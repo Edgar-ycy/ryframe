@@ -25,6 +25,9 @@ const UUID: &str = "11111111-1111-1111-1111-111111111111";
 #[path = "target_config_contract.rs"]
 mod config_contract;
 
+#[path = "target_relationship_contract.rs"]
+mod relationship_contract;
+
 struct Fixture {
     backend: PathBuf,
     local: PathBuf,
@@ -669,46 +672,67 @@ fn initialized_requires_explicit_never_started_and_no_external_writers() {
 }
 
 #[test]
-fn cli_request_binding_preserves_review_identity_and_pending_is_not_executable() {
+fn cli_request_binding_accepts_exact_ready_predecessor_and_keeps_pending_read_only() {
+    use crate::recovery::clone::native::target_verify::binding_request::validate;
+
     let mut fixture = Fixture::new();
     fixture.request["config_dir"] = json!(fixture.backend.join("config"));
-    let result = crate::recovery::clone::native::target_verify::binding_request::validate(
-        &fixture.backend,
-        &fixture.request,
-        &Value::Null,
-    )
-    .unwrap();
+    let result = validate(&fixture.backend, &fixture.request, &Value::Null).unwrap();
     assert_eq!(result["review"], fixture.review);
     assert_eq!(result["selected"], fixture.review["scopes"]["seed"]);
+    let ready = fixture.request["review"].clone();
+    assert_eq!(
+        validate(&fixture.backend, &fixture.request, &ready).unwrap(),
+        result,
+    );
+    for (field, value) in [
+        ("path", json!(fixture.local.join("other-review.json"))),
+        ("bytes", json!(0)),
+        ("sha256", json!("f".repeat(64))),
+        ("canonical_sha256", json!("f".repeat(64))),
+    ] {
+        let mut changed = ready.clone();
+        changed[field] = value;
+        assert!(
+            validate(&fixture.backend, &fixture.request, &changed).is_err(),
+            "{field}"
+        );
+    }
+    let mut corrupt = fixture.request.clone();
+    corrupt["review"]["canonical_sha256"] = json!("f".repeat(64));
+    assert!(validate(&fixture.backend, &corrupt, &corrupt["review"]).is_err());
+
     fixture.review["ready_for_execution"] = json!(false);
     fixture.seal_review();
     let predecessor = fixture.request["review"].clone();
-    assert!(
-        crate::recovery::clone::native::target_verify::binding_request::validate(
-            &fixture.backend,
-            &fixture.request,
-            &Value::Null,
-        )
-        .is_err()
+    assert!(validate(&fixture.backend, &fixture.request, &Value::Null).is_err());
+    assert!(validate(&fixture.backend, &fixture.request, &ready).is_err());
+    assert_eq!(
+        validate(&fixture.backend, &fixture.request, &predecessor).unwrap()["review"],
+        fixture.review,
     );
-    assert!(
-        crate::recovery::clone::native::target_verify::binding_request::validate(
-            &fixture.backend,
-            &fixture.request,
-            &predecessor,
-        )
-        .is_ok()
-    );
-    let mut changed = predecessor;
-    changed["bytes"] = json!(0);
-    assert!(
-        crate::recovery::clone::native::target_verify::binding_request::validate(
-            &fixture.backend,
-            &fixture.request,
-            &changed,
-        )
-        .is_err()
-    );
+
+    for invalid in [None, Some(json!("true"))] {
+        match invalid {
+            Some(value) => fixture.review["ready_for_execution"] = value,
+            None => {
+                fixture
+                    .review
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("ready_for_execution");
+            }
+        }
+        fixture.seal_review();
+        assert!(
+            validate(
+                &fixture.backend,
+                &fixture.request,
+                &fixture.request["review"]
+            )
+            .is_err()
+        );
+    }
 }
 
 #[test]

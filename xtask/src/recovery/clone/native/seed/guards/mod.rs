@@ -2,15 +2,17 @@
 use crate::{
     Result,
     local_test_path::{LocalTestPathKind, validate_local_test_path},
-    recovery::clone::native::{digest, json as document, resources::common},
+    recovery::clone::native::{
+        digest, json as document, lifecycle::state, resources::common, seed::arm_input::history,
+    },
 };
 use serde_json::{Value, json};
 use std::path::Path;
 
-mod checkpoint;
-mod close;
-mod rebind;
-mod result;
+pub(in crate::recovery::clone::native::seed) mod checkpoint;
+pub(in crate::recovery::clone::native::seed) mod close;
+pub(crate) mod rebind;
+pub(in crate::recovery::clone::native::seed) mod result;
 #[cfg(test)]
 #[path = "../../../../../../tests/unit/recovery/clone/native/seed/guards/tests.rs"]
 mod tests;
@@ -35,6 +37,24 @@ pub(super) fn dispatch(coordinator: &Path, run: &Path, args: &Value) -> Result<V
     let input = &parameters["arguments"];
     let value = match parameters["operation"].as_str() {
         Some("rebind-model") => rebind::dispatch(input)?,
+        Some("arm-prefix-history") => {
+            document::exact(input, &["run", "record", "source"], "历史 ARM 前缀参数")?;
+            let run = Path::new(document::text(&input["run"], "历史 ARM 运行目录")?);
+            validate_local_test_path(run, backend, LocalTestPathKind::ExistingDirectory)?;
+            let saved = state::load(run, true)?;
+            history::prove(
+                backend,
+                run,
+                &saved,
+                &input["record"],
+                &input["source"],
+                None,
+            )?;
+            if state::load(run, true)? != saved {
+                return Err("历史 ARM 前缀证明期间原账本变化".into());
+            }
+            Value::Null
+        }
         Some("rebind-transition-files") => rebind::live::transition(backend, input)?,
         Some("rebind-quiet-producers") => rebind::live::quiet(backend, input)?,
         Some("rebind-restart-files") => rebind::live::restart(backend, input)?,
@@ -45,12 +65,7 @@ pub(super) fn dispatch(coordinator: &Path, run: &Path, args: &Value) -> Result<V
         }
         Some("parse-snapshot") => {
             document::exact(input, &["raw"], "排空快照解析参数")?;
-            let value = document::parse_fragment(
-                document::text(&input["raw"], "排空快照原文")?,
-                "排空快照",
-            )?;
-            close::snapshot(&value)?;
-            value
+            parse_snapshot(document::text(&input["raw"], "排空快照原文")?)?
         }
         Some("identity") => {
             document::exact(input, &["value"], "关闭进程身份参数")?;
@@ -85,6 +100,12 @@ pub(super) fn dispatch(coordinator: &Path, run: &Path, args: &Value) -> Result<V
     Ok(json!({"value":value,"remote_writes":0,"automatic_retry_permitted":false}))
 }
 
+pub(in crate::recovery::clone::native::seed) fn parse_snapshot(raw: &str) -> Result<Value> {
+    let value = document::parse_fragment(raw, "排空快照")?;
+    close::snapshot(&value)?;
+    Ok(value)
+}
+
 fn transition(original: &Value, current: &Value) -> Result<()> {
     if !original.is_object() || !current.is_object() || current == original {
         return Err("重绑定需要不同的已发布存储代次".into());
@@ -108,7 +129,7 @@ fn transition(original: &Value, current: &Value) -> Result<()> {
     Ok(())
 }
 
-fn rebind_receipt(input: &Value) -> Result<()> {
+pub(crate) fn rebind_receipt(input: &Value) -> Result<()> {
     let value = &input["value"];
     document::exact(
         value,
@@ -139,7 +160,7 @@ fn rebind_receipt(input: &Value) -> Result<()> {
     Ok(())
 }
 
-fn bound_result(backend: &Path, input: &Value) -> Result<Value> {
+pub(crate) fn bound_result(backend: &Path, input: &Value) -> Result<Value> {
     document::exact(
         input,
         &["value", "runtime", "handoff", "in_progress"],

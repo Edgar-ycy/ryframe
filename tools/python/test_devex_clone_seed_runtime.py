@@ -42,7 +42,7 @@ class RuntimeTests(unittest.TestCase):
             selected={"api_url": "http://127.0.0.1:18210",
                       "worker_ready_url": "http://127.0.0.1:18211/readyz",
                       "runtime_dir": str(self.directory / "candidate")},
-            runtime=self.directory / "runtime", target={"target": True}, output=self.directory,
+            runtime=self.directory / "runtime", target={"target": True}, target_descriptor={"bound": "request"}, output=self.directory,
             review={"review": True}, run=MagicMock(), environments=environments,
             api_guard=MagicMock(), resolved_storage_run=lambda: self.directory)
         confirmation_check = patch.object(runtime, "verify_confirmations")
@@ -72,7 +72,7 @@ class RuntimeTests(unittest.TestCase):
         environments.use.return_value.__enter__.return_value = {}
         fixture_run = self.directory / "fixture-service-run"
         context = SimpleNamespace(backend=self.backend, directory_root=self.directory,
-            target={"target": True}, target_config={"scope_id": self.scope},
+            target={"target": True}, target_descriptor={"bound": "request"}, target_config={"scope_id": self.scope},
             initial={"generation": {"physical": {"scope": "target"}}},
             selected={"api_url": "http://127.0.0.1:18210",
                       "worker_ready_url": "http://127.0.0.1:18211/readyz",
@@ -182,27 +182,6 @@ class RuntimeTests(unittest.TestCase):
         self.new = self.directory / "seed-runtime/runtime"
         return read_json(self.new / "handoff.json")
 
-    def history(self, *, incomplete=False):
-        events = []
-        for index, role in enumerate(("api", "worker")):
-            identity = {**self.identity, "pid": self.identity["pid"] + index + 1}
-            write_json(self.new / (role + ".json"), {"format_version": 1, "scope_id": self.scope, "role": role, "identity": identity})
-            events.append({"sequence": len(events), "event": "start-intent", "role": role, "token": role})
-            if not incomplete:
-                events.append({"sequence": len(events), "event": "started", "role": role, "token": role, "identity": identity})
-        write_json(self.new / "producer-history.json", {"format_version": 1, "kind": "devex-clone-producer-history",
-            "scope_id": self.scope, "runtime_directory": str(self.new), "events": events})
-
-    def stop_result(self, *, fail=False):
-        value = {"format_version": 1, "kind": "devex-clone-runtime-control", "operation": "stop", "scope_id": self.scope,
-                 "runtime_directory": str(self.new), "processes": {role: {"state": "stopped", "identity": None, "ready": False}
-                                                                   for role in ("api", "worker")}}
-        number = begin(self.directory, "seed-runtime", "stop", {})
-        with patch("devex_clone_runtime.control", return_value=value), patch.object(runtime, "process_identity", return_value=None):
-            result = runtime.execute_seed(self.backend, self.directory, None, "stop", number)
-        finish(self.directory, number, result=result, error=ValueError("stop outer failure") if fail else None)
-        return result
-
     def test_prepare_new_runtime_preserves_historical_api_and_identity_plan(self):
         old_plan = self.request["identity_plan"]
         handoff = self.prepared()
@@ -211,84 +190,24 @@ class RuntimeTests(unittest.TestCase):
         self.assertNotEqual(self.new, self.old)
         self.assertEqual(runtime.runtime_inputs(self.backend, self.directory)[0], self.new)
 
-    def test_start_checks_current_state_before_and_after_control_without_rechecking_old_rows(self):
-        self.prepared()
-        number = begin(self.directory, "seed-runtime", "start", {})
-        order = []
-        with patch.object(runtime, "current_guard", side_effect=lambda *_args: order.append("guard") or ["schedule-proof"]), patch.object(runtime, "old_api_stopped", side_effect=lambda *_args: order.append("old-stopped")), patch("devex_clone_runtime.control", side_effect=lambda *_args: order.append("start") or {"running": True}):
-            result = runtime.start(self.context, self.request, number)
-        self.assertEqual(order, ["guard", "old-stopped", "start", "guard"])
-        self.assertFalse(result["outbox_drained"])
-
-    def test_failed_start_then_precise_stop_can_explicitly_restart_same_handoff(self):
+    def test_close_rejects_a_changed_native_handoff_before_control(self):
         handoff = self.prepared()
-        self.history()
-        failed = begin(self.directory, "seed-runtime", "start", {})
-        finish(self.directory, failed, error=ValueError("outer failure"))
-        stopped = self.stop_result()
-        self.assertTrue(stopped["restart_ready"])
-        with patch.object(runtime, "process_identity", return_value=None):
-            runtime.restart_after_stop(self.backend, self.directory, self.new, handoff,
-                                      {"number": failed, "stage": "seed-runtime", "mode": "start"}, 999)
+        number = begin(self.directory, "seed-runtime", "close", {})
+        with patch.object(runtime, "invoke_seed_tool") as control:
+            with self.assertRaises(ValueError):
+                runtime.pair_control(self.backend, self.new, "status", ("api", "worker"), {**handoff, "different": True}, number)
+        control.assert_not_called()
 
-    def test_failed_stop_or_unknown_start_intent_cannot_allow_restart(self):
-        handoff = self.prepared()
-        self.history(incomplete=True)
-        failed = begin(self.directory, "seed-runtime", "start", {})
-        finish(self.directory, failed, error=ValueError("start failure"))
-        result = self.stop_result()
-        self.assertFalse(result["restart_ready"])
-        with patch.object(runtime, "process_identity", return_value=None), self.assertRaises(ValueError):
-            runtime.restart_after_stop(self.backend, self.directory, self.new, handoff,
-                                      {"number": failed, "stage": "seed-runtime", "mode": "start"}, 999)
-        self.stop_result(fail=True)
-        with self.assertRaises(ValueError):
-            runtime.restart_after_stop(self.backend, self.directory, self.new, handoff,
-                                      {"number": failed, "stage": "seed-runtime", "mode": "start"}, 999)
+    def test_retired_start_cannot_claim_python_target_or_call_role_control(self):
+        with patch.object(runtime, "target_lock") as target, patch.object(runtime, "invoke_seed_tool") as control:
+            with self.assertRaisesRegex(ValueError, "Rust 正式入口"):
+                runtime.execute_seed(self.backend, self.directory, {}, "start", 53)
+            with self.assertRaisesRegex(ValueError, "业务关闭"):
+                runtime.pair_control(self.backend, self.directory / "seed-runtime/runtime", "start", ("api", "worker"), {}, 53)
+        target.assert_not_called()
+        control.assert_not_called()
 
-    def test_stale_stop_receipt_changed_handoff_or_later_identity_failure_rejected(self):
-        handoff = self.prepared()
-        self.history()
-        failed = begin(self.directory, "seed-runtime", "start", {})
-        finish(self.directory, failed, error=ValueError("start failure"))
-        self.stop_result()
-        (self.new / "api.json").write_text('{"changed":true}', encoding="utf-8")
-        with patch.object(runtime, "process_identity", return_value=None), self.assertRaises(ValueError):
-            runtime.restart_after_stop(self.backend, self.directory, self.new, handoff,
-                                      {"number": failed, "stage": "seed-runtime", "mode": "start"}, 999)
-        with self.assertRaises(ValueError):
-            runtime.restart_after_stop(self.backend, self.directory, self.new, handoff,
-                                      {"number": failed, "stage": "seed-runtime", "mode": "identities-apply"}, 999)
-
-    def test_other_handoff_or_stop_older_than_failure_does_not_release_start(self):
-        handoff = self.prepared()
-        self.history()
-        self.stop_result()
-        failed = begin(self.directory, "seed-runtime", "start", {})
-        finish(self.directory, failed, error=ValueError("new failure"))
-        prior = {"number": failed, "stage": "seed-runtime", "mode": "start"}
-        with patch.object(runtime, "process_identity", return_value=None), self.assertRaises(ValueError):
-            runtime.restart_after_stop(self.backend, self.directory, self.new, handoff, prior, 999)
-        self.stop_result()
-        (self.new / "handoff.json").write_text('{"other_generation":true}', encoding="utf-8")
-        with patch.object(runtime, "process_identity", return_value=None), self.assertRaises(ValueError):
-            runtime.restart_after_stop(self.backend, self.directory, self.new, handoff, prior, 999)
-
-    def test_outer_cleanup_skips_current_source_failures_and_uses_registered_manifest(self):
-        import devex_clone_run as run
-        from contextlib import nullcontext
-
-        self.register()
-        owner = {"identity": self.identity}
-        expected = {"status": "seed_runtime_stop"}
-        with patch.object(run, "process_guard", return_value=nullcontext()), patch.object(run, "claim_run_lock", return_value=nullcontext(owner)), patch.object(run, "bind_controller_attempt"), patch("source_fingerprints.current_execution_source", side_effect=ValueError("later source changed")), patch.object(runtime, "execute_seed", return_value=expected) as execute, patch.object(run, "environments", side_effect=AssertionError("must not load source environment")), patch.object(run, "read_manifest", side_effect=AssertionError("must not full-validate manifest")):
-            # 最小清理仍要求原固定 manifest 的字段完整；此处只替代读取，保留状态机真实发布。
-            with patch.object(run, "registered_manifest", return_value={"fixed": True}):
-                result = run.execute(self.backend, self.directory, "seed-runtime", "stop")
-        self.assertEqual(result["result"], expected)
-        self.assertEqual(execute.call_args.args[3], "stop")
-
-    def test_cli_requires_exact_operation_inputs_and_status_is_readonly(self):
+    def test_cli_requires_exact_inputs_and_rejects_native_runtime_operations(self):
         import devex_clone_run_cli as cli
 
         def args(mode, *, request=None, producer_binding=None, write=False):
@@ -302,57 +221,15 @@ class RuntimeTests(unittest.TestCase):
                 cli.dispatch(args(mode), self.backend)
         with self.assertRaises(ValueError):
             cli.dispatch(args("start", request=self.directory / "unused", write=True), self.backend)
-        with patch.object(runtime, "execute_seed", return_value={"status": "observed"}) as observe:
-            self.assertEqual(cli.dispatch(args("status"), self.backend), {"status": "observed"})
-            self.assertEqual(observe.call_args.args[2:], (None, "status", None))
+        for mode in ("status", "start", "stop", "recover"):
+            with self.subTest(mode=mode), self.assertRaisesRegex(ValueError, "Rust 正式入口"):
+                cli.dispatch(args(mode, write=mode != "status"), self.backend)
 
         request = self.directory / "arm-request.json"
         write_json(request, {"kind": "fixture-arm-input"})
-        completed = {"status": "stage_finished", "stage": "seed-runtime", "mode": "arm-input",
-                     "attempt": 53, "restore_qualified": False}
-        with patch.object(cli, "execute", return_value=completed) as execute:
-            self.assertEqual(cli.dispatch(args("arm-input", request=request, write=True),
-                                          self.backend), completed)
-        self.assertEqual(execute.call_args.kwargs["seed_request"], request)
-
-    def test_status_uses_zero_write_runtime_observation(self):
-        runtime_dir = self.directory / "seed-runtime/runtime"
-        handoff = {"api_url": "http://127.0.0.1:18210"}
-        expected = {"kind": "devex-clone-runtime-observation", "operation": "status"}
-        with patch.object(runtime, "runtime_inputs", return_value=(runtime_dir, handoff, {})), \
-                patch("devex_clone_runtime.observe", return_value=expected) as observe, \
-                patch("devex_clone_runtime.control", side_effect=AssertionError("status 不能取得控制锁")):
-            result = runtime.execute_seed(
-                self.backend, self.directory, None, "status", None,
-            )
-        self.assertEqual(result, {
-            "status": "seed_runtime_status",
-            "runtime": expected,
-            "restore_qualified": False,
-        })
-        observe.assert_called_once_with(
-            self.backend, runtime_dir, ("api", "worker"), handoff["api_url"],
-        )
-
-    def test_arm_input_dispatches_evidence_only_publisher_without_target_lock(self):
-        request = self.directory / "arm-request.json"
-        write_json(request, {"kind": "fixture-arm-input"})
-        expected = {"status": "seed_arm_input_published", "remote_writes": 0}
-        with patch.object(runtime, "require_quiet") as quiet, \
-                patch("devex_clone_seed_arm.publish_arm_input", return_value=expected) as publish, \
-                patch.object(runtime, "target_lock", side_effect=AssertionError("unexpected target lock")):
-            result = runtime.execute_seed(self.backend, self.directory, {}, "arm-input", 53, request)
-        self.assertEqual(result, expected)
-        quiet.assert_called_once_with(self.backend, self.directory, 53)
-        publish.assert_called_once_with(self.backend, self.directory, request, 53)
-
-    def test_start_rejects_capacity_proof_changed_after_prepare(self):
-        self.prepared()
-        number = begin(self.directory, "seed-runtime", "start", {})
-        with patch.object(runtime, "capacity_evidence", return_value={"changed": True}), patch("devex_clone_runtime.control") as control:
-            with self.assertRaises(ValueError):
-                runtime.start(self.context, self.request, number)
-        control.assert_not_called()
+        with patch.object(cli, "execute") as execute, self.assertRaisesRegex(ValueError, "Rust 正式入口"):
+            cli.dispatch(args("arm-input", request=request, write=True), self.backend)
+        execute.assert_not_called()
 
     def test_register_calls_bound_native_writer_with_current_controller_and_lock(self):
         from contextlib import nullcontext

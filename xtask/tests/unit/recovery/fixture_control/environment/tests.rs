@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "plan_window.rs"]
+mod plan_window;
+
 fn request(operation: &str, arguments: Value) -> (i32, Value) {
     execute(
         &serde_json::to_vec(
@@ -71,8 +74,7 @@ fn fixture_and_maintenance_types_fail_closed() {
     assert_ne!(request("maintenance", build).0, 0);
 }
 
-fn review(root: &std::path::Path) -> Value {
-    let execution = root.join("business-backend");
+pub(crate) fn review(execution: &std::path::Path) -> Value {
     let mut value = json!({"kind":"review-only-perf-resource-plan-with-readonly-preflight","ready_for_execution":true,
         "reference":{"source":{"databases":[]},"protected_target":{"databases":[]}},
         "tools":{"mysql":{"path":"mysql","sha256":"a"},"mysqldump":{"path":"dump","sha256":"b"},
@@ -93,7 +95,7 @@ fn review(root: &std::path::Path) -> Value {
     }
     value
 }
-fn ready(mut value: Value) -> Value {
+pub(crate) fn ready(mut value: Value) -> Value {
     let run = std::path::Path::new(value["future_root"].as_str().unwrap()).join("service-run");
     value["ready_for_execution"] = json!(true);
     value["services"]["rustfs"]["scope_id"] = json!("services-fixture-seed");
@@ -107,6 +109,33 @@ fn ready(mut value: Value) -> Value {
     value
 }
 
+pub(crate) fn published_plan(
+    fixture: &crate::recovery::fixture_control::source_pair::execution::tests::Fixture,
+) -> (std::path::PathBuf, Value) {
+    let publication = fixture.publication();
+    let execution = std::path::PathBuf::from(
+        publication["published"]["backend"]["path"]
+            .as_str()
+            .unwrap(),
+    );
+    let root = fixture.backend.join(".local-tests/environment-inputs");
+    std::fs::create_dir_all(&root).unwrap();
+    let mut review = ready(review(&execution));
+    review["execution_source"] = fixture.binding();
+    let sources = &publication["original"]["source_pair"]["sources"];
+    review["sources"] = json!({"backend_head":sources["backend"]["head"],"frontend_head":sources["frontend"]["head"]});
+    let maintenance = json!({"format_version":1,"kind":"devex-clone-tool-build","resources_modified":false,
+        "artifacts":{"reset":{"executable":"reset"},"migrate":{"executable":"migrate"},"tenant-data":{"executable":"tenant"}}});
+    for (name, value) in [("review", review), ("maintenance_build", maintenance)] {
+        crate::recovery::clone::native::json::write_new(&root.join(format!("{name}.json")), &value)
+            .unwrap();
+    }
+    let args = json!({"backend":fixture.backend,"review":root.join("review.json"),
+        "execution_source":fixture.output.join("execution-source.json"),
+        "maintenance_build":root.join("maintenance_build.json"),"side":"seed"});
+    (root, super::super::plan::create(&args).unwrap())
+}
+
 #[test]
 fn successor_allows_only_reviewed_tool_refresh_and_rejects_historical_or_resource_drift() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -114,6 +143,23 @@ fn successor_allows_only_reviewed_tool_refresh_and_rejects_historical_or_resourc
     pending["ready_for_execution"] = json!(false);
     let current = ready(pending.clone());
     assert_eq!(request("preflight-binding", current.clone()).0, 0);
+    #[cfg(windows)]
+    {
+        let mut native = current.clone();
+        native["services"]["rustfs"]["process_receipt"] = json!(
+            std::path::Path::new(
+                native["services"]["rustfs"]["process_receipt"]
+                    .as_str()
+                    .unwrap()
+            )
+            .components()
+            .collect::<std::path::PathBuf>()
+        );
+        assert_eq!(request("preflight-binding", native).0, 0);
+    }
+    let mut foreign = current.clone();
+    foreign["services"]["rustfs"]["process_receipt"] = json!(root.join("foreign/process.json"));
+    assert_ne!(request("preflight-binding", foreign).0, 0);
     assert_eq!(
         request(
             "preflight-successor",
@@ -211,42 +257,29 @@ fn plan_is_readonly_hashes_exact_inputs_and_rejects_every_input_drift() {
         .parent()
         .unwrap()
         .to_owned();
-    let parent = backend.join(".local-tests/reference-environment-native");
-    std::fs::create_dir_all(&parent).unwrap();
-    let temporary = tempfile::tempdir_in(&parent).unwrap();
-    let root = super::super::super::portable_path(temporary.path());
-    let review = ready(review(&root));
-    let execution = root.join("fixture/backend");
+    let fixture = crate::recovery::fixture_control::source_pair::execution::tests::Fixture::new();
+    let (root, plan) = published_plan(&fixture);
+    let execution = std::path::PathBuf::from(plan["execution_backend"].as_str().unwrap());
     let reference = execution.join(".local-tests").join("reference-fixture");
     std::fs::create_dir_all(&reference).unwrap();
-    let fixture = json!({"format_version":1,"fixture":"business","status":"ready","sources":{"backend":{"head":"abc"}},
-        "paths":{"backend":execution,"frontend":root.join("fixture/frontend")}});
-    let maintenance = json!({"format_version":1,"kind":"devex-clone-tool-build","resources_modified":false,
-        "artifacts":{"reset":{"executable":"reset"},"migrate":{"executable":"migrate"},"tenant-data":{"executable":"tenant"}}});
-    let documents = [
-        ("review", review),
-        ("fixture", fixture),
-        ("maintenance_build", maintenance),
-    ];
-    for (name, value) in &documents {
-        native_json::write_new(&root.join(format!("{name}.json")), value).unwrap();
-    }
     let args = json!({"backend":backend,"review":root.join("review.json").strip_prefix(&backend).unwrap(),
-        "fixture":root.join("fixture.json"),"maintenance_build":root.join("maintenance_build.json"),"side":"seed"});
+        "execution_source":fixture.output.join("execution-source.json"),"maintenance_build":root.join("maintenance_build.json"),"side":"seed"});
     let (code, response) = request("plan", args.clone());
     assert_eq!(code, 0, "{response}");
     let plan = response["result"].clone();
     let mut unsigned = plan.clone();
     unsigned.as_object_mut().unwrap().remove("sha256");
     assert_eq!(plan["sha256"], digest::plan_hash(&unsigned).unwrap());
-    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 4);
-    let output = reference.join("environment-seed-r1");
-    let (code, allowed) = request(
-        "prepare-output",
-        json!({"backend":backend,"plan":plan,"output":output}),
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 2);
+    assert_eq!(
+        plan["fixture"],
+        crate::recovery::fixture_control::file_binding(&fixture.receipt, "业务 fixture").unwrap()
     );
-    assert_eq!(code, 0, "{allowed}");
-    assert!(!output.exists());
+    assert_ne!(plan["execution_backend"], json!(fixture.backend));
+    let mut raw = args.clone();
+    raw["execution_source"] = json!(fixture.receipt);
+    assert_ne!(request("plan", raw).0, 0);
+    assert_reviewed_output_layout(&backend, &reference, &plan);
     let wrong = root.join("coordinator-only-environment");
     let (code, denied) = request(
         "prepare-output",
@@ -265,8 +298,11 @@ fn plan_is_readonly_hashes_exact_inputs_and_rejects_every_input_drift() {
         request("planned-inputs", json!({"backend":backend,"plan":plan})).0,
         0
     );
-    for (name, _value) in &documents {
-        let path = root.join(format!("{name}.json"));
+    for path in [
+        root.join("review.json"),
+        fixture.output.join("execution-source.json"),
+        root.join("maintenance_build.json"),
+    ] {
         let original = std::fs::read(&path).unwrap();
         std::fs::write(&path, b"{}").unwrap();
         assert_ne!(
@@ -275,7 +311,7 @@ fn plan_is_readonly_hashes_exact_inputs_and_rejects_every_input_drift() {
         );
         std::fs::write(path, original).unwrap();
     }
-    let mut historical = documents[0].1.clone();
+    let mut historical = native_json::read(&root.join("review.json")).unwrap();
     historical["reference"]["source"]["databases"] = json!([{"database":"old"}]);
     std::fs::write(
         root.join("review.json"),
@@ -283,6 +319,72 @@ fn plan_is_readonly_hashes_exact_inputs_and_rejects_every_input_drift() {
     )
     .unwrap();
     assert_ne!(request("plan", args).0, 0);
+}
+
+fn assert_reviewed_output_layout(
+    backend: &std::path::Path,
+    reference: &std::path::Path,
+    plan: &Value,
+) {
+    let future = reference.join("run-r1");
+    let mut forbidden = vec![future.clone(), future.join("private-credential-marker")];
+    #[cfg(windows)]
+    {
+        forbidden.push(std::path::PathBuf::from(
+            future
+                .to_str()
+                .unwrap()
+                .to_ascii_uppercase()
+                .replace('\\', "/"),
+        ));
+        forbidden.push(std::path::PathBuf::from(format!(
+            "{}/RUN-R1\\config",
+            reference.to_str().unwrap().replace('\\', "/")
+        )));
+    }
+    for output in forbidden.drain(..) {
+        let (code, denied) = request(
+            "prepare-output",
+            json!({"backend":backend,"plan":plan,"output":output}),
+        );
+        assert_ne!(code, 0, "{denied}");
+        let message = denied["error"]["message"].as_str().unwrap();
+        assert!(message.contains("保留服务根"), "{denied}");
+        assert!(message.contains("未写入") && message.contains("同级独立新目录"));
+        assert!(!denied.to_string().contains("private-credential-marker"));
+        assert_eq!(denied["error"]["remote_write_may_have_occurred"], false);
+        assert!(!output.exists());
+        assert!(!future.exists());
+        assert!(std::fs::read_dir(reference).unwrap().next().is_none());
+    }
+    for name in ["environment-seed-r1", "run-r1-extra", "runtime-r1"] {
+        let output = reference.join(name);
+        let (code, allowed) = request(
+            "prepare-output",
+            json!({"backend":backend,"plan":plan,"output":output}),
+        );
+        assert_eq!(code, 0, "{allowed}");
+        assert_eq!(allowed["result"]["output"], json!(output));
+        assert!(!output.exists());
+        assert!(std::fs::read_dir(reference).unwrap().next().is_none());
+    }
+    let existing = reference.join("existing-environment");
+    std::fs::create_dir(&existing).unwrap();
+    let marker = existing.join("owned-marker.txt");
+    std::fs::write(&marker, b"unchanged existing output").unwrap();
+    let (code, denied) = request(
+        "prepare-output",
+        json!({"backend":backend,"plan":plan,"output":existing}),
+    );
+    assert_ne!(code, 0);
+    assert_eq!(denied["error"]["remote_write_may_have_occurred"], false);
+    assert_eq!(
+        std::fs::read(&marker).unwrap(),
+        b"unchanged existing output"
+    );
+    assert_eq!(std::fs::read_dir(&existing).unwrap().count(), 1);
+    std::fs::remove_file(marker).unwrap();
+    std::fs::remove_dir(existing).unwrap();
 }
 
 #[test]
@@ -312,35 +414,4 @@ fn administrator_credentials_constructs_distinct_strong_private_toml_and_rejects
     assert_ne!(code, 0);
     assert!(!value.to_string().contains(initial));
     assert!(!value.to_string().contains("private-sentinel"));
-}
-
-#[test]
-fn environment_output_belongs_to_both_coordinator_and_execution_without_writes() {
-    let coordinator = crate::workspace::root_dir();
-    let parent = coordinator.join(".local-tests/environment-output-native");
-    std::fs::create_dir_all(&parent).unwrap();
-    let temporary = tempfile::tempdir_in(&parent).unwrap();
-    let execution = temporary.path().join("fixture/backend");
-    let reference = execution.join(".local-tests").join("reference-fixture");
-    std::fs::create_dir_all(&reference).unwrap();
-    let fixture = json!({"format_version":1,"fixture":"business","status":"ready",
-        "sources":{"backend":{"head":"abc"}},"paths":{"backend":execution,"frontend":temporary.path().join("fixture/frontend")}});
-    let valid = reference.join("environment-seed-r1");
-    assert_ne!(coordinator, execution);
-    let before = std::fs::read_dir(temporary.path()).unwrap().count();
-    assert_eq!(
-        super::super::output::validate(&coordinator, &fixture, &valid).unwrap(),
-        valid
-    );
-    assert!(!valid.exists());
-    let wrong = temporary.path().join("coordinator-only");
-    let error = super::super::output::validate(&coordinator, &fixture, &wrong)
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains(reference.to_str().unwrap()));
-    assert!(!wrong.exists());
-    assert_eq!(std::fs::read_dir(temporary.path()).unwrap().count(), before);
-    assert!(std::fs::read_dir(&reference).unwrap().next().is_none());
-    std::fs::create_dir(&valid).unwrap();
-    assert!(super::super::output::validate(&coordinator, &fixture, &valid).is_err());
 }

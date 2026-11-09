@@ -43,16 +43,7 @@ impl UserListQuery {
 
 impl UserFilterQuery {
     fn into_service_params(self, page: ValidatedPageQuery) -> HttpResult<UserListParams> {
-        let dept_id = self
-            .dept_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|id| !id.is_empty())
-            .map(|id| {
-                id.parse::<i64>()
-                    .map_err(|_| AppError::Validation(format!("无效的部门ID: {id}")))
-            })
-            .transpose()?;
+        let dept_id = crate::handler_utils::parse_optional_id(self.dept_id.as_deref(), "部门ID")?;
         Ok(UserListParams {
             page,
             username: self.username,

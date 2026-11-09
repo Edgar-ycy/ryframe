@@ -116,13 +116,26 @@ fn configuration(target: &Path, args: &Value) -> Result<Value> {
     let backend = Path::new(json_io::text(&args["execution_backend"], "reset 执行树")?);
     validate_absolute_path(backend, LocalTestPathKind::ExistingDirectory)?;
     let environment = json_io::text(&args["app_env"], "APP_ENV")?;
-    let table = crate::rate_limit::load_app_table(backend, None, environment)
+    let request = json_io::read(&target.join("request.json"))?;
+    let snapshot = super::fresh::initialize::reset_configuration::Snapshot::open(
+        backend,
+        target,
+        &request,
+        &args["maintenance"],
+    )?;
+    let table = crate::rate_limit::load_app_table(backend, Some(&snapshot.directory), environment)
         .map_err(|_| DIAGNOSTICS[6])?;
     let table = serde_json::to_value(table)?;
-    reset_configuration(target, &table, &args["maintenance"])
+    let result = reset_configuration(target, &table, &args["maintenance"]);
+    snapshot.check()?;
+    result
 }
 
-fn reset_configuration(target: &Path, table: &Value, maintenance: &Value) -> Result<Value> {
+pub(crate) fn reset_configuration(
+    target: &Path,
+    table: &Value,
+    maintenance: &Value,
+) -> Result<Value> {
     let reset = table
         .get("reset")
         .and_then(Value::as_object)

@@ -9,23 +9,25 @@ from native_s3_client import _invoke as native_invoke, _read_response as native_
 import subprocess
 
 import copy
+import hashlib
 from pathlib import Path
 from typing import Mapping
 import uuid
 
 from artifact_digests import filesystem_path
-from devex_clone_capture import CaptureReader, inspect_response, read_json, regular_file, verify_capture, write_json
+from devex_clone_capture import CaptureReader, inspect_response, read_json, regular_file, write_json
 from devex_clone_export import logical_inventory, schema_models, validate_dump_state, validate_inventory
 from devex_clone_inventory import configuration
 from devex_clone_inventory_complete import inventory_proofs
 from devex_clone_model import bound_file, digest, exact, linked, local_path
 from devex_clone_object_batch import ordered_batches
 from devex_clone_rows import schema_catalog
-from devex_clone_source_proof import bound_file as request_file, execution_backend, public_request, validate_request
+from devex_clone_source_proof import bound_file as request_file, execution_backend, public_request, registered_runtime, validate_request
 from native_s3_client import NativeS3InvocationError, inspect as native_s3_inspect
 from restore_build import file_digest
 from restore_reference_io import ExternalTools
 from restore_reference_plan import BUCKETS, plan_hash
+from restore_runtime_evidence import artifact_snapshot, read_json_document
 from source_fingerprints import build_source
 
 EVIDENCE = {"request", "generation-before", "generation-after", "inventory-before", "inventory-after",
@@ -135,40 +137,65 @@ def capture_proof_names() -> set[str]:
     return names
 
 
-def capture_proofs(directory: Path) -> list[Path]:
-    return [regular_file(directory / name) for name in sorted(capture_proof_names())]
+def saved_capture_sha256(backend: Path, binding: dict) -> str:
+    result, _ = native_response(*native_invoke(
+        "__source-evidence", {"operation": "copy-saved-object-captures", "write": False,
+            "arguments": {"backend": str(backend), "export": binding}},
+        subprocess.run, may_write=False,
+    ))
+    exact(result, {"value"})
+    value = result["value"]
+    exact(value, {"proofs_sha256"})
+    return digest(value["proofs_sha256"])
 
 
-def verify_captures(root: Path, value: dict, request: dict, inventory: dict) -> tuple[dict, dict, list[Path]]:
-    buckets = value["objects"]
-    if not isinstance(buckets, list) or len(buckets) != len(BUCKETS) or {item["bucket"] for item in buckets} != BUCKETS:
-        raise ValueError("源对象导出没有完整覆盖五桶")
-    tools = ExternalTools({"source": request["source"], "tools": request["tools"]}, root)
-    baseline = {bucket["bucket"]: {item["key"]: item for item in bucket["entries"]} for bucket in inventory["objects"]}
-    captures, logical, proofs = {}, {}, []
-    for bucket in buckets:
-        exact(bucket, {"bucket", "entries"})
-        name, entries = bucket["bucket"], bucket["entries"]
-        if not isinstance(entries, list) or len(entries) != len(baseline[name]) or {item["key"] for item in entries} != set(baseline[name]):
-            raise ValueError("源对象导出缺失、重复或超出完整 inventory")
-        captures[name] = {}
-        for item in entries:
-            exact(item, {"key", "artifact", "metadata", "capture", "get_header_consistent"})
-            body, receipt = bound_file(root, item["artifact"]), bound_file(root, item["capture"])
-            if receipt.name != "capture.json" or body != receipt.parent / "object.bin":
-                raise ValueError("对象字节与采集收据不是同一明确目录")
-            expected = {field: baseline[name][item["key"]][field] for field in ("bytes", "sha256")}
-            intent = read_json(receipt.parent / "intent.json")
-            if intent.get("transport") != "rust-s3-sigv4" or "aws_tool" in intent:
-                raise ValueError("对象采集 intent 必须唯一绑定原生 Rust S3 传输")
-            capture = verify_capture(tools, "source", name, item["key"], receipt.parent,
-                                     expected=expected, max_bytes=request["max_object_bytes"],
-                                     transport="rust-s3-sigv4")["capture"]
-            if capture["metadata"] != item["metadata"] or capture["get_header_consistent"] is not item["get_header_consistent"]:
-                raise ValueError("对象完整存储元数据或 GET 差异标记与源证据不同")
-            captures[name][item["key"]] = capture
-            logical[name, item["key"].removeprefix(value["scope_id"] + "/")] = item["artifact"]
-            proofs.extend(capture_proofs(receipt.parent))
+def capture_directory(root: Path, item: dict) -> Path:
+    relative = item["capture"]["file"]
+    if (not isinstance(relative, str) or "\\" in relative or ":" in relative
+            or any(part in ("", ".", "..") for part in relative.split("/"))
+            or any(ord(char) < 32 for char in relative) or Path(relative).name != "capture.json"):
+        raise ValueError("对象原始证据目录格式无效")
+    return (root / relative).parent
+
+
+def verify_captures(backend: Path, binding: dict, root: Path, export: dict) -> tuple[dict, dict, dict]:
+    expected = saved_capture_sha256(backend, binding)
+    observed = hashlib.sha256(b"ryframe-copy-saved-object-proofs-v1\n")
+    captures, logical, proofs = {}, {}, {}
+    names = sorted(capture_proof_names())
+    prefix = export["scope_id"] + "/"
+    for bucket in export["objects"]:
+        name = bucket["bucket"]
+        if name in captures:
+            raise ValueError("源导出对象桶重复")
+        entries = captures[name] = {}
+        for item in bucket["entries"]:
+            key = item["key"]
+            if key in entries or not key.startswith(prefix):
+                raise ValueError("源导出对象重复或不属于明确来源 scope")
+            directory = capture_directory(root, item)
+            for basename in names:
+                path = directory / basename
+                filename = str(path)
+                if filename in proofs:
+                    raise ValueError("对象原始证据路径重复")
+                try:
+                    if basename == "capture.json":
+                        capture = read_json_document(path)
+                        proof = {"bytes": len(capture.raw), "sha256": capture.sha256}
+                        if any(item["capture"][field] != value for field, value in proof.items()):
+                            raise ValueError("源原始小型证据已变化")
+                        entries[key] = capture.value
+                    else:
+                        snapshot = artifact_snapshot(path)
+                        proof = {"bytes": snapshot.bytes, "sha256": snapshot.sha256}
+                except FileNotFoundError:
+                    raise ValueError("采集证据文件缺失") from None
+                observed.update(f"{basename}\t{proof['bytes']}\t{proof['sha256']}\n".encode("ascii"))
+                proofs[filename] = proof
+            logical[name, key[len(prefix):]] = item["artifact"]
+    if observed.hexdigest() != expected:
+        raise ValueError("源原始小型证据已变化")
     return captures, logical, proofs
 
 
@@ -180,7 +207,7 @@ def verify_source_export(backend: Path, binding: dict) -> dict:
     request_path = request_file(backend, value["request"])
     request = read_json(request_path)
     validate_request(backend, request)
-    if public_request(request) != evidence["request"] or public_request(request)["source"] != value["source"] or request["id"] != value["id"] or request["source"]["scope_id"] != value["scope_id"]:
+    if public_request(backend, request) != evidence["request"] or public_request(backend, request)["source"] != value["source"] or request["id"] != value["id"] or request["source"]["scope_id"] != value["scope_id"]:
         raise ValueError("源导出与外部原请求不同")
     execution = execution_backend(backend, request)
     models = schema_models(execution)
@@ -194,14 +221,16 @@ def verify_source_export(backend: Path, binding: dict) -> dict:
         raise ValueError("源记录代次与外部已绑定构建、运行或进程收据不同")
     inventory = evidence["inventory-before"]
     verify_dump_declarations(root, value, inventory, models)
-    captures, index, proofs = verify_captures(root, value, request, inventory)
+    captures, index, proofs = verify_captures(backend, binding, root, value)
     tools = ExternalTools({"source": request["source"]}, root)
     if validate_dump_state(tools, models, value["databases"], index) != value["enabled_system_schedule_rows"]:
         raise ValueError("源实际业务关系或调度处置与导出结果不同")
-    proofs += [request_path, *[root / (name + ".json") for name in sorted(EVIDENCE)], *inventory_paths]
+    global_proofs = [request_path, *[root / (name + ".json") for name in sorted(EVIDENCE)], *inventory_paths]
+    proof_files = {str(path): file_digest(regular_file(path)) for path in global_proofs}
+    proof_files.update(proofs)
     result = {"export": value, "binding": copy.deepcopy(binding), "request": request, "generation": generation,
               "inventory": inventory, "captures": captures,
-              "proof_files": {str(path): file_digest(regular_file(path)) for path in proofs}}
+              "proof_files": proof_files}
     verify_export_bindings(backend, result)
     return result
 
@@ -215,12 +244,7 @@ def proof_dependencies(root: Path, value: dict, selection) -> tuple[dict, set[st
         raise ValueError("原始证据选择必须为完整、全局或明确单对象")
     for bucket in value["objects"]:
         for item in bucket["entries"]:
-            relative = item["capture"]["file"]
-            if (not isinstance(relative, str) or "\\" in relative or ":" in relative
-                    or any(part in ("", ".", "..") for part in relative.split("/"))
-                    or any(ord(char) < 32 for char in relative) or Path(relative).name != "capture.json"):
-                raise ValueError("对象原始证据目录格式无效")
-            directory = (root / relative).parent
+            directory = capture_directory(root, item)
             paths = {str(directory / name) for name in capture_proof_names()}
             all_paths.update(paths)
             identity = bucket["bucket"], item["key"]
@@ -237,7 +261,7 @@ def verify_export_bindings(backend: Path, verified: dict, *, selection="all") ->
     exact(verified, {"export", "binding", "request", "generation", "inventory", "captures", "proof_files"})
     if value != verified["export"]:
         raise ValueError("调用方源导出对象被修改")
-    if (public_request(verified["request"]) != read_json(root / "request.json")
+    if (public_request(backend, verified["request"]) != read_json(root / "request.json")
             or verified["generation"] != read_json(root / "generation-before.json")
             or verified["inventory"] != read_json(root / "inventory-before.json") or set(verified["captures"]) != BUCKETS):
         raise ValueError("调用方源证据快照被修改")
@@ -294,19 +318,27 @@ class _Observation:
         self.execution = execution_backend(backend, verified["request"])
         self.original_environment, self.environment = environment, dict(environment)
         self.plan = copy.deepcopy(tools.plan)
-        request = verified["request"]
+        self.request = request = copy.deepcopy(verified["request"])
         source = request["source"]
         if (self.plan.get("source") != source or set(self.environment) != {"APP_ENV"}
                 or self.environment.get("APP_ENV") != "test"):
             raise ValueError("源对象配置、scope 或显式环境不同")
+        self.runtime = registered_runtime(backend, request)
+        self.config_dirs = {role: Path(self.runtime[f"{role}_config_dir"]) for role in ("api", "worker")}
+        self.configurations = {role: configuration(self.execution, self.environment, source,
+            evidence_root=self.backend, config_dir=directory) for role, directory in self.config_dirs.items()}
+        if registered_runtime(backend, request) != self.runtime:
+            raise ValueError("源观察登记 runtime 或配置在冻结期间变化")
         self.initial = self.binding()
         self.reader = _SourceReader(self)
 
     def binding(self):
-        if self.original.plan != self.plan or dict(self.original_environment) != self.environment:
+        if (self.original.plan != self.plan or dict(self.original_environment) != self.environment
+                or self.verified["request"] != self.request):
             raise ValueError("源计划或显式环境在请求期间变化")
+        configurations = self.runtime_unchanged()
         source = self.plan["source"]
-        return {"plan_sha256": plan_hash(self.plan), "environment_sha256": plan_hash(self.environment),
+        value = {"plan_sha256": plan_hash(self.plan), "environment_sha256": plan_hash(self.environment),
                 "transport": "rust-s3-sigv4", "configuration_sha256": plan_hash(source["s3"]),
                 "physical": native_response(*native_invoke(
                     "__source-evidence", {"operation": "physical-binding", "write": False,
@@ -315,11 +347,23 @@ class _Observation:
                             'evidence_root': str(self.backend),
                             'source': source,
                             'app_env': self.environment.get("APP_ENV"),
-                            'config_dir': None,
+                            'config_dir': str(self.config_dirs["api"]),
                         },
                     }, subprocess.run, may_write=False,
                 ))[0]["value"],
-                "configuration": configuration(self.execution, self.environment, source, evidence_root=self.backend)}
+                "configuration": configurations["api"]}
+        self.runtime_unchanged()
+        return value
+
+    def runtime_unchanged(self):
+        if read_json(request_file(self.backend, self.request["runtime"])) != self.runtime:
+            raise ValueError("源观察原 runtime descriptor 或收据已变化")
+        source = self.plan["source"]
+        current = {role: configuration(self.execution, self.environment, source,
+            evidence_root=self.backend, config_dir=directory) for role, directory in self.config_dirs.items()}
+        if current != self.configurations:
+            raise ValueError("源观察绑定的 API/Worker 配置已变化")
+        return current
 
     def run(self, command, **kwargs):
         if self.binding() != self.initial:
@@ -341,7 +385,7 @@ class _Observation:
                 page, invocation = native_s3_inspect({
                     "format_version": 1, "kind": "ryframe-native-s3-inspect",
                     "scope_id": self.plan["source"]["scope_id"],
-                    "configuration": self.plan["source"]["s3"], "bucket": bucket,
+                    "configuration_binding": self.plan["source"]["s3"]["configuration"], "bucket": bucket,
                     "operation": "list-objects-v2", "prefix": scope, "continuation": cursor,
                 }, self.reader.tools.run)
                 code, error_type = invocation["returncode"], invocation["error_type"]

@@ -104,7 +104,7 @@ fn backend_roles_and_tools_preserve_independent_api_worker_inputs() {
         assert!(paths.contains(&json!("unknown/input.dat")));
         assert!(paths.contains(&json!("crates/ryframe/src/boot.rs")));
     }
-    let mut changed = value.clone();
+    let mut changed = value;
     for item in changed["files"].as_array_mut().unwrap() {
         if item["path"] == "tools/python/source_inventory.py" {
             item["sha256"] = json!("1".repeat(64));
@@ -135,6 +135,15 @@ fn frontend_domains_keep_documents_tools_and_unknown_product_inputs() {
         ".github/workflows/ci.yml",
         "config/tools.json",
         "vitest.config.ts",
+        "playwright.generated.config.ts",
+        "tsconfig.test.json",
+        "scripts/application-config.mjs",
+        "scripts/application-config-files.mjs",
+        "scripts/application-config-paths.mjs",
+        "scripts/application-config-toml.mjs",
+        "scripts/frontend-tool-config.mjs",
+        "scripts/build-identity.mjs",
+        "scripts/resource-render/json.mjs",
         ".gitignore",
     ]);
     let domains = request("domains", &value, "frontend").unwrap();
@@ -148,6 +157,14 @@ fn frontend_domains_keep_documents_tools_and_unknown_product_inputs() {
         ".node-version",
         "vite.config.ts",
         "unknown/input.dat",
+        "tsconfig.test.json",
+        "scripts/application-config.mjs",
+        "scripts/application-config-files.mjs",
+        "scripts/application-config-paths.mjs",
+        "scripts/application-config-toml.mjs",
+        "scripts/frontend-tool-config.mjs",
+        "scripts/build-identity.mjs",
+        "scripts/resource-render/json.mjs",
     ] {
         assert!(product.contains(&json!(path)), "{path}");
     }
@@ -160,12 +177,34 @@ fn frontend_domains_keep_documents_tools_and_unknown_product_inputs() {
         ".github/workflows/ci.yml",
         "config/tools.json",
         "vitest.config.ts",
+        "playwright.generated.config.ts",
         ".gitignore",
     ] {
         assert!(!product.contains(&json!(path)), "{path}");
     }
     assert_eq!(domains["full"], value);
-    assert_eq!(domains["tools"]["files"].as_array().unwrap().len(), 5);
+    for path in [
+        "playwright.generated.config.ts",
+        "tsconfig.test.json",
+        "scripts/application-config-files.mjs",
+    ] {
+        let mut changed = value.clone();
+        let row = changed["files"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|row| row["path"] == path)
+            .unwrap();
+        row["sha256"] = json!("1".repeat(64));
+        let after = request("domains", &changed, "frontend").unwrap();
+        assert_ne!(domains["tools"], after["tools"], "{path}");
+        assert_ne!(domains["full"], after["full"], "{path}");
+        if path == "playwright.generated.config.ts" {
+            assert_eq!(domains["product"], after["product"]);
+        } else {
+            assert_ne!(domains["product"], after["product"], "{path}");
+        }
+    }
 }
 
 #[test]

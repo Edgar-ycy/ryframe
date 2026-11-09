@@ -31,6 +31,16 @@ pub(super) struct SourceGuard {
     states: Vec<Value>,
 }
 impl SourceGuard {
+    pub(super) fn protect(
+        &self,
+    ) -> Result<crate::recovery::clone::native::target_verify::guard::Inputs> {
+        crate::recovery::clone::native::target_verify::guard::Inputs::open(
+            self.states
+                .iter()
+                .map(|state| path(&state["descriptor"]["path"]))
+                .collect::<Result<Vec<_>>>()?,
+        )
+    }
     pub(super) fn capture(root: &Path, expected: &Value) -> Result<Self> {
         let inventory = source::capture(root)?;
         let mut snapshot = source::binding_value(&inventory.source)["snapshot"].clone();

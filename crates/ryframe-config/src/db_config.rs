@@ -1,3 +1,5 @@
+use std::fmt;
+
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::Deserialize;
 
@@ -109,7 +111,7 @@ pub struct DatabaseReplicaConfig {
 
 /// 一个命名业务数据源。
 ///
-/// 业务数据源可以使用与主库不同的结构和驱动，不参与主库查询的读写路由。
+/// 业务数据源使用独立的 MySQL 连接配置，可以与主库结构不同，不参与主库查询的读写路由。
 #[derive(Debug, Clone, Deserialize)]
 pub struct DatabaseSourceConfig {
     /// 用于依赖注入、日志和健康检查的唯一名称。
@@ -127,7 +129,7 @@ pub struct DatabaseSourceConfig {
 /// - **idle_timeout_secs**: 空闲连接存活时间，建议 300~600 秒
 /// - **max_lifetime_secs**: 连接最大生命周期（需 < MySQL wait_timeout），建议 1800~3600 秒
 /// - **connect_timeout_secs**: TCP 连接建立超时，建议 3~10 秒
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DbConnection {
     /// 主机地址
@@ -168,6 +170,30 @@ pub struct DbConnection {
     /// 可选的 mTLS 客户端私钥。
     #[serde(default)]
     pub tls_client_key: Option<String>,
+}
+
+impl fmt::Debug for DbConnection {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let client_key = self.tls_client_key.as_ref().map(|_| "<redacted>");
+        formatter
+            .debug_struct("DbConnection")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("database", &self.database)
+            .field("username", &self.username)
+            .field("password", &"<redacted>")
+            .field("max_connections", &self.max_connections)
+            .field("min_connections", &self.min_connections)
+            .field("acquire_timeout_secs", &self.acquire_timeout_secs)
+            .field("idle_timeout_secs", &self.idle_timeout_secs)
+            .field("max_lifetime_secs", &self.max_lifetime_secs)
+            .field("connect_timeout_secs", &self.connect_timeout_secs)
+            .field("tls_mode", &self.tls_mode)
+            .field("tls_ca", &self.tls_ca)
+            .field("tls_client_cert", &self.tls_client_cert)
+            .field("tls_client_key", &client_key)
+            .finish()
+    }
 }
 
 fn default_acquire_timeout() -> u64 {

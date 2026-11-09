@@ -22,6 +22,9 @@ pub(super) const FAILURE: &[&str] = &[
 ];
 
 pub(crate) fn artifact(name: &str) -> Result<bool> {
+    if name.starts_with("redis-windows-") {
+        return Ok(super::prepare_observations::windows_redis_name(name));
+    }
     Ok(
         ["request.json", "prepare.json", "failure.json"].contains(&name)
             || Regex::new(r"^[a-z0-9-]+-[a-f0-9]{32}\.command\.json$")?.is_match(name)
@@ -68,7 +71,13 @@ pub(crate) fn records(backend: &Path, target: &Path, request: &Value) -> Result<
     }
     let pending = intents
         .keys()
-        .filter(|attempt| !terminals.contains_key(*attempt))
+        .filter(|attempt| {
+            !terminals.contains_key(*attempt)
+                && !values.values().any(|later| {
+                    let name = format!("resume-prepare-{attempt}.intent.json");
+                    later["files_before"].get(&name) == intents.get(*attempt)
+                })
+        })
         .cloned()
         .collect::<Vec<_>>();
     Ok(json!({"intents":intents,"terminals":terminals,"pending":pending}))

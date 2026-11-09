@@ -8,7 +8,10 @@ use crate::{
 use serde_json::Value;
 use std::path::Path;
 
-pub(super) fn validate(backend: &Path, input: &Value) -> Result<Value> {
+pub(in crate::recovery::clone::native::seed) fn validate(
+    backend: &Path,
+    input: &Value,
+) -> Result<Value> {
     document::exact(
         input,
         &[

@@ -10,7 +10,7 @@ use super::{
 };
 use crate::Result;
 
-pub(super) fn owner_proofs<T: Transport>(
+pub(crate) fn owner_proofs<T: Transport>(
     context: &Context,
     transport: &T,
     directory: &Path,

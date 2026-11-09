@@ -7,30 +7,27 @@ from rate_limit_tool import parse_binding
 
 from devex_clone_capture import read_json
 from devex_clone_model import local_path
-from devex_clone_run import cleanup_inputs, execute, recover_copy, run_runtime
+from devex_clone_run import cleanup_inputs, execute, run_runtime
 
-FRESH_TARGET_PROTOCOL_KIND = "ryframe-xtask-recovery-fresh-target"
-FRESH_TARGET_OPERATIONS = {
-    "prepare", "resume-prepare", "initialize", "resume-initialize",
-    "reconcile-preflight", "verify", "status",
-}
 SEED_SOURCE_PROTOCOL_KIND = "ryframe-xtask-recovery-seed-source"
 STAGE_PROTOCOL_KIND = "ryframe-xtask-recovery-clone-stage"
 SEED_SOURCE_OPERATIONS = {
-    "source-register", "source-rebind", "source-generation-start",
+    "source-generation-start",
     "source-generation-stop", "source-generation-status",
     "source-generation-reboot-status",
     "source-generation-reboot-close",
-    "source-generation-recover", "source-export", "source-export-reconcile",
+    "source-generation-recover",
+}
+SEED_RUNTIME_OPERATIONS = SEED_SOURCE_OPERATIONS | {
+    "register", "quotas-plan", "quotas-apply", "quotas-reconcile",
+    "departments-plan", "departments-apply", "departments-reconcile", "departments-verify",
+    "identities-apply", "identities-verify", "prepare", "close",
+    "recover-session",
 }
 SEED_SOURCE_REQUEST_OPERATIONS = {
-    "source-rebind", "source-generation-start", "source-generation-stop",
+    "source-generation-start", "source-generation-stop",
     "source-generation-recover", "source-generation-reboot-close",
 }
-
-
-class FreshTargetProtocolError(ValueError):
-    """表示 xtask 与私有 Python 阶段之间的协议输入无效。"""
 
 
 class SeedSourceProtocolError(ValueError):
@@ -39,76 +36,6 @@ class SeedSourceProtocolError(ValueError):
 
 class StageProtocolError(ValueError):
     """表示 xtask 与阶段资源执行子进程之间的协议输入无效。"""
-
-
-def _strict_object(pairs):
-    value = {}
-    for key, item in pairs:
-        if key in value:
-            raise FreshTargetProtocolError(f"fresh-target 私有协议字段重复：{key}")
-        value[key] = item
-    return value
-
-
-def _exact_keys(value, expected, label):
-    if not isinstance(value, dict) or set(value) != set(expected):
-        raise FreshTargetProtocolError(f"fresh-target 私有协议 {label} 字段不匹配")
-
-
-def _protocol_path(value, name, *, optional=False):
-    if optional and value is None:
-        return None
-    if (not isinstance(value, str) or not value.strip()
-            or any(character in value for character in ("\r", "\n", "\0"))):
-        raise FreshTargetProtocolError(f"fresh-target 私有协议 {name} 必须是有效路径")
-    path = Path(value)
-    if not path.is_absolute():
-        raise FreshTargetProtocolError(f"fresh-target 私有协议 {name} 必须是绝对路径")
-    return path
-
-
-def decode_fresh_target_protocol(source: str):
-    """严格解码由 xtask 生成的单一版本化请求，不接收公开 argv。"""
-    if not isinstance(source, str) or not source or "\0" in source:
-        raise FreshTargetProtocolError("fresh-target 私有协议为空或包含 NUL")
-    try:
-        value = json.loads(source, object_pairs_hook=_strict_object)
-    except (json.JSONDecodeError, TypeError) as error:
-        raise FreshTargetProtocolError("fresh-target 私有协议不是有效 JSON") from error
-    _exact_keys(value, {"format_version", "kind", "native_tool", "request"}, "根")
-    if (type(value["format_version"]) is not int or value["format_version"] != 1
-            or not isinstance(value["kind"], str)
-            or value["kind"] != FRESH_TARGET_PROTOCOL_KIND):
-        raise FreshTargetProtocolError("fresh-target 私有协议版本或类型不受支持")
-    try:
-        native_tool = parse_binding(json.dumps(value["native_tool"], ensure_ascii=False))
-    except (ValueError, TypeError):
-        raise FreshTargetProtocolError("fresh-target 私有协议 native_tool 无效") from None
-    request = value["request"]
-    fields = {
-        "backend_dir", "operation", "workspace", "request", "environment",
-        "storage_run", "observation_dir", "write",
-    }
-    _exact_keys(request, fields, "request")
-    operation = request["operation"]
-    if not isinstance(operation, str) or operation not in FRESH_TARGET_OPERATIONS:
-        raise FreshTargetProtocolError("fresh-target 私有协议 operation 无效")
-    if not isinstance(request["write"], bool):
-        raise FreshTargetProtocolError("fresh-target 私有协议 write 必须是布尔值")
-    backend = _protocol_path(request["backend_dir"], "backend_dir")
-    arguments = SimpleNamespace(
-        command="fresh-target",
-        native_tool=native_tool,
-        operation=operation,
-        workspace=_protocol_path(request["workspace"], "workspace"),
-        request=_protocol_path(request["request"], "request", optional=True),
-        environment=_protocol_path(request["environment"], "environment", optional=True),
-        storage_run=_protocol_path(request["storage_run"], "storage_run", optional=True),
-        observation_dir=_protocol_path(
-            request["observation_dir"], "observation_dir", optional=True),
-        write=request["write"],
-    )
-    return backend, arguments
 
 
 def _seed_strict_object(pairs):
@@ -231,19 +158,14 @@ def decode_clone_stage_protocol(source: str):
         {"backend_dir", "run_dir", "stage", "mode", "operation", "attempt", "write"},
         "request",
     )
-    if not isinstance(request["stage"], str) or request["stage"] not in {"export", "target-verify", "copy"}:
+    if not isinstance(request["stage"], str) or request["stage"] != "copy":
         raise StageProtocolError("clone stage 私有协议 stage 无效")
     if not isinstance(request["mode"], str) or request["mode"] not in {"run", "reconcile", "resume"}:
         raise StageProtocolError("clone stage 私有协议 mode 无效")
-    if request["stage"] == "target-verify" and request["mode"] != "run":
-        raise StageProtocolError("clone stage target-verify 只支持 run")
-    if not isinstance(request["operation"], str) or request["operation"] not in {"preflight", "target-authority", "run"}:
+    if not isinstance(request["operation"], str) or request["operation"] not in {"preflight", "run"}:
         raise StageProtocolError("clone stage 私有协议 operation 无效")
-    if request["operation"] == "target-authority" and (
-            request["stage"] != "target-verify" or request["mode"] != "run"):
-        raise StageProtocolError("clone target authority 只允许目标只读核验")
     attempt = request["attempt"]
-    if request["operation"] in {"preflight", "target-authority"}:
+    if request["operation"] == "preflight":
         if attempt is not None or request["write"] is not False:
             raise StageProtocolError("clone stage 预检不接受 attempt 或 --write")
     elif type(attempt) is not int or attempt <= 0 or request["write"] is not True:
@@ -271,67 +193,17 @@ def evidence_path(backend: Path, value: Path, *, new: bool = False) -> Path:
 
 
 def dispatch(args, backend: Path) -> dict:
-    if args.command == "fresh-target":
-        from devex_clone_target_cli import initialize as initialize_target, reconcile_preflight
-        from devex_clone_target_cli import prepare, resume_initialize, resume_prepare, status as target_status, verify
-
-        workspace = evidence_path(backend, args.workspace, new=args.operation == "prepare")
-        from devex_clone_target_cli import validate_dispatch
-
-        validate_dispatch(backend, workspace, args)
-        if args.operation == "status":
-            return target_status(backend, workspace)
-        if args.operation == "prepare":
-            return prepare(backend, workspace, evidence_path(backend, args.request),
-                           evidence_path(backend, args.environment), evidence_path(backend, args.storage_run))
-        if args.operation == "resume-prepare":
-            return resume_prepare(backend, workspace)
-        if args.operation == "initialize":
-            return initialize_target(backend, workspace)
-        if args.operation == "resume-initialize":
-            return resume_initialize(backend, workspace)
-        if args.operation == "reconcile-preflight":
-            return reconcile_preflight(backend, workspace)
-        return verify(backend, workspace, evidence_path(backend, args.observation_dir, new=True))
+    if args.command == "stage" and args.stage != "copy":
+        raise ValueError("Python 阶段入口仅接受 copy")
+    if args.command == "seed-runtime" and args.operation not in SEED_RUNTIME_OPERATIONS:
+        raise ValueError("Python seed-runtime 不接受此操作；请使用 Rust 正式入口")
     directory = evidence_path(backend, args.run_dir)
-    if args.command == "storage":
-        if args.request is not None and args.operation != "restart":
-            raise ValueError("仅 storage restart 可提供 --request")
-        if args.operation == "status":
-            if args.write:
-                raise ValueError("storage status 是只读操作，不接受 --write")
-            from devex_clone_storage import storage_status
-
-            return storage_status(backend, directory, args.side)
-        if not args.write:
-            raise ValueError("存储启停和恢复需要显式 --write")
-        result = execute(backend, directory, "storage-" + args.side, args.operation, storage_request=args.request)
-        return {key: result[key] for key in ("status", "stage", "mode", "attempt", "restore_qualified")}
-    if args.command == "cache":
-        if args.request is not None and args.operation != "restart":
-            raise ValueError("仅 cache restart 可提供 --request")
-        if args.operation == "status":
-            if args.write:
-                raise ValueError("cache status 是只读操作，不接受 --write")
-            from devex_clone_cache import cache_status
-
-            return cache_status(backend, directory)
-        if not args.write:
-            raise ValueError("缓存恢复、启停和核对需要显式 --write")
-        result = execute(backend, directory, "cache-target", args.operation, cache_request=args.request)
-        return {key: result[key] for key in ("status", "stage", "mode", "attempt", "restore_qualified")}
     if args.command == "seed-runtime":
-        request_operations = {"register", "arm-input", "source-rebind", "source-generation-start", "source-generation-stop", "source-generation-recover", "source-generation-reboot-close"}
+        request_operations = {"register", "source-generation-start", "source-generation-stop", "source-generation-recover", "source-generation-reboot-close"}
         if (args.operation in request_operations) != (args.request is not None):
             raise ValueError("当前 seed 操作的 --request 缺失或不适用")
         if (args.operation == "recover-session") != (args.producer_binding is not None):
             raise ValueError("仅 seed recover-session 且必须明确提供 --producer-binding")
-        if args.operation == "status":
-            if args.write:
-                raise ValueError("seed status 是只读操作，不接受 --write")
-            from devex_clone_seed_runtime import execute_seed
-
-            return execute_seed(backend, directory, None, "status", None)
         if args.operation == "source-generation-status":
             from devex_clone_seed_generation_control import status as generation_status
 
@@ -351,19 +223,17 @@ def dispatch(args, backend: Path) -> dict:
         result = execute(backend, directory, "seed-runtime", args.operation, seed_request=request, producer_binding=producer)
         return {key: result[key] for key in ("status", "stage", "mode", "attempt", "restore_qualified")}
     if args.command == "post-copy":
+        if args.operation in {"register", "prepare", "amend"}:
+            raise ValueError("登记、准备和环境修订必须使用原生持锁正式入口")
         if not args.write:
             raise ValueError("post-copy 需要显式 --write")
-        if (args.operation in {"register", "amend"}) != (args.request is not None):
-            raise ValueError("仅 register/amend 且必须明确提供 --request")
+        if args.request is not None:
+            raise ValueError("已登记业务阶段不能替换固定请求")
         if (args.operation == "recover-session") != (args.producer_binding is not None):
             raise ValueError("仅 recover-session 且必须明确提供 --producer-binding")
         producer = read_json(local_path(backend, str(args.producer_binding))) if args.producer_binding else None
-        result = execute(backend, directory, "post-copy", args.operation, post_copy_request=args.request, producer_binding=producer)
+        result = execute(backend, directory, "post-copy", args.operation, producer_binding=producer)
         return {key: result[key] for key in ("status", "stage", "mode", "attempt", "restore_qualified")}
-    if args.command == "recover-copy":
-        if not args.write:
-            raise ValueError("recover-copy 需要显式 --write")
-        return recover_copy(backend, directory, read_json(local_path(backend, str(args.owner_binding))))
     if args.command == "runtime":
         if args.operation == "status":
             if args.write:
@@ -384,10 +254,6 @@ def dispatch_stage_operation(args, backend: Path) -> dict:
     from devex_clone_run import execute_operation
 
     directory = evidence_path(backend, args.run_dir)
-    if args.operation == "target-authority":
-        from devex_clone_target import read_target_authority
-
-        return read_target_authority(backend, directory)
     return execute_operation(
         backend,
         directory,

@@ -1,19 +1,33 @@
 //! 按 Cargo 实际产物构建四个角色，不猜测 target 目录。
-use super::{Port, context::Context, provenance};
-use crate::{Result, recovery::clone::native::json as documents};
+use super::provenance;
+use crate::{
+    Result,
+    local_test_path::{LocalTestPathKind, validate_absolute_path},
+    recovery::clone::native::{digest, json as documents},
+};
 use serde_json::{Value, json};
 use std::{
     fs,
     path::{Path, PathBuf},
 };
 
-pub(super) fn run(context: &Context, port: &mut impl Port) -> Result<Value> {
+pub(in crate::recovery) fn run(
+    root: &Path,
+    directory: &Path,
+    command: &mut impl FnMut(&str, &[String]) -> Result<String>,
+) -> Result<Value> {
     for name in ["binaries.json", "build-evidence.json"] {
-        if context.output.join(name).exists() {
+        if directory.join(name).exists() {
             return Err("已有全栈构建收据；保留现场，禁止覆盖或自动重放".into());
         }
     }
-    let source = provenance::current(&context.root, &context.output)?;
+    let jobs = crate::recovery::clone::native::bridge::build_jobs(root)?;
+    let cargo_target =
+        crate::recovery::clone::native::bridge::cargo_environment::configured_target(root)?;
+    let source = provenance::current(root, directory)?;
+    let artifacts = directory.join("artifacts");
+    validate_absolute_path(&artifacts, LocalTestPathKind::NewDirectory)?;
+    fs::create_dir(&artifacts)?;
     let mut binaries = serde_json::Map::new();
     for (feature, name) in [
         ("bin-reset", "ryframe-reset"),
@@ -21,6 +35,7 @@ pub(super) fn run(context: &Context, port: &mut impl Port) -> Result<Value> {
         ("bin-api", "ryframe"),
         ("bin-worker", "ryframe-worker"),
     ] {
+        let jobs_text = jobs.to_string();
         let args = [
             "build",
             "--locked",
@@ -31,22 +46,69 @@ pub(super) fn run(context: &Context, port: &mut impl Port) -> Result<Value> {
             feature,
             "--bin",
             name,
+            "--jobs",
+            &jobs_text,
             "--message-format=json",
         ]
         .into_iter()
         .map(str::to_owned)
         .collect::<Vec<_>>();
-        let output = port.command("cargo", &args, None)?;
-        binaries.insert(name.into(), json!(artifact(&context.root, name, &output)?));
+        let output = command("cargo", &args)?;
+        let cargo = artifact(root, name, &output)?;
+        binaries.insert(name.into(), json!(freeze(&cargo, &artifacts)?));
     }
     let binaries = Value::Object(binaries);
-    let evidence = provenance::build(&context.root, &context.output, &binaries, &source)?;
-    documents::write_new(&context.output.join("binaries.json"), &binaries)?;
-    documents::write_new(&context.output.join("build-evidence.json"), &evidence)?;
+    if crate::recovery::clone::native::bridge::build_jobs(root)? != jobs {
+        return Err("构建期间 verification.build_jobs 变化；保留产物和原收据，不自动重放".into());
+    }
+    if crate::recovery::clone::native::bridge::cargo_environment::configured_target(root)?
+        != cargo_target
+    {
+        return Err(
+            "构建期间工具文件 generator.target_dir 变化；保留产物和证据，不自动重放".into(),
+        );
+    }
+    let evidence = provenance::build(root, directory, &binaries, &source, jobs)?;
+    if crate::recovery::clone::native::bridge::build_jobs(root)? != jobs {
+        return Err("发布构建收据前 verification.build_jobs 变化；保留产物，不自动重放".into());
+    }
+    if crate::recovery::clone::native::bridge::cargo_environment::configured_target(root)?
+        != cargo_target
+    {
+        return Err(
+            "发布构建收据前 generator.target_dir 变化；保留原目录和产物，不自动重放".into(),
+        );
+    }
+    documents::write_new(&directory.join("binaries.json"), &binaries)?;
+    documents::write_new(&directory.join("build-evidence.json"), &evidence)?;
     Ok(binaries)
 }
 
-fn artifact(root: &Path, name: &str, output: &str) -> Result<PathBuf> {
+/// 每个 Cargo 角色返回后立即独立复制；共享缓存后续覆盖不得改变本代产物。
+pub(in crate::recovery) fn freeze(source: &Path, directory: &Path) -> Result<PathBuf> {
+    validate_absolute_path(source, LocalTestPathKind::ExistingFile)?;
+    let before = digest::file(source)?;
+    let saved = directory.join(source.file_name().ok_or("Cargo 产物没有文件名")?);
+    let mut input = fs::File::open(source)?;
+    #[cfg(unix)]
+    let permissions = input.metadata()?.permissions();
+    let mut output = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&saved)?;
+    std::io::copy(&mut input, &mut output)?;
+    #[cfg(unix)]
+    fs::set_permissions(&saved, permissions)?;
+    output.sync_all()?;
+    if digest::file(source)? != before || digest::file(&saved)? != before {
+        return Err("冻结构建产物期间源或副本发生变化；保留现场，禁止覆盖或重放".into());
+    }
+    Ok(crate::recovery::fixture_control::portable_path(
+        &fs::canonicalize(saved)?,
+    ))
+}
+
+pub(in crate::recovery) fn artifact(root: &Path, name: &str, output: &str) -> Result<PathBuf> {
     let manifest = root.join("crates/ryframe/Cargo.toml");
     let mut paths = Vec::new();
     for line in output.lines() {
@@ -82,4 +144,4 @@ fn artifact(root: &Path, name: &str, output: &str) -> Result<PathBuf> {
 
 #[cfg(test)]
 #[path = "../../../tests/unit/recovery/full_stack/build_tests.rs"]
-mod tests;
+pub(in crate::recovery) mod tests;

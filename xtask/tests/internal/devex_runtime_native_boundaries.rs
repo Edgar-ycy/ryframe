@@ -80,7 +80,7 @@ fn import_manifest_rejects_duplicate_escaped_foreign_and_changed_samples() {
     let mut invalid = manifest.clone();
     invalid.files[0].filename = "../outside.xlsx".into();
     assert!(imports::Samples::verify(temp.path(), &invalid, &request).is_err());
-    let mut invalid = manifest.clone();
+    let mut invalid = manifest;
     invalid.files.push(invalid.files[0].clone());
     assert!(imports::Samples::verify(temp.path(), &invalid, &request).is_err());
     fs::write(temp.path().join("0-0.xlsx"), b"changed").unwrap();
@@ -96,10 +96,10 @@ fn source_descriptors_and_runner_identity_are_mandatory_before_any_process() {
         json!({"path":temp.path().join("receipt.json"),"bytes":1,"sha256":"a".repeat(64)});
     config["contract"]["environment_sha256"] = json!("b".repeat(64));
     config["bindings"]["source_fingerprints"] = json!(input.source_fingerprints);
-    config["bindings"]["provenance"] = json!({"python":temp.path().join("python.exe"),"runtime_receipt":descriptor,"target_plan":descriptor,
+    config["bindings"]["provenance"] = json!({"runtime_receipt":descriptor,"target_plan":descriptor,
         "runtime_registration":descriptor,"runtime_launch":descriptor,"environment_document":temp.path().join("environment.json")});
     assert!(provenance::specification(&config, &input).is_ok());
-    let (_, specification) = provenance::specification(&config, &input).unwrap();
+    let specification = provenance::specification(&config, &input).unwrap();
     assert!(specification.get("native_tool").is_none());
     for field in [
         "runtime_receipt",

@@ -9,7 +9,7 @@ import re
 
 from devex_clone_capture import read_json, write_json
 from devex_clone_model import linked, local_path
-from devex_clone_target_binding import KEYS, request_binding, validate_review
+from devex_clone_target_binding import KEYS, execution_backend, request_binding, validate_review
 from restore_build import file_digest
 from reference_fixture_service_context import application_settings
 from restore_reference_plan import plan_hash
@@ -222,7 +222,7 @@ def build(
     )
     environment_binding = _bound(environment_file)
     values = private.get("environment")
-    settings = application_settings(bootstrap_file, execution)
+    settings = application_settings(bootstrap, execution)
     if (not isinstance(values, dict) or values.get("APP_ENV") != "test"
             or settings.get("scope_id") != selected["scope_id"]):
         raise ValueError("fresh-target 私有环境未绑定当前 scope")
@@ -253,7 +253,7 @@ def build(
         },
         "maintenance_build": plan["maintenance_build"],
         "configuration_sha256": bootstrap["configuration_sha256"],
-        "config_dir": str(bootstrap_file.parent / "config"),
+        "config_dir": bootstrap["config_dir"],
         "tools": {
             name: {key: review["tools"][name][key] for key in ("path", "sha256")}
             for name in ("mysql",)
@@ -272,9 +272,10 @@ def build(
             "sentinel_key": f"ryframe:devex-fresh:{scope}:sentinel",
             "sentinel_value": f"devex-fresh:{request_id}",
         },
-        "execution_backend": {"fixture": plan["fixture"], "path": str(execution)},
+        "execution_backend": {"execution_source": plan["execution_source"], "path": str(execution)},
     }
     request_binding(backend, request)
+    _, execution_binding = execution_backend(backend, request)
     if (
         _bound(bootstrap_file) != bootstrap_binding
         or _bound(review_file) != review_binding
@@ -282,6 +283,8 @@ def build(
     ):
         raise ValueError("fresh-target 私有环境在请求构造期间变化")
     _require_live_service(backend, review_file, service)
+    if execution_backend(backend, request)[1] != execution_binding:
+        raise ValueError("fresh-target 执行来源在请求构造期间变化")
     return request
 
 

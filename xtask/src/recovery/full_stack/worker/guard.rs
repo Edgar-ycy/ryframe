@@ -16,26 +16,23 @@ pub(super) struct Guard {
     directory: (u64, u64),
 }
 impl Guard {
-    pub fn acquire(directory: &Path) -> Result<Self> {
+    pub fn acquire(role: super::role::Role, directory: &Path) -> Result<Self> {
+        Self::acquire_with(role, directory, true)
+    }
+
+    pub(super) fn acquire_existing(role: super::role::Role, directory: &Path) -> Result<Self> {
+        Self::acquire_with(role, directory, false)
+    }
+
+    fn acquire_with(role: super::role::Role, directory: &Path, create: bool) -> Result<Self> {
         super::operation::canonical(directory)?;
         let identity = common::device_inode_for(directory, &fs::symlink_metadata(directory)?)?;
-        let path = directory.join("worker-control.guard");
-        let mut file = match OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(mut file) => {
-                file.write_all(&[0])?;
-                file.sync_all()?;
-                file
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                validate(&path)?;
-                OpenOptions::new().read(true).write(true).open(&path)?
-            }
-            Err(error) => return Err(error.into()),
+        let path = directory.join(format!("{}-control.guard", role.name()));
+        let mut file = if create {
+            Self::open_or_create(&path)?
+        } else {
+            validate(&path)?;
+            OpenOptions::new().read(true).write(true).open(&path)?
         };
         file.try_lock().map_err(|error| match error {
             fs::TryLockError::WouldBlock => "控制或锁恢复正在执行，拒绝并发操作".to_owned(),
@@ -51,6 +48,26 @@ impl Guard {
         };
         guard.check()?;
         Ok(guard)
+    }
+
+    fn open_or_create(path: &Path) -> Result<File> {
+        match OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(path)
+        {
+            Ok(mut file) => {
+                file.write_all(&[0])?;
+                file.sync_all()?;
+                Ok(file)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                validate(path)?;
+                Ok(OpenOptions::new().read(true).write(true).open(path)?)
+            }
+            Err(error) => Err(error.into()),
+        }
     }
     pub fn check(&self) -> Result<()> {
         let directory = self.path.parent().ok_or("Worker互斥缺少父目录")?;
@@ -99,18 +116,36 @@ mod tests {
         tempfile::tempdir_in(root).unwrap()
     }
     #[test]
+    fn existing_guard_requires_original_file_and_excludes_the_normal_controller() -> Result<()> {
+        let directory = directory();
+        let role = super::super::role::Role::Worker;
+        let path = directory.path().join("worker-control.guard");
+        assert!(Guard::acquire_existing(role, directory.path()).is_err());
+        assert!(!path.exists());
+        drop(Guard::acquire(role, directory.path())?);
+        let held = Guard::acquire_existing(role, directory.path())?;
+        assert!(Guard::acquire(role, directory.path()).is_err());
+        held.check()?;
+        drop(held);
+        assert_eq!(fs::read(path)?, [0]);
+        Ok(())
+    }
+    #[test]
     fn kernel_guard_excludes_second_controller_and_survives_normal_release() {
         let directory = directory();
-        let first = Guard::acquire(directory.path()).unwrap();
-        assert!(Guard::acquire(directory.path()).is_err());
+        let first = Guard::acquire(super::super::role::Role::Worker, directory.path()).unwrap();
+        assert!(Guard::acquire(super::super::role::Role::Worker, directory.path()).is_err());
         first.check().unwrap();
         drop(first);
-        Guard::acquire(directory.path()).unwrap().check().unwrap();
+        Guard::acquire(super::super::role::Role::Worker, directory.path())
+            .unwrap()
+            .check()
+            .unwrap();
     }
     #[test]
     fn replaced_guard_is_detected_even_when_marker_and_timestamp_shape_match() {
         let directory = directory();
-        let first = Guard::acquire(directory.path()).unwrap();
+        let first = Guard::acquire(super::super::role::Role::Worker, directory.path()).unwrap();
         let path = directory.path().join("worker-control.guard");
         fs::rename(&path, directory.path().join("old.guard")).unwrap();
         fs::write(&path, [0]).unwrap();
@@ -121,12 +156,12 @@ mod tests {
         for bytes in [vec![], vec![0, 0], vec![1]] {
             let directory = directory();
             fs::write(directory.path().join("worker-control.guard"), bytes).unwrap();
-            assert!(Guard::acquire(directory.path()).is_err());
+            assert!(Guard::acquire(super::super::role::Role::Worker, directory.path()).is_err());
         }
         let directory = directory();
         let source = directory.path().join("source");
         fs::write(&source, [0]).unwrap();
         fs::hard_link(source, directory.path().join("worker-control.guard")).unwrap();
-        assert!(Guard::acquire(directory.path()).is_err());
+        assert!(Guard::acquire(super::super::role::Role::Worker, directory.path()).is_err());
     }
 }

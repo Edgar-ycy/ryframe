@@ -6,7 +6,7 @@ use serde_json::Value;
 use super::super::{json, resources::common, seed};
 use crate::Result;
 
-pub(super) fn resolve(
+pub(crate) fn resolve(
     backend: &Path,
     run: &Path,
     stage: &str,

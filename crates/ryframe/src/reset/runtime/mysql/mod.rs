@@ -12,6 +12,7 @@ use crate::reset::{
 
 mod identity;
 mod operations;
+mod projection;
 
 #[cfg(test)]
 #[path = "../../../../tests/reset_contract/seed.rs"]
@@ -27,7 +28,6 @@ use operations::{
     verify_seed_hashes, verify_server_writable,
 };
 
-pub use crate::reset::connections::same_credentials;
 pub use identity::parse_lower_case_table_names;
 pub use operations::quote_identifier;
 
@@ -35,7 +35,6 @@ const EMPTY_CONTROL_TABLES: &[&str] = &[
     "sys_background_job",
     "sys_export_job",
     "sys_file",
-    "sys_outbox_event",
     "sys_oper_log",
     "sys_login_info",
     "sys_user_import_job",
@@ -297,9 +296,15 @@ impl MysqlReset {
                 continue;
             }
             let target = self.connect_verified_target(handle).await?;
-            ryframe_tenant_db::migration::up(&target)
+            ryframe_tenant_db::migration::up_pending_business_migrations(&target)
                 .await
                 .map_err(|_| ResetError::new("租户库唯一 baseline 执行失败"))?;
+            if handle.resource.control_baseline {
+                ryframe_tenant_db::migration::verify_shared_control(&target).await
+            } else {
+                ryframe_tenant_db::migration::verify(&target).await
+            }
+            .map_err(|_| ResetError::new("租户库 baseline 结构校验失败"))?;
             ryframe_db::resource_ownership::ensure_resource_ownership(
                 &target,
                 &manifest.scope_id,
@@ -346,9 +351,12 @@ impl MysqlReset {
                 verify_empty_control_resources(&target).await?;
             }
             if handle.resource.tenant_baseline {
-                ryframe_tenant_db::migration::verify(&target)
-                    .await
-                    .map_err(|_| ResetError::new("租户库 ledger/schema 指纹验证失败"))?;
+                if handle.resource.control_baseline {
+                    ryframe_tenant_db::migration::verify_shared_control(&target).await
+                } else {
+                    ryframe_tenant_db::migration::verify(&target).await
+                }
+                .map_err(|_| ResetError::new("租户库 ledger/schema 指纹验证失败"))?;
                 if !handle.resource.control_baseline {
                     ryframe_tenant_db::migration::verify_mysql_target(&target)
                         .await

@@ -66,7 +66,9 @@ fn prepared_fixture(root: &Path, description: &Description, evidence: &Path) -> 
     OriginBinding {
         binding,
         held,
-        evidence: evidence.to_owned(),
+        evidence: Some(evidence.to_owned()),
+        root_identity: None,
+        snapshot: None,
         source_root: root.to_owned(),
         source_paths: description
             .sources

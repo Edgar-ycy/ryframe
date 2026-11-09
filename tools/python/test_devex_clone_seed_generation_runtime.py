@@ -9,7 +9,6 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import devex_clone_seed_generation_runtime as runtime
 import devex_clone_seed_generation_control as control
@@ -26,14 +25,15 @@ class GenerationRuntimeTests(unittest.TestCase):
         frozen = inventory()
         build = build_receipt(frozen)
         observed = []
-        controller = {"PATH": os.environ["PATH"], "CARGO_BUILD_JOBS": "4", "CARGO_TARGET_DIR": "D:/fixture-target",
-                      "CARGO_HOME": "D:/fixture-cargo", "RUSTUP_HOME": "D:/fixture-rustup", "RUSTUP_TOOLCHAIN": "stable"}
+        controller = {**dict(os.environ), "CARGO_BUILD_JOBS": "4",
+                      "CARGO_TARGET_DIR": str(self.f.directory / "target")}
+        native_context = restore_build.build_context
 
-        def version(_root, _run, command):
+        def context(root, *, environment=None):
             observed.append(dict(os.environ))
-            return "rustc fixture\nhost: x86_64-pc-windows-msvc" if command[0] == "rustc" else "cargo fixture"
+            return native_context(root, environment=environment)
 
-        with patch.dict(os.environ, controller, clear=True), patch.object(restore_build, "_version", side_effect=version), \
+        with patch.dict(os.environ, controller, clear=True), patch.object(restore_build, "build_context", side_effect=context), \
                 patch.object(source_fingerprints, "capture_inventory", return_value=frozen), \
                 patch("devex_clone_run._require_owned_run"), patch.object(runtime, "verify_build_artifacts"), \
                 patch.object(runtime, "verify_tools", return_value={"source": frozen["source"]}), \
@@ -115,9 +115,8 @@ class GenerationRuntimeTests(unittest.TestCase):
 
     def test_static_proof_is_readonly_and_live_proof_checks_all_six_process_identities(self):
         before = {str(path): path.read_bytes() for path in self.output.rglob("*") if path.is_file()}
-        with self.inputs() as (registered, process, listener, ready):
+        with self.inputs() as (_registered, process, listener, ready):
             self.assertEqual(self.verify(), self.contract)
-            self.assertFalse(registered.call_args.kwargs["reconstruct"])
             process.assert_not_called()
             listener.assert_not_called()
             ready.assert_not_called()

@@ -1,4 +1,4 @@
-use super::{close, rebind_receipt, result, transition};
+use super::{close, parse_snapshot, rebind_receipt, result, transition};
 use serde_json::{Value, json};
 use std::path::Path;
 
@@ -6,6 +6,23 @@ fn snapshot() -> Value {
     json!({"database_time":"2026-09-05T00:00:00.000000Z",
         "active":close::ACTIVE.iter().map(|key| (key.to_string(),json!(0))).collect::<serde_json::Map<_,_>>(),
         "terminal_non_success":close::TERMINAL.iter().map(|key| (key.to_string(),json!(0))).collect::<serde_json::Map<_,_>>()})
+}
+
+#[test]
+fn drain_mysql_snapshot_requires_one_complete_json_row_and_preserves_counts() {
+    let mut expected = snapshot();
+    expected["active"]["background_job_attempt"] = json!(3);
+    expected["terminal_non_success"]["schedule_target_unavailable"] = json!(2);
+    let raw = expected.to_string();
+    assert_eq!(parse_snapshot(&raw).unwrap(), expected);
+    assert!(parse_snapshot(&format!("{raw}\n{raw}")).is_err());
+    let duplicate = raw.replacen(
+        "\"background_job_attempt\":3",
+        "\"background_job_attempt\":0,\"background_job_attempt\":3",
+        1,
+    );
+    assert_ne!(duplicate, raw);
+    assert!(parse_snapshot(&duplicate).is_err());
 }
 
 #[test]
@@ -57,16 +74,6 @@ fn terminal_failures_are_visible_but_do_not_mean_active_work() {
     assert!(close::drained(&value).unwrap());
     value["active"]["outbox_event_status"] = json!(1);
     assert!(!close::drained(&value).unwrap());
-}
-
-#[test]
-fn snapshot_duplicate_and_nested_duplicate_keys_are_rejected() {
-    for raw in [
-        r#"{"database_time":1,"database_time":2}"#,
-        r#"{"active":{"x":0,"x":1}}"#,
-    ] {
-        assert!(crate::recovery::clone::native::json::parse_fragment(raw, "排空快照").is_err());
-    }
 }
 
 #[test]
@@ -190,7 +197,7 @@ fn close_result_binds_handoff_types_and_reconciliation_reason() {
     let runtime = Path::new("fixture");
     assert!(result::validate(&original, runtime, &handoff, &json!({}), true).is_ok());
     assert!(result::validate(&original, runtime, &handoff, &json!({}), false).is_err());
-    let mut value = original.clone();
+    let mut value = original;
     value["reason"] = json!("api_stop_failed");
     assert!(result::validate(&value, runtime, &handoff, &json!({}), false).is_ok());
     for (field, changed) in [
@@ -303,7 +310,7 @@ fn rebind_receipt_binds_full_prefix_and_zero_write_semantics() {
         bad["value"][field] = changed;
         assert!(rebind_receipt(&bad).is_err());
     }
-    let mut bad = input.clone();
+    let mut bad = input;
     bad["prefix"][0]["status"] = json!("failed");
     assert!(rebind_receipt(&bad).is_err());
 }

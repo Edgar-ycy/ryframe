@@ -146,16 +146,23 @@ pub fn init_tracer_provider_with_http_client(
 
     global::set_text_map_propagator(opentelemetry_sdk::propagation::TraceContextPropagator::new());
 
-    let mut exporter = opentelemetry_otlp::SpanExporter::builder()
+    let exporter = opentelemetry_otlp::SpanExporter::builder()
         .with_http_without_environment()
         .with_endpoint(&config.endpoint)
         .with_timeout(Duration::from_secs(config.export_timeout_secs))
         .with_protocol(Protocol::HttpBinary)
         .with_headers(config.headers.clone().into_iter().collect());
-    if let Some(http_client) = http_client {
-        exporter = exporter.with_http_client(http_client);
-    }
-    let exporter = match exporter.build() {
+    // 默认客户端也只能使用文件中的端点，不让 SDK 的代理发现读取宿主配置。
+    let client = http_client.map(Ok).unwrap_or_else(|| {
+        reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(config.export_timeout_secs))
+            .build()
+    });
+    let exporter = client
+        .map_err(|_| ())
+        .and_then(|client| exporter.with_http_client(client).build().map_err(|_| ()));
+    let exporter = match exporter {
         Ok(exporter) => exporter,
         Err(_) => {
             record_otel_exporter_failure();

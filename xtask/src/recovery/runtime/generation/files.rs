@@ -52,6 +52,7 @@ pub(super) fn bound_value(path: &Path) -> Result<Value> {
 }
 
 fn bounded_bytes(path: &Path) -> Result<Vec<u8>> {
+    crate::recovery::runtime::dataset_authority::reads::file(path)?;
     let mut bytes = Vec::new();
     fs::File::open(path)?
         .take(strict::MAX_JSON_BYTES + 1)
@@ -89,6 +90,7 @@ pub(super) fn bound(path: &Path, expected: &Value) -> Result<()> {
     )
 }
 pub(super) fn names(directory: &Path) -> Result<BTreeSet<String>> {
+    crate::recovery::runtime::dataset_authority::reads::directory(directory)?;
     safe(directory)?;
     fs::read_dir(directory)?
         .map(|entry| {
@@ -99,7 +101,10 @@ pub(super) fn names(directory: &Path) -> Result<BTreeSet<String>> {
         })
         .collect()
 }
-pub(super) fn generation_directory(directory: &Path, roles: &Value) -> Result<()> {
+pub(in crate::recovery::runtime) fn generation_directory(
+    directory: &Path,
+    roles: &Value,
+) -> Result<()> {
     safe(directory)?;
     if !directory.try_exists()? {
         return Ok(());

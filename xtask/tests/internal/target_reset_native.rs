@@ -3,10 +3,7 @@ use std::{fs, path::PathBuf};
 use serde_json::{Value, json};
 
 use crate::{
-    recovery::clone::native::{
-        json as json_io,
-        target_verify::{evidence_protocol, reset},
-    },
+    recovery::clone::native::{json as json_io, target_verify::reset},
     workspace,
 };
 
@@ -75,7 +72,7 @@ impl Fixture {
             .clone(),
         );
         let mut ledger = common;
-        ledger["ledger_version"] = json!(4);
+        ledger["ledger_version"] = json!(5);
         ledger["updated_at"] = json!("2026-10-18T00:01:00Z");
         let mut previous = ledger.clone();
         previous["updated_at"] = json!("2026-10-18T00:00:59Z");
@@ -208,6 +205,16 @@ fn reset_requires_exact_reported_resources_and_previous_file() {
     let fixture = Fixture::new();
     fs::remove_file(fixture.path("previous")).unwrap();
     assert!(fixture.verify().is_err());
+    for version in [4, 6] {
+        for kind in ["ledger", "previous"] {
+            let fixture = Fixture::new();
+            fixture.mutate(kind, |value| value["ledger_version"] = json!(version));
+            let error = fixture.verify().unwrap_err().to_string();
+            if kind == "ledger" {
+                assert!(error.contains("ledger_version 必须为 5"));
+            }
+        }
+    }
 }
 
 #[test]
@@ -223,20 +230,6 @@ fn reset_refuses_duplicate_keys_and_invalid_plan_path_components() {
 }
 
 #[test]
-fn native_reset_protocol_reuses_exact_completed_evidence() {
-    let fixture = Fixture::new();
-    let payload = json!({"format_version":1,"operation":"reset-completed",
-        "backend":fixture.backend,"target":fixture.target,
-        "manifest":fixture.manifest,"sha":fixture.hash});
-    let result = evidence_protocol::execute(&serde_json::to_vec(&payload).unwrap()).unwrap();
-    assert_eq!(result, fixture.verify().unwrap());
-    fixture.mutate("previous", |value| {
-        value["phases"]["release"]["status"] = json!("complete")
-    });
-    assert!(evidence_protocol::execute(&serde_json::to_vec(&payload).unwrap()).is_err());
-}
-
-#[test]
 fn reset_plan_binds_full_command_original_text_and_digest() {
     use sha2::{Digest, Sha256};
     let fixture = Fixture::new();
@@ -244,9 +237,11 @@ fn reset_plan_binds_full_command_original_text_and_digest() {
     let hash = hex::encode(Sha256::digest(document.as_bytes()));
     let plan = json!({"manifest":{"scope_id":"审阅目标"},"plan_hash":hash});
     let path = fixture.target.join("plan.command.json");
-    let valid = json!({"command":["reset.exe","plan"],"returncode":0,
+    let request = json!({"config_dir":fixture.target.join("bound/config")});
+    let executable = "D:/中文 空格/reset.exe";
+    let valid = json!({"command":[executable,"--config-dir",request["config_dir"],"plan"],"returncode":0,
         "error_type":null,"stdout":format!("{document}\nplan_hash={hash}\n"),"stderr":""});
-    for case in 0..10 {
+    for case in 0..14 {
         let mut value = valid.clone();
         match case {
             0 => {}
@@ -256,8 +251,19 @@ fn reset_plan_binds_full_command_original_text_and_digest() {
             4 => value["stderr"] = json!("warning"),
             5 => value["stdout"] = json!(format!("{document}\nplan_hash={hash}")),
             6 => value["stdout"] = json!(format!("{{\"scope_id\":\"other\"}}\nplan_hash={hash}\n")),
-            7 => value["command"] = json!(["other.exe", "plan"]),
+            7 => value["command"][0] = json!("other.exe"),
             8 => value["extra"] = json!(true),
+            10 => value["command"][2] = json!(fixture.target.join("other/config")),
+            11 => value["command"] = json!([executable, "plan"]),
+            12 => {
+                value["stdout"] = json!(format!(
+                    "{}\nplan_hash={hash}\n",
+                    serde_json::to_string(&plan["manifest"]).unwrap()
+                ));
+            }
+            13 => {
+                value["stdout"] = json!(valid["stdout"].as_str().unwrap().replace('\n', "\r\n"));
+            }
             _ => {
                 value["stdout"] = json!(format!(
                     "{{\"scope_id\":1,\"scope_id\":2}}\nplan_hash={hash}\n"
@@ -265,9 +271,15 @@ fn reset_plan_binds_full_command_original_text_and_digest() {
             }
         }
         fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
-        let observed =
-            reset::plan_receipt(&fixture.backend, &fixture.target, &path, "reset.exe", &plan);
-        assert_eq!(observed.is_ok(), case == 0, "case {case}");
+        let observed = reset::plan_receipt(
+            &fixture.backend,
+            &fixture.target,
+            &path,
+            executable,
+            &plan,
+            &request,
+        );
+        assert_eq!(observed.is_ok(), case == 0 || case == 13, "case {case}");
     }
     let outside = fixture
         .target
@@ -280,8 +292,9 @@ fn reset_plan_binds_full_command_original_text_and_digest() {
             &fixture.backend,
             &fixture.target,
             &outside,
-            "reset.exe",
-            &plan
+            executable,
+            &plan,
+            &request
         )
         .is_err()
     );

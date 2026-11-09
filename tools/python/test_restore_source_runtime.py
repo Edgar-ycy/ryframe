@@ -19,7 +19,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from devex_clone_capture import read_json, write_json
 from devex_clone_run_state import binding
 from restore_reference_plan import plan_hash
-import restore_source as source_cli
 import restore_source_runtime as runtime
 import restore_source_runtime_producer as producer
 from workspace_directory import WorkspaceDirectory
@@ -126,28 +125,58 @@ class FakeResources:
             )
         return self.old
 
+    def cache_attempt(self, observation, output):
+        directory = output.parent
+        producer_intent = read_json(directory / producer.INTENT)
+        start = read_json(Path(producer_intent["source_generation"]["path"]))
+        published = read_json(Path(start["source_registration"]["path"]))
+        registration = read_json(Path(published["registration"]["path"]))
+        manifest = read_json(Path(registration["run_manifest"]["path"]))
+        prepared_path = Path(manifest["initialized"]["path"]).parent / "prepare.json"
+        prepared = read_json(prepared_path)
+        request = read_json(Path(prepared["request"]["path"]))
+        recovery_path = directory / runtime.RECOVERY_INTENT
+        bindings = {
+            "source_generation": producer_intent["source_generation"], "generation_request": start["request"],
+            "target": {"source_registration": start["source_registration"], "registration": published["registration"],
+                       "run_manifest": registration["run_manifest"], "initialized": manifest["initialized"],
+                       "prepare": binding(prepared_path), "request": prepared["request"]},
+            "request_sha256": plan_hash(request), "producer": {
+                key: binding(directory / name) for key, name in (
+                    ("intent", producer.INTENT), ("process", producer.PROCESS), ("ready", producer.READY),
+                    ("stdout", producer.STDOUT), ("stderr", producer.STDERR), ("completion", producer.COMPLETION))},
+            "configuration": producer_intent["configuration"],
+            "login_audit": binding(directory / "audit/login-audit.json"),
+            "dataset_lineage": producer_intent["dataset_lineage"], "scope_id": "perf-seed-unit", "subjects": self.subjects,
+        }
+        # 资源替身只发布既有协议的文件事实；Redis WATCH 决策由 Rust 行为场景覆盖。
+        write_json(directory / "cache-cleanup-attempt.json", {
+            "format_version": 1, "kind": "source-cache-cleanup-attempt", "bindings": bindings,
+            "scope_id": "perf-seed-unit", "observation": observation, "observation_sha256": plan_hash(observation),
+            "started_at": runtime._timestamp(), "recovery_intent": binding(recovery_path) if recovery_path.exists() else None,
+        })
+        return binding(directory / "cache-cleanup-attempt.json")
+
+    def cache_execution(self, output, attempt, result):
+        status = {"confirmed": "confirmed", "watch_conflict": "watch_conflict",
+                  "unknown_exec_result": "unknown_exec"}.get(result["status"], "pre_exec_failed")
+        write_json(output.parent / "cache-cleanup-execution.json", {
+            "format_version": 1, "kind": "source-cache-cleanup-execution", "attempt": attempt,
+            "status": status, "cause": result["status"], "deleted": result.get("deleted"),
+            "expired": result.get("expired", []), "completed_at": runtime._timestamp(),
+        })
+
+    def _cache_cleanup_native(self, observation, comparisons, output):
+        attempt = self.cache_attempt(observation, output)
+        expired = [row["snapshot"]["key"] for row in observation["before"] if row["snapshot"]["type"] == "none"]
+        self.deleted = True
+        result = {"status": "confirmed", "deleted": 33-len(expired), "expired": expired,
+                  "remote_write_may_have_occurred": True, "automatic_retry_permitted": False}
+        self.cache_execution(output, attempt, result)
+        return result
+
     def _redis(self, parts):
         command, *arguments = parts
-        if command == "EVAL":
-            script, count, *values = arguments
-            script_path = Path(__file__).resolve().parents[2] / "xtask/src/recovery/source/runtime/policy/cache_cleanup.lua"
-            assert script == script_path.read_bytes().decode("utf-8") and count == "33"
-            keys, comparisons = values[:33], values[33:]
-            assert len(comparisons) == 55
-            expired = []
-            for index in range(11):
-                tenant, user, snapshot = keys[index * 3:index * 3 + 3]
-                expected = comparisons[index * 5:index * 5 + 5]
-                assert self._redis(["GET", tenant]) == expected[0]
-                assert self._redis(["GET", user]) == expected[1]
-                assert self._redis(["TYPE", snapshot]) == expected[2]
-                if expected[2] == "none":
-                    expired.append(snapshot)
-                else:
-                    assert self._redis(["HKEYS", snapshot]) == [expected[3]]
-                    assert self._redis(["HGET", snapshot, expected[3]]) == expected[4]
-            self.deleted = True
-            return [33 - len(expired), expired]
         key = arguments[0]
         if command == "TYPE":
             if self.deleted:
@@ -165,6 +194,7 @@ class FakeResources:
                 "versions": {
                     "tenant_authorization_epoch": 1,
                     "user_authorization_version": 1,
+                    "data_scope_version": 1,
                 },
                 "tenant_session_version": 1,
                 "principal": {
@@ -177,8 +207,12 @@ class FakeResources:
                         "data_scope": "all",
                         "custom_dept_ids": [],
                         "include_self": True,
+                        "data_scope_version": 1,
                         "is_super_admin": False,
                     },
+                    "password_change_required": False,
+                    "user_authorization_version": 1,
+                    "data_scope_version": 1,
                     "tenant_authorization_epoch": 1,
                     "preferred_locale": None,
                     "roles": [],
@@ -215,10 +249,21 @@ class SourceRuntimeTests(unittest.TestCase):
         self.generation = self.copy_run / "g0001"
         self.results.mkdir(parents=True)
         self.generation.mkdir()
-        self.start = descriptor_file(self.results / "0001.json", {"status": "running"})
-        self.source_registration = descriptor_file(
-            self.copy_run / "source-registration.json", {"status": "registered"}
-        )
+        target = self.copy_run / "target"
+        request = {"side": "seed", "target": {"scope_id": "perf-seed-unit"}}
+        request_binding = descriptor_file(target / "request.json", request)
+        prepared = descriptor_file(target / "prepare.json", {"request": request_binding, "request_sha256": plan_hash(request)})
+        initialized = descriptor_file(target / "initialized.json", {
+            "status": "fresh_target_initialized", "scope_id": "perf-seed-unit", "prepare_sha256": prepared["sha256"],
+        })
+        manifest = descriptor_file(self.copy_run / "manifest.json", {"copy_stage": "source_to_seed", "initialized": initialized})
+        registration = descriptor_file(self.copy_run / "source-registration.json", {"run_manifest": manifest})
+        self.source_registration = descriptor_file(self.copy_run / "registered.json", {"registration": registration})
+        generation_request = descriptor_file(self.copy_run / "generation-request.json", {"source_registration": self.source_registration})
+        self.start = descriptor_file(self.results / "0001.json", {
+            "status": "running", "generation_id": "g0001", "request": generation_request,
+            "source_registration": self.source_registration,
+        })
         self.lineage_value = self.lineage()
         self.lineage = descriptor_file(
             self.generation / "dataset-lineage.json", self.lineage_value
@@ -648,38 +693,6 @@ class SourceRuntimeCliTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "原生工具绑定"):
             runtime._runtime_policy("flow", mode="verify")
         run.assert_not_called()
-
-    def test_verify_uses_only_generation_lineage_and_explicit_output(self):
-        backend = Path(__file__).resolve().parents[2]
-        start = backend / ".local-tests/run/results/start.json"
-        output = backend / ".local-tests/run/g0001/verification/source-runtime.json"
-        result = {"output": str(output), "status": "source_runtime_verified"}
-        protocol = {
-            "backend_dir": str(backend),
-            "format_version": 1,
-            "kind": source_cli.PROTOCOL_KIND,
-            "native_tool": tool_binding(),
-            "operation": "verify",
-            "source_generation": str(start),
-            "output": str(output),
-            "write": True,
-        }
-        request = source_cli.decode_request(json.dumps(protocol))
-        with patch.object(
-            source_cli, "execute_source_verification", return_value=result
-        ) as execute, patch("builtins.print") as printed:
-            source_cli.main(request)
-        execute.assert_called_once_with(backend.resolve(), start, output)
-        self.assertEqual(json.loads(printed.call_args.args[0]), result)
-
-        protocol["write"] = False
-        with self.assertRaises(source_cli.SourceProtocolError):
-            source_cli.decode_request(json.dumps(protocol))
-        with self.assertRaises(source_cli.SourceProtocolError):
-            source_cli.private_protocol_request(["verify"])
-        protocol["operation"] = "quiesce"
-        with self.assertRaises(source_cli.SourceProtocolError):
-            source_cli.decode_request(json.dumps(protocol))
 
 
 class SourceProducerStoppedTests(unittest.TestCase):

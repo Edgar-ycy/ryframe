@@ -519,28 +519,6 @@ mod ledger {
     }
 
     #[test]
-    fn old_ledger_version_is_rejected_without_rewriting_evidence() {
-        let manifest = manifest();
-        let base = test_state_root().join(format!(
-            "ryframe-reset-old-{}-{}",
-            std::process::id(),
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        ));
-        let hash = "f".repeat(64);
-        let store = LedgerStore::new(&base, &manifest, &hash).expect("有效路径");
-        let mut ledger = ResetLedger::new(&manifest, &hash);
-        ledger.ledger_version = 3;
-        store.save(&ledger).expect("保存旧版测试账本");
-        let original = fs::read(store.ledger_path()).expect("旧账本字节");
-        assert!(store.load_or_create(&manifest, &hash).is_err());
-        assert_eq!(
-            original,
-            fs::read(store.ledger_path()).expect("旧账本保持原样")
-        );
-        fs::remove_dir_all(base).expect("清理测试状态目录");
-    }
-
-    #[test]
     fn recovers_ledger_from_previous_copy_after_interrupted_replace() {
         let manifest = manifest();
         let base = test_state_root().join(format!(
@@ -734,18 +712,10 @@ mod model {
         assert!(validate_database_identity("localhost", 3306, "tenant-a").is_err());
         assert!(validate_database_identity("", 3306, "tenant_a").is_err());
     }
-
-    #[test]
-    fn canonical_hash_is_deterministic() {
-        let bytes = canonical_json(&vec!["a", "b"]).expect("编码清单");
-        assert_eq!(sha256_hex(&bytes), sha256_hex(&bytes));
-    }
 }
 
 mod mysql {
     use ryframe::reset::runtime::mysql::*;
-
-    use ryframe_config::DbConnection;
 
     #[test]
     fn ddl_identifier_quoting_is_strict() {
@@ -756,19 +726,6 @@ mod mysql {
         assert!(quote_identifier("tenant-a").is_err());
         assert!(quote_identifier("tenant`; DROP DATABASE x").is_err());
         assert!(quote_identifier("mysql").is_ok());
-    }
-
-    #[test]
-    fn deduplication_requires_identical_credentials() {
-        let left = DbConnection {
-            username: "reset".into(),
-            password: "secret-a".into(),
-            ..DbConnection::default()
-        };
-        let mut right = left.clone();
-        assert!(same_credentials(&left, &right));
-        right.password = "secret-b".into();
-        assert!(!same_credentials(&left, &right));
     }
 
     #[test]

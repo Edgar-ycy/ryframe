@@ -6,14 +6,14 @@ from rate_limit_tool import tool_binding
 import json
 import os
 from pathlib import Path
-import shutil
 import sys
 import unittest
-import uuid
 from unittest.mock import patch
+from workspace_directory import WorkspaceDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import reference_fixture_request as request
+import test_reference_fixture_environment as environment_fixture
 from restore_build import file_digest
 from restore_reference_plan import plan_hash
 from devex_clone_run_state import initialize_state, begin, finish
@@ -31,17 +31,13 @@ class ReferenceFixtureRequestTests(unittest.TestCase):
 
     def setUp(self):
         self.backend = Path(__file__).resolve().parents[2]
-        self.root = (
-            self.backend / ".local-tests" / f"rf-{uuid.uuid4().hex}"
-        )
-        self.root.mkdir()
-        self.addCleanup(shutil.rmtree, self.root)
+        self.temporary = WorkspaceDirectory(self.backend / ".local-tests", prefix="rf-")
+        self.root = Path(self.temporary.name)
+        self.addCleanup(self.temporary.cleanup)
         self.require_live_service = request._require_live_service
         self.live_service = patch.object(request, "_require_live_service")
         self.live_service_mock = self.live_service.start()
         self.addCleanup(self.live_service.stop)
-        self.execution = self.root / "business-backend"
-        (self.execution / ".local-tests/reference-fixture").mkdir(parents=True)
         self.tool = self.root / "tool.exe"
         self.tool.write_bytes(b"tool")
         self.defaults = self.root / "mysql.cnf"
@@ -73,16 +69,13 @@ class ReferenceFixtureRequestTests(unittest.TestCase):
                 "redis": {"directory": str(self.root / "redis")},
             },
             "scopes": {},
-            "future_root": str(
-                self.execution / ".local-tests/reference-fixture/run-r1"
-            ),
         }
         for index, side in enumerate(request.SIDES):
             scope = f"fixture-{side}"
             self.review["scopes"][side] = {
                 "scope_id": scope,
                 "runtime_dir": str(self.root / f"runtime-{side}"),
-                "backend_dir": str(self.execution),
+                "backend_dir": str(self.root),
                 "identity_ledger": str(self.root / f"identities-{side}"),
                 "api_url": f"http://127.0.0.1:{18210 + index}",
                 "worker_ready_url": f"http://127.0.0.1:{19210 + index}/readyz",
@@ -115,8 +108,10 @@ class ReferenceFixtureRequestTests(unittest.TestCase):
                     )
                 ],
             }
+        environment_fixture.publish_execution_fixture(self)
+        self.execution = Path(self.publication["published"]["backend"]["path"])
+        self.fixture = self.original_fixture
         self.review_path = self.write(self.root / "review.json", self.review)
-        self.fixture = self.write(self.root / "fixture.json", {"fixture": "business"})
         self.maintenance = self.write(
             self.root / "build.json", {"kind": "devex-clone-tool-build"}
         )
@@ -138,6 +133,7 @@ class ReferenceFixtureRequestTests(unittest.TestCase):
                 "canonical_sha256": plan_hash(self.review),
             },
             "fixture": self.bound(self.fixture),
+            "execution_source": self.bound(self.execution_source),
             "maintenance_build": self.bound(self.maintenance),
             "side": side,
             "scope_id": selected["scope_id"],
@@ -162,6 +158,7 @@ class ReferenceFixtureRequestTests(unittest.TestCase):
                 "status": "prepared",
                 "plan": plan,
                 "execution_backend": str(self.execution),
+                "config_dir": str(config),
                 "configuration_sha256": "b" * 64,
                 "services_started": False,
                 "remote_writes": 0,
@@ -223,6 +220,8 @@ class ReferenceFixtureRequestTests(unittest.TestCase):
                 self.assertEqual(
                     value["execution_backend"]["path"], str(self.execution)
                 )
+                self.assertEqual(value["execution_backend"]["execution_source"], self.bound(self.execution_source))
+                self.assertNotIn("fixture", value["execution_backend"])
                 self.assertEqual(value["storage"]["redis"]["generation"], "redis-r1")
                 self.assertEqual(
                     {item["database"] for item in value["target"]["databases"]},

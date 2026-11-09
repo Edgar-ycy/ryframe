@@ -17,11 +17,7 @@ fn assert_runtime_contract_targets(clippy: &[String], test: &[String]) {
         assert!(clippy.windows(2).any(|pair| pair == ["--bin", bin]));
     }
     assert!(!test.contains(&"--bin".to_owned()));
-    for contract in [
-        "resource_api_contracts",
-        "resource_application_contracts",
-        "resource_tenant_contracts",
-    ] {
+    for contract in ["resource_api_contracts", "resource_application_contracts"] {
         assert!(clippy.windows(2).any(|pair| pair == ["--test", contract]));
         assert!(test.windows(2).any(|pair| pair == ["--test", contract]));
     }
@@ -54,7 +50,7 @@ fn every_workspace_package_has_one_resource_gate_disposition() {
     ] {
         assert!(
             affected_package_args_for_target(
-                "test",
+                "clippy",
                 &packages(&[package]),
                 "target/ci/backend",
                 4,
@@ -62,7 +58,31 @@ fn every_workspace_package_has_one_resource_gate_disposition() {
             .is_ok(),
             "{package} 缺少精确编译面"
         );
+        if package != "ryframe-tenant-db" {
+            assert!(
+                affected_package_args_for_target(
+                    "test",
+                    &packages(&[package]),
+                    "target/ci/backend",
+                    4,
+                )
+                .is_ok(),
+                "{package} 缺少精确测试面"
+            );
+        }
     }
+
+    assert!(
+        affected_package_args_for_target(
+            "test",
+            &packages(&["ryframe-tenant-db"]),
+            "target/ci/backend",
+            4,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("没有定向测试目标")
+    );
 
     let unknown = packages(&["ryframe-unknown"]);
     assert!(
@@ -129,6 +149,16 @@ fn resource_cargo_surface_selects_only_runtime_api_contracts() {
     }
 
     assert_runtime_contract_targets(&clippy, &test);
+    assert!(
+        clippy
+            .windows(2)
+            .any(|pair| pair == ["-p", "ryframe-tenant-db"])
+    );
+    assert!(
+        !test
+            .windows(2)
+            .any(|pair| pair == ["-p", "ryframe-tenant-db"])
+    );
     let test_features = test
         .windows(2)
         .find_map(|pair| (pair[0] == "--features").then_some(pair[1].as_str()))

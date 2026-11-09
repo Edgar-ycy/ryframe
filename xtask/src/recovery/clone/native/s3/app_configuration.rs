@@ -60,6 +60,7 @@ pub(crate) fn load(
     let mut files = serde_json::Map::new();
     for (index, name) in ["app.toml", environment.as_str()].iter().enumerate() {
         let file = directory.join(name);
+        crate::recovery::runtime::dataset_authority::reads::optional(&file)?;
         if index == 0 && !file.exists() {
             continue;
         }
@@ -100,38 +101,56 @@ pub(crate) fn unchanged(snapshots: &[(PathBuf, Vec<u8>)]) -> Result<()> {
     Ok(())
 }
 
+/// 仅供内存比较和传输；不得将返回的凭据写入来源清单或公开收据。
+pub(crate) fn private_configuration(root: &Path, binding: &Value) -> Result<Value> {
+    let mut snapshots = Vec::new();
+    let table = load(root, binding, &mut snapshots)?;
+    let objects = table
+        .get("object_storage")
+        .and_then(toml::Value::as_table)
+        .ok_or("绑定app配置缺少object_storage")?;
+    if objects
+        .keys()
+        .any(|name| matches!(name.as_str(), "session_token" | "security_token"))
+    {
+        return Err("对象配置不接受会话令牌".into());
+    }
+    let mut value = serde_json::Map::new();
+    for name in ["endpoint", "region", "access_key", "secret_key"] {
+        let field = objects
+            .get(name)
+            .and_then(toml::Value::as_str)
+            .filter(|value| !value.is_empty() && !value.chars().any(char::is_control))
+            .ok_or("绑定app配置缺少有效的object_storage字段；请修正配置文件")?;
+        value.insert(name.into(), json!(field));
+    }
+    let value = Value::Object(value);
+    super::Configuration::read(&value)?;
+    unchanged(&snapshots)?;
+    Ok(value)
+}
+
+pub(crate) fn public_configuration(root: &Path, binding: &Value) -> Result<Value> {
+    let value = private_configuration(root, binding)?;
+    Ok(json!({"endpoint":value["endpoint"],"region":value["region"]}))
+}
+
 impl super::Configuration {
-    /// 与 read 分离的显式文件绑定入口；调用方必须主动选择该契约。
+    pub(crate) fn from_app_binding(root: &Path, binding: &Value) -> Result<Self> {
+        Self::read(&private_configuration(root, binding)?)
+    }
+
     pub(crate) fn read_app_binding(root: &Path, value: &Value) -> Result<Self> {
         documents::exact(
             value,
             &["endpoint", "region", "configuration"],
             "参考对象配置绑定",
         )?;
-        let mut snapshots = Vec::new();
-        let table = load(root, &value["configuration"], &mut snapshots)?;
-        let objects = table
-            .get("object_storage")
-            .and_then(toml::Value::as_table)
-            .ok_or("绑定app配置缺少object_storage")?;
-        if objects
-            .keys()
-            .any(|name| matches!(name.as_str(), "session_token" | "security_token"))
-        {
-            return Err("对象配置不接受会话令牌".into());
+        let objects = private_configuration(root, &value["configuration"])?;
+        if value["endpoint"] != objects["endpoint"] || value["region"] != objects["region"] {
+            return Err("对象连接身份与绑定配置文件不同；请重新生成来源投影".into());
         }
-        let field = |name| {
-            objects
-                .get(name)
-                .and_then(toml::Value::as_str)
-                .filter(|value| !value.is_empty() && !value.chars().any(char::is_control))
-                .ok_or("绑定app配置缺少有效的object_storage凭据字段")
-        };
-        let configuration = Self::read(
-            &json!({"endpoint":value["endpoint"],"region":value["region"],"access_key":field("access_key")?,"secret_key":field("secret_key")?}),
-        )?;
-        unchanged(&snapshots)?;
-        Ok(configuration)
+        Self::read(&objects)
     }
 }
 
@@ -176,37 +195,42 @@ pub(crate) fn configuration_value(
 }
 
 pub(crate) fn runtime_configuration(
-    root: &Path,
-    environment: &std::collections::BTreeMap<String, String>,
+    coordinator: &Path,
+    execution: &Path,
+    environment: &BTreeMap<String, String>,
     runtime: &Value,
     role: &str,
-) -> Result<(Value, std::collections::BTreeMap<String, Value>)> {
-    if *environment != BTreeMap::from([("APP_ENV".into(), "test".into())]) {
-        return Err("源导出只允许 APP_ENV=test；其他配置必须绑定 TOML 文件".into());
-    }
+) -> Result<(Value, BTreeMap<String, Value>)> {
+    use super::super::{
+        resources::common,
+        seed::runtime_model,
+        target_verify::input::request_configuration::{
+            canonical_path, configuration_files, configuration_identity,
+        },
+    };
+
+    runtime_model::validate_api_environment(coordinator, environment)?;
     let declared = runtime
         .get(format!("{role}_config_dir"))
         .ok_or("源运行收据缺少角色配置目录")?;
-    let (directory, files) =
-        super::super::target_verify::input::request_configuration::configuration_files(
-            root,
-            environment,
-            Some(declared),
-        )?;
-    let sha = super::super::target_verify::input::request_configuration::configuration_identity(
-        &directory, &files,
-    )?;
+    let path = Path::new(documents::text(declared, "源角色配置目录")?);
+    let root = if coordinator != execution
+        && path.is_absolute()
+        && !canonical_path(path)?.starts_with(canonical_path(execution)?)
+    {
+        common::local_directory(coordinator, path, "协调根的已登记源角色配置目录")?;
+        coordinator
+    } else {
+        execution
+    };
+    let (directory, files) = configuration_files(root, environment, Some(declared))?;
+    let sha = configuration_identity(&directory, &files)?;
     if runtime[format!("{role}_configuration_sha256")].as_str() != Some(sha.as_str()) {
         return Err("源 TOML 配置与运行收据摘要不同；请核对绑定文件".into());
     }
-    let table = crate::rate_limit::load_app_table(root, Some(&directory), "test")
+    let table = crate::rate_limit::load_app_table(execution, Some(&directory), "test")
         .map_err(|_| "源 TOML 配置无法加载；请检查所选环境文件与字段类型")?;
-    if super::super::target_verify::input::request_configuration::configuration_files(
-        root,
-        environment,
-        Some(declared),
-    )? != (directory, files.clone())
-    {
+    if configuration_files(root, environment, Some(declared))? != (directory, files.clone()) {
         return Err("源 TOML 配置在读取期间变化".into());
     }
     Ok((serde_json::to_value(table)?, files))

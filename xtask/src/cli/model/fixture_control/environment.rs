@@ -5,7 +5,7 @@ use super::{FixtureFileOutput, FixtureSide};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FixtureEnvironmentInputs {
     pub(crate) review: PathBuf,
-    pub(crate) fixture: PathBuf,
+    pub(crate) execution_source: PathBuf,
     pub(crate) maintenance_build: PathBuf,
     pub(crate) side: FixtureSide,
 }

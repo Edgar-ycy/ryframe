@@ -30,10 +30,13 @@ fn ci_file_is_required_strict_and_drift_is_rejected() {
     assert_eq!(input.timeout.as_secs(), 30);
     let path = scope.path().join(".local-tests/integration/ci.toml");
     let before = fs::read(&path).unwrap();
-    fs::write(&path, format!("unknown='{SECRET}'")).unwrap();
+    let mut changed = before.clone();
+    changed.extend_from_slice(format!("\nunknown='{SECRET}'\n").as_bytes());
+    fs::write(&path, changed).unwrap();
     let error = IntegrationConfiguration::load(scope.path()).err().unwrap();
     assert!(
         error.to_string().contains(path.to_string_lossy().as_ref())
+            && error.to_string().contains("存在未允许字段")
             && !error.to_string().contains(SECRET)
     );
     assert!(input.verify().is_err());

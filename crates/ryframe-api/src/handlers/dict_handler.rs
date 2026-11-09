@@ -114,9 +114,10 @@ async fn create_type(
 async fn update_type(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
     Json(dto): Json<UpdateDictTypeDto>,
 ) -> HttpResult<Json<ApiResponse<DictTypeVo>>> {
+    let id = crate::handler_utils::parse_id(&id, "id 必须是 i64 字符串")?;
     dto.validate()?;
     state
         .services
@@ -138,8 +139,9 @@ async fn update_type(
 async fn delete_type(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
+    let id = crate::handler_utils::parse_id(&id, "id 必须是 i64 字符串")?;
     state
         .services
         .content
@@ -246,9 +248,10 @@ async fn create_data(
 async fn update_data(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
     Json(dto): Json<UpdateDictDataDto>,
 ) -> HttpResult<Json<ApiResponse<DictDataVo>>> {
+    let id = crate::handler_utils::parse_id(&id, "id 必须是 i64 字符串")?;
     dto.validate()?;
     state
         .services
@@ -277,8 +280,9 @@ async fn update_data(
 async fn delete_data(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
+    let id = crate::handler_utils::parse_id(&id, "id 必须是 i64 字符串")?;
     state
         .services
         .content

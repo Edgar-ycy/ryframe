@@ -111,7 +111,7 @@ pub(super) fn command_output_result(mut command: Command) -> Result<Output> {
     })
 }
 
-pub(super) fn command_output_result_with_timeout(
+pub(crate) fn command_output_result_with_timeout(
     command: Command,
     timeout: Duration,
 ) -> Result<Output> {

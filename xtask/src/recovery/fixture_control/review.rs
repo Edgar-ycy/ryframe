@@ -11,10 +11,11 @@ use crate::{
     Result,
     cli::{FixtureReviewCommand, FixtureReviewOptions},
     local_test_path::{LocalTestPathKind, validate_local_test_path},
-    recovery::clone::native::source,
 };
 
-use super::{file_binding, path_text_canonical, portable_path, print_json, read_json, write_new};
+use super::{
+    file_binding, path_text_canonical, portable_path, print_json, read_json, text_field, write_new,
+};
 
 const MAX_RECEIPT_BYTES: u64 = 4 * 1024 * 1024;
 const KEYS: &[(&str, &str, &str)] = &[
@@ -25,14 +26,23 @@ const KEYS: &[(&str, &str, &str)] = &[
 ];
 const SIDES: &[&str] = &["seed", "base", "candidate"];
 const FILE_TOOLS: &[&str] = &["mysql", "mysqldump", "rustfs"];
+pub(super) const LINUX_REDIS_TOOLS: &[&str] = &["wsl", "native_tool", "redis_python"];
+
+#[path = "review/reconciled.rs"]
+pub(crate) mod reconciled;
 
 pub(super) fn run(command: &FixtureReviewCommand, backend: &Path) -> Result<()> {
+    if let FixtureReviewCommand::AfterReconcile(options) = command {
+        return print_json(&reconciled::publish(backend, options)?);
+    }
     let FixtureReviewCommand::Renew(options) = command else {
         println!(
-            "cargo xtask check recovery fixture review --template <文件> --fixture <文件> \
+            "cargo xtask check recovery fixture review --template <文件> --execution-source <文件> \
              --future-root <新目录> --id <ID> --api-port <端口> --worker-port <端口> \
              --frontend-port <端口> --rustfs-api-port <端口> \
-             --rustfs-console-port <端口> --redis-port <端口> --output <新文件> --write"
+             --rustfs-console-port <端口> --redis-port <端口> --output <新文件> --write\n\
+             cargo xtask check recovery fixture review after-reconcile --workspace <原已收尾目录> \
+             --execution-source <新发布收据> --future-root <新目录> --output <新文件> --write"
         );
         return Ok(());
     };
@@ -41,37 +51,55 @@ pub(super) fn run(command: &FixtureReviewCommand, backend: &Path) -> Result<()> 
 }
 
 pub(crate) fn renew(backend: &Path, options: &FixtureReviewOptions) -> Result<Value> {
+    renew_observed(backend, options, || {})
+}
+
+pub(crate) fn renew_observed(
+    backend: &Path,
+    options: &FixtureReviewOptions,
+    observe: impl FnOnce(),
+) -> Result<Value> {
     let backend = portable_path(
         &fs::canonicalize(backend)
             .map_err(|error| format!("无法解析当前后端 {}：{error}", backend.display()))?,
     );
     validate_inputs(options, &backend)?;
-    let template_file = options.template.clone();
-    let fixture_file = options.fixture.clone();
+    let template_file = portable_path(&options.template)
+        .components()
+        .collect::<PathBuf>();
+    let publication_file = portable_path(&options.execution_source)
+        .components()
+        .collect::<PathBuf>();
     let template = read_controlled_json(&template_file, "审阅模板")?;
     let template_binding = file_binding(&template_file, "审阅模板")?;
     validate_review(&template)?;
     reject_historical_databases(&template)?;
-    let (fixture, execution) = fixture_execution(&fixture_file)?;
-    let fixture_binding = file_binding(&fixture_file, "业务 crate fixture 收据")?;
+    let publication_binding = file_binding(&publication_file, "执行源码发布收据")?;
+    let publication = super::source_pair::execution::verify(&backend, &publication_binding)?;
+    let execution = PathBuf::from(text_field(
+        &publication["published"]["backend"],
+        "path",
+        "执行源码",
+    )?);
     validate_future_root(&options.future_root, &execution)?;
     let revised = derive(
         &backend,
         &template,
-        &fixture,
+        &publication,
         &execution,
         &template_binding,
+        &publication_binding,
         options,
     )?;
     validate_review(&ready_structural(&revised)?)?;
+    observe();
     verify_inputs(
         &template_file,
         &template_binding,
         &template,
-        &fixture_file,
-        &fixture_binding,
-        &fixture,
-        &execution,
+        &backend,
+        &publication_binding,
+        &publication,
     )?;
     validate_output(&options.output, &backend)?;
     write_new(&options.output, &revised)?;
@@ -91,7 +119,7 @@ fn validate_inputs(options: &FixtureReviewOptions, backend: &Path) -> Result<()>
     }
     for (path, label) in [
         (&options.template, "--template"),
-        (&options.fixture, "--fixture"),
+        (&options.execution_source, "--execution-source"),
     ] {
         validate_local_test_path(path, backend, LocalTestPathKind::ExistingFile)
             .map_err(|error| format!("{label}无效：{error}"))?;
@@ -194,6 +222,9 @@ fn validate_tools(tools: &Map<String, Value>) -> Result<()> {
         .get("redis_server")
         .and_then(Value::as_object)
         .ok_or("审阅计划 Redis 工具定义无效")?;
+    if redis.contains_key("platform") {
+        return validate_windows_tools(tools);
+    }
     if ["distribution", "resolved_path", "sha256"]
         .iter()
         .any(|field| redis.get(*field).and_then(Value::as_str).is_none())
@@ -201,6 +232,16 @@ fn validate_tools(tools: &Map<String, Value>) -> Result<()> {
         return Err("审阅计划 Redis 工具定义无效".into());
     }
     Ok(())
+}
+
+pub(super) fn validate_windows_tools(tools: &Map<String, Value>) -> Result<()> {
+    if LINUX_REDIS_TOOLS.iter().any(|key| tools.contains_key(*key)) {
+        return Err("Windows Redis 审阅不能混用 WSL 或 Linux Redis 工具绑定".into());
+    }
+    let redis = tools
+        .get("redis_server")
+        .ok_or("审阅计划缺少 Windows Redis 工具")?;
+    crate::recovery::clone::native::cache::windows_tool::validate(redis)
 }
 
 fn validate_services(services: &Map<String, Value>) -> Result<()> {
@@ -297,53 +338,6 @@ fn reject_historical_databases(review: &Value) -> Result<()> {
     Ok(())
 }
 
-fn fixture_execution(path: &Path) -> Result<(Value, PathBuf)> {
-    let fixture = read_controlled_json(path, "业务 crate fixture 收据")?;
-    let root = fixture.as_object().ok_or("业务 crate fixture 收据无效")?;
-    if root.get("format_version").and_then(Value::as_u64) != Some(1)
-        || root.get("fixture").and_then(Value::as_str) != Some("business")
-        || root.get("status").and_then(Value::as_str) != Some("ready")
-        || !root.get("sources").is_some_and(Value::is_object)
-    {
-        return Err("业务 crate 隔离工作树收据不完整或尚未就绪".into());
-    }
-    let paths = root
-        .get("paths")
-        .and_then(Value::as_object)
-        .ok_or("业务 crate 隔离工作树收据不完整或尚未就绪")?;
-    if paths.len() != 2
-        || paths.get("backend").and_then(Value::as_str).is_none()
-        || paths.get("frontend").and_then(Value::as_str).is_none()
-    {
-        return Err("业务 crate 隔离工作树收据不完整或尚未就绪".into());
-    }
-    for side in root["sources"]
-        .as_object()
-        .expect("已检查 sources 对象")
-        .values()
-    {
-        if side.get("head").and_then(Value::as_str).is_none() {
-            return Err("业务 crate 隔离工作树收据不完整或尚未就绪".into());
-        }
-    }
-    let execution = portable_path(&PathBuf::from(
-        paths
-            .get("backend")
-            .and_then(Value::as_str)
-            .expect("已检查 backend 路径"),
-    ));
-    let generated = root
-        .get("generated")
-        .and_then(Value::as_object)
-        .and_then(|value| value.get("backend"))
-        .and_then(Value::as_object)
-        .ok_or("业务 crate 工作树与生成快照不一致")?;
-    if !execution.is_dir() || snapshot_value(&execution)? != Value::Object(generated.clone()) {
-        return Err("业务 crate 工作树与生成快照不一致".into());
-    }
-    Ok((fixture, execution))
-}
-
 fn validate_future_root(root: &Path, execution: &Path) -> Result<()> {
     let allowed = execution.join(".local-tests/reference-fixture");
     if root.exists()
@@ -359,9 +353,10 @@ fn validate_future_root(root: &Path, execution: &Path) -> Result<()> {
 fn derive(
     backend: &Path,
     template: &Value,
-    fixture: &Value,
+    publication: &Value,
     execution: &Path,
     template_binding: &Value,
+    execution_binding: &Value,
     options: &FixtureReviewOptions,
 ) -> Result<Value> {
     let future_root = &options.future_root;
@@ -384,11 +379,12 @@ fn derive(
     root.insert(
         "sources".into(),
         json!({
-            "backend_head": fixture["sources"]["backend"]["head"],
-            "frontend_head": fixture["sources"]["frontend"]["head"],
+            "backend_head": publication["original"]["source_pair"]["sources"]["backend"]["head"],
+            "frontend_head": publication["original"]["source_pair"]["sources"]["frontend"]["head"],
             "renewed_from": template_binding,
         }),
     );
+    root.insert("execution_source".into(), execution_binding.clone());
     root.insert("ready_for_execution".into(), Value::Bool(false));
     let mut scopes = Map::new();
     for (index, side) in SIDES.iter().enumerate() {
@@ -514,21 +510,15 @@ fn verify_inputs(
     template_file: &Path,
     template_binding: &Value,
     template: &Value,
-    fixture_file: &Path,
-    fixture_binding: &Value,
-    fixture: &Value,
-    execution: &Path,
+    backend: &Path,
+    publication_binding: &Value,
+    publication: &Value,
 ) -> Result<()> {
-    let generated = fixture
-        .pointer("/generated/backend")
-        .ok_or("业务 crate 工作树与生成快照不一致")?;
     if file_binding(template_file, "审阅模板")? != *template_binding
         || read_controlled_json(template_file, "审阅模板")? != *template
-        || file_binding(fixture_file, "业务 crate fixture 收据")? != *fixture_binding
-        || read_controlled_json(fixture_file, "业务 crate fixture 收据")? != *fixture
-        || snapshot_value(execution)? != *generated
+        || super::source_pair::execution::verify(backend, publication_binding)? != *publication
     {
-        return Err("审阅续签期间模板、业务 crate 收据或生成工作树发生变化".into());
+        return Err("审阅续签期间模板、发布收据或完整来源发生变化".into());
     }
     Ok(())
 }
@@ -546,17 +536,7 @@ fn read_controlled_json(path: &Path, label: &str) -> Result<Value> {
     read_json(path, label, MAX_RECEIPT_BYTES)
 }
 
-fn snapshot_value(root: &Path) -> Result<Value> {
-    let snapshot = source::capture(root)?.source.snapshot;
-    Ok(json!({
-        "head": snapshot.head,
-        "patch_sha256": snapshot.patch_sha256,
-        "files": snapshot.files.into_iter()
-            .map(|file| json!({"path": file.path, "sha256": file.sha256}))
-            .collect::<Vec<_>>(),
-    }))
-}
-
 fn path_text_lexical(path: &Path) -> Result<String> {
-    Ok(super::path_text(path, "路径")?.to_owned())
+    let normalized = portable_path(path).components().collect::<PathBuf>();
+    Ok(super::path_text(&normalized, "路径")?.to_owned())
 }

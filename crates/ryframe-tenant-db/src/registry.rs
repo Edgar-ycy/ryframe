@@ -127,11 +127,11 @@ struct OpeningPool {
     max_connections: u32,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 enum OpeningStatus {
     Pending,
     Ready,
-    Failed,
+    Failed(Option<crate::error::SafeDatabaseCause>),
 }
 
 struct RegistryInner {

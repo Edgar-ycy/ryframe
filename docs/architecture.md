@@ -106,20 +106,23 @@ RyFrame 官方源码不内置业务示例。开发者用 `cargo generate -- new-
 
 ## 外部备份与恢复验证
 
+历史进程停止证明由 Rust 统一执行，其他调用方只传递完整创建身份并消费严格的小结果。Windows 的 CIM 查询通过仅工具 crate 启用的 `wmi` 安全 API，在受管原生子进程内完成；第三方 COM 实现内部不属于 RyFrame 自维护 Rust。CIM 查询结果与停止结论分开，查询失败不能代替停止证明，具体边界和排障方式见[运维说明](operations.md#采集和登记)。
+
+seed 的 source-register 由统一 Rust 阶段控制器直接执行。它实际持有目标 Generation 和复制账本 guard，核验完整初始化、复制、seed close 及生产者历史，按固定顺序发布六项本地证据，并在写入最终来源登记前完成两轮来源锚点、请求和 generation 比较。正常收尾核验并释放本次持有的锁；失败保留局部证据，异常残留锁须按实际状态核对，不能删除后重放。Windows 原生 CIM 查询失败会拒绝登记，不回退 PowerShell/PDH。阶段成功返回包含内层登记结果的统一外壳；调用方法和结果消费见[运维说明](operations.md#参考环境的外部验收驱动)。该本地登记不授予远端写入权限，也不能替代完整端到端恢复验收。
+
 外部运维工具负责生成一致的数据库与对象备份。application 的备份用例拥有登记、恢复状态机和事务；控制库 Repository 保存清单及演练记录，租户库实现目标与数据校验，adapters 实现文件摘要、对象摘要和就绪探测。维护 CLI 负责读取显式配置、装配端口并打印结构化结果。API 后台采集器只读取汇总状态，向 Prometheus 输出固定维度指标。
 
 恢复依次经历开始、数据验证、业务与运行验证；失败为终态。目标必须具有独立 scope 和 ownership，数据校验比较明确登记的物理数据库、schema、租户关系、表摘要与对象摘要。业务证明绑定演练记录和精确前后端源码，只有数据校验、完整浏览器场景、API/Worker 就绪以及恢复时间目标都满足时才登记成功。具体操作见[运维指南](operations.md#备份失败或过期)。
 
 ## 非生产重建
 
-MySQL 重建预检接受覆盖清单中精确库名的库级授权。每个迁移连接须具备目标库所需的 DDL/DML 权限。同一物理服务器的持锁连接也须对它负责的每个库具备 `SELECT`、`CREATE` 和 `DROP`。两项核对均通过后才进入资源写入阶段。
+MySQL 重建预检接受覆盖清单中精确库名的库级授权。每个迁移连接须具备目标库所需的 DDL/DML 权限，同一物理服务器的持锁连接也须对它负责的每个库具备 `SELECT`、`CREATE` 和 `DROP`。权限核对通过后才进入资源写入阶段。
 
 `ryframe-reset` 只在显式 `bin-reset` feature 下编译，生产镜像不复制该二进制。先用 `git rev-parse HEAD` 查看完整提交，再将 40 位 Git SHA 填入所选明文配置的 `reset.source_sha`；`plan` 必须提供该字段及非秘密轮换声明 `reset.credential_version`，后者为 1～64 位 ASCII 字母、数字、点、下划线或连字符，任一 reset 相关密码或私钥轮换时必须同步变更。`reset.services_stopped` 默认 `false`，`plan` 不要求它为 `true`，也不要求 `reset.state_directory`。只有 `execute` 必须先停止 API、Worker 和 scheduler，声明 `reset.services_stopped=true`，显式提供绝对目录 `reset.state_directory` 并完成全部只读预检。管理员密码统一在 `[bootstrap] admin_password` 中明文显式提供并满足复杂度策略；普通种子用户 `user` 使用统一初始密码 `123456`，无需额外提供普通用户密码。重建验证同时核对 `admin`、`user` 的密码哈希及 `password_change_required=true`，任一不符均失败关闭；两个账号首次登录后都必须修改密码。
 
 ```powershell
 git rev-parse HEAD
 $env:APP_ENV = "test"
-cargo reset --help
 cargo reset -- plan --config-dir ../ryframe-reset-config
 cargo reset -- execute --config-dir ../ryframe-reset-config --plan-hash <sha256> --confirm-reset <exact-confirmation-phrase>
 ```
@@ -130,7 +133,7 @@ cargo reset -- execute --config-dir ../ryframe-reset-config --plan-hash <sha256>
 
 ## Cargo 工具来源核验
 
-原生导出核验分别比较 API/Worker 产品分域与当前构建上下文，并复核显式登记的来源审计。工具或文档变化不会把旧产物改记为新源码构建；通过复用校验后仍保留原构建快照与指纹。运行窗口结束时重新核对完整执行来源和冻结产物，生产者清单按 PID 与创建时间去重，不能用不同名称重复登记同一代次。
+原生导出核验分别比较 API/Worker 产品分域与当前构建上下文，并复核显式登记的来源审计。工具或文档变化不会把旧产物改记为新源码构建；通过复用校验后仍保留原构建快照与指纹。运行窗口结束时重新核对完整执行来源和冻结产物，生产者清单按 PID 与创建时间去重，不能用不同名称重复登记同一代次。完整来源采集只在本次观察内固定规范根，逐文件保留普通文件、链接、规范路径和摘要检查；成功或失败后都重新核对根路径与目录状态，不跨观察或请求复用。
 
 直接执行 Cargo build、check 或 test 时，xtask 构建脚本每次重新核对当前 Cargo 工作区根与完整来源文件集，包括新增和删除的文件。编译快照包含规范化的根路径及文件摘要；跨工作树即使内容相同，也属于不同的编译来源。工具的 describe 只读取编译时固化的来源，不在运行时重算。
 
@@ -139,3 +142,9 @@ cargo reset -- execute --config-dir ../ryframe-reset-config --plan-hash <sha256>
 构建脚本还固化并核对自身与来源遍历 helper 的编译输入字节。共享缓存中的脚本若与当前根这两个文件不符，将拒绝构建并要求仅清理 xtask 后重建；不会读取当前文件后将其摘要伪装成脚本编译来源。
 
 受管 origin 工具的完整来源核验由同一受保护二进制的私有 `__frontend-origin verify-sources` 执行。标准输入只接受 `format_version` 为整数 `1`、`root` 和 `sources` 三个字段，上限为 4 MiB；根必须是编译时同一真实且无链接或重解析点的目录，来源绑定必须与编译列表和当前完整发现集合一致，不增加排除目录。每个普通文件按 16 MiB 上限双读完整字节，并核对读取前、打开句柄、关闭后的真实设备/文件编号、大小和 mtime/ctime；Windows ctime 为创建时间，Unix ctime 保留纳秒。返回值仅含固定版本、种类、文件数及覆盖有序绑定与文件/根身份的 SHA-256 聚合 token，不含源码字节。现存 Python loader 保留严格绑定读取、程序摘要和二进制保护，在保护内取得初始 token、发布工具前及 finally 再核验并比较 token；取消时回收当前只读 probe、不重试，仍核对绑定与程序身份。URL check 仍使用 10 秒超时，完整来源扫描不新增固定总期限；两者保留有界管道和失败关闭。源码或绑定变化后须重新编译并通过 `__frontend-origin describe` 重建受管绑定，不能回退到旧来源扫描或临时编译工具。
+
+前端构建证明由 Rust 私有 `__frontend-build-contract --frontend-dir <abs>` 统一核验：标准输入精确包含 `frontend_inventories` 与 `backend_inventories` 两数组，上限 16 MiB；响应仅含三域及公开配置、身份和完整产物描述。Node 从正式 consumer context 取得固定工具绑定，不再通过 Python 来源契约入口。权威只读核对既有 origin 绑定、编译根与完整来源闭包，持有来源、配置及产物保护至响应发布完成；失败不发布成功 JSON。恢复 Python 接口仅适配同一 Rust 模型和文件验证，IPC 快照不代表持续持有文件，使用窗口末端必须重验；实际 HTTP server、构建编排及仍被 origin loader 使用的通用 JSON/path helper 保留。配置正文不进入协议，dist 大文件继续流式摘要，不套用文档的 16 MiB 限制。
+
+共享缓存回归的隔离 Workspace 从真实 TOML 派生包属性、所需依赖、lint、profile 和 patch，源路径转为原 Workspace 的绝对路径。先离线解析种子锁并拒绝任何包版本、来源或校验和变化，之后构建均使用 `--offline --locked`。仅隔离宏副本和既有 `patch_route` 消费测试追加字面量 probe，实际执行 A→同字节 B 输出 A→改写 B 输出 B→返回 A 输出 A；产品宏不增加测试导出。
+
+`ryframe-macro` 每次 Cargo 执行都会重新核对包内 `src/**/*.rs`、`Cargo.toml` 和 `build.rs` 的相对路径及字节摘要；新增、修改、删除源码均改变编译输入。同字节跨工作树不因绝对路径变化而改变指纹，同内容生成文件保持 mtime，但不保证 Cargo 不会再次编译。缺失监视哨兵若被其他对象占用则拒绝构建，不自动删除；脚本自身编译来源不匹配也明确失败。独占共享 target 时可运行 `cargo test -p ryframe-macro --test source_cache -- --ignored --exact shared_target_rechecks_macro_sources_across_roots`；运行进程须显式设置标准 Cargo `CARGO_TARGET_DIR` 为同一绝对缓存目录。回归在 `.local-tests` 保留 A/B 源码、Cargo JSON、错误和耗时，检查 build/check/test、返回 A、同内容 mtime 与增改删，耗时只有独占环境才可用于性能比较。

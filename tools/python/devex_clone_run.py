@@ -1,4 +1,4 @@
-"""固定清单驱动导出、目标复核、数据复制及环境控制，逐阶段显式继续。"""
+"""固定清单驱动数据复制及环境控制，逐阶段显式继续。"""
 from __future__ import annotations
 
 import copy
@@ -101,7 +101,7 @@ def _overlap(first: Path, second: Path) -> bool:
     return first == second or first.is_relative_to(second) or second.is_relative_to(first)
 
 
-def _capture_target_storage_run(backend: Path, historical: dict, *, live: bool) -> dict:
+def _legacy_target_storage_run(backend: Path, historical: dict, *, live: bool) -> dict:
     exact(historical, HISTORICAL_STORAGE_RUN_FIELDS)
     directory = local_path(backend, historical["path"])
     if linked(directory) or not directory.is_dir():
@@ -117,6 +117,20 @@ def _capture_target_storage_run(backend: Path, historical: dict, *, live: bool) 
     cache = registered_cache_binding(backend, directory)
     return {"path": str(directory), "manifest": copy.deepcopy(historical["manifest"]),
             "storage": storage, "cache": cache}
+
+
+def _capture_target_storage_run(backend: Path, registration: dict, historical: dict,
+                                expected: dict | None, *, live: bool) -> dict:
+    from devex_clone_target_binding import fixture_arm_storage
+
+    storage = fixture_arm_storage(backend, registration, expected, active=live)
+    if storage is None:
+        if expected is not None:
+            exact(expected, TARGET_STORAGE_RUN_FIELDS)
+        storage = _legacy_target_storage_run(backend, historical, live=live)
+    if expected is not None and storage != expected:
+        raise ValueError("seed_to_arm 外部目标存储代次发生变化")
+    return storage
 
 
 def _target_snapshot(backend: Path, registration_descriptor: dict,
@@ -139,20 +153,19 @@ def _target_snapshot(backend: Path, registration_descriptor: dict,
     files_path = bound_file(backend, files_descriptor)
     if files_path != workspace / "initialized-files.json":
         raise ValueError("arm 目标文件快照不属于 fresh-target workspace")
-    snapshot = read_json(files_path)
-    exact(snapshot, {"format_version", "kind", "registration", "predecessor", "files"})
-    from devex_clone_target_cli import _target_files
+    from devex_clone_target_binding import initialized_target_files
 
-    if (snapshot["format_version"] != 1
-            or snapshot["kind"] != "devex-clone-fresh-target-initialized-files"
-            or snapshot["registration"] != registration_descriptor
-            or snapshot["predecessor"] != binding(workspace / "prepared-files.json")
-            or snapshot["files"] != _target_files(target)):
+    # 本入口没有持有目标 Generation，不得忽略 initialize.lock 或冒称持锁核验。
+    if initialized_target_files(backend, target) != files_descriptor:
         raise ValueError("arm 目标 initialized-files 未绑定当前完整初始化目录")
     initialized, request = initialization_history(backend, initialized_path)
     prepared = read_json(target / "prepare.json")
     if prepared.get("request") != registration["request"]:
         raise ValueError("arm 目标初始化请求不属于 fresh-target registration")
+    if (initialized_target_files(backend, target) != files_descriptor
+            or binding(registration_path) != registration_descriptor
+            or binding(initialized_path) != initialized_descriptor):
+        raise ValueError("arm 目标初始化完整快照或绑定在核验期间变化")
     return registration, initialized, request
 
 
@@ -164,12 +177,10 @@ def target_lifecycle_binding(backend: Path, value: dict, *, live_storage: bool) 
     )
     if registration["environment"] != value["target_environment"]:
         raise ValueError("arm 目标环境不属于 fresh-target registration")
-    storage = _capture_target_storage_run(backend, registration["storage_run"], live=live_storage)
-    expected = value.get("target_storage_run")
-    if expected is not None:
-        exact(expected, TARGET_STORAGE_RUN_FIELDS)
-        if expected != storage:
-            raise ValueError("seed_to_arm target_storage_run 不属于 fresh 初始化使用的固定代次")
+    storage = _capture_target_storage_run(
+        backend, value["target_registration"], registration["storage_run"],
+        value.get("target_storage_run"), live=live_storage,
+    )
     return {"registration": registration, "initialized": initialized, "target": request,
             "target_storage_run": storage}
 
@@ -179,14 +190,13 @@ def target_storage_run(backend: Path, value: dict, *, live: bool = True) -> Path
     if value["copy_stage"] != "seed_to_arm":
         return None
     descriptor = value["target_storage_run"]
-    exact(descriptor, TARGET_STORAGE_RUN_FIELDS)
-    directory = local_path(backend, descriptor["path"])
-    registration = read_json(bound_file(backend, value["target_registration"]))
+    registration_binding = value["target_registration"]
+    registration = read_json(bound_file(backend, registration_binding))
     exact(registration, TARGET_REGISTRATION_FIELDS)
-    historical = registration["storage_run"]
-    if _capture_target_storage_run(backend, historical, live=live) != descriptor:
-        raise ValueError("seed_to_arm 外部目标存储代次发生变化")
-    return directory
+    storage = _capture_target_storage_run(
+        backend, registration_binding, registration["storage_run"], descriptor, live=live,
+    )
+    return local_path(backend, storage["path"])
 
 
 def target_fixture_storage_run(backend: Path, initialized_descriptor: dict, *,
@@ -308,22 +318,10 @@ def cleanup_inputs(backend: Path, directory: Path, side: str) -> tuple[dict, Env
     """停止只读取固定清单与该侧运行环境，不依赖导出或另一侧的证据文件。"""
     value = registered_manifest(backend, directory)
     if side == "target" and (directory / "post-copy.json").exists():
-        from devex_clone_post import runtime_inputs
-
-        _, environment = runtime_inputs(backend, directory)
-        return value, Environments(environment, environment)
+        raise ValueError("已登记post-copy目标API清理必须使用原生完整树控制入口")
     private = read_json(bound_file(backend, value[side + "_environment"]))
     exact(private, {"environment"})
     return value, Environments(private["environment"], private["environment"])
-
-
-def recover_copy(backend: Path, directory: Path, owner: dict) -> dict:
-    from devex_clone_copy_locks import recover_copy_locks
-
-    with run_lock(directory):
-        value = registered_manifest(backend, directory)
-        return recover_copy_locks(backend, local_path(backend, value["copy_directory"]), owner,
-                                  source_export=export_binding(backend, directory, value), initialized=value["initialized"])
 
 
 def environments(backend: Path, value: dict) -> Environments:
@@ -426,90 +424,28 @@ def export_binding(backend: Path, directory: Path, value: dict) -> dict:
     raise ValueError("复制前必须完成源导出阶段")
 
 
-def run_export(backend: Path, directory: Path, value: dict, environment: Environments, number: int,
-               mode: str, sources: dict) -> dict:
-    from devex_clone_export_recovery import (prepare_attempt, reconcile, record_verified,
-                                             reject_reexport, resume)
-    from devex_clone_export_verify import verify_source_export
-    from devex_clone_source import export_source
-
-    controller = Environments(dict(os.environ), {})
-
-    def control_environment():
-        if dict(os.environ) not in (controller.values["source"], environment.values["source"]):
-            raise ValueError("导出控制或服务环境在检查前变化")
-        return controller.use("source")
-
-    if mode == "reconcile":
-        if value["source_export"] is not None:
-            raise ValueError("固定清单已有外部 export，无需采用 attempt 候选")
-        return reconcile(backend, directory, value, environment, number, sources,
-                         control_environment=control_environment)
-    if mode == "resume":
-        if value["source_export"] is not None:
-            raise ValueError("固定清单已有外部 export，无需恢复 attempt 候选")
-        return resume(backend, directory, value, environment, number, sources,
-                      control_environment=control_environment)
-    if mode != "run":
-        raise ValueError("源导出模式无效")
-    with control_environment(), environment.use("source"):
-        if value["source_export"] is None:
-            reject_reexport(backend, directory, number)
-        with control_environment():
-            storage = source_storage_binding(backend, directory, value)
-        if value["source_export"] is None:
-            # 失败仅留下本地证据；新尝试保存独立短目录，固定主清单不换代。
-            output = prepare_attempt(backend, directory, value, number, sources, storage)
-            export_source(backend, bound_file(backend, value["source_request"]), output,
-                          control_environment=control_environment)
-            exported = binding(output / "export.json")
-        else:
-            exported = value["source_export"]
-        verified = verify_source_export(backend, exported)
-        if value["source_export"] is None:
-            intent = read_json(directory / f"export-{number:04d}.intent.json")
-            record_verified(directory, number, intent, exported, verified)
-        with control_environment():
-            if source_storage_binding(backend, directory, value) != storage:
-                raise ValueError("源 storage provenance 在导出前后发生变化")
-    return {"status": "export_verified", "export": exported,
-            "logical_inventory_sha256": verified["export"]["logical_inventory_sha256"],
-            "remote_writes": 0, "restore_qualified": False}
-
-
-def run_target(backend: Path, directory: Path, value: dict, environment: Environments, number: int) -> dict:
-    from devex_clone_target import verify_target
-
-    target = bound_file(backend, value["initialized"])
-    with target_storage_control(backend, directory, value) as storage_run, environment.use("target"):
-        return verify_target(
-            backend, target.parent, directory / f"v{number:04d}", storage_run=storage_run,
-        )
-
-
 def copy_binary_bindings(backend: Path, value: dict) -> list[dict]:
-    """仅从已绑定请求、初始化历史和构建收据收集明确二进制；业务文件不进入保护集合。"""
+    """从既有协调器、请求、初始化历史和构建收据收集明确二进制。"""
     from devex_clone_source_proof import validate_request
-    from devex_clone_target_binding import request_binding
+    from devex_clone_target_binding import execution_binary_bindings
+    from rate_limit_tool import tool_binding
 
     source = read_json(bound_file(backend, value["source_request"]))
     validate_request(backend, source)
     _, target = initialization_history(backend, bound_file(backend, value["initialized"]))
-    request_binding(backend, target)
     bindings = [dict(item) for item in source["tools"].values()]
-    bindings.extend(dict(item) for item in target["tools"].values())
     builds = [(source["backend_build"], "restore-backend-build", {"api", "worker"}),
-              (source["maintenance_build"], "devex-clone-tool-build", {"reset", "migrate", "tenant-data"}),
-              (target["maintenance_build"], "devex-clone-tool-build", {"reset", "migrate", "tenant-data"})]
+              (source["maintenance_build"], "devex-clone-tool-build", {"reset", "migrate", "tenant-data"})]
     for descriptor, kind, roles in builds:
         build = read_json(bound_file(backend, descriptor))
         if build.get("kind") != kind or set(build.get("artifacts", {})) != roles:
             raise ValueError("二进制保护必须绑定当前构建类型和完整角色")
         bindings.extend({"path": item["executable"], "sha256": item["sha256"]}
                         for item in build["artifacts"].values())
-    storage = target["storage"]
-    bindings.append({"path": storage["rustfs"]["identity"]["executable"], "sha256": storage["rustfs"]["sha256"]})
-    bindings.append(dict(storage["redis"]["wsl"]))
+    bindings.extend(execution_binary_bindings(backend, target))
+    coordinator = tool_binding()
+    if coordinator is not None:
+        bindings.append({key: coordinator[key] for key in ("path", "sha256")})
     return bindings
 
 
@@ -559,40 +495,7 @@ def run_runtime(backend: Path, value: dict, environment: Environments, side: str
     from devex_clone_runtime import control, observe, reconcile_lock
 
     if side == "target" and run_directory is not None and (run_directory / "post-copy.json").exists():
-        from devex_clone_post import registration, runtime_inputs, target_lock
-
-        if roles != ("api",):
-            raise ValueError("复制后交接只允许 API，Worker 必须保持停止")
-        if operation == "start":
-            if (run_directory / "seed-runtime.json").exists():
-                raise ValueError("原 API 已成为身份计划的历史来源，必须通过 seed-runtime 启动新运行对")
-            from devex_clone_post import registered
-            from devex_clone_post_context import Context
-
-            active = registration(backend, run_directory)
-            runtime, private = runtime_inputs(backend, run_directory, descriptor=active.descriptor)
-            environment = Environments(private, private)
-            registered(backend, run_directory)
-            number = load_state(run_directory)["attempts"][-1]["number"]
-            with target_lock(backend, value, current_run=run_directory) as owned_lock_identity:
-                # 交接阶段持有目标 generation lock：初始化文件树复核必须携带同一锁身份，
-                # 否则会在被 msvcrt 锁定的 guard 字节区间上失败关闭。
-                context = Context(backend, run_directory, value, number,
-                                  owned_lock_identity=owned_lock_identity)
-                context.bindings()
-                context.target_guard(api=False)
-                with environment.use("target"):
-                    result = control(backend, Path(runtime["runtime_dir"]), operation, roles, runtime["api_url"])
-                context.guard()
-                return result
-        runtime, private = runtime_inputs(backend, run_directory)
-        environment = Environments(private, private)
-        with environment.use("target"):
-            if operation == "recover":
-                return reconcile_lock(Path(runtime["runtime_dir"]))
-            if operation == "status":
-                return observe(backend, Path(runtime["runtime_dir"]), roles, runtime["api_url"])
-            return control(backend, Path(runtime["runtime_dir"]), operation, roles, runtime["api_url"])
+        raise ValueError("已登记post-copy目标API生命周期必须使用原生完整树控制入口")
 
     if side == "source":
         request = read_json(bound_file(backend, value["source_request"]))
@@ -632,13 +535,13 @@ def require_target_copy(backend: Path, directory: Path, value: dict, roles: tupl
     ledger = CloneLedger(backend, output / "ledger", saved["plan_sha256"], saved["generation_sha256"])
     observed = ledger.inspect()
     from devex_clone import verify_plan_result
-    from devex_clone_transfer import TransferSteps
+    from devex_clone_transfer import copy_step_ids
 
     verified = verify_plan_result(backend, str(output / "plan.json"))
     plan = verified.plan
     no_writes = (observed["status"] == "partial" and not observed["steps"] and not plan["objects"]
                  and result["unchanged_databases"] == len(plan["databases"])
-                 and set(result["unchanged_database_images"]) == {TransferSteps.db_step(item) for item in plan["databases"]})
+                 and set(result["unchanged_database_images"]) == set(copy_step_ids(plan["databases"], [])["databases"]))
     if (not (observed["status"] == "ledger_evidence_complete" or no_writes)
             or result["plan_sha256"] != saved["plan_sha256"]
             or result["plan_sha256"] != plan["plan_sha256"]
@@ -654,37 +557,26 @@ def require_target_copy(backend: Path, directory: Path, value: dict, roles: tupl
 
 
 def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple = ("api", "worker"),
-            *, post_copy_request: Path | None = None, producer_binding: dict | None = None,
-            seed_request: Path | None = None, storage_request: Path | None = None,
-            cache_request: Path | None = None) -> dict:
+            *, producer_binding: dict | None = None,
+            seed_request: Path | None = None) -> dict:
     from source_fingerprints import artifact_sources, current_execution_source
 
-    if stage == "target-verify" and mode != "run":
-        raise ValueError("target-verify 只支持首次 run，不得创建 reconcile 或 resume 阶段")
+    if stage == "post-copy" and mode in {"register", "prepare", "amend"}:
+        raise ValueError("登记、准备和环境修订必须使用原生持锁正式入口")
+    if stage in {"export", "target-verify"}:
+        raise ValueError("导出和目标复核必须使用原生 Rust 入口")
+    if stage == "seed-runtime" and mode == "arm-input":
+        raise ValueError("ARM 输入签发必须使用 Rust 正式入口")
 
     # 停止只依据已登记运行产物及内核身份，不能被后来源码变化阻挡。
     session_cleanup = stage in {"post-copy", "seed-runtime"} and mode == "recover-session"
-    seed_cleanup = stage == "seed-runtime" and mode in {"stop", "recover", "source-generation-recover"}
-    storage_cleanup = (stage.startswith("storage-") or stage == "cache-target") and mode in {"stop", "recover"}
-    cleanup = session_cleanup or seed_cleanup or storage_cleanup or (stage.startswith("runtime-") and mode in {"stop", "recover"})
+    seed_cleanup = stage == "seed-runtime" and mode == "source-generation-recover"
+    cleanup = session_cleanup or seed_cleanup or (stage.startswith("runtime-") and mode in {"stop", "recover"})
     evidence_handoff = stage == "seed-runtime" and mode in {
-        "arm-input", "source-rebind", "source-generation-start", "source-generation-stop", "source-generation-recover",
+        "source-generation-start", "source-generation-stop", "source-generation-recover",
         "source-generation-reboot-close",
-        "source-export", "source-export-reconcile",
     }
-    cache_handoff = None
-    if stage == "cache-target" and not cleanup:
-        from devex_clone_cache import preflight_successor
-
-        cache_handoff = preflight_successor(backend, directory, registered_manifest(backend, directory), cache_request, mode=mode)
-        evidence_handoff = cache_handoff is not None
-    published_storage = stage == "storage-target" and mode == "restart" and (directory / "seed-runtime.json").exists()
-    if published_storage:
-        from devex_clone_seed_rebind import published_restart_guard
-
-        published_restart_guard(backend, directory, None)
-        evidence_handoff = True
-    if session_cleanup or seed_cleanup or storage_cleanup or evidence_handoff:
+    if session_cleanup or seed_cleanup or evidence_handoff:
         value, environment = registered_manifest(backend, directory), None
     elif cleanup:
         value, environment = cleanup_inputs(backend, directory, stage.removeprefix("runtime-"))
@@ -693,19 +585,10 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
         environment = environments(backend, value)
     source_context = (nullcontext() if cleanup or evidence_handoff else
                       artifact_sources(backend, value["build_bridges"], inherited_build_bridges(backend, value)))
-    if stage in {"storage-source", "storage-target"} and mode == "restart":
-        from devex_clone_storage import preflight_restart
-
-        preflight_restart(backend, directory, value, stage.removeprefix("storage-"), storage_request)
     number, result = None, None
     with process_guard(directory, "run-control.guard"):
         try:
             with claim_run_lock(directory) as owner, source_context:
-                if cache_handoff is not None:
-                    if preflight_successor(backend, directory, value, cache_request, mode=mode) != cache_handoff:
-                        raise ValueError("缓存工具后继在登记阶段前变化")
-                if published_storage:
-                    published_restart_guard(backend, directory, None)
                 if stage == "seed-runtime" and mode == "source-generation-start":
                     from devex_clone_seed_generation import preflight as generation_preflight
 
@@ -720,10 +603,6 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
                     from devex_clone_seed_generation_reboot import preflight as reboot_preflight
 
                     reboot_preflight(backend, directory, seed_request)
-                if stage == "seed-runtime" and mode in {"source-export", "source-export-reconcile"}:
-                    from devex_clone_seed_export import preflight
-
-                    preflight(directory, mode)
                 try:
                     sources = current_execution_source(backend)
                 except Exception as error:
@@ -732,25 +611,12 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
                     sources = {"source_capture_error_type": type(error).__name__}
                 number = begin(directory, stage, mode, sources, verify_results=not cleanup)
                 bind_controller_attempt(directory, number, owner, verify_results=not cleanup)
-                if stage == "export":
-                    result = run_export(backend, directory, value, environment, number, mode, sources)
-                elif stage == "target-verify" and mode == "run":
-                    result = run_target(backend, directory, value, environment, number)
-                elif stage == "copy":
+                if stage == "copy":
                     result = run_copy(backend, directory, value, environment, mode)
-                elif stage in {"storage-source", "storage-target"}:
-                    from devex_clone_storage import execute_storage
-
-                    result = execute_storage(backend, directory, value, mode, number,
-                                             stage.removeprefix("storage-"), storage_request)
-                elif stage == "cache-target":
-                    from devex_clone_cache import execute_cache
-
-                    result = execute_cache(backend, directory, value, mode, number, cache_request)
                 elif stage == "post-copy":
                     from devex_clone_post import execute_post
 
-                    result = execute_post(backend, directory, value, mode, number, post_copy_request, producer_binding)
+                    result = execute_post(backend, directory, value, mode, number, producer_binding)
                 elif stage == "seed-runtime":
                     from devex_clone_seed_runtime import execute_seed
 
@@ -784,10 +650,8 @@ def execute_operation(backend: Path, directory: Path, stage: str, mode: str,
     """只执行已拆分的资源编排；生命周期锁、attempt 和结果发布由 Rust 持有。"""
     from source_fingerprints import artifact_sources, current_execution_source
 
-    if stage not in {"export", "target-verify", "copy"} or mode not in {"run", "reconcile", "resume"}:
+    if stage != "copy" or mode not in {"run", "reconcile", "resume"}:
         raise ValueError("阶段与执行模式不匹配")
-    if stage == "target-verify" and mode != "run":
-        raise ValueError("target-verify 只支持首次 run，不得创建 reconcile 或 resume 阶段")
     if preflight != (number is None):
         raise ValueError("阶段资源编排 attempt 与预检模式不匹配")
     value = read_manifest(backend, directory)
@@ -796,13 +660,8 @@ def execute_operation(backend: Path, directory: Path, stage: str, mode: str,
     with artifact_sources(backend, value["build_bridges"], inherited):
         if preflight:
             return {"status": "stage_operation_preflight_ready", "stage": stage, "mode": mode}
-        sources = current_execution_source(backend)
-        if stage == "export":
-            result = run_export(backend, directory, value, environment, number, mode, sources)
-        elif stage == "target-verify":
-            result = run_target(backend, directory, value, environment, number)
-        else:
-            result = run_copy(backend, directory, value, environment, mode)
+        current_execution_source(backend)
+        result = run_copy(backend, directory, value, environment, mode)
         if read_manifest(backend, directory) != value:
             raise ValueError("阶段运行期间验收清单发生变化")
         return result

@@ -11,48 +11,44 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import devex_clone_export_verify as verify
 import devex_clone_export as export
-import devex_clone_capture as capture
 import devex_clone_model as model
 import devex_clone_rows as sql_rows
 from devex_clone_source import export_source
 from devex_clone_source_fixture import SourceFixture
+from devex_clone_capture import capture_result, read_json, verify_capture
 from restore_build import file_digest
 from restore_reference_io import COPY_METADATA_FIELDS, ExternalTools
 from restore_reference_plan import BUCKETS, plan_hash
 
 
 class ObjectRequestConfigurationTests(unittest.TestCase):
-    def test_object_requests_dispatch_inline_and_file_bound_configuration_to_their_declared_protocol_fields(self):
-        from workspace_directory import WorkspaceDirectory
-        temporary = WorkspaceDirectory(dir=Path(__file__).resolve().parents[2] / ".local-tests/object-request-mode")
-        self.addCleanup(temporary.cleanup)
-        work = Path(temporary.name)
-        for index, (field, configuration) in enumerate((
-            ("configuration", {"endpoint": "http://127.0.0.1:29000", "region": "us-east-1", "access_key": "fixture-access", "secret_key": "fixture-secret"}),
-            ("configuration_binding", {"endpoint": "http://127.0.0.1:29000", "region": "us-east-1", "configuration": {"app_env": "test", "directory": str(work), "files": {}, "sha256": "a" * 64}}),
-        )):
-            tools = ExternalTools({"source": {"scope_id": "restore-unit", "s3": configuration}, "tools": {}}, work)
-            with patch("restore_reference_io.native_s3_read", return_value=({"fixture": "response"}, {})) as native:
-                self.assertEqual(tools.read_object("source", "uploads", "restore-unit/system/file", work / str(index), max_bytes=4096), {"fixture": "response"})
-            request = native.call_args.args[0]
-            self.assertEqual(set(request), {"format_version", "kind", "scope_id", field, "bucket", "operation", "key", "if_match", "version", "destination", "max_bytes"})
-            self.assertEqual(request[field], configuration)
-            tools.plan["target"] = tools.plan["source"]
-            source = work / f"source-{index}"
-            source.write_bytes(b"data")
-            metadata = {name: None for name in COPY_METADATA_FIELDS}
-            metadata.update(ContentType="text/plain", Metadata={})
-            with patch("restore_reference_io.native_put_if_absent", return_value=({"status": "created_unverified", "remote_write_may_have_occurred": True}, {"returncode": 0, "error_type": None})) as put:
-                result = tools.create_object_if_absent("uploads", "restore-unit/system/file", source, metadata, file_digest(source))
-            request = put.call_args.args[0]
-            self.assertEqual(set(request), {"format_version", "kind", "scope_id", field, "bucket", "key", "source", "expected", "metadata"})
-            self.assertEqual(request[field], configuration)
-            self.assertNotIn("fixture-secret", Path(result["request_file"]).read_text(encoding="utf-8"))
+    def test_object_requests_use_only_verified_file_configuration_binding(self):
+        from restore_reference_fixture import environment
+        backend, plan = environment(self)
+        work = backend / ".local-tests"
+        configuration = plan["source"]["s3"]["configuration"]
+        tools = ExternalTools(plan, work)
+        with patch("restore_reference_io.native_s3_read", return_value=({"fixture": "response"}, {})) as native:
+            self.assertEqual(tools.read_object("source", "uploads", "source/system/file", work / "object", max_bytes=4096), {"fixture": "response"})
+        request = native.call_args.args[0]
+        self.assertEqual(set(request), {"format_version", "kind", "scope_id", "configuration_binding", "bucket", "operation", "key", "if_match", "version", "destination", "max_bytes"})
+        self.assertEqual(request["configuration_binding"], configuration)
+        source = work / "body"
+        source.write_bytes(b"data")
+        metadata = {name: None for name in COPY_METADATA_FIELDS}
+        metadata.update(ContentType="text/plain", Metadata={})
+        with patch("restore_reference_io.native_put_if_absent", return_value=({"status": "created_unverified", "remote_write_may_have_occurred": True}, {"returncode": 0, "error_type": None})) as put:
+            result = tools.create_object_if_absent("uploads", "target/system/file", source, metadata, file_digest(source))
+        request = put.call_args.args[0]
+        self.assertEqual(set(request), {"format_version", "kind", "scope_id", "configuration_binding", "bucket", "key", "source", "expected", "metadata"})
+        self.assertEqual(request["configuration_binding"], configuration)
+        self.assertNotIn("secret-fixture", Path(result["request_file"]).read_text(encoding="utf-8"))
 
 
 class ExportVerificationTests(unittest.TestCase):
     def setUp(self):
         self.fixture = SourceFixture(self)
+        self.fixture.relocate_configuration()
         item = self.fixture
         self.export = export_source(item.backend, item.request_path, item.output, item)
         self.binding = {"path": str(item.output / "export.json"), **file_digest(item.output / "export.json")}
@@ -97,7 +93,7 @@ class ExportVerificationTests(unittest.TestCase):
         self.assertFalse(kwargs["check"])
         self.assertIn(command[-1], ("__s3-read", "__s3-inspect"))
         request = json.loads(kwargs["input"])
-        self.assertEqual(request["configuration"]["secret_key"], "secret-fixture")
+        self.assertEqual(request["configuration_binding"], self.fixture.object_configuration)
         operation = request["operation"]
         self.assertIn(operation, ("list-objects-v2", "head-object", "get-object"))
         bucket = request["bucket"]
@@ -163,23 +159,90 @@ class ExportVerificationTests(unittest.TestCase):
         self.assertFalse(result["export"]["source_snapshot"]["clean"])
         self.assertFalse(result["export"]["dump_semantic_digest_verified"])
         self.assertEqual(set(result["captures"]), BUCKETS)
+        self.assertEqual({bucket for bucket, captures in result["captures"].items() if not captures},
+                         BUCKETS - {"uploads"})
         self.assertTrue(result["proof_files"])
         self.assertFalse(any(Path(name).suffix == ".sql" or Path(name).name == "object.bin" for name in result["proof_files"]))
 
+    def test_saved_native_capture_matches_python_null_header_evidence_and_rejects_body_drift(self):
+        entry = next(bucket["entries"][0] for bucket in self.export["objects"] if bucket["bucket"] == "uploads")
+        receipt = self.fixture.output / entry["capture"]["file"]
+        directory = receipt.parent
+        original = read_json(receipt)
+        head = read_json(directory / "head-before.json")
+        get = read_json(directory / "get.json")
+        self.assertNotIn("CacheControl", head)
+        get["CacheControl"] = None
+        (directory / "get.json").write_text(json.dumps(get), encoding="utf-8")
+        expected = original["expected"]
+        capture = capture_result(read_json(directory / "intent.json"), head, get,
+                                 read_json(directory / "head-after.json"), expected,
+                                 original["ownership_before"], original["ownership_after"])
+        receipt.write_text(json.dumps(capture), encoding="utf-8")
+        entry["capture"].update(file_digest(receipt))
+        entry["get_header_consistent"] = False
+        self.save_export()
+        old = verify_capture(self.tools, "source", "uploads", entry["key"], directory,
+                             expected=expected, max_bytes=original["max_bytes"],
+                             transport="rust-s3-sigv4")["capture"]
+        bound = verify.bound_export(self.fixture.backend, self.binding)
+        captures, logical, proofs = verify.verify_captures(self.fixture.backend, self.binding, *bound)
+        self.assertEqual(captures["uploads"][entry["key"]], old)
+        self.assertEqual(old["get_header_differences"], [{"field": "CacheControl", "head_present": False,
+            "head_value": None, "get_present": True, "get_value": None}])
+        self.assertEqual(logical["uploads", "system/file.txt"], entry["artifact"])
+        self.assertEqual(proofs, {str(directory / name): file_digest(directory / name)
+                                  for name in verify.capture_proof_names()})
+
+        native_capture = verify.saved_capture_sha256
+        for name in ("capture.json", "head-before.diagnostic.json"):
+            proof = directory / name
+            original_proof = proof.read_bytes()
+
+            def replace_after_native(*args):
+                checked = native_capture(*args)
+                replacement = proof.with_suffix(".replacement")
+                replacement.write_bytes(original_proof + b"\n")
+                replacement.replace(proof)
+                return checked
+
+            try:
+                with self.subTest(name=name), patch.object(verify, "saved_capture_sha256", side_effect=replace_after_native):
+                    with self.assertRaisesRegex(ValueError, "源原始小型证据已变化"):
+                        self.load()
+            finally:
+                proof.write_bytes(original_proof)
+
+        diagnostic = directory / "head-before.diagnostic.json"
+        original_diagnostic = diagnostic.read_bytes()
+
+        def remove_after_native(*args):
+            checked = native_capture(*args)
+            diagnostic.unlink()
+            return checked
+
+        try:
+            with patch.object(verify, "saved_capture_sha256", side_effect=remove_after_native):
+                with self.assertRaisesRegex(ValueError, "采集证据文件缺失"):
+                    self.load()
+        finally:
+            diagnostic.write_bytes(original_diagnostic)
+        body = directory / "object.bin"
+        body.write_bytes(body.read_bytes() + b"drift")
+        with self.assertRaisesRegex(ValueError, "对象实际载荷大小"):
+            verify.verify_captures(self.fixture.backend, self.binding, *bound)
+
     def test_full_export_parses_each_dump_once_and_keeps_narrow_tenant_preread(self):
-        expected = sum(sum(dump["tables"].values()) for dump in self.export["databases"])
-        tenants = sum(dump["tables"].get("sys_tenant", 0) for dump in self.export["databases"])
         with patch.object(export, "rows", wraps=export.rows) as full, \
-                patch.object(model, "rows", wraps=model.rows) as narrow, \
-                patch.object(sql_rows, "parse_row", wraps=sql_rows.parse_row) as parsed:
+                patch.object(model, "rows", wraps=model.rows) as narrow:
             self.load()
         self.assertEqual(full.call_count, len(self.export["databases"]))
         self.assertEqual({call.args[0].name for call in full.call_args_list},
                          {Path(dump["artifact"]["file"]).name for dump in self.export["databases"]})
-        self.assertTrue(all(not call.kwargs for call in full.call_args_list))
+        self.assertTrue(all(call.kwargs.get("only_table") is None for call in full.call_args_list))
         self.assertEqual(narrow.call_count, 1)
         self.assertEqual(narrow.call_args.kwargs, {"only_table": "sys_tenant"})
-        self.assertEqual(parsed.call_count, expected + tenants)
+        self.assertEqual(set(narrow.call_args.args[1]), set(self.fixture.case.control) | set(self.fixture.case.tenant))
 
     def test_full_export_keeps_real_object_relationship_validation_after_counting(self):
         capture = verify.verify_captures
@@ -337,7 +400,9 @@ class ExportVerificationTests(unittest.TestCase):
         loaded = self.load()
         for selection in ("all", "global", ("uploads", self.fixture.scope + "/system/file.txt")):
             with self.subTest(selection=selection), patch.object(verify, "schema_models", side_effect=AssertionError("unused full models")), \
-                    patch.object(sql_rows, "_native", wraps=sql_rows._native) as catalog:
+                    patch.object(sql_rows, "_native", wraps=sql_rows._native) as catalog, \
+                    patch.object(export, "rows", side_effect=AssertionError("binding must not read SQL")), \
+                    patch.object(model, "rows", side_effect=AssertionError("binding must not preread tenants")):
                 verify.verify_export_bindings(self.fixture.backend, loaded, selection=selection)
                 catalog.assert_called_once_with("copy-schema-catalog", {
                     "backend": str(self.fixture.backend), "include_full": False})
@@ -378,6 +443,7 @@ class ExportVerificationTests(unittest.TestCase):
             self.load()
 
     def test_whole_listing_and_heads_use_no_business_get_or_ambient_credentials(self):
+        self.assertFalse((self.fixture.backend / "config").exists())
         with patch.dict(os.environ, {"TEST_SECRET": "ambient-wrong", "AWS_SECRET_ACCESS_KEY": "implicit-wrong"}):
             result = self.observe()
         self.assertTrue(result["whole_source"])
@@ -389,6 +455,31 @@ class ExportVerificationTests(unittest.TestCase):
         self.assertEqual(operations.count("head-object"), 1)
         self.assertEqual(operations.count("list-objects-v2"), 10)
 
+    def test_original_runtime_and_both_registered_configurations_stay_bound_during_head(self):
+        loaded = self.load()
+        paths = [self.fixture.runtime_dir / "runtime.json",
+                 Path(self.fixture.runtime["api_config_dir"]) / "app.test.toml",
+                 Path(self.fixture.runtime["worker_config_dir"]) / "app.test.toml"]
+        for index, path in enumerate(paths):
+            with self.subTest(path=path.name, role=index):
+                self.observation = self.fixture.local / f"runtime-drift-{index}"
+                self.calls = []
+                original = path.read_bytes()
+                self.effect = lambda: path.write_bytes(original + b"\n")
+                try:
+                    self.failed_observation(loaded, single=True)
+                    operations = [json.loads(options["input"])["operation"] for _, options in self.calls]
+                    self.assertEqual(operations.count("head-object"), 1)
+                    self.assertEqual(operations.count("list-objects-v2"), 0)
+                finally:
+                    path.write_bytes(original)
+        self.effect = None
+        loaded["request"]["runtime"]["sha256"] = "0" * 64
+        self.observation = self.fixture.local / "forged-runtime-descriptor"
+        self.calls = []
+        self.failed_observation(loaded, single=True)
+        self.assertEqual(self.calls, [])
+
     def test_single_head_only_does_not_download_or_list_whole_dataset(self):
         result = self.observe(single=True)
         self.assertFalse(result["whole_source"])
@@ -399,20 +490,6 @@ class ExportVerificationTests(unittest.TestCase):
         owners = [json.loads(options["input"]) for _, options in self.calls
                   if json.loads(options["input"]).get("key", "").endswith("/.ryframe-owner")]
         self.assertEqual([request["bucket"] for request in owners], ["uploads", "uploads"])
-
-    def test_list_diagnostics_open_with_extended_path_conversion(self):
-        recorded = []
-        original = capture.filesystem_path
-
-        def wrap(path):
-            recorded.append(Path(path))
-            return original(path)
-
-        with patch.object(capture, "filesystem_path", wrap):
-            self.observe()
-        expected = {f"list-{phase}-{bucket}-0.diagnostic.json"
-                    for phase in ("before", "after") for bucket in BUCKETS}
-        self.assertTrue(expected.issubset({path.name for path in recorded}))
 
     def test_real_pagination_is_completed_without_truncating_key_set(self):
         self.paginated = True

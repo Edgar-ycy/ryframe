@@ -13,7 +13,11 @@ pub(super) fn load_descriptors(
     target: Option<&Path>,
 ) -> Result<Vec<OwnedResourceDescriptor>, ResourceError> {
     let manifest = lock::reader_manifest(package)?;
-    let scratch_root = package.workspace_root.join("target/ryframe-generate");
+    let selected = catalog_target(package, target)?;
+    let scratch_root = selected
+        .parent()
+        .ok_or_else(|| catalog_error("catalog 缓存缺少父目录", &selected))?
+        .join("catalog");
     fs::create_dir_all(&scratch_root).map_err(|error| {
         catalog_error(format!("无法创建 catalog 临时目录：{error}"), &scratch_root)
     })?;
@@ -40,16 +44,12 @@ pub(super) fn load_descriptors(
         "fn main() { println!(\"{}\", serde_json::to_string(&business::resource_descriptors()).expect(\"资源描述符必须可序列化\")); }\n",
     )
     .map_err(|error| catalog_error(format!("无法写入 catalog reader：{error}"), scratch.path()))?;
-    lock::resolve_reader(package, scratch.path())?;
+    lock::resolve_reader(package, scratch.path(), &selected)?;
     let output = Command::new("cargo")
         .args(["run", "--locked", "--offline", "--quiet", "--manifest-path"])
         .arg(scratch.path().join("Cargo.toml"))
         .arg("--target-dir")
-        .arg(target.map(Path::to_path_buf).unwrap_or_else(|| {
-            package
-                .workspace_root
-                .join("target/ryframe-generate/catalog-target")
-        }))
+        .arg(&selected)
         .output()
         .map_err(|error| catalog_error(format!("无法编译业务 catalog：{error}"), &package.root))?;
     if !output.status.success() {
@@ -83,6 +83,20 @@ pub(super) fn load_descriptors(
         }
     }
     Ok(descriptors)
+}
+
+fn catalog_target(
+    package: &BusinessPackage,
+    selected: Option<&Path>,
+) -> Result<std::path::PathBuf, ResourceError> {
+    if let Some(target) = selected {
+        return Ok(target.to_path_buf());
+    }
+    let settings = ryframe_config::ToolSettings::load(&package.workspace_root)
+        .map_err(|error| catalog_error(error.message(), &package.root))?;
+    crate::command::target_directory(&package.workspace_root, &settings)
+        .map(|path| path.join("ryframe-generate/catalog-target"))
+        .map_err(|error| catalog_error(error, &package.root))
 }
 
 fn catalog_error(message: impl Into<String>, path: &std::path::Path) -> ResourceError {

@@ -89,6 +89,26 @@ pub(crate) fn workspace_test_args(target_dir: &str, jobs: usize) -> Vec<String> 
     .collect()
 }
 
+pub(crate) fn worker_lib_test_args(target_dir: &str, jobs: usize) -> Vec<String> {
+    [
+        "test",
+        "--locked",
+        "--target-dir",
+        target_dir,
+        "-p",
+        "ryframe",
+        "--no-default-features",
+        "--features",
+        "bin-worker",
+        "--lib",
+        "--jobs",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .chain([jobs.max(1).to_string()])
+    .collect()
+}
+
 /// Windows 链接与测试进程的峰值内存较高，默认限制为四并发。
 pub(crate) fn default_test_jobs_from(windows: bool, fallback: usize) -> usize {
     if windows { 4 } else { fallback.max(1) }

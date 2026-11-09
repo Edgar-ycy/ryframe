@@ -7,23 +7,20 @@ sys.dont_write_bytecode = True
 import argparse
 import json
 from pathlib import Path
-import shlex
-from urllib.parse import urlsplit
 
 from devex_clone_capture import read_json, write_json
-from devex_clone_cache_process import start as start_redis
 from process_environment import configured
 from devex_clone_model import linked, local_path
 from devex_clone_run_state import begin, bind_controller_attempt, finish, initialize_state, load_state, run_lock
 from devex_clone_source_proof import require_closed_port
 from devex_clone_storage_process import start as start_rustfs
 from restore_build import file_digest
-from restore_reference_plan import BUCKETS, plan_hash
+from restore_reference_plan import BUCKETS, plan_hash, configuration_binding
 from reference_fixture_environment import validate_current_review_tools
 from reference_fixture_service_context import application_settings, service_run
 from reference_fixture_control_protocol import run_private
 from fixture_service_client import _invoke
-from native_s3_client import create_bucket as native_create_bucket, inspect as native_s3_inspect
+from native_s3_client import create_bucket as native_create_bucket, inspect as native_s3_inspect, configuration as bound_object_configuration
 
 
 def bound(path: Path) -> dict:
@@ -83,7 +80,10 @@ def buckets(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bo
     if output.exists() or not manifest.is_file():
         raise ValueError("对象桶初始化必须复用首代服务账本且不能覆盖已有证据")
     _initial_services(load_state(run))
-    configuration = _bucket_configuration(review, application_settings(bootstrap_file, Path(bootstrap["execution_backend"])))
+    configuration = _bucket_configuration(review, application_settings(bootstrap, Path(bootstrap["execution_backend"])))
+    object_configuration = configuration_binding(backend, Path(bootstrap["config_dir"]))
+    if configuration != bound_object_configuration(object_configuration, backend):
+        raise ValueError("对象桶连接身份与绑定配置文件不同；请复核审阅和环境准备结果")
     scope_id = review["scopes"]["seed"]["scope_id"]
     output.mkdir()
     environment_file = bootstrap_file.parent / "environment.json"
@@ -99,7 +99,7 @@ def buckets(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bo
         if (bound(manifest) != sources["manifest"]
                 or bound(environment_file) != sources["environment"]
                 or read_json(environment_file) != {"environment": private}
-                or plan_hash(_bucket_configuration(review, application_settings(bootstrap_file, Path(bootstrap["execution_backend"])))) != sources["configuration_sha256"]):
+                or plan_hash(_bucket_configuration(review, application_settings(bootstrap, Path(bootstrap["execution_backend"])))) != sources["configuration_sha256"]):
             raise ValueError("对象桶初始化期间服务账本清单发生变化")
         validate_current_review_tools(review)
 
@@ -111,7 +111,7 @@ def buckets(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bo
             for bucket in sorted(BUCKETS):
                 guard()
                 request = {"format_version": 1, "kind": "ryframe-native-s3-create-bucket",
-                           "scope_id": scope_id, "configuration": configuration, "bucket": bucket}
+                           "scope_id": scope_id, "configuration_binding": object_configuration, "bucket": bucket}
                 outcome, invocation = native_create_bucket(request)
                 create_receipt = {"transport": "rust-s3-sigv4", "operation": "create-bucket",
                                   "bucket": bucket, "outcome": outcome, **invocation}
@@ -121,7 +121,7 @@ def buckets(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bo
                 guard()
                 observed, read_invocation = native_s3_inspect({
                     "format_version": 1, "kind": "ryframe-native-s3-inspect",
-                    "scope_id": scope_id, "configuration": configuration, "bucket": bucket,
+                    "scope_id": scope_id, "configuration_binding": object_configuration, "bucket": bucket,
                     "operation": "head-bucket", "prefix": None, "continuation": None,
                 })
                 head_receipt = {"transport": "rust-s3-sigv4", "operation": "head-bucket",
@@ -210,126 +210,30 @@ def rustfs(backend: Path, review_path: Path, bootstrap_path: Path, *, write: boo
             "services_started": True, "request_sha256": plan_hash(request)}
 
 
-def redis(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bool) -> dict:
-    if not write:
-        raise ValueError("启动夹具服务必须显式指定 --write")
-    review_file, review = document(backend, review_path)
-    bootstrap_file, bootstrap, private = environment(backend, review_file, review, bootstrap_path)
-    execution = Path(bootstrap["execution_backend"])
-    run = service_run(review)
-    output = run / "redis"
-    manifest = run / "manifest.json"
-    if output.exists() or not manifest.is_file():
-        raise ValueError("Redis 首代必须复用已有 RustFS 服务账本且不能覆盖已有证据")
-    state = load_state(run)
-    if (len(state["attempts"]) != 1 or state["attempts"][0]["stage"] != "storage-target"
-            or state["attempts"][0]["mode"] != "initial" or state["attempts"][0]["status"] != "passed"):
-        raise ValueError("Redis 首代只允许接续已完成的 RustFS 首代账本")
-    service = review["services"]["redis"]
-    directory = Path(service["directory"]).resolve()
-    local = (backend / ".local-tests").resolve()
-    if (not directory.is_relative_to(local) or linked(directory)
-            or any(linked(path) for path in directory.parents if path.exists())
-            or directory.exists() and (not directory.is_dir() or any(directory.iterdir()))):
-        raise ValueError("Redis 数据目录越界、经过链接或不是明确空目录")
-    port = urlsplit("redis://" + service["endpoint"]).port
-    if port is None:
-        raise ValueError("Redis 审阅端点无端口")
-    password = application_settings(bootstrap_file, Path(bootstrap["execution_backend"])).get("redis", {}).get("password")
-    if not isinstance(password, str) or not password:
-        raise ValueError("Redis 首代缺少私有认证")
-    tools = review["tools"]
-    redis_tool, wsl, python = tools["redis_server"], tools["wsl"], tools["redis_python"]
-    if (redis_tool["distribution"] != service["wsl_distribution"] or python["distribution"] != service["wsl_distribution"]
-            or set(wsl) != {"path", "sha256"} or set(python) != {"distribution", "path", "resolved_path", "sha256"}):
-        raise ValueError("Redis 服务与冻结监督器工具不一致")
-    if not directory.exists():
-        directory.mkdir()
-    configuration = directory / "redis.conf"
-    with configuration.open("x", encoding="utf-8", newline="\n") as stream:
-        stream.write("\n".join(("bind 127.0.0.1", f"port {port}", f"dir /mnt/{directory.drive[0].lower()}/" + "/".join(directory.parts[1:]),
-                                  "databases 1", "protected-mode yes", 'save ""', "appendonly no", "daemonize no",
-                                  "requirepass " + shlex.quote(password))) + "\n")
-    request = {"scope_id": "services-" + bootstrap["plan"]["scope_id"], "wsl": wsl,
-               "distribution": service["wsl_distribution"], "launcher": "/usr/bin/redis-server",
-               "executable": redis_tool["resolved_path"], "sha256": redis_tool["sha256"], "configuration": bound(configuration),
-               "directory": {"path": str(directory), "device": directory.stat().st_dev, "inode": directory.stat().st_ino},
-               "previous_identity": None, "previous_boot_id": None, "previous_run_id": None, "port": port,
-               "password": password, "timeout_seconds": 60,
-               "python": {"path": python["path"], "executable": python["resolved_path"], "sha256": python["sha256"]}}
-    output.mkdir()
-    write_json(output / "request.json", request)
-    sources = {"review": bound(review_file), "bootstrap": bound(bootstrap_file), "manifest": bound(manifest),
-               "request": bound(output / "request.json")}
-    def guard() -> None:
-        current_review, current = document(backend, review_file)
-        current_bootstrap, current_value = document(backend, bootstrap_file)
-        if current_review != review_file or current != review or current_bootstrap != bootstrap_file or current_value != bootstrap:
-            raise ValueError("Redis 启动期间审阅或私有环境收据发生变化")
-        if bound(manifest) != sources["manifest"]:
-            raise ValueError("Redis 启动期间服务账本清单发生变化")
-    with run_lock(run) as owner:
-        number = begin(run, "cache-target", "initial", sources)
-        controller = bind_controller_attempt(run, number, owner)
-        try:
-            runtime = start_redis(request, configured(private), output, guard)
-            result = {"service": "redis", "runtime": runtime, "request_sha256": plan_hash(request),
-                      "controller": controller, "remote_writes": 0}
-            finish(run, number, result=result)
-        except BaseException as error:
-            finish(run, number, error=error)
-            raise
-    return {"status": "redis_started", "storage": runtime["redis"], "run": str(run), "remote_writes": 0,
-            "services_started": True, "request_sha256": plan_hash(request)}
-
-
 PROTOCOL_SCHEMAS = {
     "rustfs": (("review", "environment", "native_tool"), (), True),
-    "redis": (("review", "environment", "native_tool"), (), True),
     "buckets": (("review", "environment", "native_tool"), (), True),
-    "status": (("review", "environment", "native_tool"), (), False),
-    "close": (("review", "environment", "native_tool"), (), True),
-    "reconcile": (("review", "environment", "owner_binding", "native_tool"), (), True),
-    "recover": (("review", "environment", "owner_binding", "native_tool"), (), True),
-    "restart": (("review", "environment", "owner_binding", "native_tool"), (), True),
 }
 
 
 def main(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
-    parser.add_argument("operation", choices=("rustfs", "redis", "buckets", "status", "close", "reconcile", "recover", "restart"))
+    parser.add_argument("operation", choices=("rustfs", "buckets"))
     parser.add_argument("--backend-dir", type=Path, required=True)
     parser.add_argument("--review", type=Path, required=True)
     parser.add_argument("--environment", type=Path, required=True)
     parser.add_argument("--write", action="store_true")
     parser.add_argument("--native-tool", required=True)
-    parser.add_argument("--owner-binding", type=Path,
-                        help="reconcile/recover/restart 时传 status 返回的当前 state 文件")
     options = [value.partition("=")[0] for value in argv if value.startswith("--")]
     if len(options) != len(set(options)):
         parser.error("服务控制选项不能重复")
     args = parser.parse_args(argv)
-    if args.operation == "status" and (args.write or args.owner_binding is not None):
-        parser.error("status 只读，不接受 --write 或 --owner-binding")
-    if args.operation != "status" and not args.write:
+    if not args.write:
         parser.error("服务操作必须显式指定 --write")
-    if (args.operation in {"reconcile", "recover", "restart"}) != (args.owner_binding is not None):
-        parser.error("reconcile、recover 和 restart 必须指定 --owner-binding，其他操作不接受")
     from rate_limit_tool import install_verified_binding
     install_verified_binding(args.native_tool)
     backend = args.backend_dir.resolve(strict=True)
-    if args.operation in {"status", "close", "reconcile", "recover", "restart"}:
-        from reference_fixture_service_context import status
-
-        if args.operation == "status":
-            result = status(backend, args.review, args.environment)
-        else:
-            from fixture_service_client import lifecycle
-            result = lifecycle(backend, args.operation, args.review, args.environment,
-                               args.owner_binding, write=args.write)
-        print(json.dumps(result, ensure_ascii=False))
-        return
-    action = {"rustfs": rustfs, "redis": redis, "buckets": buckets}[args.operation]
+    action = {"rustfs": rustfs, "buckets": buckets}[args.operation]
     result = action(backend, args.review, args.environment, write=args.write)
     summary = {"status": result["status"], "remote_writes": result["remote_writes"]}
     if "services_started" in result:

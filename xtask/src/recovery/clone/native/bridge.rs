@@ -18,6 +18,8 @@ const ROLES: [&str; 2] = ["api", "worker"];
 
 #[path = "bridge/build_context.rs"]
 pub(crate) mod build_context;
+#[path = "bridge/cargo_environment.rs"]
+pub(in crate::recovery) mod cargo_environment;
 #[path = "bridge/scope.rs"]
 pub(crate) mod scope;
 
@@ -110,6 +112,18 @@ fn verify_restore_receipt(receipt: &Value) -> Result<()> {
     let inventory = source::validate_inventory(full)?;
     source::validate_backend_domains(sources, &inventory)?;
     validate_build_context(object.get("build").ok_or("构建收据缺少构建上下文")?)?;
+    verify_restore_artifacts(receipt)
+}
+
+pub(in crate::recovery) fn verify_restore_artifacts(receipt: &Value) -> Result<()> {
+    let object = native_json::exact(
+        receipt,
+        &["format_version", "kind", "sources", "build", "artifacts"],
+        "API/Worker构建收据",
+    )?;
+    if object["format_version"].as_u64() != Some(2) || object["kind"] != "restore-backend-build" {
+        return Err("恢复二进制收据格式无效".into());
+    }
     let artifacts = native_json::object(
         object.get("artifacts").ok_or("构建收据缺少产物")?,
         "API/Worker 构建产物",
@@ -121,6 +135,7 @@ fn verify_restore_receipt(receipt: &Value) -> Result<()> {
     if artifacts.keys().cloned().collect::<BTreeSet<_>>() != expected {
         return Err("API/Worker 构建收据缺少完整产物".into());
     }
+    let jobs = recorded_jobs(&receipt["build"]["jobs"])?;
     for role in ROLES {
         let artifact = artifacts
             .get(role)
@@ -132,7 +147,7 @@ fn verify_restore_receipt(receipt: &Value) -> Result<()> {
         )?;
         if artifact.get("command").and_then(Value::as_array)
             != Some(
-                &build_command(role)?
+                &build_command(role, jobs)?
                     .into_iter()
                     .map(Value::String)
                     .collect::<Vec<_>>(),
@@ -163,7 +178,7 @@ fn verify_restore_receipt(receipt: &Value) -> Result<()> {
     Ok(())
 }
 
-fn validate_build_context(value: &Value) -> Result<()> {
+pub(in crate::recovery) fn validate_build_context(value: &Value) -> Result<()> {
     let object = native_json::exact(
         value,
         &[
@@ -176,6 +191,7 @@ fn validate_build_context(value: &Value) -> Result<()> {
         ],
         "构建命令或工具链上下文",
     )?;
+    let jobs = recorded_jobs(&value["jobs"])?;
     let commands = native_json::object(object.get("commands").unwrap(), "构建命令集合")?;
     if commands.len() != ROLES.len() {
         return Err("构建命令或工具链上下文无效".into());
@@ -183,7 +199,7 @@ fn validate_build_context(value: &Value) -> Result<()> {
     for role in ROLES {
         if commands.get(role).and_then(Value::as_array)
             != Some(
-                &build_command(role)?
+                &build_command(role, jobs)?
                     .into_iter()
                     .map(Value::String)
                     .collect::<Vec<_>>(),
@@ -282,7 +298,29 @@ fn product_inputs(kind: &str, inventory: &source::Inventory) -> Result<Value> {
     }
 }
 
-fn build_command(role: &str) -> Result<Vec<String>> {
+pub(in crate::recovery) fn build_jobs(root: &Path) -> Result<u8> {
+    crate::recovery::runtime::dataset_authority::reads::tool_settings(root)?;
+    Ok(ryframe_config::ToolSettings::load(root)
+        .map_err(|error| error.message().to_owned())?
+        .verification
+        .build_jobs)
+}
+
+pub(in crate::recovery) fn recorded_jobs(value: &Value) -> Result<u8> {
+    value
+        .as_str()
+        .and_then(|s| s.parse::<u8>().ok())
+        .filter(|jobs| (1..=64).contains(jobs) && value.as_str() == Some(jobs.to_string().as_str()))
+        .ok_or_else(|| {
+            "构建来源 jobs 必须是 1 到 64 的规范整数文本；核对构建命令与原收据，不能改写历史证据"
+                .into()
+        })
+}
+
+pub(in crate::recovery) fn build_command(role: &str, jobs: u8) -> Result<Vec<String>> {
+    if !(1..=64).contains(&jobs) {
+        return Err("verification.build_jobs 必须是 1 到 64 的整数；核对工具配置".into());
+    }
     let (feature, name) = match role {
         "api" => ("bin-api", "ryframe"),
         "worker" => ("bin-worker", "ryframe-worker"),
@@ -299,12 +337,14 @@ fn build_command(role: &str) -> Result<Vec<String>> {
         feature.into(),
         "--bin".into(),
         name.into(),
+        "--jobs".into(),
+        jobs.to_string(),
         "--message-format=json".into(),
     ])
 }
 
 fn maintenance_root(root: &Path, path: &Path, receipt: &Value) -> Result<PathBuf> {
-    let current = fs::canonicalize(root)?;
+    let current = crate::recovery::fixture_control::portable_path(&fs::canonicalize(root)?);
     let declared = PathBuf::from(
         receipt
             .get("backend_root")
@@ -314,7 +354,7 @@ fn maintenance_root(root: &Path, path: &Path, receipt: &Value) -> Result<PathBuf
     if !declared.is_absolute() || !declared.is_dir() {
         return Err("维护构建缺少可用的所属工作树".into());
     }
-    let declared = fs::canonicalize(declared)?;
+    let declared = crate::recovery::fixture_control::portable_path(&fs::canonicalize(declared)?);
     if declared == current {
         return Ok(current);
     }

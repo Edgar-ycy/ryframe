@@ -10,7 +10,7 @@ from devex_clone_model import local_path
 from devex_clone_run_state import binding
 from devex_clone_source_proof import bound_file
 from devex_clone_storage_request import directory_identity
-from devex_clone_target_binding import external_file, pending_request_binding, request_binding
+from devex_clone_target_binding import external_file, predecessor_request_binding, request_binding
 from rate_limit_client import load_app_table
 
 
@@ -24,7 +24,7 @@ def environment(backend, request):
     return value
 
 
-def process_binding(backend, request, review, private, *, effective=None, observe_effective_files=True):
+def process_binding(backend, request, review, private, *, review_binding, effective=None, observe_effective_files=True):
     from devex_clone_cache_process import validate
     previous, process = request["previous"], request["process"]
     validate(process, files=effective is None)
@@ -37,20 +37,24 @@ def process_binding(backend, request, review, private, *, effective=None, observ
     if effective is None:
         external_file(previous["wsl"])
     options = [shlex.split(line) for line in config.read_text(encoding="utf-8").splitlines() if line.strip()]
-    invoke("process-model", request=request, review=review, receipt=receipt,
+    invoke("process-model", request=request, review=review_binding, receipt=receipt,
            directory=str(directory), config=str(config), options=options)
 
 
 def _validate_request(backend, directory, value, request, bind_request, *, owned_lock_identity=None,
-                      effective=None, initialization=None, observe_effective_files=True):
+                      effective=None, initialization=None, observe_effective_files=True, review_descriptor=None):
     invoke("request-head", request=request, manifest=binding(directory / "manifest.json"), value=value)
     filename = bound_file(backend, request["initialized"])
     initial, original = (initialization_history(backend, filename, owned_lock_identity)
                          if initialization is None else initialization)
     review, selected = bind_request(backend, original)
+    from reference_fixture_successor import _descriptor_path
+    descriptor = original["review"] if review_descriptor is None else review_descriptor
+    _descriptor_path(descriptor, "cache process review", canonical=True)
+    review_binding = {key: item for key, item in descriptor.items() if key != "canonical_sha256"}
     invoke("request-model", request=request, initial=initial, original=original, selected=selected)
     private = environment(backend, request)
-    process_binding(backend, request, review, private, effective=effective,
+    process_binding(backend, request, review, private, review_binding=review_binding, effective=effective,
                     observe_effective_files=observe_effective_files)
     return private
 
@@ -75,11 +79,12 @@ def successor_process(backend, directory, value, request, successor, *, owned_lo
         source_directory=str(source["directory"]), source_manifest=source["manifest"], tools=tools,
         tool_wsl_path=str(Path(tools["wsl"]["path"]).resolve()),
         original_wsl_path=str(Path(request["process"]["wsl"]["path"]).resolve()))
-    def bind_pending(root, target):
+    def bind_predecessor(root, target):
         invoke("pending-target", target=target, seed_target=source["seed_target"])
-        return pending_request_binding(root, target, relationship["predecessor_review"])
-    private = _validate_request(backend, directory, value, request, bind_pending,
+        return predecessor_request_binding(root, target, relationship["predecessor_review"])
+    private = _validate_request(backend, directory, value, request, bind_predecessor,
                                  owned_lock_identity=owned_lock_identity, effective=effective,
                                  initialization=(source["initialization"], source["seed_target"]),
-                                 observe_effective_files=observe_current_tools)
+                                 observe_effective_files=observe_current_tools,
+                                 review_descriptor=relationship["predecessor_review"])
     return effective, private, source

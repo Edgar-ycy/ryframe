@@ -302,11 +302,21 @@ mod tests {
         after
             .indexes
             .retain(|index| index.name != "uk_order_tenant_name");
+        after.foreign_keys.push(crate::ForeignKeySpec {
+            name: "fk_order_parent".into(),
+            columns: vec!["tenant_id".into(), "id".into()],
+            referenced_table: "biz_parent".into(),
+            referenced_columns: vec!["tenant_id".into(), "id".into()],
+            update_rule: crate::import::ForeignKeyAction::Restrict,
+            delete_rule: crate::import::ForeignKeyAction::Restrict,
+            match_option: crate::import::ForeignKeyMatch::None,
+        });
         let error = diff::statements(&before, &after).unwrap_err().to_string();
         for detail in [
             "name",
             "updated_at",
             "uk_order_tenant_name",
+            "物理外键",
             "人工审阅",
             "本批未写入",
         ] {

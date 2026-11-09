@@ -1,5 +1,7 @@
 #[path = "support/configuration.rs"]
 mod configuration;
+#[path = "support/configuration_tests.rs"]
+mod configuration_tests;
 use configuration::{Configuration, ScopedClient};
 use ryframe_config::StorageBackend;
 

@@ -1,13 +1,14 @@
 use super::*;
 use crate::recovery::fixture_control::{file_binding, portable_path};
+use crate::recovery::full_stack::{Port, context::Context};
 use std::{process::Command, time::Duration};
 
-struct Fixture {
+pub(in crate::recovery) struct Fixture {
     _directory: tempfile::TempDir,
-    context: Context,
+    pub(in crate::recovery) context: Context,
 }
 impl Fixture {
-    fn new() -> Self {
+    pub(in crate::recovery) fn new() -> Self {
         let local = crate::workspace::root_dir().join(".local-tests");
         fs::create_dir_all(&local).unwrap();
         let directory = tempfile::tempdir_in(local).unwrap();
@@ -15,6 +16,7 @@ impl Fixture {
         let root = parent.join("backend");
         fs::create_dir_all(root.join("crates/ryframe")).unwrap();
         fs::write(root.join("crates/ryframe/Cargo.toml"), "fixture").unwrap();
+        fs::write(root.join("Cargo.toml"), "[workspace]\n").unwrap();
         fs::write(root.join("README.md"), "fixture\n").unwrap();
         fs::create_dir(root.join("tools")).unwrap();
         for side in [&root, &parent.join("frontend")] {
@@ -70,7 +72,7 @@ impl Fixture {
         documents::write_replace(&self.context.output.join("source-pair.json"), value).unwrap();
     }
 
-    fn business(&self) -> Value {
+    pub(in crate::recovery) fn business(&self) -> Value {
         let pair = self.pair();
         self.write_pair(&pair);
         let model = self
@@ -128,6 +130,11 @@ impl Port for Cargo<'_> {
         let name = &args[args.iter().position(|s| s == "--bin").unwrap() + 1];
         let executable = self.context.output.join(format!("{name}.exe"));
         fs::write(&executable, name)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&executable, fs::Permissions::from_mode(0o750))?;
+        }
         if self.drift {
             fs::write(self.context.root.join("README.md"), "changed")?;
         }
@@ -137,9 +144,6 @@ impl Port for Cargo<'_> {
             json!({"reason":"compiler-artifact","manifest_path":self.context.root.join("crates/ryframe/Cargo.toml"),
                 "target":{"name":name,"kind":["bin"]},"executable":executable})
         ))
-    }
-    fn ready(&mut self, _: &str) -> Result<bool> {
-        panic!("构建不访问网络")
     }
     fn sleep(&mut self, _: Duration) -> Result<()> {
         panic!("构建不重试")
@@ -161,13 +165,27 @@ fn cargo(context: &Context) -> Cargo<'_> {
 }
 
 #[test]
-fn all_four_roles_use_current_cargo_paths_and_publish_exact_byte_bindings() {
+fn all_four_roles_freeze_cargo_bytes_before_cache_reuse_and_publish_exact_bindings() {
     let fixture = Fixture::new();
     let context = &fixture.context;
+    fs::create_dir(context.root.join(".local-tests")).unwrap();
+    fs::write(
+        context.root.join(".local-tests/tools.toml"),
+        "[verification]\nbuild_jobs=1\n",
+    )
+    .unwrap();
     let mut port = cargo(context);
-    let binaries = run(context, &mut port).unwrap();
+    let binaries = run(&context.root, &context.output, &mut |program, args| {
+        port.command(program, args, None)
+    })
+    .unwrap();
     let evidence = documents::read(&context.output.join("build-evidence.json")).unwrap();
     assert_eq!(port.calls.len(), 4);
+    assert_eq!(evidence["build_jobs"], 1);
+    for args in &port.calls {
+        let jobs = args.iter().position(|s| s == "--jobs").unwrap();
+        assert_eq!(args[jobs + 1], "1");
+    }
     assert_eq!(
         documents::read(&context.output.join("binaries.json")).unwrap(),
         binaries
@@ -179,13 +197,65 @@ fn all_four_roles_use_current_cargo_paths_and_publish_exact_byte_bindings() {
         "ryframe-migrate",
         "ryframe-worker",
     ] {
+        let frozen = Path::new(binaries[role].as_str().unwrap());
+        assert_eq!(
+            frozen.parent(),
+            Some(context.output.join("artifacts").as_path())
+        );
+        assert_eq!(fs::read(frozen).unwrap(), role.as_bytes());
+        let cargo = context.output.join(format!("{role}.exe"));
+        assert_ne!(frozen, cargo);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(frozen).unwrap().permissions().mode() & 0o777,
+                0o750
+            );
+        }
+        fs::write(cargo, "next workspace build").unwrap();
         assert_eq!(
             evidence["artifacts"][role],
             file_binding(Path::new(binaries[role].as_str().unwrap()), "产物").unwrap()
         );
     }
-    assert!(run(context, &mut port).is_err());
+    assert_eq!(
+        provenance::build(&context.root, &context.output, &binaries, &Value::Null, 1).unwrap(),
+        evidence
+    );
+    assert!(
+        run(&context.root, &context.output, &mut |program, args| port
+            .command(program, args, None))
+        .is_err()
+    );
     assert_eq!(port.calls.len(), 4);
+}
+
+#[test]
+fn changed_tool_settings_preserve_artifacts_without_publishing_mixed_receipts() {
+    for (overlay, field) in [
+        ("[verification]\nbuild_jobs=1\n", "verification.build_jobs"),
+        (
+            "[generator]\ntarget_dir='other-target'\n",
+            "generator.target_dir",
+        ),
+    ] {
+        let fixture = Fixture::new();
+        let context = &fixture.context;
+        fs::create_dir(context.root.join(".local-tests")).unwrap();
+        let mut port = cargo(context);
+        let result = run(&context.root, &context.output, &mut |program, args| {
+            let output = port.command(program, args, None)?;
+            if port.calls.len() == 1 {
+                fs::write(context.root.join(".local-tests/tools.toml"), overlay)?;
+            }
+            Ok(output)
+        });
+        assert!(result.unwrap_err().to_string().contains(field));
+        assert!(!context.output.join("binaries.json").exists());
+        assert!(!context.output.join("build-evidence.json").exists());
+        assert!(context.output.join("artifacts/ryframe.exe").exists());
+    }
 }
 
 #[test]
@@ -196,11 +266,35 @@ fn failed_build_or_changed_source_never_publishes_partial_success_or_replays() {
         let mut port = cargo(&fixture.context);
         port.drift = drift;
         port.failure = (!drift).then_some(2);
-        assert!(run(&fixture.context, &mut port).is_err());
+        assert!(
+            run(
+                &fixture.context.root,
+                &fixture.context.output,
+                &mut |program, args| port.command(program, args, None)
+            )
+            .is_err()
+        );
         assert_eq!(port.calls.len(), if drift { 4 } else { 2 });
         for name in ["binaries.json", "build-evidence.json"] {
             assert!(!fixture.context.output.join(name).exists());
         }
+        assert!(
+            fixture
+                .context
+                .output
+                .join("artifacts/ryframe-reset.exe")
+                .is_file()
+        );
+        let before = port.calls.len();
+        assert!(
+            run(
+                &fixture.context.root,
+                &fixture.context.output,
+                &mut |program, args| port.command(program, args, None)
+            )
+            .is_err()
+        );
+        assert_eq!(port.calls.len(), before);
     }
 }
 
@@ -229,6 +323,57 @@ fn cargo_events_reject_missing_duplicate_other_workspace_and_wrong_kind() {
     ] {
         assert!(artifact(root, "ryframe", &output).is_err());
     }
+}
+
+#[test]
+fn runtime_registration_reuses_verified_receipts_only_for_the_selected_configurations() {
+    use crate::recovery::fixture_control::artifact::runtime;
+
+    let fixture = Fixture::new();
+    let context = &fixture.context;
+    fixture.write_pair(&fixture.pair());
+    let mut port = cargo(context);
+    run(&context.root, &context.output, &mut |program, args| {
+        port.command(program, args, None)
+    })
+    .unwrap();
+
+    let other = context.output.join("other");
+    for directory in [&context.output, &other] {
+        for (name, id) in [("config", 3), ("worker-config", 2)] {
+            let config = directory.join(name);
+            fs::create_dir_all(&config).unwrap();
+            fs::write(
+                config.join("app.test.toml"),
+                format!(
+                    "scope_id='runtime-test'\nsnowflake_worker_id={id}\n[jobs]\nmode='external'\nhealth_host='127.0.0.1'\nhealth_port=18081\n"
+                ),
+            )
+            .unwrap();
+        }
+    }
+    let paths = ["runtime.json", "runtime-evidence.json"].map(|name| context.output.join(name));
+    let bytes = || paths.each_ref().map(|path| fs::read(path).unwrap());
+
+    let registered = context.register_runtime().unwrap();
+    let original = bytes();
+    assert_eq!(context.register_runtime().unwrap(), registered);
+    assert_eq!(bytes(), original);
+
+    for path in &paths {
+        fs::remove_file(path).unwrap();
+    }
+    runtime::register(
+        &context.root,
+        &context.output,
+        &other.join("config"),
+        &other.join("worker-config"),
+    )
+    .unwrap();
+    let rebound = bytes();
+    let error = context.register_runtime().unwrap_err().to_string();
+    assert!(error.contains("未绑定当前选定"));
+    assert_eq!(bytes(), rebound);
 }
 
 #[test]

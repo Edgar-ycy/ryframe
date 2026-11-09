@@ -1182,6 +1182,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "file-id"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1fc6a637b6dc58414714eddd9170ff187ecb0933d4c7024d1abbd23a3cc26e9"
+dependencies = [
+ "windows-sys 0.60.2",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1235,12 +1244,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "futures"
+version = "0.3.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a31d2a3fbaaeb2af2368bbdd904aa8e812d3c04a1ee10d3171f52d556e5d0a3"
+dependencies = [
+ "futures-channel",
+ "futures-core",
+ "futures-executor",
+ "futures-io",
+ "futures-sink",
+ "futures-task",
+ "futures-util",
+]
+
+[[package]]
 name = "futures-channel"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1f9e3d69d39e4862ffed03ed071a76f9a13ba1d9109d355b0f0aa6b15e393c4"
 dependencies = [
  "futures-core",
+ "futures-sink",
 ]
 
 [[package]]
@@ -1306,6 +1331,7 @@ version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d50a92467f8ba5dd6e3ee5d4bd04d73ab2e4e1c44474a0674821dfce14b79bc"
 dependencies = [
+ "futures-channel",
  "futures-core",
  "futures-io",
  "futures-macro",
@@ -3344,6 +3370,7 @@ dependencies = [
  "ryframe-db",
  "ryframe-kernel",
  "ryframe-tenant-db",
+ "same-file",
  "sea-orm",
  "serde",
  "serde_json",
@@ -3370,7 +3397,11 @@ dependencies = [
  "axum",
  "proc-macro2",
  "quote",
+ "serde_json",
+ "sha2 0.11.0",
  "syn 3.0.6",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]
@@ -3402,14 +3433,17 @@ version = "0.13.1"
 dependencies = [
  "async-trait",
  "chrono",
+ "futures-util",
  "hex",
  "rust_decimal",
  "ryframe-application",
  "ryframe-config",
  "ryframe-db",
  "ryframe-kernel",
+ "same-file",
  "sea-orm",
  "sea-orm-migration",
+ "serde_json",
  "sha2 0.11.0",
  "thiserror",
  "tokio",
@@ -5105,6 +5139,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
+name = "wmi"
+version = "0.18.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c81b85c57a57500e56669586496bf2abd5cf082b9d32995251185d105208b64"
+dependencies = [
+ "futures",
+ "log",
+ "serde",
+ "thiserror",
+ "windows",
+ "windows-core",
+]
+
+[[package]]
 name = "writeable"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5115,11 +5163,17 @@ name = "xtask"
 version = "0.13.1"
 dependencies = [
  "async-trait",
+ "axum",
  "base64 0.23.1",
  "chrono",
+ "file-id",
  "futures-util",
+ "glob",
  "hex",
  "hmac",
+ "hyper",
+ "hyper-util",
+ "mime_guess",
  "nix 0.29.0",
  "notify",
  "percent-encoding",
@@ -5128,11 +5182,13 @@ dependencies = [
  "regex",
  "reqwest",
  "rustls",
+ "rustix",
  "ryframe-config",
  "ryframe-generator",
  "same-file",
  "serde",
  "serde_json",
+ "sha1 0.11.0",
  "sha2 0.11.0",
  "tempfile",
  "tokio",
@@ -5142,6 +5198,7 @@ dependencies = [
  "url",
  "uuid",
  "winsafe",
+ "wmi",
  "zip",
 ]
 

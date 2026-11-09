@@ -346,6 +346,11 @@ class GenerationTests(unittest.TestCase):
                 rebind.history(self.directory, {"attempts": records}, self.registration)
 
     def test_inputs_reject_extra_fields_wrong_lineage_storage_and_unowned_controller(self):
+        self.request = {**self.request, "format_version": 2,
+                        "configuration": {"app_env": "test", "directory": str(self.directory),
+                                          "files": [], "sha256": "a" * 64},
+                        "execution_source": None}
+        self.request_path.write_text(__import__("json").dumps(self.request), encoding="utf-8")
         with patch.object(generation, "load_state", return_value=self.state), \
                 patch("reference_fixture_successor_generation.rebuild", return_value=self.request), \
                 patch("devex_clone_seed_export._source", return_value=self.source), patch("devex_clone_run._require_owned_run"):

@@ -72,31 +72,6 @@ class SeedRebindTests(unittest.TestCase):
         stack.enter_context(patch.object(rebind, "quiet_producers"))
         return stack
 
-    def test_explicit_rebind_is_append_only_result_and_rechecks_every_input(self):
-        state = {"attempts": self.prefix + [self.record(54, "seed-runtime", "source-rebind", status="running")]}
-        original = {path: path.read_bytes() for path in self.directory.rglob("*.json")}
-        with self.patches(), patch("reference_fixture_successor._source_with_loader", return_value=self.source) as source, \
-                patch.object(rebind, "load_state", return_value=state), \
-                patch.object(rebind, "current_storage_binding", return_value=self.current) as current, \
-                patch("devex_clone_run._require_owned_run") as owned:
-            value = rebind.register_rebind(self.backend, self.directory, Path(self.successor["path"]), 54)
-        self.assertEqual(value, self.value())
-        self.assertEqual(source.call_count, 2)
-        self.assertEqual(current.call_count, 2)
-        self.assertEqual(owned.call_count, 2)
-        self.assertEqual(original, {path: path.read_bytes() for path in self.directory.rglob("*.json")})
-
-    def test_rebind_rejects_other_cache_successor_before_observing_current_storage(self):
-        cache = self.record(54, "cache-target", "restart", self.successor)
-        state = {"attempts": self.prefix + [cache, self.record(55, "seed-runtime", "source-rebind", status="running")]}
-        with self.patches(), patch("reference_fixture_successor._source_with_loader", return_value=self.source), \
-                patch.object(rebind, "load_state", return_value=state), \
-                patch.object(rebind, "history", return_value=[cache]), \
-                patch("devex_clone_cache.seed_history_proof", return_value={"other": "successor"}), \
-                patch.object(rebind, "current_storage_binding") as current, self.assertRaisesRegex(ValueError, "同一缓存工具 successor"):
-            rebind.register_rebind(self.backend, self.directory, Path(self.successor["path"]), 55)
-        current.assert_not_called()
-
     def test_default_resolution_never_probes_current_listeners_or_writes(self):
         receipt, state = self.published_rebind()
         before = {path: path.read_bytes() for path in self.directory.rglob("*.json")}
@@ -218,51 +193,15 @@ class SeedRebindTests(unittest.TestCase):
                 self.assertRaises(ValueError):
             rebind.published_restart_guard(self.backend, self.directory, None)
 
-    def test_rebind_cli_requires_request_and_explicit_write_and_dispatches_same_path(self):
+    def test_retired_python_rebind_dispatch_rejects_before_stage_execution(self):
         import devex_clone_run_cli as cli
-        import devex_clone_seed_runtime as runtime
 
-        def args(*, request=None, write=False):
-            return SimpleNamespace(command="seed-runtime", run_dir=self.directory,
-                                   operation="source-rebind", request=request,
-                                   producer_binding=None, write=write)
-        with patch.object(cli, "execute") as execute:
-            for request, write in ((None, False), (None, True), (Path(self.successor["path"]), False)):
-                with self.subTest(request=request, write=write), self.assertRaises(ValueError):
-                    cli.dispatch(args(request=request, write=write), self.backend)
-            execute.assert_not_called()
-        completed = {"status": "stage_finished", "stage": "seed-runtime", "mode": "source-rebind",
-                     "attempt": 54, "restore_qualified": False}
-        with patch.object(cli, "execute", return_value=completed) as execute:
-            observed = cli.dispatch(args(request=Path(self.successor["path"]), write=True), self.backend)
-        self.assertEqual(observed, completed)
-        self.assertEqual(execute.call_args.kwargs["seed_request"], Path(self.successor["path"]))
-        with patch.object(runtime, "require_quiet"), patch.object(rebind, "register_rebind", return_value=self.value()) as register:
-            result = runtime.execute_seed(self.backend, self.directory, {}, "source-rebind", 54, Path(self.successor["path"]))
-        self.assertEqual(result, self.value())
-        register.assert_called_once_with(self.backend, self.directory, Path(self.successor["path"]), 54)
-
-    def test_rebind_rejects_changed_current_generation_between_observations(self):
-        state = {"attempts": self.prefix + [self.record(54, "seed-runtime", "source-rebind", status="running")]}
-        changed = copy.deepcopy(self.current)
-        changed["storage"]["identity"]["started"] = "300"
-        with self.patches(), patch("reference_fixture_successor._source_with_loader", return_value=self.source), \
-                patch.object(rebind, "load_state", return_value=state), \
-                patch.object(rebind, "current_storage_binding", side_effect=[self.current, changed]), \
-                patch("devex_clone_run._require_owned_run"), self.assertRaises(ValueError):
-            rebind.register_rebind(self.backend, self.directory, Path(self.successor["path"]), 54)
-        self.assertEqual(binding(Path(self.published["path"])), self.published)
-        self.assertFalse((self.directory / "results/0054.json").exists())
-
-    def test_duplicate_rebind_is_rejected_before_live_storage_probe(self):
-        _, state = self.published_rebind()
-        state["attempts"].append(self.record(55, "seed-runtime", "source-rebind", status="running"))
-        with self.patches(), patch("reference_fixture_successor._source_with_loader", return_value=self.source), \
-                patch.object(rebind, "load_state", return_value=state), \
-                patch.object(rebind, "current_storage_binding") as current, \
-                patch("devex_clone_run._require_owned_run"), self.assertRaises(ValueError):
-            rebind.register_rebind(self.backend, self.directory, Path(self.successor["path"]), 55)
-        current.assert_not_called()
+        args = SimpleNamespace(command="seed-runtime", run_dir=self.directory,
+                               operation="source-rebind", request=Path(self.successor["path"]),
+                               producer_binding=None, write=True)
+        with patch.object(cli, "execute") as execute, self.assertRaises(ValueError):
+            cli.dispatch(args, self.backend)
+        execute.assert_not_called()
 
     def test_failed_export_only_opens_exact_explicit_owned_reconcile(self):
         _, state = self.published_rebind()
@@ -880,8 +819,8 @@ class SegmentedSourceResumeTests(unittest.TestCase):
               patch("devex_clone_seed_generation_runtime.verify_runtime_evidence",
                     return_value={"physical_binding": registered["generation"]["physical_binding"]}),
               patch("restore_source_runtime.verify_source_runtime", return_value=verified_runtime),
-              patch.object(successor, "_validated_relationship", return_value=relationship),
-              patch.object(successor, "pending_request_binding"),
+              patch.object(successor, "review_successor_binding", return_value=relationship),
+              patch.object(successor, "predecessor_request_binding"),
               patch.object(seed_export, "load_state", return_value=state)):
             public = successor.published_source(self.backend, self.successor, live_storage=False)
             adopted = seed_export.published_export(self.backend, export_descriptor, public)

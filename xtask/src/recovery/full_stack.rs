@@ -1,6 +1,6 @@
 //! 原生全栈阶段协调；既有进程树和来源权威只作为底层核验端口复用。
 #[path = "full_stack/build.rs"]
-mod build;
+pub(in crate::recovery) mod build;
 #[path = "full_stack/context.rs"]
 pub(super) mod context;
 #[path = "full_stack/execution.rs"]
@@ -10,7 +10,7 @@ mod lifecycle;
 #[path = "full_stack/prepare.rs"]
 mod prepare;
 #[path = "full_stack/provenance.rs"]
-mod provenance;
+pub(in crate::recovery) mod provenance;
 #[cfg(test)]
 #[path = "../../tests/unit/recovery/full_stack/tests.rs"]
 mod tests;
@@ -33,7 +33,6 @@ pub(super) trait Port {
     ) -> Result<String> {
         self.command(program, args, log)
     }
-    fn ready(&mut self, url: &str) -> Result<bool>;
     fn sleep(&mut self, duration: Duration) -> Result<()>;
     fn storage(&mut self, table: &Value) -> Result<()>;
     fn databases(&mut self, frozen: &crate::ci::databases::snapshot::Frozen) -> Result<()>;

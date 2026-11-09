@@ -1,7 +1,4 @@
-use std::{
-    path::{Path, PathBuf},
-    process::Command,
-};
+use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
@@ -14,6 +11,98 @@ use super::{
     command, registration,
 };
 use crate::Result;
+#[cfg(windows)]
+use crate::recovery::fixture_control::services::lifecycle::readonly::process;
+
+/// 未登记生产者的历史尝试必须确实没有启动、进程或输出证据；不采纳缺失一半的未知启动。
+pub(super) fn require_unlaunched(
+    backend: &Path,
+    run: &Path,
+    stage: &str,
+    number: u64,
+) -> Result<()> {
+    use crate::local_test_path::{LocalTestPathKind, validate_local_test_path};
+    let output = run.join(stage).join(format!("attempt-{number:04}"));
+    validate_local_test_path(&output, backend, LocalTestPathKind::StateDirectory)?;
+    for name in [
+        "session-launch.json",
+        "session-process.json",
+        "session.stderr.log",
+        "session.stdout.log",
+    ] {
+        super::files::absent(&output.join(name))?;
+    }
+    Ok(())
+}
+
+pub(super) fn unpublished_seed_registration(
+    backend: &Path,
+    run: &Path,
+    attempt: &Value,
+) -> Result<bool> {
+    if attempt["stage"] != "seed-runtime"
+        || attempt["mode"] != "register"
+        || attempt["status"] != "failed"
+    {
+        return Ok(false);
+    }
+    match std::fs::symlink_metadata(run.join("seed-runtime.json")) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let number = attempt["number"].as_u64().ok_or("历史 seed 登记序号无效")?;
+            let output = run
+                .join("seed-runtime")
+                .join(format!("attempt-{number:04}"));
+            crate::local_test_path::validate_local_test_path(
+                &output,
+                backend,
+                crate::local_test_path::LocalTestPathKind::StateDirectory,
+            )?;
+            super::files::absent(&output)?;
+            Ok(true)
+        }
+        Err(error) => Err(error.into()),
+        Ok(_) => Ok(false),
+    }
+}
+
+/// 使用原启动收据解析历史登记，无启动时要求整个生产者证据都不存在。
+pub(in crate::recovery::clone::native) fn inspect_historical(
+    backend: &Path,
+    run: &Path,
+    attempt: &Value,
+) -> Result<Value> {
+    let stage = json_io::text(&attempt["stage"], "历史生产者阶段")?;
+    if !matches!(stage, "post-copy" | "seed-runtime") {
+        return Err("原生生产者历史不属于明确阶段".into());
+    }
+    let number = attempt["number"]
+        .as_u64()
+        .filter(|number| *number > 0)
+        .ok_or("历史生产者 attempt 无效")?;
+    let launch = run
+        .join(stage)
+        .join(format!("attempt-{number:04}/session-launch.json"));
+    match std::fs::symlink_metadata(&launch) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            require_unlaunched(backend, run, stage, number)?;
+            return Ok(Value::Null);
+        }
+        Err(error) => return Err(error.into()),
+        Ok(_) => {}
+    }
+    let before = common::binding(&launch)?;
+    let receipt = common::read_bound(backend, &before, "历史生产者启动收据")?;
+    let descriptor = &receipt["registration"];
+    let request = registration::resolve(backend, run, stage, descriptor, Some(number), true)?;
+    let observed = inspect(&json!({
+        "backend":backend, "run_dir":run, "attempt":attempt,
+        "registration":request, "registration_binding":descriptor
+    }))?;
+    if common::binding(&launch)? != before {
+        return Err("历史生产者启动收据在核验期间变化".into());
+    }
+    Ok(observed)
+}
 
 pub(super) fn inspect(request: &Value) -> Result<Value> {
     let root = json_io::exact(
@@ -133,7 +222,7 @@ pub(super) fn inspect(request: &Value) -> Result<Value> {
         .map_err(|_| "生产者 PID 超出范围")?;
     let alive = match common::process_identity(pid)? {
         Some(current) if current == identity => {
-            if actual_argv(pid)? != values(&launch["command"])? {
+            if actual_argv(&identity)? != values(&launch["command"])? {
                 return Err("原生实际参数不属于固定 run 和 attempt".into());
             }
             true
@@ -168,6 +257,7 @@ pub(super) fn quiet(request: &Value) -> Result<Value> {
                 attempt["stage"].as_str(),
                 Some("post-copy" | "seed-runtime")
             )
+            || unpublished_seed_registration(&backend, &run, attempt)?
         {
             continue;
         }
@@ -239,8 +329,8 @@ fn values(value: &Value) -> Result<Vec<String>> {
         .collect()
 }
 
-pub(super) fn require_actual_argv(pid: u32, expected: &Value) -> Result<()> {
-    if actual_argv(pid)? != values(expected)? {
+pub(super) fn require_actual_argv(identity: &Value, expected: &Value) -> Result<()> {
+    if actual_argv(identity)? != values(expected)? {
         return Err("生产者实际参数不同于已授权启动命令".into());
     }
     Ok(())
@@ -272,7 +362,10 @@ fn path(value: &Value, label: &str) -> Result<PathBuf> {
 }
 
 #[cfg(unix)]
-fn actual_argv(pid: u32) -> Result<Vec<String>> {
+fn actual_argv(identity: &Value) -> Result<Vec<String>> {
+    let identity = common::validate_process_identity(identity)?;
+    let pid = u32::try_from(identity["pid"].as_u64().ok_or("生产者 PID 无效")?)
+        .map_err(|_| "生产者 PID 超出范围")?;
     let bytes = std::fs::read(format!("/proc/{pid}/cmdline"))?;
     Ok(bytes
         .split(|b| *b == 0)
@@ -281,69 +374,10 @@ fn actual_argv(pid: u32) -> Result<Vec<String>> {
         .collect::<std::result::Result<_, _>>()?)
 }
 #[cfg(windows)]
-fn actual_argv(pid: u32) -> Result<Vec<String>> {
-    let script = format!(
-        "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); (Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}').CommandLine | ConvertTo-Json -Compress"
-    );
-    let output = Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .output()?;
-    if !output.status.success() {
-        return Err("读取原生参数失败".into());
-    }
-    let line: String = serde_json::from_slice(&output.stdout)?;
-    windows_argv(&line)
+fn actual_argv(identity: &Value) -> Result<Vec<String>> {
+    process::arguments(identity)
 }
 #[cfg(not(any(unix, windows)))]
-fn actual_argv(_: u32) -> Result<Vec<String>> {
+fn actual_argv(_: &Value) -> Result<Vec<String>> {
     Err("当前平台不支持进程参数核验".into())
-}
-
-#[cfg(windows)]
-pub(super) fn windows_argv(line: &str) -> Result<Vec<String>> {
-    let mut result = Vec::new();
-    let chars = line.chars().collect::<Vec<_>>();
-    let mut i = 0;
-    while i < chars.len() {
-        while i < chars.len() && chars[i].is_whitespace() {
-            i += 1
-        }
-        if i == chars.len() {
-            break;
-        }
-        let mut value = String::new();
-        let mut quoted = false;
-        while i < chars.len() {
-            let mut slashes = 0;
-            while i < chars.len() && chars[i] == '\\' {
-                slashes += 1;
-                i += 1
-            }
-            if i < chars.len() && chars[i] == '"' {
-                value.extend(std::iter::repeat_n('\\', slashes / 2));
-                if slashes % 2 == 1 {
-                    value.push('"');
-                    i += 1
-                } else {
-                    quoted = !quoted;
-                    i += 1
-                }
-                continue;
-            }
-            value.extend(std::iter::repeat_n('\\', slashes));
-            if i == chars.len() || (!quoted && chars[i].is_whitespace()) {
-                break;
-            }
-            value.push(chars[i]);
-            i += 1
-        }
-        result.push(value);
-        while i < chars.len() && chars[i].is_whitespace() {
-            i += 1
-        }
-    }
-    if result.is_empty() {
-        return Err("原生参数为空".into());
-    }
-    Ok(result)
 }

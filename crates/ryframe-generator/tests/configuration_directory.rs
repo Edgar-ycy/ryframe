@@ -15,20 +15,28 @@ fn builder_resolves_default_public_local_and_explicit_directory_precedence() {
         builder(root.path()).plan().unwrap().config_directory,
         root.path().join("config")
     );
+    assert_eq!(
+        builder(root.path()).plan().unwrap().target_dir,
+        root.path().join("target")
+    );
     fs::create_dir(root.path().join("config")).unwrap();
     fs::write(
         root.path().join("config/tools.toml"),
-        "[generator]\nconfig_dir='公共 配置'\n",
+        "[generator]\nconfig_dir='公共 配置'\ntarget_dir='公共 缓存'\n",
     )
     .unwrap();
     assert_eq!(
         builder(root.path()).plan().unwrap().config_directory,
         root.path().join("公共 配置")
     );
+    assert_eq!(
+        builder(root.path()).plan().unwrap().target_dir,
+        root.path().join("公共 缓存")
+    );
     fs::create_dir(root.path().join(".local-tests")).unwrap();
     fs::write(
         root.path().join(".local-tests/tools.toml"),
-        "[generator]\nconfig_dir='本机 配置'\n",
+        "[generator]\nconfig_dir='本机 配置'\ntarget_dir='本机 缓存'\n",
     )
     .unwrap();
     assert_eq!(
@@ -43,6 +51,17 @@ fn builder_resolves_default_public_local_and_explicit_directory_precedence() {
             .config_directory,
         root.path().join("显式 配置")
     );
+    assert_eq!(
+        builder(root.path()).plan().unwrap().target_dir,
+        root.path().join("本机 缓存")
+    );
+    let cache = root.path().join("独立 缓存");
+    let configured = format!(
+        "[generator]\nconfig_dir='本机 配置'\ntarget_dir={}\n",
+        serde_json::to_string(&cache).unwrap()
+    );
+    fs::write(root.path().join(".local-tests/tools.toml"), configured).unwrap();
+    assert_eq!(builder(root.path()).plan().unwrap().target_dir, cache);
     let absolute = root.path().join("绝对 配置");
     assert_eq!(
         builder(root.path())
@@ -92,6 +111,37 @@ fn builder_and_tool_directories_reject_invalid_paths_before_execution() {
             .unwrap_err()
             .contains("config_dir")
     );
+    let mut invalid_targets = vec!["", " ", "bad\0path", "bad\tpath", "../outside"];
+    if cfg!(windows) {
+        invalid_targets.extend(["C:cache", r"\cache"]);
+    }
+    for invalid in invalid_targets {
+        let mut settings = toml::Table::new();
+        settings.insert("target_dir".into(), toml::Value::String(invalid.into()));
+        let settings = toml::Table::from_iter([("generator".into(), toml::Value::Table(settings))]);
+        fs::write(
+            root.path().join("config/tools.toml"),
+            toml::to_string(&settings).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            builder(root.path())
+                .plan()
+                .unwrap_err()
+                .contains("target_dir")
+        );
+    }
+    let file = root.path().join("not-directory");
+    fs::write(&file, b"existing file").unwrap();
+    fs::write(
+        root.path().join("config/tools.toml"),
+        format!(
+            "[generator]\ntarget_dir={}\n",
+            serde_json::to_string(&file).unwrap()
+        ),
+    )
+    .unwrap();
+    assert!(builder(root.path()).plan().is_err());
     assert!(!root.path().join(".local-tests").exists());
 }
 

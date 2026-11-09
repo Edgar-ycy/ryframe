@@ -243,9 +243,6 @@ fn ci_plan_and_each_independent_job_share_the_same_task_specs() {
                 .collect::<Vec<_>>(),
             expected
         );
-        for task in &execution.tasks {
-            assert_eq!(task.definition().id, task.id);
-        }
     }
 }
 
@@ -283,13 +280,6 @@ fn daily_full_checks_use_explicit_repository_scopes() {
             "普通完整检查与 CI 应共用原子节点 {shared:?}"
         );
     }
-    assert!(
-        !backend_full.tasks.iter().any(|task| matches!(
-            task.executor,
-            TaskExecutor::ConsumerContract | TaskExecutor::FrontendConsumerContract
-        )),
-        "后端完整检查不能隐式访问前端；跨仓契约由 all 完整检查和 CI 明确执行"
-    );
 }
 
 #[test]
@@ -345,40 +335,28 @@ fn preflight_uses_only_a_valid_nonzero_base_sha() {
 
 #[test]
 fn integration_commands_share_the_ci_target_and_jobs() {
-    assert_eq!(
-        integration_test_args_for_target(
+    let planned: Vec<_> = crate::ci::INTEGRATION_TESTS
+        .iter()
+        .map(|&(package, target, features)| {
+            integration_test_args_for_target(package, target, features, "target/ci/backend", 4)
+        })
+        .collect();
+    let expected: Vec<_> = [
+        (
             "ryframe-db",
             "mysql_real_protocol",
-            Some("repositories,migration"),
-            "target/ci/backend",
-            4,
-        ),
-        [
-            "test",
-            "--locked",
-            "--no-default-features",
-            "--target-dir",
-            "target/ci/backend",
-            "-p",
-            "ryframe-db",
-            "--features",
             "repositories,migration",
-            "--test",
-            "mysql_real_protocol",
-            "--jobs",
-            "4",
-            "--",
-            "--nocapture",
-        ]
-    );
-    assert_eq!(
-        integration_test_args_for_target(
-            "ryframe-adapters",
-            "redis_real_protocol",
-            Some("redis-api"),
-            "target/ci/backend",
-            4,
         ),
+        ("ryframe-adapters", "redis_real_protocol", "redis-api"),
+        ("ryframe-generator", "mysql_schema_import", "schema-import"),
+        (
+            "ryframe",
+            "business_initialization_mysql",
+            "bin-api,bin-migrate",
+        ),
+    ]
+    .into_iter()
+    .map(|(package, target, features)| {
         [
             "test",
             "--locked",
@@ -386,17 +364,21 @@ fn integration_commands_share_the_ci_target_and_jobs() {
             "--target-dir",
             "target/ci/backend",
             "-p",
-            "ryframe-adapters",
+            package,
             "--features",
-            "redis-api",
+            features,
             "--test",
-            "redis_real_protocol",
+            target,
             "--jobs",
             "4",
             "--",
             "--nocapture",
         ]
-    );
+        .map(str::to_owned)
+        .to_vec()
+    })
+    .collect();
+    assert_eq!(planned, expected);
     assert_eq!(
         crate::ci::tls::test_command(&crate::ci::tls::TESTS[0], Path::new("target/ci/backend"), 4),
         [

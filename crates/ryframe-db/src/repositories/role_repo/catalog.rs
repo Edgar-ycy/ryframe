@@ -18,20 +18,6 @@ impl RoleRepository {
             .db()
     }
 
-    pub async fn find_super_role(
-        &self,
-        db: &DatabaseConnection,
-        tenant_id: &str,
-    ) -> AppResult<Option<role::Model>> {
-        role::Entity::find()
-            .filter(role::Column::IsSuper.eq(1))
-            .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
-            .filter(role::Column::TenantId.eq(tenant_id))
-            .one(db)
-            .await
-            .db()
-    }
-
     pub async fn find_by_ids(
         &self,
         db: &DatabaseConnection,

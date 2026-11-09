@@ -25,7 +25,7 @@ const CLEANUP_JOBS: &[(&str, &str)] = &[
     ),
     (
         "system.data_retention_cleanup",
-        "system.data.retention.cleanup",
+        "system.data_retention.cleanup",
     ),
 ];
 

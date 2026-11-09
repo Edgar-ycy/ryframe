@@ -1,4 +1,8 @@
-use super::{fixture::Fixture, history};
+use super::{
+    capacity::orchestration::{Prepared, before_identities},
+    fixture::Fixture,
+    history,
+};
 use crate::recovery::clone::native::{
     digest, json as document, lifecycle::state, resources::common,
 };
@@ -108,6 +112,67 @@ fn current_post_amendment_reconstructs_request_and_cleanup_can_select_original_g
         )
         .is_ok()
     );
+}
+
+#[test]
+fn quota_stage_binds_the_effective_amended_request_and_its_exact_descriptor() {
+    let (fixture, descriptor) = amended();
+    let current = history::post(&fixture.backend, &fixture.run, None, None, false).unwrap();
+    let mut request = fixture.request.clone();
+    request["post_copy"] = descriptor.clone();
+    fixture.file("seed-runtime", &request);
+    let (number, _) =
+        state::begin(&fixture.run, "seed-runtime", "quotas-plan", &json!({})).unwrap();
+    let output = fixture
+        .run
+        .join(format!("seed-runtime/attempt-{number:04}"));
+    fs::create_dir_all(&output).unwrap();
+    let accepts = |post: &Value| {
+        Prepared::load(
+            &fixture.backend,
+            &fixture.run,
+            &output,
+            number,
+            post,
+            &request,
+            "quotas-plan",
+        )
+        .is_ok()
+    };
+    assert!(accepts(&current.request));
+    let raw = common::read_bound(&fixture.backend, &descriptor, "修订登记").unwrap();
+    assert!(!accepts(&raw));
+    let original = document::read(&fixture.run.join("post-copy.json")).unwrap();
+    assert!(!accepts(&original));
+}
+
+#[test]
+fn every_identity_session_artifact_blocks_quota_even_when_its_stage_failed() {
+    let mut fixture = Fixture::new();
+    for mode in ["identities-apply", "identities-verify"] {
+        fixture.stage("seed-runtime", mode, None, Some("Interrupted"));
+        let saved = state::load(&fixture.run, true).unwrap();
+        let number = state::attempts(&saved).unwrap().last().unwrap()["number"]
+            .as_u64()
+            .unwrap();
+        let output = fixture
+            .run
+            .join(format!("seed-runtime/attempt-{number:04}"));
+        fs::create_dir_all(&output).unwrap();
+        let check = || before_identities(&fixture.backend, &fixture.run, &fixture.request, &saved);
+        assert!(check().is_ok());
+        for name in [
+            "session-launch.json",
+            "session-process.json",
+            "session.stdout.log",
+            "session.stderr.log",
+        ] {
+            let path = output.join(name);
+            fs::write(&path, b"").unwrap();
+            assert!(check().is_err(), "{mode}: {name}");
+            fs::remove_file(&path).unwrap();
+        }
+    }
 }
 
 #[test]

@@ -4,11 +4,8 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use serde_json::Value;
-
 use super::{
     cli::{CheckCommand, Command, FixtureRuntimeCommand, FixtureServer, RecoveryCommand, parse},
-    recovery::fixture_runtime::private_invocation_at,
     workspace::root_dir,
 };
 
@@ -101,18 +98,14 @@ fn parses_all_runtime_operations_into_three_typed_shapes() {
     assert!(matches!(build, FixtureRuntimeCommand::Build(_)));
 
     for operation in ["verify", "status"] {
-        assert!(matches!(
-            parse_runtime(fixture.arguments(operation)).unwrap(),
-            FixtureRuntimeCommand::Verify(_) | FixtureRuntimeCommand::Status(_)
-        ));
+        let command = parse_runtime(fixture.arguments(operation)).unwrap();
+        assert_eq!(command.operation(), operation);
     }
     for operation in ["start", "stop"] {
         let mut arguments = fixture.arguments(operation);
         arguments.push("--write".to_owned());
-        assert!(matches!(
-            parse_runtime(arguments).unwrap(),
-            FixtureRuntimeCommand::Start(_) | FixtureRuntimeCommand::Stop(_)
-        ));
+        let command = parse_runtime(arguments).unwrap();
+        assert_eq!(command.operation(), operation);
     }
     for (operation, expected) in [
         ("browser", "browser"),
@@ -131,6 +124,43 @@ fn parses_all_runtime_operations_into_three_typed_shapes() {
 }
 
 #[test]
+fn explicit_resume_only_accepts_existing_build_output_with_write_and_no_duplicate_flag() {
+    let fixture = Fixture::new();
+    let mut arguments = fixture.arguments("build");
+    arguments.extend(strings(&["--resume", "--write"]));
+    let command = parse_runtime(arguments.clone()).unwrap();
+    assert!(matches!(command, FixtureRuntimeCommand::ResumeBuild(_)));
+    assert_eq!(command.operation(), "build");
+    assert!(command.writes());
+    let mut duplicate = arguments.clone();
+    duplicate.push("--resume".into());
+    assert!(parse_runtime(duplicate).is_err());
+    let mut missing_write = arguments.clone();
+    missing_write.pop();
+    assert!(parse_runtime(missing_write).is_err());
+    let mut missing_directory = arguments;
+    missing_directory[8] = text(&fixture.directory.join("missing"));
+    assert!(parse_runtime(missing_directory).is_err());
+    for operation in [
+        "verify",
+        "start",
+        "stop",
+        "status",
+        "bind",
+        "browser",
+        "browser-verify",
+        "browser-close",
+    ] {
+        let mut wrong_operation = fixture.arguments(operation);
+        wrong_operation.push("--resume".into());
+        assert!(parse_runtime(wrong_operation).is_err(), "{operation}");
+    }
+    let mut ordinary = fixture.arguments("build");
+    ordinary.push("--write".into());
+    assert!(parse_runtime(ordinary).is_err());
+}
+
+#[test]
 fn parses_bind_with_new_exactly_named_binding() {
     let fixture = Fixture::new();
     let binding = fixture.runtime.join("browser-binding-r25-business.json");
@@ -145,12 +175,6 @@ fn parses_bind_with_new_exactly_named_binding() {
         "--write",
     ]));
     let command = parse_runtime(arguments).unwrap();
-    let invocation = private_invocation_at(&command, &root_dir()).unwrap();
-    let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
-    assert_eq!(protocol["browser_binding"], text(&binding));
-    assert_eq!(protocol["run_id"], "r25-business");
-    assert_eq!(protocol["server"], "preview");
-    assert_eq!(protocol["write"], true);
     assert_eq!(
         command,
         FixtureRuntimeCommand::Bind {
@@ -217,7 +241,7 @@ fn rejects_paths_outside_the_current_backend_or_with_wrong_state() {
 }
 
 #[test]
-fn rejects_browser_binding_drift_before_dispatch() {
+fn rejects_browser_binding_parent_server_and_run_id_before_dispatch() {
     let fixture = Fixture::new();
     let other = fixture.directory.join("other");
     fs::create_dir(&other).unwrap();
@@ -260,36 +284,7 @@ fn rejects_browser_binding_drift_before_dispatch() {
 }
 
 #[test]
-fn private_invocation_has_no_path_arguments_and_an_exact_read_only_protocol() {
-    let fixture = Fixture::new();
-    let command = parse_runtime(fixture.arguments("verify")).unwrap();
-    let invocation = private_invocation_at(&command, &root_dir()).unwrap();
-    assert_eq!(
-        invocation.script,
-        "tools/python/reference_fixture_runtime.py"
-    );
-    assert!(!invocation.protocol.contains(['\n', '\r', '\0']));
-    let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
-    assert_eq!(
-        protocol.as_object().unwrap().keys().collect::<Vec<_>>(),
-        [
-            "backend_dir",
-            "environment",
-            "format_version",
-            "native_tool",
-            "operation",
-            "output",
-            "write"
-        ]
-    );
-    assert_eq!(protocol["operation"], "verify");
-    assert_eq!(protocol["write"], false);
-    assert_eq!(protocol["environment"], text(&fixture.environment));
-    assert_eq!(protocol["output"], text(&fixture.runtime));
-}
-
-#[test]
-fn rejects_reparse_or_link_components_before_protocol_creation() {
+fn rejects_reparse_or_link_components_before_dispatch() {
     let fixture = Fixture::new();
     let linked = fixture.directory.join("linked-runtime");
     create_directory_link(&fixture.runtime, &linked);

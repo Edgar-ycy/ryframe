@@ -16,6 +16,8 @@ use crate::Result;
 #[path = "../../../../../tests/unit/recovery/clone/native/export/producers.rs"]
 mod producer_tests;
 
+pub(crate) mod copy;
+
 pub(crate) fn generation(context: &Context) -> Result<Value> {
     let bindings = array(&context.manifest["build_bridges"], "显式构建来源审计")?;
     let scope = bridge::scope::Scope::load(&context.backend, bindings, &[])?;
@@ -23,6 +25,15 @@ pub(crate) fn generation(context: &Context) -> Result<Value> {
 }
 
 pub(crate) fn generation_in(context: &Context, scope: &bridge::scope::Scope) -> Result<Value> {
+    generation_observed(context, scope, require_closed_runtime_ports, false)
+}
+
+fn generation_observed(
+    context: &Context,
+    scope: &bridge::scope::Scope,
+    require_ports: fn(&str, &str) -> Result<()>,
+    require_producer_names: bool,
+) -> Result<Value> {
     let build_path = manifest::bound_file(
         &context.backend,
         context.request.get("backend_build").unwrap(),
@@ -47,7 +58,7 @@ pub(crate) fn generation_in(context: &Context, scope: &bridge::scope::Scope) -> 
         return Err("源 runtime scope 与请求不一致".into());
     }
     let processes = runtime_processes(context, &build, &runtime)?;
-    let producers = producers(context, &processes)?;
+    let producers = producers(context, &processes, require_producer_names)?;
     let (api_configuration, api_files) = runtime_configuration(context, &runtime, "api")?;
     let (worker_configuration, worker_files) = runtime_configuration(context, &runtime, "worker")?;
     if api_configuration["jobs"]["mode"].as_str() != Some("external")
@@ -66,8 +77,7 @@ pub(crate) fn generation_in(context: &Context, scope: &bridge::scope::Scope) -> 
         .ok_or("源 runtime 缺少 Worker 就绪地址")?;
     verify_api_address(api, &api_configuration)?;
     verify_worker_address(worker, &worker_configuration)?;
-    common::require_closed_port(api)?;
-    common::require_closed_port(worker)?;
+    require_ports(api, worker)?;
     if runtime_configuration(context, &runtime, "api")?.1 != api_files
         || runtime_configuration(context, &runtime, "worker")?.1 != worker_files
     {
@@ -80,7 +90,7 @@ pub(crate) fn generation_in(context: &Context, scope: &bridge::scope::Scope) -> 
         "runtime": runtime,
         "processes": processes,
         "operator_declared_producers": producers,
-        "physical_binding": physical_binding(context)?,
+        "physical_binding": physical_binding(context, &runtime)?,
         "maintenance": maintenance,
         "request_sha256": digest::plan_hash(&context.request)?,
         "external_writers_discovered": false,
@@ -91,12 +101,19 @@ pub(crate) fn generation_in(context: &Context, scope: &bridge::scope::Scope) -> 
     Ok(proof)
 }
 
+fn require_closed_runtime_ports(api: &str, worker: &str) -> Result<()> {
+    common::require_closed_port(api)?;
+    let worker = worker
+        .strip_suffix("/readyz")
+        .ok_or("Worker 就绪地址必须以 /readyz 结尾")?;
+    common::require_closed_port(worker)
+}
+
 fn verify_runtime_contract(context: &Context, path: &Path, expected: &Value) -> Result<()> {
-    if context.environment.len() != 1
-        || context.environment.get("APP_ENV").map(String::as_str) != Some("test")
-    {
-        return Err("源完整运行契约必须仅使用 APP_ENV=test".into());
-    }
+    super::super::seed::runtime_model::validate_api_environment(
+        &context.backend,
+        &context.environment,
+    )?;
     let directory = path.parent().ok_or("源运行收据缺少所在目录")?;
     let actual = crate::recovery::fixture_control::verify_full_stack_runtime(
         &context.execution_backend,
@@ -186,7 +203,11 @@ fn verify_maintenance(
     Ok(receipt)
 }
 
-fn producers(context: &Context, processes: &BTreeMap<String, Value>) -> Result<Vec<Value>> {
+fn producers(
+    context: &Context,
+    processes: &BTreeMap<String, Value>,
+    require_names: bool,
+) -> Result<Vec<Value>> {
     let path = manifest::bound_file(
         &context.backend,
         context.request.get("producers_registry").unwrap(),
@@ -201,8 +222,18 @@ fn producers(context: &Context, processes: &BTreeMap<String, Value>) -> Result<V
         runtime_sha,
         processes,
     )?;
+    if require_names {
+        for producer in &result {
+            super::input::validate_name(text(&producer["name"], "producer 名称")?)?;
+        }
+    }
     for producer in &result {
-        require_stopped(&producer["identity"])?;
+        super::super::seed::source_registration::quiet::require_stopped(
+            &context.backend,
+            &context.run_dir,
+            &producer["identity"],
+            &crate::recovery::fixture_control::portable_path(&std::env::current_exe()?),
+        )?;
     }
     manifest::bound_file(
         &context.backend,
@@ -213,7 +244,7 @@ fn producers(context: &Context, processes: &BTreeMap<String, Value>) -> Result<V
     Ok(result)
 }
 
-fn validate_registry(
+pub(crate) fn validate_registry(
     registry: &Value,
     scope: &Value,
     runtime_sha: &str,
@@ -269,33 +300,6 @@ fn validate_registry(
     Ok(result)
 }
 
-fn require_stopped(identity: &Value) -> Result<()> {
-    let pid = identity
-        .get("pid")
-        .and_then(Value::as_u64)
-        .and_then(|value| u32::try_from(value).ok())
-        .ok_or("producer PID 无效")?;
-    let original = identity
-        .get("started")
-        .and_then(Value::as_str)
-        .ok_or("producer 创建代次无效")?
-        .parse::<u128>()
-        .map_err(|_| "producer 创建代次无效")?;
-    let Some(current) = common::process_identity(pid)? else {
-        return Ok(());
-    };
-    validate_identity(&current, "当前 producer 身份")?;
-    let started = current
-        .get("started")
-        .and_then(Value::as_str)
-        .and_then(|value| value.parse::<u128>().ok())
-        .ok_or("当前 producer 创建代次无效")?;
-    if started <= original {
-        return Err("登记 producer 尚未停止或当前创建代次不明确".into());
-    }
-    Ok(())
-}
-
 fn validate_identity<'a>(value: &'a Value, label: &str) -> Result<&'a Value> {
     let original = value;
     let value = exact(original, &["pid", "started", "executable"], label)?;
@@ -319,20 +323,21 @@ fn validate_identity<'a>(value: &'a Value, label: &str) -> Result<&'a Value> {
     Ok(original)
 }
 
-fn physical_binding(context: &Context) -> Result<Value> {
-    let mut databases = Vec::new();
-    for database in context.databases()? {
-        databases.push(json!({
-            "key": database["key"],
-            "kind": database["kind"],
-            "server_uuid": database["server_uuid"],
-            "database": database["database"],
-        }));
+fn physical_binding(context: &Context, runtime: &Value) -> Result<Value> {
+    let configuration = super::super::s3::app_configuration::configuration_value(
+        &context.backend,
+        Path::new(text(&runtime["api_config_dir"], "源API配置目录")?),
+        "test",
+    )?;
+    if context.source()["s3"]["configuration"] != configuration {
+        return Err("源对象绑定不属于实际API运行配置；请重新登记来源".into());
     }
-    Ok(json!({
-        "scope_id": context.source()["scope_id"],
-        "object_endpoint": context.source()["s3"]["endpoint"],
-        "databases": databases,
+    crate::recovery::source::evidence::binding::physical(&json!({
+        "backend": context.execution_backend,
+        "evidence_root": context.backend,
+        "source": context.source(),
+        "app_env": "test",
+        "config_dir": runtime["api_config_dir"],
     }))
 }
 
@@ -342,6 +347,7 @@ fn runtime_configuration(
     role: &str,
 ) -> Result<(Value, BTreeMap<String, Value>)> {
     super::super::s3::app_configuration::runtime_configuration(
+        &context.backend,
         &context.execution_backend,
         &context.environment,
         runtime,
@@ -349,7 +355,7 @@ fn runtime_configuration(
     )
 }
 
-fn verify_api_address(url: &str, configuration: &Value) -> Result<()> {
+pub(crate) fn verify_api_address(url: &str, configuration: &Value) -> Result<()> {
     let host = configuration["app"]["host"]
         .as_str()
         .ok_or("源 TOML 配置缺少 app.host")?;
@@ -378,7 +384,7 @@ fn verify_api_address(url: &str, configuration: &Value) -> Result<()> {
     Ok(())
 }
 
-fn verify_worker_address(url: &str, configuration: &Value) -> Result<()> {
+pub(crate) fn verify_worker_address(url: &str, configuration: &Value) -> Result<()> {
     let jobs = &configuration["jobs"];
     let port = jobs["health_port"]
         .as_u64()
@@ -437,9 +443,11 @@ mod tests {
         let context = Context {
             backend: root.clone(),
             run_dir: root.clone(),
+            output_dir: root.join("e0001"),
             mode: "run".into(),
             attempt: 1,
             manifest: Value::Null,
+            object_identity: json!({}),
             request: Value::Null,
             request_path: root.join("request.json"),
             environment: BTreeMap::from([("APP_ENV".into(), "test".into())]),
@@ -458,5 +466,70 @@ mod tests {
             .environment
             .insert("APP_APP_PORT".into(), "18210".into());
         assert!(runtime_configuration(&overridden, &runtime, "api").is_err());
+    }
+
+    #[test]
+    fn external_product_uses_coordinator_role_configuration_without_rebinding() {
+        use super::super::super::target_verify::input::request_configuration::{
+            configuration_files, configuration_identity,
+        };
+
+        let fixture = tempfile::tempdir_in(crate::workspace::root_dir()).unwrap();
+        let coordinator = fixture.path().to_path_buf();
+        let local = coordinator.join(".local-tests");
+        let execution = local.join("published/backend");
+        let api = local.join("run/post-copy/runtime-configuration/config");
+        let worker = local.join("run/post-copy/runtime-configuration/worker-config");
+        let private = local.join("private-temp");
+        let environment = BTreeMap::from([
+            ("APP_ENV".to_owned(), "test".to_owned()),
+            ("TEMP".to_owned(), private.to_str().unwrap().to_owned()),
+            ("TMP".to_owned(), private.to_str().unwrap().to_owned()),
+        ]);
+        let selected = "[app]\nhost='127.0.0.1'\nport=18210\n";
+        for directory in [&execution, &api, &worker, &private] {
+            std::fs::create_dir_all(directory).unwrap();
+        }
+        for directory in [&api, &worker] {
+            std::fs::write(directory.join("app.test.toml"), selected).unwrap();
+        }
+        let outside = coordinator.join("unmanaged-config");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("app.test.toml"), selected).unwrap();
+        let contract_sha = |directory: &Path| {
+            let (directory, files) =
+                configuration_files(&coordinator, &environment, Some(&json!(directory))).unwrap();
+            configuration_identity(&directory, &files).unwrap()
+        };
+        let runtime = json!({"backend_root":execution,
+            "api_config_dir":api,"api_configuration_sha256":contract_sha(&api),
+            "worker_config_dir":worker,"worker_configuration_sha256":contract_sha(&worker)});
+        let outside_sha = contract_sha(&outside);
+        let context = Context {
+            backend: coordinator.clone(),
+            run_dir: local.join("run"),
+            output_dir: local.join("run/e0001"),
+            mode: "source-register".into(),
+            attempt: 1,
+            manifest: Value::Null,
+            object_identity: json!({}),
+            request: Value::Null,
+            request_path: local.join("run/request.json"),
+            environment,
+            execution_backend: execution,
+        };
+
+        for role in ["api", "worker"] {
+            let (table, files) = runtime_configuration(&context, &runtime, role).unwrap();
+            assert_eq!(table["app"]["port"], 18210);
+            assert_eq!(files.len(), 1);
+        }
+        std::fs::write(worker.join("app.test.toml"), "[app]\nport=18211\n").unwrap();
+        assert!(runtime_configuration(&context, &runtime, "worker").is_err());
+
+        let mut rebound = runtime;
+        rebound["api_config_dir"] = json!(outside);
+        rebound["api_configuration_sha256"] = json!(outside_sha);
+        assert!(runtime_configuration(&context, &rebound, "api").is_err());
     }
 }

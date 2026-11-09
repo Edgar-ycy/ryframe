@@ -11,7 +11,7 @@ use super::super::json as json_io;
 use crate::Result;
 
 #[path = "inventory_history.rs"]
-mod inventory_history;
+pub(in crate::recovery) mod inventory_history;
 
 const MARKER: &str = "__target-evidence";
 const MAX_BYTES: u64 = 1024 * 1024;
@@ -60,6 +60,9 @@ pub(crate) fn run_hidden_if_requested() -> Option<i32> {
 }
 
 const DIAGNOSTICS: &[&str] = &[
+    super::storage::redis_layout::WINDOWS_REQUIRED,
+    super::database::model::TABLE_SET_ERROR,
+    super::evidence_reset::MANIFEST_VERSION_ERROR,
     "reset 报告或账本不属于当前精确 plan",
     "reset 有未完成阶段或锁释放证据缺失",
     "reset 存在未确认资源",
@@ -115,6 +118,7 @@ const DIAGNOSTICS: &[&str] = &[
     "reset plan 对象端点或五桶不符",
     "reset plan 对象前缀越界",
     "reset plan Redis namespace、端点或 sentinel 不符",
+    super::reset::TERMINAL_VERSION_ERROR,
     "维护 CLI 在执行前发生变化",
     "初始化失败、仍持锁或观察目录无效",
     "初始化失败之前的 prepare 失败尚未显式收尾",
@@ -327,9 +331,13 @@ pub(crate) fn execute(bytes: &[u8]) -> Result<Value> {
         return super::cli::execute(backend, target, operation, &value["arguments"]);
     }
     let extra = match operation {
-        "reset-completed" => &["manifest", "sha"][..],
-        "reset-plan" => &["path", "executable", "plan"][..],
-        "history" => &[][..],
+        "process-argv" => &["receipt", "identity"][..],
+        "storage-generation" => &["expected", "actual", "runtime", "cache_runtime"][..],
+        "storage-layout" => &["request", "storage", "runtime", "cache_runtime"][..],
+        "fixture-storage-selection" => &["request", "storage_run"][..],
+        "fixture-storage-layout" => &["request", "storage_run", "selection"][..],
+        "redis-initialized-state" => &["request", "storage_run", "redis", "cache_runtime"][..],
+        "history" | "reset-completed" => &[][..],
         "initial-inventory" => &["receipt", "resumed"][..],
         "inventory-history" => &["initial", "request", "resumed", "inventory_directory"][..],
         "migration-operations" => &["executable"][..],
@@ -364,6 +372,14 @@ pub(crate) fn execute(bytes: &[u8]) -> Result<Value> {
 
 fn dispatch(backend: &Path, target: &Path, operation: &str, value: &Value) -> Result<Value> {
     match operation {
+        "process-argv"
+        | "storage-generation"
+        | "storage-layout"
+        | "fixture-storage-selection"
+        | "fixture-storage-layout"
+        | "redis-initialized-state" => {
+            super::storage::protocol::execute(backend, target, operation, value)
+        }
         "inventory-history" => inventory_history::verify(backend, target, value),
         "migration-resume-state" => super::resume_state::state(
             backend,
@@ -375,13 +391,28 @@ fn dispatch(backend: &Path, target: &Path, operation: &str, value: &Value) -> Re
                 .ok_or("初始化锁标志必须为布尔值")?,
         ),
         "migration-resume-confirmed" => Ok(
-            json!({"confirmed":super::resume_confirmed::confirmed(backend,target,&value["initialized"])}),
+            json!({"confirmed":super::resume_confirmed::confirmed(backend,target,&value["initialized"],None)}),
         ),
         "creation-evidence" => {
             super::evidence_creation::creation(backend, target, &value["request"])
         }
         "reset-evidence" => {
-            super::evidence_reset::aggregate(backend, target, &value["request"], &value["original"])
+            if target.join("initialized.json").try_exists()? {
+                super::evidence_reset::history(
+                    backend,
+                    target,
+                    &value["request"],
+                    &value["original"],
+                    None,
+                )
+            } else {
+                super::evidence_reset::aggregate(
+                    backend,
+                    target,
+                    &value["request"],
+                    &value["original"],
+                )
+            }
         }
         "initialization-paths" => Ok(
             json!({"paths":super::evidence_creation::paths(target,&value["creation"],&value["reset"],&value["prefix"])?}),
@@ -406,9 +437,10 @@ fn dispatch(backend: &Path, target: &Path, operation: &str, value: &Value) -> Re
         "initialization-failure" => {
             super::evidence_prepare::failure_path(backend, target, &value["request_descriptor"])
         }
-        "migration-operations" => {
-            super::resume_prefix::operations(json_io::text(&value["executable"], "迁移程序")?)
-        }
+        "migration-operations" => super::resume_prefix::operations(
+            json_io::text(&value["executable"], "迁移程序")?,
+            &json_io::read(&target.join("request.json"))?,
+        ),
         "migration-prefix" => super::resume_prefix::prefix(
             backend,
             target,
@@ -420,19 +452,7 @@ fn dispatch(backend: &Path, target: &Path, operation: &str, value: &Value) -> Re
         "migration-operation-record" => {
             super::resume_prefix::operation_record(backend, target, &value["migration_operation"])
         }
-        "reset-completed" => super::reset::completed(
-            backend,
-            target,
-            &value["manifest"],
-            json_io::text(&value["sha"], "reset 摘要")?,
-        ),
-        "reset-plan" => super::reset::plan_receipt(
-            backend,
-            target,
-            Path::new(json_io::text(&value["path"], "reset 命令收据")?),
-            json_io::text(&value["executable"], "reset 程序")?,
-            &value["plan"],
-        ),
+        "reset-completed" => reset_completed(backend, target),
         "history" => super::proof::history(backend, target),
         "initial-inventory" => {
             super::proof::initial_inventory(
@@ -447,4 +467,25 @@ fn dispatch(backend: &Path, target: &Path, operation: &str, value: &Value) -> Re
         }
         _ => unreachable!(),
     }
+}
+
+fn reset_completed(backend: &Path, target: &Path) -> Result<Value> {
+    let paths = ["request.json", "prepare.json", "initialized.json"].map(|name| target.join(name));
+    let protected = super::guard::Inputs::open(paths.iter().cloned())?;
+    let request = json_io::read(&paths[0])?;
+    let prepared = json_io::read(&paths[1])?;
+    let initialized = json_io::read(&paths[2])?;
+    let result =
+        super::evidence_reset::history(backend, target, &request, &prepared["generation"], None)?;
+    let completed = &result["completed"];
+    if initialized["status"] != "fresh_target_initialized"
+        || initialized["generation"] != prepared["generation"]
+        || initialized["id"] != request["id"]
+        || initialized["scope_id"] != request["target"]["scope_id"]
+        || *completed != initialized["reset"]
+    {
+        return Err("reset 完成投影与初始化终态不一致".into());
+    }
+    protected.check()?;
+    Ok(completed.clone())
 }

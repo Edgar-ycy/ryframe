@@ -6,9 +6,50 @@ use std::{
 
 use serde_json::{Value, json};
 
-use super::super::{json as json_io, resources::common};
-use crate::Result;
+use super::super::{
+    json as json_io, resources::common,
+    target_verify::input::request_configuration::python_configuration_hash,
+};
+use crate::{
+    Result,
+    recovery::fixture_control::{
+        artifact::runtime::configuration_digest, services::lifecycle::readonly::process,
+    },
+};
 
+/// 产品根只来自已经绑定的运行合同；证据目录仍由协调根单独核验。
+pub(crate) fn product_root(coordinator: &std::path::Path, runtime: &Value) -> Result<PathBuf> {
+    use crate::local_test_path::{LocalTestPathKind, validate_absolute_path};
+    let root = PathBuf::from(json_io::text(&runtime["backend_root"], "运行产品根")?);
+    validate_absolute_path(&root, LocalTestPathKind::ExistingDirectory)?;
+    let canonical = crate::recovery::fixture_control::portable_path(&root.canonicalize()?);
+    if canonical != root {
+        return Err("运行产品根必须是规范普通目录".into());
+    }
+    if root != coordinator {
+        common::local_directory(coordinator, &root, "发布运行产品根")?;
+    }
+    Ok(root)
+}
+/// 来源选择与已登记产品桥接必须独立指向同一根；不从构建收据补造字段。
+pub(crate) fn selected_product_root(
+    coordinator: &std::path::Path,
+    target: &Value,
+    scope: &super::super::bridge::scope::Scope,
+    build_path: &std::path::Path,
+    build: &Value,
+) -> Result<PathBuf> {
+    let (selected, _) = super::super::target_verify::input::request::execution_backend(
+        coordinator,
+        target.get("execution_backend"),
+        &super::super::target_verify::input::request::SystemSourceObserver,
+    )?;
+    let registered = scope.registered_product_root(build_path, build)?;
+    if selected != registered {
+        return Err("目标产品根与本运行已核验构建桥接根不一致".into());
+    }
+    product_root(coordinator, &json!({"backend_root":selected}))
+}
 pub(super) fn proof(request: &Value) -> Result<Value> {
     let root = json_io::exact(
         request,
@@ -20,12 +61,17 @@ pub(super) fn proof(request: &Value) -> Result<Value> {
     if std::env::var("APP_ENV").as_deref() != Ok("test") {
         return Err("运行来源核验只允许 APP_ENV=test".into());
     }
-    let canonical = backend.canonicalize()?;
+    let canonical = crate::recovery::fixture_control::portable_path(&backend.canonicalize()?);
     if canonical != backend {
         return Err("后端目录必须是规范绝对路径".into());
     }
     let directory = common::local_directory(&backend, &directory, "运行目录")?;
-    let runtime = contract(&backend, &directory)?;
+    let declared = json_io::read(&directory.join("runtime.json"))?;
+    let product = product_root(&backend, &declared)?;
+    let runtime = contract(&backend, &product, &directory)?;
+    if runtime != declared {
+        return Err("运行来源合同在核对期间发生变化".into());
+    }
     let scope = json_io::text(&root["scope_id"], "运行 scope")?;
     if runtime["scope_id"] != scope {
         return Err("运行来源 scope 不匹配".into());
@@ -48,11 +94,15 @@ pub(super) fn proof(request: &Value) -> Result<Value> {
     if identity["executable"] != runtime["artifacts"]["api"]["path"] {
         return Err("API 内核进程与运行收据产物不匹配".into());
     }
-    listener(json_io::text(&root["api_url"], "API 地址")?, pid)?;
+    listener(json_io::text(&root["api_url"], "API 地址")?, &identity)?;
     Ok(json!({"runtime":runtime,"api_process":identity}))
 }
 
-fn contract(backend: &std::path::Path, directory: &std::path::Path) -> Result<Value> {
+pub(crate) fn contract(
+    coordinator: &std::path::Path,
+    product: &std::path::Path,
+    directory: &std::path::Path,
+) -> Result<Value> {
     let runtime = json_io::read(&directory.join("runtime.json"))?;
     json_io::exact(
         &runtime,
@@ -70,7 +120,7 @@ fn contract(backend: &std::path::Path, directory: &std::path::Path) -> Result<Va
         ],
         "运行收据",
     )?;
-    if runtime["format_version"] != 1 || runtime["backend_root"] != json!(backend) {
+    if runtime["format_version"] != 1 || runtime["backend_root"] != json!(product) {
         return Err("运行收据版本或后端目录不匹配".into());
     }
     let api = path(&runtime["api_config_dir"], "API 配置目录")?;
@@ -81,19 +131,20 @@ fn contract(backend: &std::path::Path, directory: &std::path::Path) -> Result<Va
     {
         return Err("运行收据必须绑定同一受管配置根".into());
     }
-    common::local_directory(backend, &api, "API 配置目录")?;
-    common::local_directory(backend, &worker, "Worker 配置目录")?;
+    common::local_directory(coordinator, &api, "API 配置目录")?;
+    common::local_directory(coordinator, &worker, "Worker 配置目录")?;
     let api_digest = configuration_digest(&api)?;
     let worker_digest = configuration_digest(&worker)?;
     if runtime["api_configuration_sha256"] != api_digest
         || runtime["worker_configuration_sha256"] != worker_digest
-        || runtime["configuration_sha256"] != python_hash(&json!([api_digest, worker_digest]))?
+        || runtime["configuration_sha256"]
+            != python_configuration_hash(&json!([api_digest, worker_digest]))?
     {
         return Err("运行收据与绑定配置摘要不匹配".into());
     }
-    let mut api_table = crate::rate_limit::load_app_table(backend, Some(&api), "test")
+    let mut api_table = crate::rate_limit::load_app_table(product, Some(&api), "test")
         .map_err(|error| error.message().to_owned())?;
-    let mut worker_table = crate::rate_limit::load_app_table(backend, Some(&worker), "test")
+    let mut worker_table = crate::rate_limit::load_app_table(product, Some(&worker), "test")
         .map_err(|error| error.message().to_owned())?;
     let api_id = api_table
         .remove("snowflake_worker_id")
@@ -130,20 +181,6 @@ fn contract(backend: &std::path::Path, directory: &std::path::Path) -> Result<Va
     Ok(runtime)
 }
 
-fn configuration_digest(directory: &std::path::Path) -> Result<String> {
-    let mut files = serde_json::Map::new();
-    for name in ["app.toml", "app.test.toml"] {
-        let file = directory.join(name);
-        if name == "app.toml" && !file.exists() {
-            continue;
-        }
-        files.insert(name.into(), common::binding(&file)?["sha256"].clone());
-    }
-    python_hash(
-        &json!({"environment":{"APP_ENV":"test"},"config_directory":directory,"files":files}),
-    )
-}
-
 fn verify_artifacts(directory: &std::path::Path, runtime: &Value) -> Result<()> {
     json_io::exact(&runtime["artifacts"], &["api", "worker"], "运行产物")?;
     let binaries = json_io::read(&directory.join("binaries.json"))?;
@@ -168,82 +205,51 @@ fn verify_artifacts(directory: &std::path::Path, runtime: &Value) -> Result<()> 
     Ok(())
 }
 
-fn python_hash(value: &Value) -> Result<String> {
-    use sha2::{Digest, Sha256};
-    Ok(hex::encode(Sha256::digest(python_json(value)?.as_bytes())))
-}
-
-fn python_json(value: &Value) -> Result<String> {
-    Ok(match value {
-        Value::Object(fields) => format!(
-            "{{{}}}",
-            fields
-                .iter()
-                .map(|(key, value)| Ok(format!(
-                    "{}: {}",
-                    python_json(&json!(key))?,
-                    python_json(value)?
-                )))
-                .collect::<Result<Vec<_>>>()?
-                .join(", ")
-        ),
-        Value::Array(values) => format!(
-            "[{}]",
-            values
-                .iter()
-                .map(python_json)
-                .collect::<Result<Vec<_>>>()?
-                .join(", ")
-        ),
-        Value::String(_) => {
-            let encoded = serde_json::to_string(value)?;
-            let mut output = String::new();
-            for character in encoded.chars() {
-                if character.is_ascii() {
-                    output.push(character);
-                } else {
-                    for unit in character.encode_utf16(&mut [0; 2]) {
-                        use std::fmt::Write;
-                        write!(output, "\\u{unit:04x}")?;
-                    }
-                }
-            }
-            output
-        }
-        value => serde_json::to_string(value)?,
-    })
-}
-
-fn listener(value: &str, pid: u32) -> Result<()> {
+pub(crate) fn listener(value: &str, identity: &Value) -> Result<()> {
     let url = url::Url::parse(value).map_err(|_| "API 地址无效")?;
-    let host = url.host_str().ok_or("API 地址缺少主机")?;
+    let ip = match url.host() {
+        Some(url::Host::Ipv4(ip)) => IpAddr::V4(ip),
+        Some(url::Host::Ipv6(ip)) => IpAddr::V6(ip),
+        _ => return Err("API 地址必须使用明确 IP".into()),
+    };
     let port = url.port_or_known_default().ok_or("API 地址缺少端口")?;
-    let ip: IpAddr = host.parse().map_err(|_| "API 地址必须使用明确 IP")?;
+    process::require(identity)?;
+    let pid = u32::try_from(identity["pid"].as_u64().ok_or("API PID 无效")?)
+        .map_err(|_| "API PID 超出范围")?;
     TcpStream::connect_timeout(&SocketAddr::new(ip, port), Duration::from_secs(2))
         .map_err(|_| "API 监听端口不可达")?;
+    // 连接探测与所有者观察共用该完整身份窗口，不把 PID 当作代次凭据。
+    process::require(identity)?;
     listener_owner(port, pid)?;
-    Ok(())
+    process::require(identity)
 }
 
 #[cfg(windows)]
 fn listener_owner(port: u16, pid: u32) -> Result<()> {
-    let script = format!(
-        "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); @(Get-NetTCPConnection -State Listen -LocalPort {port} | Select-Object LocalAddress,OwningProcess) | ConvertTo-Json -Compress"
-    );
-    let output = std::process::Command::new("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .output()?;
-    if !output.status.success() {
-        return Err("API 监听所有者无法核验".into());
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Row {
+        #[serde(rename = "LocalAddress")]
+        address: String,
+        #[serde(rename = "LocalPort")]
+        port: u16,
+        #[serde(rename = "OwningProcess")]
+        owner: u32,
+        #[serde(rename = "State")]
+        state: u8,
     }
-    let value: Value = serde_json::from_slice(&output.stdout)?;
-    let rows = value.as_array().ok_or("API 监听观察必须是列表")?;
+    let connection = wmi::WMIConnection::with_namespace_path("ROOT\\StandardCimv2")
+        .map_err(|_| "API 监听 CIM 连接失败；检查本机读取权限，保留现场")?;
+    let rows: Vec<Row> = connection.raw_query(format!(
+        "SELECT LocalAddress,LocalPort,OwningProcess,State FROM MSFT_NetTCPConnection WHERE LocalPort={port} AND State=2"))
+        .map_err(|_| "API 监听 CIM 查询失败；检查本机读取权限，保留现场")?;
+    for row in &rows {
+        if row.port != port || row.state != 2 || row.address.parse::<IpAddr>().is_err() {
+            return Err("API 监听 CIM 返回不符合固定查询的记录".into());
+        }
+    }
     if !rows.iter().any(|row| {
-        row["OwningProcess"].as_u64() == Some(u64::from(pid))
-            && matches!(
-                row["LocalAddress"].as_str(),
-                Some("127.0.0.1" | "0.0.0.0" | "::1" | "::")
-            )
+        row.owner == pid && matches!(row.address.as_str(), "127.0.0.1" | "0.0.0.0" | "::1" | "::")
     }) {
         return Err("API 监听端口不属于登记进程".into());
     }
@@ -294,4 +300,43 @@ fn path(value: &Value, label: &str) -> Result<PathBuf> {
         return Err(format!("{label}必须是绝对路径").into());
     }
     Ok(path)
+}
+
+#[cfg(all(test, windows))]
+#[test]
+#[ignore = "需要本机 CIM 权限；仅观察本测试进程的四种回环/通配临时监听"]
+fn current_process_listener_proof_preserves_ipv4_ipv6_and_creation_identity() {
+    let identity = common::process_identity(std::process::id())
+        .unwrap()
+        .unwrap();
+    for (binding, destination) in [
+        ("127.0.0.1", "127.0.0.1"),
+        ("0.0.0.0", "127.0.0.1"),
+        ("::1", "::1"),
+        ("::", "::1"),
+    ] {
+        let ip: IpAddr = binding.parse().unwrap();
+        let socket = std::net::TcpListener::bind(SocketAddr::new(ip, 0)).unwrap();
+        let port = socket.local_addr().unwrap().port();
+        let destination: IpAddr = destination.parse().unwrap();
+        let url = format!("http://{}", SocketAddr::new(destination, port));
+        listener(&url, &identity).unwrap();
+        assert_eq!(
+            listener_owner(port, 1).unwrap_err().to_string(),
+            "API 监听端口不属于登记进程"
+        );
+        let mut reused = identity.clone();
+        reused["started"] = json!("1");
+        assert_eq!(
+            listener(&url, &reused).unwrap_err().to_string(),
+            "登记进程已退出或内核创建身份变化"
+        );
+        drop(socket);
+        assert_eq!(
+            listener_owner(port, std::process::id())
+                .unwrap_err()
+                .to_string(),
+            "API 监听端口不属于登记进程"
+        );
+    }
 }

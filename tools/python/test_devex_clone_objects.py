@@ -30,26 +30,7 @@ class ObjectStore:
         self.calls.append((command, kwargs))
         if "__s3-put-if-absent" in command:
             return self.native_put(command, kwargs)
-        bucket, key = command[command.index("--bucket") + 1], command[command.index("--key") + 1]
-        conditional = "--if-none-match" in command and command[command.index("--if-none-match") + 1] == "*"
-        if conditional and (bucket, key) in self.objects:
-            raise subprocess.CalledProcessError(255, command, stderr=b"An error occurred (PreconditionFailed) when calling the PutObject operation: existing")
-        if self.failure in {"AccessDenied", "403", "ConditionalRequestConflict", "409", "UnknownCode"}:
-            message = f"An error occurred ({self.failure}) when calling the PutObject operation: fixture-private-detail"
-            raise subprocess.CalledProcessError(255, command, stderr=message.encode())
-        request = Path(command[command.index("--cli-input-json") + 1].removeprefix("file://"))
-        source = Path(command[command.index("--body") + 1])
-        self.objects[bucket, key] = source.read_bytes(), json.loads(request.read_text(encoding="utf-8"))
-        if self.failure == "timeout-after-write":
-            raise subprocess.TimeoutExpired(command, 1800)
-        if self.failure == "body-changed":
-            source.write_bytes(b"different")
-        output = json.dumps({"ETag": '"fixture-etag"'}).encode()
-        if self.failure == "invalid-response":
-            output = b"not-json"
-        if self.failure == "no-etag":
-            output = b"{}"
-        return subprocess.CompletedProcess(command, 0, stdout=output)
+        raise AssertionError("对象条件写入只接受原生 Rust S3 私有协议")
 
     def native_put(self, command, kwargs):
         request = json.loads(kwargs["input"].decode("utf-8"))
@@ -181,7 +162,6 @@ class CloneObjectTests(unittest.TestCase):
             with self.subTest(failure=failure), self.assertRaises(ObjectCreateError) as caught:
                 self.create()
             self.assertEqual(caught.exception.outcome, outcome)
-            self.assertNotIn("fixture-private-detail", str(caught.exception))
             self.assertEqual(len(self.store.calls), 1)
             self.assertEqual(self.store.objects, {})
 

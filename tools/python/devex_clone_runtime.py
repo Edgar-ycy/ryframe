@@ -203,7 +203,7 @@ def observe(backend: Path, runtime_directory: Path, roles: tuple[str, ...], api_
     results = _observe(directory, receipt, roles, urls, False)
     if verify_runtime(backend, directory) != receipt:
         raise ValueError("运行时收据在无锁观察期间发生变化")
-    verify_api_address(backend, api_url)
+    verify_api_address(backend, api_url, config_dir=Path(receipt["api_config_dir"]))
     return {"format_version": 1, "kind": "devex-clone-runtime-observation",
             "operation": "status", "scope_id": receipt["scope_id"],
             "runtime_directory": str(directory), "processes": results}

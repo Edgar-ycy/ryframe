@@ -40,6 +40,12 @@ pub(super) fn migration(resource: &ResourceIr, header: &str) -> String {
             resource.column("tenant_id"),
         ));
     }
+    definitions.extend(
+        resource
+            .foreign_keys
+            .iter()
+            .map(crate::resource::foreign_key::ddl),
+    );
     let ddl = format!(
         "CREATE TABLE `{}` (\n{}\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE={} COMMENT={}",
         resource.table,

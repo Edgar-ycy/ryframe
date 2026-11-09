@@ -15,6 +15,8 @@ mod registration;
 #[derive(PartialEq, Eq)]
 struct Registered {
     receipt_hash: String,
+    build_path: PathBuf,
+    build_sha256: String,
     build_identity: String,
     inventory: source::Inventory,
     root: PathBuf,
@@ -28,6 +30,28 @@ pub(crate) struct Scope {
 }
 
 impl Scope {
+    /// 只读取本窗口已核验的唯一产品桥接，不为未登记构建推断所属根。
+    pub(crate) fn registered_product_root(&self, path: &Path, receipt: &Value) -> Result<PathBuf> {
+        self.assert_unchanged()?;
+        let result = (|| {
+            if receipt["kind"] != "restore-backend-build" || document::read(path)? != *receipt {
+                return Err("产品根必须绑定实际API/Worker构建收据".into());
+            }
+            let sha = digest::file(path)?.sha256;
+            let key = digest::plan_hash(receipt)?;
+            let mut matches = self.entries.iter().filter(|(_, _, item)| {
+                item.build_path == path && item.build_sha256 == sha && item.receipt_hash == key
+            });
+            let (_, _, entry) = matches.next().ok_or("产品构建没有精确匹配的已登记桥接")?;
+            if matches.next().is_some() {
+                return Err("产品构建所属桥接不唯一".into());
+            }
+            Ok(entry.root.clone())
+        })();
+        self.assert_unchanged()?;
+        result
+    }
+
     pub(crate) fn product(
         &self,
         execution_root: &Path,

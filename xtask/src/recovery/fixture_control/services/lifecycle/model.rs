@@ -31,6 +31,12 @@ pub(super) fn error(message: &'static str) -> Box<dyn Error> {
 pub(super) fn check(valid: bool, message: &'static str) -> Result<()> {
     if valid { Ok(()) } else { Err(error(message)) }
 }
+pub(super) fn reason(error: &(dyn Error + 'static)) -> Option<&'static str> {
+    error
+        .downcast_ref::<LifecycleError>()
+        .map(|error| error.message)
+        .or_else(|| super::super::storage::rejection_reason(error))
+}
 pub(super) fn category(error: &(dyn Error + 'static)) -> &'static str {
     error
         .downcast_ref::<LifecycleError>()
@@ -136,9 +142,14 @@ impl Context {
     }
     pub(super) fn require_current_owner(&self, selected: &Path) -> Result<()> {
         let path = self.owner(selected)?;
+        let recorded = Path::new(text(&self.value["sources"]["state_before"], "path")?);
         check(
-            path == self.run.join("state.json")
-                && binding(&path)? == self.value["sources"]["state_before"],
+            crate::local_test_path::same_local_test_file(
+                &self.backend,
+                recorded,
+                &self.run.join("state.json"),
+            )? && crate::local_test_path::same_local_test_file(&self.backend, &path, recorded)?
+                && binding(recorded)? == self.value["sources"]["state_before"],
             "生命周期操作必须精确绑定 status 返回的当前 state 文件",
         )
     }

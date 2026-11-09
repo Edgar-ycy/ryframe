@@ -1,7 +1,6 @@
 use std::{
     ffi::OsString,
     fs::OpenOptions,
-    io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
@@ -24,7 +23,7 @@ use super::super::{
     },
     resolve_output_at,
 };
-use super::{fs as cgroup_fs, owned_root};
+use super::{cgroup_fs, owned_root};
 
 const CARGO_TIMEOUT: Duration = Duration::from_secs(900);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
@@ -39,7 +38,7 @@ struct TestStart<'a> {
     root_identity: &'a KernelIdentity,
 }
 
-pub(super) fn run_cli(arguments: &[OsString]) -> GateResult<()> {
+pub(in crate::devex::cgroup) fn run_cli(arguments: &[OsString]) -> GateResult<()> {
     if arguments.len() != 2
         || arguments
             .first()
@@ -256,7 +255,7 @@ fn validate_cargo_result(plan: &CgroupPlan, output: &Path, code: i32) -> GateRes
             ),
         ));
     }
-    let mut log = OpenOptions::new()
+    let log = OpenOptions::new()
         .append(true)
         .open(&log_path)
         .map_err(|error| GateError::io("test", "复核 Cargo 验收日志", &log_path, &error))?;

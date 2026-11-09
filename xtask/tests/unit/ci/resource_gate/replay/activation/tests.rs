@@ -3,7 +3,7 @@ use crate::ci::integration_configuration::test_fixture::{BASE, SECRET, fixture};
 use crate::ci::resource_gate::replay::{
     ProcessEnvironment, ReplayRequest, ReplayRuntime, ToolExecutables, execute,
 };
-use std::fs;
+use std::{fs, io::Write};
 
 fn write_roles(root: &Path) {
     for relative in [MYSQL, REDIS] {
@@ -14,10 +14,48 @@ fn write_roles(root: &Path) {
 }
 
 fn request(root: &Path, activation_gate: bool) -> ReplayRequest {
+    let manifest = root.join("manifest.json");
+    if !manifest.exists() {
+        let categories = [
+            "addition",
+            "field",
+            "permission",
+            "relation",
+            "sql",
+            "rename",
+            "delete",
+        ];
+        let cases = (0..20)
+            .map(|index| {
+                serde_json::json!({
+                    "name": format!("case-{index}"),
+                    "category": categories[index % categories.len()],
+                    "base": format!("{:040x}", index + 1),
+                    "head": format!("{:040x}", index + 101),
+                    "frontendBase": format!("{:040x}", index + 201),
+                    "frontendHead": format!("{:040x}", index + 301),
+                    "targetedMode": if index % 2 == 0 { "targeted" } else { "full" },
+                    "expected": if index % 2 == 0 { "pass" } else { "fail" },
+                })
+            })
+            .collect::<Vec<_>>();
+        let command = ["cargo", "xtask", "check", "ci", "resource-gate"];
+        let content = serde_json::to_vec(&serde_json::json!({
+            "formatVersion": 2,
+            "targetedCommand": command,
+            "fullCommand": command,
+            "cases": cases,
+        }))
+        .unwrap();
+        fs::File::create_new(&manifest)
+            .unwrap()
+            .write_all(&content)
+            .unwrap();
+    }
     ReplayRequest {
         backend: root.to_owned(),
         frontend: root.join("frontend"),
-        manifest: root.join("manifest.json"),
+        manifest,
         work_dir: root.join(".local-tests/resource-gate-replay/work"),
         report: root.join(".local-tests/resource-gate-replay/report.json"),
         activation_gate,
@@ -25,6 +63,8 @@ fn request(root: &Path, activation_gate: bool) -> ReplayRequest {
 }
 
 fn early_error(root: &Path, required: bool, value: &str) -> String {
+    let request = request(root, required);
+    let manifest = fs::read(&request.manifest).unwrap();
     let environment: ProcessEnvironment = [
         "RYFRAME_MYSQL_INTEGRATION",
         "RYFRAME_MYSQL_TLS_INTEGRATION",
@@ -36,19 +76,20 @@ fn early_error(root: &Path, required: bool, value: &str) -> String {
     .into_iter()
     .map(|key| (key.into(), value.into()))
     .collect();
-    // 不提供仓库、manifest或可执行工具；配置错误必须先失败，不能启动资源命令。
+    // manifest先正常校验；配置错误须在Git前失败，合法配置仅进入只读Git顶层核验。
     let tools = ToolExecutables {
         corepack: root.join("must-not-run-corepack"),
         sccache: root.join("must-not-run-sccache"),
     };
-    execute(
-        &request(root, required),
+    let result = execute(
+        &request,
         ReplayRuntime {
             base_environment: &environment,
             tools: Some(&tools),
         },
-    )
-    .unwrap_err()
+    );
+    assert_eq!(fs::read(&request.manifest).unwrap(), manifest);
+    result.unwrap_err()
 }
 
 #[test]
@@ -58,7 +99,11 @@ fn activation_rejects_old_flags_without_files_before_any_external_command() {
         let error = early_error(root.path(), true, value);
         assert!(error.contains("必须提供MySQL和Redis"), "{error}");
     }
-    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+    let entries = fs::read_dir(root.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect::<Vec<_>>();
+    assert_eq!(entries, [std::ffi::OsString::from("manifest.json")]);
 }
 
 #[test]
@@ -67,8 +112,8 @@ fn valid_files_ignore_disabled_environment_and_publish_exact_role_bytes() {
     write_roles(root.path());
     let error = early_error(root.path(), true, "0");
     assert!(
-        error.contains("manifest"),
-        "必须已通过配置验证再读取manifest：{error}"
+        error.contains("后端 --repository 必须指向 Git 仓库顶层"),
+        "必须通过manifest及配置验证后才进入Git顶层核验：{error}"
     );
     let inputs = Activation::load(root.path(), true).unwrap();
     let mut environment = BTreeMap::new();
@@ -145,7 +190,16 @@ fn malformed_or_unsafe_present_roles_fail_even_without_activation() {
         fs::write(&path, BASE.replace(from, to)).unwrap();
         for required in [false, true] {
             let error = early_error(root.path(), required, "1");
-            assert!(!error.contains("manifest"), "配置错误未提前失败：{error}");
+            assert!(
+                error.replace('\\', "/").contains(
+                    root.path()
+                        .join(role)
+                        .to_string_lossy()
+                        .replace('\\', "/")
+                        .as_str()
+                ),
+                "必须拒绝当前角色配置：{error}"
+            );
             assert!(!error.contains(SECRET));
         }
         assert!(
@@ -172,7 +226,13 @@ fn missing_selected_file_is_an_error_but_absent_roles_are_recorded_and_guarded()
     for role in [MYSQL, REDIS] {
         let selected = root.path().join(role).join("app.test.toml");
         fs::remove_file(&selected).unwrap();
-        assert!(!early_error(root.path(), false, "1").contains("manifest"));
+        let error = early_error(root.path(), false, "1");
+        assert!(
+            error
+                .replace('\\', "/")
+                .contains(selected.to_string_lossy().replace('\\', "/").as_str()),
+            "必须拒绝缺失的selected文件：{error}"
+        );
         fs::write(&selected, BASE).unwrap();
     }
 }
@@ -254,7 +314,13 @@ fn redis_tls_material_drift_and_missing_pair_fail_without_service_access() {
         ),
     )
     .unwrap();
-    assert!(!early_error(root.path(), false, "1").contains("manifest"));
+    let error = early_error(root.path(), false, "1");
+    assert!(
+        error
+            .replace('\\', "/")
+            .contains(path.to_string_lossy().replace('\\', "/").as_str()),
+        "必须拒绝当前Redis客户端证书配对：{error}"
+    );
 }
 
 #[test]
@@ -298,7 +364,13 @@ fn linked_role_directories_and_selected_files_are_not_treated_as_missing() {
     let saved = root.path().join("saved-mysql");
     fs::rename(&role, &saved).unwrap();
     directory_link(&saved, &role);
-    assert!(!early_error(root.path(), false, "1").contains("manifest"));
+    let error = early_error(root.path(), false, "1");
+    assert!(
+        error
+            .replace('\\', "/")
+            .contains(role.to_string_lossy().replace('\\', "/").as_str()),
+        "必须拒绝链接角色目录：{error}"
+    );
     #[cfg(windows)]
     fs::remove_dir(&role).unwrap();
     #[cfg(unix)]
@@ -310,7 +382,13 @@ fn linked_role_directories_and_selected_files_are_not_treated_as_missing() {
     std::os::unix::fs::symlink(root.path().join("missing.toml"), &selected).unwrap();
     #[cfg(windows)]
     directory_link(root.path(), &selected);
-    assert!(!early_error(root.path(), false, "1").contains("manifest"));
+    let error = early_error(root.path(), false, "1");
+    assert!(
+        error
+            .replace('\\', "/")
+            .contains(selected.to_string_lossy().replace('\\', "/").as_str()),
+        "必须拒绝链接selected文件：{error}"
+    );
     #[cfg(windows)]
     fs::remove_dir(&selected).unwrap();
     #[cfg(unix)]

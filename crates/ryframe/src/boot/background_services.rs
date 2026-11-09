@@ -242,7 +242,10 @@ fn build_extended_services(
     let file = &content.file;
     let job_queue = &content.job_queue;
     let tenant_data_migration = Arc::new(TenantDataMigrationService::new(
-        ryframe_tenant_db::application_ports::tenant_data::tracking(database.clone()),
+        ryframe_tenant_db::application_ports::tenant_data::tracking(
+            database.clone(),
+            authorization_cache.clone(),
+        ),
         Arc::<TenantDatabaseRouter>::clone(&tenant_data),
         Arc::<TenantDatabaseRouter>::clone(&tenant_data),
         job_queue.clone(),
@@ -261,7 +264,8 @@ fn build_extended_services(
         user.clone(),
         file.clone(),
         super::spreadsheet::document_processor(),
-        ryframe_db::application_ports::users::import(database.clone()),
+        ryframe_db::application_ports::users::import(database.clone(), authorization_cache.clone()),
+        authorization_cache.clone(),
         policies.user_import,
     ));
     let tenant_config_transfer = Arc::new(TenantConfigTransferService::new(

@@ -2,7 +2,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from devex_clone_post_actions import Bridge
 from devex_clone_post_process import KINDS, PHASES, producer_command
@@ -41,9 +41,14 @@ class QuotaProducerContractTests(unittest.TestCase):
                     'subject_id': '1', 'tenant_id': 'system', 'username': 'admin',
                     'client_address': '198.19.20.1'}}
         bridge = Bridge.__new__(Bridge)
+        config_dir = root / 'execution/config'
+        target = {'config_dir': str(config_dir), 'execution_backend': {'path': str(root / 'execution')}}
         bridge.context = SimpleNamespace(request=seed, backend=root, directory_root=root / 'run',
             selected={'api_url': 'http://127.0.0.1:9000', 'frontend_url': 'http://127.0.0.1:4000'},
-            target_config={'scope_id': 'fixture'}, output=root / 'run/seed-runtime/attempt-0004')
+            target=target, target_config={'scope_id': 'fixture'}, output=root / 'run/seed-runtime/attempt-0004')
+        configuration = patch('devex_clone_post_actions.application_config_directory', return_value=config_dir)
+        selected_config = configuration.start()
+        self.addCleanup(configuration.stop)
         bridge.producer_owner = None
         bridge.call = Mock(return_value={'subject_id': '1'})
         tenants = ['system', *['tenant-' + str(index) for index in range(10)]]
@@ -57,12 +62,25 @@ class QuotaProducerContractTests(unittest.TestCase):
         self.assertEqual(arguments['attempt'], 4)
         self.assertEqual(arguments['run_dir'], str(root / 'run'))
         self.assertEqual(arguments['config']['contract']['pacing'], post['pacing']['contract'])
+        self.assertEqual(arguments['frontend'], post['frontend_root'])
+        self.assertEqual(arguments['config']['bindings'], {
+            'scope_id': 'fixture', 'api_url': bridge.context.selected['api_url'],
+            'frontend_url': bridge.context.selected['frontend_url'], 'pacing': post['pacing']['bindings'],
+            'app_config_dir': str(config_dir)})
+        selected_config.assert_called_once_with(root, target)
         bridge.context.request = post
         bridge.call.reset_mock()
         bridge.login()
         self.assertNotIn('tenant_ids', bridge.call.call_args.kwargs)
+        self.assertEqual(bridge.call.call_args.kwargs['config']['bindings']['app_config_dir'], str(config_dir))
+        self.assertIs(bridge.context.target, target)
         with self.assertRaises(ValueError):
             bridge.login(template_identities=[])
+        bridge.call.reset_mock()
+        selected_config.side_effect = ValueError('目标配置绑定已漂移')
+        with self.assertRaisesRegex(ValueError, '配置绑定已漂移'):
+            bridge.login()
+        bridge.call.assert_not_called()
 
 
 if __name__ == '__main__':

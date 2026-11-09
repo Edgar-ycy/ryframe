@@ -13,7 +13,7 @@ fn fixture() -> (tempfile::TempDir, Value) {
     (temp, json!({"backend":backend,"directory":directory}))
 }
 
-fn cache_fixture() -> (Value, Value) {
+pub(super) fn cache_fixture() -> (Value, Value) {
     let subjects = json!(
         (0..11)
             .map(|index| json!({"tenant_id":format!("tenant-{index}"),
@@ -25,10 +25,10 @@ fn cache_fixture() -> (Value, Value) {
     )
     .unwrap();
     let payloads = subjects.as_array().unwrap().iter().enumerate().map(|(index, subject)| {
-        let payload = json!({"versions":{"tenant_authorization_epoch":2,"user_authorization_version":1},"tenant_session_version":1,
+        let payload = json!({"versions":{"tenant_authorization_epoch":2,"user_authorization_version":1,"data_scope_version":1},"tenant_session_version":1,
             "principal":{"actor":{"user_id":subject["user_id"],"tenant_id":subject["tenant_id"],"username":"owner","dept_id":null,
-                "dept_path":null,"data_scope":"all","custom_dept_ids":[],"include_self":true,"is_super_admin":false},
-                "tenant_authorization_epoch":2,"preferred_locale":null,"roles":[],"role_ids":[],"permissions":[],"tenant_request_limit_per_minute":600}}).to_string();
+                "dept_path":null,"data_scope":"all","custom_dept_ids":[],"include_self":true,"data_scope_version":1,"is_super_admin":false},
+                "password_change_required":false,"user_authorization_version":1,"data_scope_version":1,"tenant_authorization_epoch":2,"preferred_locale":null,"roles":[],"role_ids":[],"permissions":[],"tenant_request_limit_per_minute":600}}).to_string();
         let absent = index % 2 == 0;
         json!({"types":{"tenant_epoch":"string","user_version":"string","snapshot":if absent {"none"} else {"hash"}},
             "tenant_epoch":"2","user_version":"1","fields":if absent {json!([])} else {json!(["2:1"])},
@@ -42,23 +42,24 @@ fn cache_fixture() -> (Value, Value) {
 }
 
 #[test]
-fn cache_observation_and_cas_bind_exact_role_order_versions_and_payload_bytes() {
+fn cache_comparison_binds_exact_role_order_versions_and_payload_bytes() {
     let (observation, data) = cache_fixture();
     let args = json!({"observation":observation,"comparisons":data["comparisons"]});
-    let command = cache_io::command(&args).unwrap();
-    let command = command.as_array().unwrap();
-    assert_eq!(command.len(), 3 + 33 + 55);
-    assert_eq!(command[0], "EVAL");
-    assert!(
-        command[1]
-            .as_str()
-            .unwrap()
-            .contains("redis.call('UNLINK', unpack(KEYS))")
+    let comparison = cache_io::comparison(&args).unwrap();
+    assert_eq!(comparison.keys.len(), 33);
+    assert_eq!(comparison.values.len(), 55);
+    assert_eq!(
+        comparison.keys[0],
+        observation["plan"][0]["keys"]["tenant_epoch"]
     );
-    assert_eq!(command[2], "33");
-    assert_eq!(command[3], observation["plan"][0]["keys"]["tenant_epoch"]);
-    assert_eq!(command[4], observation["plan"][0]["keys"]["user_version"]);
-    assert_eq!(command[5], observation["plan"][0]["keys"]["snapshot"]);
+    assert_eq!(
+        comparison.keys[1],
+        observation["plan"][0]["keys"]["user_version"]
+    );
+    assert_eq!(
+        comparison.keys[2],
+        observation["plan"][0]["keys"]["snapshot"]
+    );
     for (pointer, changed) in [
         ("/comparisons/0", json!("3")),
         ("/comparisons/1", json!("2")),
@@ -68,12 +69,12 @@ fn cache_observation_and_cas_bind_exact_role_order_versions_and_payload_bytes() 
     ] {
         let mut invalid = args.clone();
         *invalid.pointer_mut(pointer).unwrap() = changed;
-        let error = cache_io::command(&invalid).unwrap_err().to_string();
+        let error = cache_io::comparison(&invalid).err().unwrap().to_string();
         assert!(!error.contains("private-secret-marker"));
     }
     let mut invalid = args;
     invalid["comparisons"].as_array_mut().unwrap().pop();
-    assert!(cache_io::command(&invalid).is_err());
+    assert!(cache_io::comparison(&invalid).is_err());
 }
 
 #[test]
@@ -100,25 +101,6 @@ fn cache_raw_reads_reject_missing_persistent_keys_versions_fields_and_foreign_su
     let mut invalid = args;
     invalid["raw"].as_array_mut().unwrap().pop();
     assert!(cache_io::observation(&invalid).is_err());
-}
-
-#[test]
-fn cleanup_result_rejects_loose_scalars_without_claiming_unknown_write_success() {
-    assert_eq!(
-        cache_io::result(&json!({"value":[27,["expired"]]})).unwrap(),
-        json!({"deleted":27,"expired":["expired"]})
-    );
-    for value in [
-        Value::Null,
-        json!([true, []]),
-        json!([-1, []]),
-        json!(["33", []]),
-        json!([33, [false]]),
-        json!([33, [], "extra"]),
-        json!([33, {}]),
-    ] {
-        assert!(cache_io::result(&json!({"value":value})).is_err());
-    }
 }
 
 #[test]
@@ -208,7 +190,7 @@ fn failed_fixture() -> (tempfile::TempDir, Value) {
 }
 
 #[test]
-fn recovery_prefix_accepts_only_three_explicit_shapes_and_original_value_error() {
+fn recovery_prefix_accepts_only_registered_shapes_and_known_failure_categories() {
     let (_temp, args) = failed_fixture();
     let directory = Path::new(args["directory"].as_str().unwrap());
     recovery_create::prefix(&args).unwrap();
@@ -224,6 +206,7 @@ fn recovery_prefix_accepts_only_three_explicit_shapes_and_original_value_error()
         "after",
         "cache-cleanup.json",
         "source-runtime.json",
+        "cache-cleanup-execution.json",
         "unknown",
     ] {
         fs::write(directory.join(name), b"{}").unwrap();
@@ -232,7 +215,7 @@ fn recovery_prefix_accepts_only_three_explicit_shapes_and_original_value_error()
     }
     fs::write(
         directory.join("failed.json"),
-        br#"{"status":"failed","error":"TimeoutExpired"}"#,
+        br#"{"status":"failed","error":"UnknownFailure"}"#,
     )
     .unwrap();
     assert!(recovery_create::prefix(&args).is_err());
@@ -333,7 +316,7 @@ fn audit_creation_and_stored_validation_recompute_all_eleven_subjects_and_raw_fi
 }
 
 #[test]
-fn recovery_creation_binds_failure_producer_manifest_cache_and_unknown_history() {
+fn recovery_creation_binds_failure_producer_manifest_and_frozen_cache() {
     let (_temp, args) = failed_fixture();
     let directory = Path::new(args["directory"].as_str().unwrap());
     fs::write(directory.join("audit/login-audit.json"), b"{}").unwrap();
@@ -354,33 +337,11 @@ fn recovery_creation_binds_failure_producer_manifest_cache_and_unknown_history()
     let intent_path = directory.join("source-verification-recovery-intent.json");
     fs::write(&intent_path, serde_json::to_vec(&intent).unwrap()).unwrap();
     assert!(recovery_create::intent(&create_args).is_err());
-    let keys = cache_io::keys(&json!({"plan":observation["plan"]})).unwrap();
-    let expired = observation["before"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|row| row["snapshot"]["type"] == "none")
-        .map(|row| row["snapshot"]["key"].clone())
-        .collect::<Vec<_>>();
-    let cleanup = recovery::cache_publication(&json!({"observation":observation,"deleted":null,"expired":expired,
-        "execution":"reconciled_unknown_lua_result","after":keys.as_array().unwrap().iter().map(|key| json!({"key":key,"type":"none"})).collect::<Vec<_>>(),
-        "cleaned_at":"2026-01-01T00:00:01Z"})).unwrap();
-    fs::write(
-        directory.join("cache-cleanup.json"),
-        serde_json::to_vec(&cleanup).unwrap(),
-    )
-    .unwrap();
-    fs::create_dir(directory.join("recovery-audit")).unwrap();
-    fs::write(directory.join("recovery-audit/check.json"), b"{}").unwrap();
-    let receipt_args = json!({"backend":args["backend"],"directory":args["directory"],"cleanup":cleanup,
-        "after":{"sha256":"c".repeat(64)},"completed_at":"2026-01-01T00:00:02Z"});
-    let receipt = recovery_create::receipt(&receipt_args).unwrap();
-    assert_eq!(receipt["historical_cleanup"], "unknown");
-    assert_eq!(
-        receipt["confirmed_cleanup"],
-        "reconciled_unknown_lua_result_all_keys_absent"
+    // 无 attempt 的旧纯发布模型不能再冒充未知清理；真实恢复由完整调用方场景验证。
+    assert!(
+        recovery::cache_publication(&json!({"backend":args["backend"],"directory":directory,
+        "output":directory.join("cache-cleanup.json"),"observation":observation,"after":[],
+        "cleaned_at":"2026-01-01T00:00:01Z"}))
+        .is_err()
     );
-    assert_eq!(receipt["intent"], common::binding(&intent_path).unwrap());
-    fs::write(directory.join("cache-cleanup.json"), b"{}").unwrap();
-    assert!(recovery_create::receipt(&receipt_args).is_err());
 }

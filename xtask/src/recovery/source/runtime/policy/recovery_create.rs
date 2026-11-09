@@ -19,10 +19,13 @@ pub(super) fn failed_entries(args: &Value) -> Result<Value> {
 
 pub(super) fn prefix(args: &Value) -> Result<Value> {
     documents::exact(args, &["backend", "directory"], "来源失败前缀参数")?;
-    let (_, directory) = receipts::directory(args)?;
-    let actual = std::fs::read_dir(&directory)?
+    let (backend, directory) = receipts::directory(args)?;
+    let mut actual = std::fs::read_dir(&directory)?
         .map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().into_owned()))
         .collect::<std::io::Result<BTreeSet<_>>>()?;
+    for name in super::cache_attempt::entries(&backend, &directory)? {
+        actual.remove(name);
+    }
     let failed = failed_entries(&json!({}))?
         .as_array()
         .ok_or("来源失败清单无效")?
@@ -36,11 +39,7 @@ pub(super) fn prefix(args: &Value) -> Result<Value> {
     if actual != failed && actual != pending && actual != auditing {
         return Err("来源验收恢复只接受未清理、未采集后像且未封口的精确失败前缀".into());
     }
-    let failure = documents::read(&directory.join("failed.json"))?;
-    documents::exact(&failure, &["status", "error"], "来源验收原失败记录")?;
-    if failure != json!({"status":"failed","error":"ValueError"}) {
-        return Err("来源验收恢复只接受缓存阶段 ValueError 失败记录".into());
-    }
+    failure(&directory)?;
     // 递归核对普通文件与链接；完整登记集合继续由生产者输入核验。
     inventory::files_request(args)?;
     Ok(Value::Null)
@@ -92,6 +91,7 @@ pub(super) fn receipt(args: &Value) -> Result<Value> {
     let intent = common::read_bound(&backend, &intent_descriptor, "来源恢复意图")?;
     let cleanup = &args["cleanup"];
     cache::receipt(&json!({"value":cleanup,"subjects":intent["authorization_cache"]["subjects"]}))?;
+    super::cache_attempt::validate_cleanup(&backend, &directory, cleanup)?;
     if common::read_bound(
         &backend,
         &common::binding(&directory.join("cache-cleanup.json"))?,
@@ -106,8 +106,8 @@ pub(super) fn receipt(args: &Value) -> Result<Value> {
     Ok(
         json!({"format_version":1,"kind":"restore-source-verification-recovery","status":"recovered",
         "intent":intent_descriptor,"cache_cleanup":common::binding(&directory.join("cache-cleanup.json"))?,
-        "after":args["after"],"historical_cleanup":"unknown","confirmed_cleanup":
-        if cleanup["execution"] == "confirmed_lua_result" {"recovery_lua_cas_unlink"} else {"reconciled_unknown_lua_result_all_keys_absent"},
+        "after":args["after"],"historical_cleanup":super::cache_attempt::historical(cleanup)?,
+        "confirmed_cleanup":super::cache_attempt::confirmed(cleanup)?,
         "login_recheck":inventory::manifest(&directory.join("recovery-audit"))?,"completed_at":args["completed_at"]}),
     )
 }
@@ -118,4 +118,27 @@ pub(super) fn published(args: &Value) -> Result<Value> {
         return Err("来源运行收据写入后复核不同".into());
     }
     Ok(Value::Null)
+}
+
+pub(super) fn failure(directory: &std::path::Path) -> Result<()> {
+    let value = documents::read(&directory.join("failed.json"))?;
+    documents::exact(&value, &["status", "error"], "来源验收原失败记录")?;
+    if value["status"] != "failed"
+        || !matches!(
+            value["error"].as_str(),
+            Some(
+                "ValueError"
+                    | "SourceRuntimeError"
+                    | "NativeS3InvocationError"
+                    | "OSError"
+                    | "PermissionError"
+                    | "TimeoutError"
+                    | "TimeoutExpired"
+                    | "FileExistsError"
+            )
+        )
+    {
+        return Err("来源失败分类未知；保留原失败文件与完整前后像，不重放".into());
+    }
+    Ok(())
 }

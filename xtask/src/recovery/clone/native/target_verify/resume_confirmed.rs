@@ -28,11 +28,21 @@ const CONFIRMED: &[&str] = &[
     "restore_qualified",
 ];
 
-pub(crate) fn confirmed(backend: &Path, target: &Path, initialized: &Value) -> bool {
-    verify(backend, target, initialized).is_ok()
+pub(crate) fn confirmed(
+    backend: &Path,
+    target: &Path,
+    initialized: &Value,
+    owner: Option<&super::guard::Generation>,
+) -> bool {
+    verify(backend, target, initialized, owner).is_ok()
 }
 
-fn verify(backend: &Path, target: &Path, initialized: &Value) -> Result<()> {
+fn verify(
+    backend: &Path,
+    target: &Path,
+    initialized: &Value,
+    owner: Option<&super::guard::Generation>,
+) -> Result<()> {
     let (value, successor) = confirmation(target, backend)?;
     let attempt = json_io::text(&value["attempt"], "续作 attempt")?;
     let intent_path = target.join(format!("resume-initialize-{attempt}.intent.json"));
@@ -53,8 +63,13 @@ fn verify(backend: &Path, target: &Path, initialized: &Value) -> Result<()> {
     let request = read(backend, &bound(backend, &intent["request"])?)?;
     initialized_proof(backend, target, initialized, &prepared, &request)?;
     let creation = super::evidence_creation::creation(backend, target, &request)?;
-    let reset =
-        super::evidence_reset::aggregate(backend, target, &request, &initialized["generation"])?;
+    let reset = super::evidence_reset::history(
+        backend,
+        target,
+        &request,
+        &initialized["generation"],
+        owner,
+    )?;
     check(
         initialized["reset"] == reset["completed"],
         "迁移成功 reset 与已确认结果不同",
@@ -63,11 +78,7 @@ fn verify(backend: &Path, target: &Path, initialized: &Value) -> Result<()> {
     let (operations, prefix) = completed(backend, target, initialized)?;
     let operations = operations.as_slice();
     let prefix = prefix.as_slice();
-    let split = json_io::array(&value["original_prefix"], "原迁移前缀")?.len();
-    check(
-        split > 0 && split < operations.len() && operations[split]["write"] == false,
-        "迁移成功确认没有从首个只读 verify 开始",
-    )?;
+    let split = resume_split(backend, target, &value["original_prefix"], operations)?;
     resume_runtime::started(backend, &initialized["generation"], &started)?;
     let initialize_started = binding(backend, &target.join("initialize.started.json"))?;
     let context = Context {
@@ -120,6 +131,26 @@ fn verify(backend: &Path, target: &Path, initialized: &Value) -> Result<()> {
     check(model::failure(&failed)?, "迁移原失败不满足只读续作条件")
 }
 
+fn resume_split(
+    backend: &Path,
+    target: &Path,
+    original_prefix: &Value,
+    operations: &[Value],
+) -> Result<usize> {
+    let split = json_io::array(original_prefix, "原迁移前缀")?.len();
+    check(
+        split > 0 && split < operations.len() && operations[split]["write"] == false,
+        "迁移成功确认没有从首个只读 verify 开始",
+    )?;
+    if let Some((index, _)) = super::resume_prefix::failed_readonly(backend, target)? {
+        check(
+            index == split,
+            "原始失败只读收据不属于成功确认绑定的原始前缀",
+        )?;
+    }
+    Ok(split)
+}
+
 fn confirmation(target: &Path, backend: &Path) -> Result<(Value, bool)> {
     let paths = names(target, r"^resume-initialize-.*\.confirmed\.json$")?;
     let failures = names(target, r"^resume-initialize-.*\.failure\.json$")?;
@@ -149,10 +180,10 @@ fn completed(
     target: &Path,
     initialized: &Value,
 ) -> Result<(Vec<Value>, Vec<Value>)> {
-    let operations = super::resume_prefix::operations(executable(
-        &initialized["generation"]["maintenance"],
-        "migrate",
-    )?)?["operations"]
+    let operations = super::resume_prefix::operations(
+        executable(&initialized["generation"]["maintenance"], "migrate")?,
+        &read(backend, &target.join("request.json"))?,
+    )?["operations"]
         .clone();
     let prefix =
         super::resume_prefix::prefix(backend, target, &operations, true)?["completed"].clone();
@@ -427,6 +458,16 @@ fn intent_fields(context: &Context<'_>, proof: &FinalProof<'_>) -> Result<()> {
         ..
     } = proof;
     let attempt = json_io::text(&value["attempt"], "attempt")?;
+    super::resume_prefix::prior_failed_stage(
+        context.backend,
+        context.target,
+        &intent["files_before"],
+        json_io::text(
+            &context.operations[context.prefix.len()]["stage"],
+            "原始缺失阶段",
+        )?,
+    )?;
+
     check(
         intent["format_version"] == 1
             && intent["kind"] == "devex-clone-migration-resume-intent"

@@ -30,10 +30,9 @@ class BinaryBindingTests(unittest.TestCase):
         self.source = {"tools": {role: self.binary(role) for role in ("mysql", "mysqldump", "node")},
                        "backend_build": self.api, "maintenance_build": self.maintenance,
                        "business_payload": {"path": str(self.local / "payload.sql"), "sha256": "b" * 64}}
-        self.target = {"tools": {role: self.binary(role) for role in ("mysql",)},
-                       "maintenance_build": self.maintenance,
-                       "storage": {"rustfs": {"identity": {"executable": self.binary("rustfs")["path"]},
-                                               "sha256": "a" * 64}, "redis": {"wsl": self.binary("wsl")}}}
+        self.target = {"fixture": "target request"}
+        self.target_binaries = [self.binary(role) for role in
+                                ("mysql", "reset", "migrate", "tenant-data", "rustfs", "wsl")]
         self.value = {"source_request": self.file("source", self.source), "initialized": self.file("initialized", {})}
 
     def file(self, name, value):
@@ -50,19 +49,25 @@ class BinaryBindingTests(unittest.TestCase):
     def verified_requests(self):
         with patch("devex_clone_source_proof.validate_request") as source, \
                 patch.object(run, "initialization_history", return_value=({}, self.target)) as history, \
-                patch("devex_clone_target_binding.request_binding") as target:
+                patch("devex_clone_target_binding.execution_binary_bindings",
+                      return_value=self.target_binaries) as target:
             yield source, history, target
 
     def test_registered_roles_exclude_object_cli_and_payload(self):
-        with self.verified_requests() as (source, history, target):
+        with self.verified_requests() as (source, history, target), \
+                patch("rate_limit_tool.tool_binding", return_value=None):
             values = run.copy_binary_bindings(self.backend, self.value)
         source.assert_called_once_with(self.backend, self.source)
         history.assert_called_once_with(self.backend, Path(self.value["initialized"]["path"]))
         target.assert_called_once_with(self.backend, self.target)
-        self.assertEqual(len(values), 14)
+        self.assertEqual(values[-len(self.target_binaries):], self.target_binaries)
         self.assertEqual({Path(item["path"]).stem for item in values}, {
             "mysql", "mysqldump", "node", "api", "worker", "reset", "migrate", "tenant-data", "rustfs", "wsl"})
         self.assertTrue(all(set(item) == {"path", "sha256"} for item in values))
+        coordinator = self.binary("coordinator")
+        installed = {**coordinator, "format_version": 1, "kind": "ryframe-native-rate-limit-tool", "bytes": 17}
+        with self.verified_requests(), patch("rate_limit_tool.tool_binding", return_value=installed):
+            self.assertEqual(run.copy_binary_bindings(self.backend, self.value), values + [coordinator])
 
     def test_wrong_build_kind_missing_role_and_changed_binding_are_rejected(self):
         for kind, roles in (("other", ("api", "worker")), ("restore-backend-build", ("api",))):

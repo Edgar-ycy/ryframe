@@ -8,6 +8,8 @@ mod baseline_contract;
 mod business_catalog;
 mod catalog;
 #[cfg(feature = "migration")]
+mod initialization;
+#[cfg(feature = "migration")]
 mod m20260820_000000_tenant_baseline;
 #[cfg(feature = "migration")]
 mod m20261017_000000_data_scope_projection;
@@ -39,10 +41,14 @@ pub use m20260820_000000_tenant_baseline::{
     TENANT_FENCE_DDL, TENANT_TARGET_SLOT_DDL,
 };
 #[cfg(feature = "migration")]
-pub use runtime::{Migrator, up, up_pending_business_migrations};
+pub use runtime::{Migrator, up, up_in_session, up_pending_business_migrations};
 pub use ryframe_db::migration::normalize_check_clause;
 pub use schema::{
     canonical_table_schema, ensure_mysql_target_boundary, verify, verify_for_catalog,
-    verify_mysql_80, verify_mysql_target, verify_mysql_target_for_catalog,
+    verify_mysql_80, verify_mysql_target, verify_mysql_target_for_catalog, verify_shared_control,
+    verify_shared_control_for_catalog,
 };
 pub use status::{MigrationStatus, TENANT_DATA_MIGRATION_LEDGER, status};
+
+#[cfg(feature = "migration")]
+pub use initialization::{SharedControlInitialization, shared_control_initialization};

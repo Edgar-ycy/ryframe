@@ -11,13 +11,12 @@ import sys
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from process_sockets import endpoint
 from restore_build import validate_build_context
 from source_inventory import validate_build_source_domains
-from restore_frontend_context import validate_frontend_build_context
 from artifact_digests import filesystem_path
 
 MAX_JSON_BYTES = 16 * 1024 * 1024
@@ -343,42 +342,10 @@ def read_authority(stream=None) -> dict:
     return validate_authority(decode_object(raw, "stdin 权威恢复上下文"))
 
 
-def validate_frontend_receipt(receipt: object) -> dict:
-    value = exact_fields(
-        receipt,
-        {"format_version", "kind", "sources", "build", "files"},
-        "前端构建收据",
-    )
-    if (
-        type(value["format_version"]) not in (int, float)
-        or value["format_version"] != 3
-        or value["kind"] != "restore-frontend-build"
-        or not isinstance(value["files"], list)
-    ):
-        raise ValueError("前端必须使用 v3 生产构建收据，旧 v2 不能用于当前恢复")
-    validate_build_source_domains(value["sources"], "frontend")
-    # 前端构建上下文绑定公开 TOML、工具来源及受管身份。
-    validate_frontend_build_context(value["build"])
-    previous = ""
-    for item in value["files"]:
-        item = exact_fields(item, {"path", "bytes", "sha256"}, "前端文件收据")
-        relative = PurePosixPath(item["path"]) if isinstance(item["path"], str) else None
-        if (
-            relative is None
-            or relative.is_absolute()
-            or ".." in relative.parts
-            or "\\" in item["path"]
-            or relative.as_posix() != item["path"]
-            or item["path"] <= previous
-            or type(item["bytes"]) not in (int, float)
-            or not 0 <= item["bytes"] <= 9007199254740991
-            or item["bytes"] != int(item["bytes"])
-            or not isinstance(item["sha256"], str)
-            or not HEX_64.fullmatch(item["sha256"])
-        ):
-            raise ValueError("前端文件收据必须有序且包含有效摘要")
-        previous = item["path"]
-    return value
+def validate_frontend_receipt(receipt: object, *, b0: bool = False) -> dict:
+    from restore_frontend_native import request
+
+    return request("receipt-b0" if b0 else "receipt", value=receipt)
 
 
 def process_identity_record(value: object, label: str) -> dict:
@@ -514,8 +481,10 @@ def validate_runtime_receipt(receipt: object) -> dict:
         ):
             raise ValueError(f"{role} 进程收据路径或摘要无效")
         process_identity_record(item["identity"], f"{role} 进程身份")
+    from restore_frontend_native import b0_runtime_source
+
     validate_backend_receipt(value["backend"])
-    validate_frontend_receipt(value["frontend"])
+    validate_frontend_receipt(value["frontend"], b0=b0_runtime_source(source))
     if value["frontend"]["build"]["identity"]["frontend_commit"] != source["frontend_sha"]:
         raise ValueError("恢复前端构建身份必须绑定权威前端精确 SHA")
     return value

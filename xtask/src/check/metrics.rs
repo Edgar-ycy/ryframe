@@ -72,7 +72,7 @@ static ACTIVE_VERIFY: OnceLock<Mutex<Option<ActiveVerify>>> = OnceLock::new();
 
 pub(crate) fn begin(
     root: &Path,
-    frontend: &Path,
+    frontend: Option<&Path>,
     scope: &str,
     mode: &str,
     backend_target: &str,
@@ -93,7 +93,7 @@ pub(crate) fn begin(
             scope: scope.to_owned(),
             mode: mode.to_owned(),
             backend_dirty: git_dirty(root),
-            frontend_dirty: git_dirty(frontend),
+            frontend_dirty: frontend.and_then(git_dirty),
             rustc_cache: rustc_cache.to_owned(),
             sccache_before,
             sccache_after: None,

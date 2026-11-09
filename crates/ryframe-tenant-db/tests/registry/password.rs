@@ -5,9 +5,9 @@ use ryframe_config::{
 
 use super::{TenantDataError, TenantDatabaseTargetRegistry, support::target_definition};
 
-const PASSWORD: &str = r"  tenant!@:/?%${NOT_EXPANDED}\密钥  ";
+pub(super) const PASSWORD: &str = r"  tenant!@:/?%${NOT_EXPANDED}\密钥  ";
 
-fn target(password: Option<&str>) -> TenantDatabaseTargetConfig {
+pub(super) fn target(password: Option<&str>) -> TenantDatabaseTargetConfig {
     TenantDatabaseTargetConfig {
         key: "private-target".into(),
         kind: TenantDatabaseTargetKind::Mysql,
@@ -112,4 +112,43 @@ async fn registry_debug_and_metadata_do_not_expose_connection_secrets() {
         ),
         (0, 0, 0)
     );
+}
+
+#[test]
+fn safe_cause_redacts_escaped_credentials_urls_and_private_keys() {
+    use std::error::Error;
+    let config = ryframe_config::DbConnection {
+        username: "private-user".into(),
+        password: "p'\\ass@word".into(),
+        tls_client_key: Some("private-key.pem".into()),
+        ..Default::default()
+    };
+    let raw = format!(
+        "1045 {} {:?} {} {}",
+        config.password,
+        config.password,
+        config.connection_url(),
+        config.tls_client_key.as_deref().unwrap()
+    );
+    let source = crate::error::SafeDatabaseCause::from_connection(&config, &raw);
+    let error = TenantDataError::TargetUnavailable {
+        target_key: "safe".into(),
+        source: Some(source),
+    };
+    for output in [format!("{error:?}"), error.source().unwrap().to_string()] {
+        assert!(output.contains("1045"));
+        for secret in [
+            &config.password[..],
+            "private-user",
+            "private-key.pem",
+            "mysql://",
+        ] {
+            assert!(!output.contains(secret));
+        }
+    }
+    let pem = crate::error::SafeDatabaseCause::from_connection(
+        &config,
+        "-----BEGIN PRIVATE KEY----- private-material",
+    );
+    assert!(!pem.to_string().contains("private-material"));
 }

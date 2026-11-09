@@ -1,5 +1,6 @@
 use super::super::{ResourceIr, StorageKind};
 use super::queries::*;
+use super::write::insert_body;
 
 pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], header: &str) -> String {
     let scope_parameter = super::super::owner_scope_parameter(resource);
@@ -40,11 +41,6 @@ pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], heade
     let unique_conflicts = unique_conflict_mappings(resource);
     let generic_conflict = format!("{}已存在", resource.labels.zh_cn);
     let tenant_mismatch = format!("{}事务租户不匹配", resource.labels.zh_cn);
-    let tenant_error = if resource.storage == StorageKind::TenantData {
-        tenant_error_mapper()
-    } else {
-        String::new()
-    };
     let pagination = match resource.storage {
         StorageKind::ControlRow => "crate::pagination::paginate",
         StorageKind::TenantData => "ryframe_db::pagination::paginate",
@@ -126,6 +122,9 @@ pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], heade
         unique_conflicts = unique_conflicts,
         delete = delete,
         commit = commit,
+        insert_type = super::super::insert_type(resource),
+        insert_import = super::super::insert_import(resource),
+        update_body = super::write::update_body(resource),
         to_record = to_record,
         to_entity = to_entity,
         insert_body = insert_body(resource, &unique_conflicts, &generic_conflict),
@@ -135,8 +134,7 @@ pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], heade
             "&record.tenant_id"
         },
         relation_mappers = relation_mappers,
-        tenant_error = tenant_error,
-    )
+    ) + "\n"
 }
 
 fn projected_write_scope(resource: &ResourceIr) -> (String, String) {
@@ -156,27 +154,6 @@ fn projected_write_scope(resource: &ResourceIr) -> (String, String) {
             "        let build_token = {data_scope_module}::lock_projected_build(\n            &self.transaction,\n            tenant_id,\n            data_scope.data_scope_version,\n        )\n        .await?;\n"
         ),
     )
-}
-
-fn insert_body(resource: &ResourceIr, conflicts: &str, conflict: &str) -> String {
-    if resource.id_generation == crate::IdGeneration::AutoIncrement {
-        let (tenant_capture, tenant_filter) = if resource.access.system_tenant_only {
-            ("", "")
-        } else {
-            (
-                "        let tenant_id = record.tenant_id.clone();\n",
-                "            .filter(entity::Column::TenantId.eq(tenant_id))\n",
-            )
-        };
-        // MySQL 只返回单个自增值，不能让 ORM 把它解码为租户复合主键。
-        format!(
-            "{tenant_capture}        let mut active = entity::ActiveModel::from(to_entity(record));\n        active.id = sea_orm::ActiveValue::NotSet;\n        entity::Entity::insert(active)\n            .exec_without_returning(&self.transaction)\n            .await\n            .db_conflicts(&[{conflicts}], {conflict:?})?;\n        entity::Entity::find()\n{tenant_filter}            .filter(sea_orm::ExprTrait::eq(sea_orm::sea_query::Expr::col(entity::Column::Id), sea_orm::sea_query::Expr::cust(\"LAST_INSERT_ID()\")))\n            .one(&self.transaction)\n            .await\n            .db()?\n            .map(to_record)\n            .ok_or_else(|| AppError::Database(\"自增记录插入后读取失败；事务尚未提交\".into()))"
-        )
-    } else {
-        format!(
-            "        entity::ActiveModel::from(to_entity(record))\n            .insert(&self.transaction)\n            .await\n            .map(to_record)\n            .db_conflicts(&[{conflicts}], {conflict:?})"
-        )
-    }
 }
 
 fn relation_detail_parts(

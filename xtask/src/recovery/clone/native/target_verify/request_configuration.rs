@@ -97,6 +97,7 @@ pub(crate) fn configuration_files(
         return Err("目标配置必须位于明确执行后端内".into());
     }
     let mut files = BTreeMap::new();
+    crate::recovery::runtime::dataset_authority::reads::directory(&directory)?;
     for entry in fs::read_dir(&directory).map_err(|_| "目标配置目录无法读取")? {
         let entry = entry.map_err(|_| "目标配置目录项无法读取")?;
         let path = entry.path();

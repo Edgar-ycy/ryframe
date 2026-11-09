@@ -4,17 +4,422 @@
 
 ## [Unreleased]
 
-- Fix authentication settings rejecting the lowercase `s` lifetime suffix already accepted by configuration validation. Access and refresh tokens use the same duration formats, and invalid formats or numeric overflow report the relevant configuration field, cause and remedy. Check time addition during construction and issuance; excessive CSRF lifetimes return an error instead of panicking or wrapping.
+- Clarify how to merge the database topology TOML fragment into the application configuration, and document connection pool timeout units, defaults, and scope for the primary, replicas, and named sources.
 
-- Fix non-production rebuild preflight rejecting exact schema-level grants. Verify each target's privileges on both the migration and lock-holding connections, with partial revocation, ownership, and write boundaries enforced.
+- The formal copy stage runs initial copy, explicit reconciliation and resume in Rust. It checks the complete before-image and ledger intent before writes, and publishes data completion only after independent checks of the four databases, five buckets and Redis.
 
-- Remove a simulated quota-recovery refresh failure and its fixture branch that duplicate the post-write unknown-response scenario, along with an assertion that only checks mock restoration. Keep coverage for unknown writes, explicit reconciliation, identity and evidence binding, idempotency, and failure cleanup.
+- The formal Rust command now recovers copy-controller locks after checking the original process exit, direct-command completion, and ownership of the target and ledger locks. Unknown data writes still require explicit reconciliation.
+
+- Final recovery registration uses the Rust verifier issued by the formal data command to independently check browser business proof, database authority, and the original runtime generation. The binding is valid while the same build source lock is held.
+
+- Reference backup verification checks control and tenant schema fingerprints and tenant placements against the product manifest contract. Generated completion and retention timestamps use the UTC format and microsecond precision accepted by backup registration.
+
+- Formal recovery monitoring preflight uses Rust xtask to verify the frozen export, backup inventory, and registered live generation. The existing subprocess timeout, credential isolation, and probes for all three endpoints are preserved.
+
+- Bind SQL bytes sent to MySQL during restore and copy to the original backup artifact and Rust syntax proof. Reject replacement after validation while retaining original line endings and the single transaction.
 
 - Enforce the 24-hour backup-to-fault limit at microsecond precision in the application and recovery tool. Rereading a saved product plan uses the same time validation as generating it.
 
-- Recheck source trees and every consumed evidence binding before and after full-stack artifact verification, rejecting extra fields in original snapshots. Validate fixed evidence paths before hashing files and keep source-test fixtures in isolated workspace directories. Source-export proofs recheck the complete runtime contract, both configurations, and artifact manifests before and after verification, rejecting duplicate instance IDs, configuration mismatches, and runtime-receipt drift.
+- Copy and post-copy share one read-only Rust source-generation check. It reads the source, configuration and build bridges from the registered run manifest and verifies stopped producers and closed ports.
 
-- Clarify how to merge the database topology TOML fragment into the application configuration, and document connection pool timeout units, defaults, and scope for the primary, replicas, and named sources.
+- Generate copy step IDs in plan order through one native batch, preserving existing database and object ledger IDs, the complete step set, and resume verification.
+
+- Verify saved captures across all five buckets in one Rust call during ordinary copy, using the bound source export and inventory. Preserve complete payload, raw response, and ownership proofs. Rust returns a fixed-length digest of the small proofs, and copy verifies their original bytes before use. Record missing and explicitly null optional GET headers separately.
+
+- Publish and revalidate seed successor relationships in Rust. Preserve the original fields, digest, three-side collision checks, and input bindings, and remove the Python publisher.
+
+- Windows RustFS supervision tolerates short-lived Job members that exit during observation. Live members must match the original creation identity and remain in the same Job. Full-tree shutdown proof and startup deadlines are preserved.
+
+- Reuse native registration rules when verifying the frozen post-copy API environment. Preserve `TEMP` and `TMP` when both identify the same existing private directory, and reject environment drift and injected variables.
+
+- Derive the fixture receipt from verified publication provenance or the fixed business worktree location. Verify its file binding before consuming the evidence, preventing early reads of paths declared in build evidence.
+
+- Allow the coordinator worktree to restart registered RustFS from its original external executable. Verify the original launch identity, absolute path without links, actual file size, and SHA-256.
+
+- A recovery successor relationship accepts the ready review exactly referenced by the original seed request and revalidates its full preflight. Historical pending reviews remain readable through an explicit predecessor binding, and successor resource isolation still covers all three sides.
+
+- Verify build and runtime evidence between the two observations of one four-root publication window for full-stack roles. API reuses its verified configuration, and supervisor progress rechecks the same authorized operation, configuration, and receipts. Existing startup, readiness, and handoff deadlines remain in force.
+
+- After a failed preflight has been formally reconciled, issue a successor seed request from new execution sources and maintenance artifacts. Keep the original service ledger and physical resources, verify the four schemas and credential bindings, and publish fresh-target requests in Rust.
+
+- Accept the original fresh-target history when reading arm-input for a formal recovery plan. Verify the storage ledger against its pinned manifest and exact state prefix, and require the arm result and copy manifest to use the same effective storage generation.
+
+- Bind successor arms to the fixture service ledger's initial or successfully restarted generation. Separate historical reads from live checks, and reuse the same registered generation and actual RustFS and Redis checks in copy, target verification, and API handoff.
+
+- Fix non-production rebuild preflight rejecting exact schema-level grants. Verify each target's privileges on both the migration and lock-holding connections, with partial revocation, ownership, and write boundaries enforced.
+
+- Preview and exclusively publish successor arm requests in Rust using the existing shared export, full fresh initialization, and storage generation proofs. Verify the formal two-field audit bridge and the bound target execution root's maintenance build jobs, and remove the replaced Python writer.
+
+- Read-only `seed_to_arm` target authority verifies the actual base or candidate request and the same initialized workspace's original registration, environment, and complete file lineage. The execution phase retains its existing external storage lock scope.
+
+- Verify the four source roots before and after the independent backend snapshot comparison in one target-binding window. Reduce duplicate reads during fresh-target request publication while preserving the complete checks and deadline.
+
+- Fix historical RustFS credential authorization matching with mixed Windows path separators. Normalize only path text during reading while retaining unique full-descriptor matching, byte and kernel-identity verification, and original receipts.
+
+- Preserve safe fixed storage rejection reasons through existing fixture lifecycle error exits. Read-only partial-close status reports only I/O kind and system code, keeps unknown private errors redacted, and neither rewrites the ledger nor replays operations.
+
+- Observe all four execution-source roots completely in parallel when no static authority is active; an active authority still records actual inputs serially on its owner thread. Collect every observation thread and concurrent failure while preserving source, file-protection, receipt and deadline requirements.
+
+- Reuse the canonical root within each complete source observation, retaining per-file boundaries and complete Git, index, mode and digest checks. Success and failure both recheck the root path and directory state, without caching across requests or adding file-identity platform requirements.
+
+- Initial Redis requests use the reviewed Redis tool distribution and require the native tool distribution to match before creating directories or configuration; they no longer read a service field absent from the formal review.
+
+- Use one complete source-read window for fixture plans and prepared environments, independently verifying all four original generated and published source roots at both ends while reusing pure plan calculation. Preserve JSON, digests and input projections; protect bootstrap, configuration-directory and secret-file bytes and identities, and retain other postchecks and concurrent errors when reading or one root fails.
+
+- Fix native RustFS supervised launch returning on monitor acknowledgement and combining registration/listener timing: restore the original complete-supervision registration window of 60 seconds followed by an independent 60-second listener window. Preserve full authorization at role entries and final source validation, check immutable inputs, the original controller and actual processes within each phase, and remove repeated source-plan reconstruction. Overall primitive and recovery deadlines remain unchanged.
+
+- Connect initial RustFS, Redis and five-bucket orchestration to existing native entry points and supervisors, preserving source, configuration, secret-file, stage-owner and exclusive-order bindings; retain unknown writes across individual create+HEAD operations. Bind actor roots across coordinator/product worktrees and consume original early complete-member closure read-only for partial close, without fabricated trees, repeated stop or a restart predecessor.
+
+- Support explicit `build --resume --write` for reference-fixture builds: recheck the completed four-role build, both configurations, sources and tool context before continuing formal runtime registration. Share the build mutex and file protection, preserve original artifacts and failure evidence, and reject drift, partial prefixes, unknown files, concurrency and repeated resumption.
+
+- Run reference-fixture environment preparation natively in Rust, including private configuration, administrator credentials, source and secret-file postchecks, and bootstrap-last publication. Cover coordinator-root refusal, Seed/Base data mappings and scheduling, refusal to replay successful output, and raw-byte drift before publication. Remove Python Prepare, obsolete private dispatch and dedicated tests replaced by effective native coverage, while preserving shared readers used by service and successor workflows.
+
+- Fix ordinary runtime, reference-fixture and full-stack Cargo builds ignoring the shared target directory selected in tool files. Derive the Cargo standard child environment from the explicit file value and include it in existing build-context digests. Preserve receipt schemas, reject mixed publication after configuration drift, and retain failed evidence.
+
+- Configure acceptance-build concurrency for maintenance tools, API and Worker through one tool-file setting, defaulting to 4 with a local option of 1; actual commands and source receipts agree, current configuration drift rejects reuse, and historical command verification and failed evidence are preserved. Shared Python readers for maintenance receipts, Cargo events and commands now use the existing Rust core, removing duplicate parsing and hardcoded concurrency.
+
+- Fix ordinary runtime observation using the repository default configuration for its final API-address check; consistently use the receipt-bound configuration directory. Extend the existing no-write observation case to cover different default and runtime-snapshot ports, and remove obsolete application environment variables from the fixture.
+
+- Remove a simulated quota-recovery refresh failure and its fixture branch that duplicate the post-write unknown-response scenario, along with an assertion that only checks mock restoration. Keep coverage for unknown writes, explicit reconciliation, identity and evidence binding, idempotency, and failure cleanup.
+
+- Move fixture-environment review renewal to Rust with two actual tool observations, raw-input revalidation and new-receipt publication. Preserve ready resource fields and validate the successor contract; remove obsolete Python renewal and the unused WSL Python collector, and report stages, remedies and preservation requirements when publication is unconfirmed.
+
+- Run the formal fixture-environment plan entry directly through existing Rust planning and source verification, removing its public Python dispatch while preserving arguments, read-only behavior, output and the shared adapter still used by environment preparation.
+
+- Remove obsolete Python object-storage lifecycle dispatch, private parameters and execution functions already replaced by formal Rust entry points; retire their protocol cases, tests and fixtures while preserving shared readers used by copying, service startup and history validation.
+
+- Remove obsolete Python cache lifecycle dispatch, dedicated preflight and execution functions while retaining cache registration, history binding and native I/O adapters still used by copying and services.
+
+- Clarify that database examples are topology fragments to merge into application configuration, and document timeout units, defaults and scope for primary, replica and named-source pools in both languages.
+
+- Move formal fixture `rotate-secrets` and `bootstrap-secrets` execution into Rust and remove their Python writers and private dispatch. Preserve seven-file bindings, non-overwrite behavior and failure evidence; recheck source and raw bytes before publication, report stages and safe causes, and reject failed sources in the remaining environment preparation flow.
+
+- Fix backend-only checks still querying the frontend Git repository during metric collection. The default scope no longer passes a frontend directory, while explicit cross-repository checks retain frontend state metrics; verify Chinese characters, spaces and renamed directories through the actual command entry.
+
+- Fix rejection of the same Windows runtime root when standard path separators differ. Runtime contracts compare canonical paths without links while retaining original configuration, artifact and source digest checks; frozen receipts are not rewritten.
+
+- Correct the product runtime root used by post-copy preparation and API handoff by cross-checking the target source against the audited bridge that exactly binds the build, preserving the v2 build schema. Product control and closure archives use the product root while evidence and locks remain under the coordinator; closure adds no dependency on opposing sources or original build files.
+
+- Remove the unused Python maintenance build producer, standalone command entry and last dedicated Cargo-event parser file. Maintenance builds continue through Rust; retain actual consumers' read-only source and artifact verification, merge duplicate tests, and preserve evidence safeguards for source and toolchain drift during builds in the native failure scenarios.
+
+- Remove the unused Python full-stack CI build producer, its dedicated role mappings and obsolete tests. Formal builds continue through Rust; retain active runtime-manifest reading and recovery Cargo-event parsing, and merge post-mutation read-only verification safeguards into the existing consumer matrix.
+
+- Remove the replay request's test-only mirror reader while preserving actual receiver rejection checks and production writer path, size and anonymous-file cleanup safeguards. Correct CI unknown-field and activation test prerequisites so earlier failures cannot masquerade as coverage of the intended checks.
+
+- Review artifact-digest and Windows file-protection tests, removing constraints on duplicate binding counts and private function call counts/order while retaining digest/race rejection, actual write/replacement blocking, identity-drift detection, nested concurrency, exception cleanup and long-path safeguards.
+
+- Unify isolated full-stack CI configuration and Worker health-port preparation in the formal Rust entry point, reusing paired-source receipts and application validation. Remove inline Python port selection and shell configuration writers, and check source ordering through actual YAML commands.
+
+- Fix source-file protection for independently published sources in post-copy stages and API handoff: fully verify the sibling execution manifest and protect the derived original fixture receipt, preserving ordinary file boundaries, mixed-binding rejection and no-replay failure protections.
+
+- Add complete G/P provenance verification and actual observation to fresh-target execution bindings for independently published sources, distinguishing the current backend, original generated sources and published sources. Delegate Python execution-root selection to the same Rust readonly authority, rejecting mixed bindings and drift without rewriting original receipts.
+
+- Execute reference-dataset bulk post writes in Rust through the bound MySQL CLI, independently checking input, continuous IDs, per-batch transactions and source drift. Failures publish only safe diagnostic digests and preserve possible-write evidence without automatic replay; remove the old Python post writer and dedicated tests.
+
+- Remove reviewed redundant test assertions for empty-repository backend scanning, policy-task membership and strict-migration constants. Retain safeguards for real Git inventories, backend language accounting, exact policy vectors, strict task-graph arguments and effective test entry points.
+
+- Select release full-stack receipts by the declared `extended-ci.yml` identity and its corresponding source, run, and attempt, rejecting missing, duplicate, or mismatched evidence while preserving output order and race rechecks. Remove reviewed redundant assertions and wording constraints from CI/release tests while retaining task, security, and provenance safeguards.
+
+- Add optional file setting `verification.pnpm_cache_dir` to backend pnpm calls across fixtures, generation candidates and frontend execution, preserving standard cache selection when omitted. Offline metadata failures publish only known safe error codes, exit status and the operation directory, with advice to prepare required caches and policy checks while preserving the failure scene without automatic replay.
+
+- Connect published independent clean fixture sources to review, environment preparation and runtime builds through explicit execution-source and configuration bindings, preserving original credential sources, complete dual-repository provenance and no-replay failure protections. Use Rust for browser runtime dispatch and dependency reads, independently verifying the tool compilation root, fixed binding and complete sources while keeping the registered business runtime source. Remove the old Python runtime, browser dependency adapter, review-renewal executor and obsolete dedicated tests, preserving drift rejection, failure evidence and non-publication safeguards in the existing Rust host.
+
+- List the existing `control export-sql` operation in top-level migration usage and clarify that the Worker exposes only health and metrics HTTP endpoints, without business APIs. Command execution and build boundaries remain unchanged.
+
+- Remove Python status, close, reconcile, recover and restart dispatch already replaced by native service lifecycles, together with obsolete tree-control and cache primitives. Retain the active initial-service and storage-start paths, real recovery coverage, explicit write authorization and tool verification before dispatch. Correct the backend rejection reason to identify a mismatch with the current operation workspace.
+
+- Review existing isolated-service tests and remove the duplicate drift case covered by the real Context and obsolete Python tree-stop/cache-start forwarding assertions. Preserve storage-start supervision and its actual guard callback, and strengthen module-removal, restart-eligibility and native-cache tool-binding negative cases so unrelated invalid inputs cannot mask the intended validation.
+
+- Remove reviewed internal-count, duplicate status-projection and untriggered assertions from copy-recovery tests while preserving SQL, inventory boundaries and complete before/after images. Correct conditional-write interception and check the native PUT entry in both existing success and failure scenarios.
+
+- Fix explicit reconciliation of failed isolated-fixture shutdowns to accept an original RustFS tree already fully stopped before the first observation, without repeating stop operations, while preserving Redis causal-exit, complete-member, port and source-drift checks. Fix mirrored-port waiting during isolated-fixture shutdown recovery by avoiding repeated Linux binds in the loop while retaining complete stage-boundary observations, Windows exclusive-binding proofs, and existing timeout and drift protections.
+
+- Remove unnecessary clones at final use sites in development and acceptance tools and tests while preserving resource-guard lifetimes, existing assertions, fail-closed behavior and strict Clippy checks.
+
+- Clarify the tool-level read-only boundary of `--plan`: no task execution, business-descriptor compilation, database connections, generation caches or reports. Retain existing Cargo aliases, explain possible Cargo bootstrap build writes, and document running the prebuilt executable directly.
+
+- Complete precise cleanup in the real MySQL/Redis authorization-cache test: register each subject ID after successful creation, remove the tenant epoch and all registered subjects’ version/snapshot keys, and verify the test scope is empty before returning success. Preserve and report unknown residual keys without deleting scan results.
+
+- Route integer path IDs, reset requests, department filters and plan-version parsing in handwritten API handlers through the existing ID helpers. Preserve the signed i64 range, optional-value handling and validation messages. Invalid path IDs return standard JSON validation errors; internal uploaded-file ID failures remain internal errors, and the OpenAPI string contract is unchanged.
+
+- Remove reviewed tautological, private-layout and redundant source checks from composition-root tests while preserving read-only probe, cryptographic initialization and feature-isolation constraints. Correct the configuration-archive rejection case to verify the actual validation reasons for excess entry counts and unknown entry names separately, and remove a redundant string clone when constructing validation SQL.
+
+- Fix native copy sessions authorizing the base registration after an environment amendment. Initialization, producer authorization and administrator credential loading now share the active published whole request and recheck its lineage and file binding before returning; stale generations, unpublished or failed amendments and drift during verification are rejected. Merge the old check, which stopped early on missing authorization fields, into the actually authorized fixture to verify rejection of ungranted requests, stale attempts and incorrect artifact directories.
+
+- Remove reviewed duplicate resource-order and menu page-key tests whose checks are fully covered by stronger OpenAPI cases. Preserve framework-path snapshot coverage, generated/manual API composition and menu-extension consistency safeguards.
+
+- Fix the product S3 and default OTLP HTTP clients implicitly reading host proxy configuration. Use file-configured endpoints and connection/export settings directly; isolated-process real HTTP regressions verify that configured endpoints receive requests and host proxies are not contacted. The existing OTLP test now exercises the product's default entry point.
+
+- After reviewing existing database tests, remove SQL-formatting-only checks, duplicate baseline-field assertions, and a fixed-seed validation wrapper and its dedicated test with no production caller. Preserve complete SQL snapshots, seed parsing, specific DDL contracts and initialization-equivalence safeguards.
+
+- Fix database connection diagnostics leaking password content when whitespace was normalized before redaction. Merge secret and connection-address ranges in the original message before normalizing display; cover overlapping credentials and private-key markers, preserve safe error codes, and leave actual connection passwords unchanged.
+
+- Fix post-copy API verification omitting `--config-dir` and the bound configuration directory, which incorrectly rejected valid launch arguments as drift. Continue rejecting missing or different configuration directories and preserve process identity, artifact, scope and listener-ownership checks.
+
+- Redact JWT secrets, database passwords, TLS client private keys and metric tokens from direct or nested `Debug` output of authentication, database connection and monitoring configuration while preserving nonsecret diagnostics. Merge duplicate configuration-argument parsing in tests and accurately describe tool-configuration test coverage.
+
+- Fix authentication settings rejecting the lowercase `s` lifetime suffix already accepted by configuration validation. Access and refresh tokens use the same duration formats, and invalid formats or numeric overflow report the relevant configuration field, cause and remedy. Check time addition during construction and issuance; excessive CSRF lifetimes return an error instead of panicking or wrapping.
+
+- Reuse the existing Rust source-fact computation for full-stack consumers and remove duplicate Python core/business source reconstruction, avoiding false drift from Windows model-path separators. Preserve original receipts, complete source/model validation and explicitly transmitted CI run/attempt checks.
+
+- Fix source/target application-environment switching removing OS variables required to discover Git on Windows. Preserve allowlisted system variables while excluding inherited application configuration, credentials and proxies, and retain declaration bindings, drift checks and caller-environment restoration.
+
+- Preserve redacted phases, complete call locations and system codes for formal copy failures, and identify the stage record and copy failure file in command diagnostics. Diagnostic-write failures do not replace the original error; no automatic retry or scene cleanup occurs.
+
+- Move complete SQL reading and precise row decoding for copy/recovery into Rust, removing the Python SQL decoder and per-row native process interface. Managed chunks bind source and result digests, file identities and complete counts; unselected tables and invalid trailing rows remain validated, and failures preserve the scene. Fix volume-prefix checks for canonical Windows paths while retaining actual-root and link validation.
+
+- Fix rejection of canonical Windows paths for private plans and SQL output, preserving path-boundary, reparse-point and overwrite protections.
+
+- Remove Chromium installation, login-budget export and inline Python configuration generation from the Extended CI full-stack build job because it has no browser consumer. Remove the unused step-order assertion while retaining independent browser gates, real full-stack startup, failure collection and complete artifact requirements.
+
+- After native target-verify saves a failure receipt, the formal clone stage reports the verify_existing phase, safe reason, original failure.json location and unaccepted status. Known reasons use exact static messages; unknown reasons expose no passwords, tokens or arbitrary underlying text. Redis initialization-state mismatches preserve the scene and direct further work to a new isolated target without automatic replay or repair of old evidence.
+
+- Fix native source-export logical digests omitting outer database and object-bucket ordering, matching the existing complete consumer contract. Canonicalize databases, tables, tenant placements, buckets and entries in a digest copy, excluding only capture time while preserving raw inventory and all business content. Do not re-sign or accept an alternate old digest; create a new formal export.
+
+- Use the registered target's path spelling consistently in target-verification context and read-only authority, preventing later reset configuration checks from deriving a nonexistent directory. Preserve the outer initialization-file binding without recreating configuration snapshots or repairing original receipts.
+
+- Fix rejection of initialized-target history when Windows path separators differ. Read the complete chain using the registered target's original spelling, verify that the selected and registered files occupy the same location, and protect the registration and initialized file during reading. Preserve the original byte counts, SHA digests and predecessor checks without rewriting receipts or accepting another file with identical content. Service lifecycle checks share the existing controlled-file matching rule.
+
+- Correct the copy/recovery mapping for data-retention cleanup to the registered product type `system.data_retention.cleanup`, preventing rejection of valid global scheduled parent jobs. Preserve checks for the system tenant, global parent, related IDs, trigger type and payload timestamps without accepting misspelled aliases.
+
+- Reuse four fixed regular expressions in the copy tool's SQL parser instead of recompiling them per row and numeric literal. Preserve grammar, exact numeric text, JSON and escape handling, complete-column and multiple-statement rejection, without reducing full scans or validation.
+
+- Fix source inventory composition omitting authorization projections. Fully compare ordinary business inventory with raw per-target results before including the data-scope projections that must be restored; a target omitted with nonempty projections cannot be treated as empty. Multi-database export exclusively creates its shared dump directory once per batch, avoiding failure on the second database while continuing to reject overwrites and replay of existing directories or files.
+
+- Fix source export omitting the standalone business migration ledger when rebuilding the full schema independently. Reuse the formal complete catalog and SDK ledger definition while retaining strict rejection of unknown tables, missing columns, and type drift.
+
+- Fix native managed copy/export subprocesses on Windows omitting SystemRoot, preventing MySQL from creating TCP/IP sockets. Inherit only OS SystemRoot when no case-insensitive explicit declaration exists, with explicit values taking precedence; do not inherit PATH, credentials, or application configuration overrides. Reject missing or empty values before creating evidence or starting a subprocess, preserving existing deadlines and source verification.
+
+- Fix the source-export stop proof incorrectly parsing the Worker `/readyz` path as part of its port. After validating the registered address, check the same listening port and continue to reject occupied API or Worker ports without relaxing resource-root address constraints.
+
+- Fix the copy-source generation and object-observation adapters to use the API configuration directory registered by the verified runtime. Freeze the original runtime descriptor and API/Worker configuration and recheck them around reads, supporting managed non-default directories while continuing to fail closed on configuration or receipt drift.
+
+- Audit copy/recovery tests, merge duplicate missing-object coverage, and remove obsolete AWS CLI simulation and unintroduced-secret assertions while preserving conditional writes, unknown outcomes, concurrent completion, and real credential isolation. Correct file-binding assertions and case names. Two current test modules reuse workspace temporary directories to avoid Windows system-temp ACL failures during creation and cleanup.
+
+- Before creating configuration, environment preparation rejects output equal to or inside the reviewed reserved service root, explains that nothing was written, and recommends an independent directory; valid sibling and similarly prefixed directories remain allowed.
+
+- Fix complete evidence binding for ordinary source-export reconcile/resume: verify the original output, manifest, controller, request, source and storage provenance; bind the adopting execution source and complete generation/proof-file digests. Recovery publishes only its own receipt without re-exporting or rewriting original evidence.
+
+- Move the fixture dataset plan/prepare factory to Rust, reusing native runtime provenance and held input protection instead of recomputing path strings across languages. Preserve the existing data preparation responsibility, explicit target side, full scale and 43200-second budget. Capture managed child diagnostics with redaction and retain unknown-write evidence without automatic replay. Remove the replaced Python factory, its private protocol and obsolete tests while retaining other current shared consumers.
+
+- Fix API/Worker startup handoff using the business readiness timeout as the total result collection window. Result collection now uses the remaining budget of the same 300-second controller deadline; the 120-second preparation and 60-second business readiness limits remain unchanged. Timeouts preserve original receipts without replay and direct operators to read-only status or explicit reconcile.
+
+- Fix services lifecycle rejection of different Windows separator spellings for the same input file. After controlled-file location checks, retain the registered descriptor path and strict byte/hash binding. Owner remains limited to the current run state.json; existing receipts are not re-signed and identical-content copies are rejected.
+
+- Retire the Python CLI, decoding/cleanup dispatch and Rust fallback protocol replaced by formal native fresh-target operations. Preserve shared resource and source callers, merge environment-filtering coverage, and exercise initial, published-restart and closed-service rejection through native registration windows. Generic and service histories share ordered-prefix encoding and unique exact byte/digest matching, retaining current initial writers, Unicode, LF/CRLF and complete numeric representations.
+
+- Remove the obsolete test and sole import for the retired Python source verify CLI. Preserve current runtime, producer, recovery and tool-binding regressions; formal source verification remains covered by Rust entry points and generation-lineage and explicit-write constraints.
+
+- Complete redacted service-close diagnostics and Windows exclusive-port release waiting within the original deadline. Explicit reconcile can finish the original RustFS tree in a new stage after strictly binding the failed close, normal Redis exit and complete process identities, publishing independent recovery evidence without resending Redis stop, changing the old failure or fabricating an old stop receipt.
+
+- Fix type mismatches for standard Redis integer replies in fresh preflight-cleanup DEL and resumed marker EVAL. Accept only exact string replies and normalize a confirmed EVAL result to the existing integer receipt, preserving transaction reply contracts and the prohibition on replaying unknown writes. Unconfirmed DEL exposes only a fixed redacted stage diagnostic and preserves the original plan and failure, and requires complete before/after-image verification without backfilling completion for an old scene.
+
+- Add a dev package override with opt-level=3 only for locked sha2 0.11.0 to reduce the computation cost of full digest verification in development tools. Preserve dependency versions, optimization settings for other crates, full source verification, and the API/Worker preparation, readiness and outer handoff limits of 120, 60 and 300 seconds.
+
+- Route the formal fresh-target reconcile-preflight entry directly to Rust, reusing workspace, storage-run and target-generation guards. Cleanup is limited to the exact sentinel and rechecked empty databases of a unique reset preflight failure, with a plan published before cleanup and complete after-image validation before completion. Original failures, reports and unknown writes remain preserved; initialization is not replayed and recovery is not qualified.
+
+- Fix shared atomic receipt publication for API, Worker and frontend on long Windows paths. Preserve native canonical paths separately for staging and target parents without changing staging outside control locks, publication inside them, or portable receipt facts. Persistence failures retain the original I/O type and OS code and clean up the current temporary file, without overwriting unknown targets or automatically replaying operations.
+
+- Add redacted preparation-stage failure evidence for API/Worker monitors, bound to the original operation and actual creation identity. Parent authorization strictly validates it before exposing fixed causes, available I/O OS codes and advice; unknown causes retain only a digest. Missing or invalid evidence preserves the original failure. Preparation/readiness/handoff limits, process ownership and cleanup remain unchanged, without backfilling old scenes or replaying startup.
+
+- Allow 120 seconds for API/Worker full-source verification and supervisor candidate preparation, retaining 60-second product readiness, 300-second outer handoff and final RPO/RTO requirements. Existing candidate or authorization receipts cannot bypass the deadline; expiry retains evidence for explicit reconciliation without replay.
+
+- Before Redis startup, wait at most 60 seconds only for an occupied Windows exclusive-bind port, checking original sources each round and probing within one fixed monotonic deadline. Publish intent and launch the supervisor only after actual bind/drop succeeds. Timeout retains the last OS code and fixed recovery advice; other errors fail immediately. Post-stop port proof and the 180-second primitive, 60-second readiness and 15-second acceptance limits remain unchanged, with no automatic restart or replay.
+
+- Remove retired Python forwarding and private binding branches for fresh-target prepare, resume-prepare and status. Formal lifecycle operations continue to execute directly in Rust; Python retains the active reconcile-preflight path only. Narrow the private protocol and consolidate useful boundary coverage, removing the test that only checked script-file existence without changing recovery authority or cleanup scope.
+
+- Add fixed stage, cause-category and OS-code diagnostics for Redis source guards, socket creation/options, exclusive port binding, command construction and intent publication between launch and intent records. Validate fixed diagnostic fields strictly across processes and retain only digests for unknown causes. Post-stop port checks retain their original I/O errors and are not marked as not started. Preserve existing checks, deadlines and failure evidence without automatically retrying or replaying services.
+
+- Merge configuration-transfer snapshot-phase tests with identical inputs and assertions, naming the retained case after the phase rule it checks. Remove restore-retry and concurrent-CAS tests that exercise only the fake repository's own implementation. Retain real MySQL coverage of authoritative records, waiting and complete-preimage CAS, together with service-level tests, production validators and shared test helpers.
+
+- Preserve original controller exit codes during startup handoff and distinguish monitor exit, candidate registration exceeding the original deadline, and ownership mismatch. Expose only exact fixed safe diagnostics; unknown output reports bounded lengths, overflow flags and digests. Retain existing deadlines, source and complete process-tree checks, failure receipts and explicit reconciliation without automatically retrying startup.
+
+- Fix authorization projections missing from complete logical copy images and continuation tool contexts still using old S3 descriptions. Compare raw business inventories before including authorization projections from raw preserved tables, and reject omitted targets with nonempty projections. Explicit continuation reuses the verified source request and target file configuration while retaining the original plan, initialization receipts, unknown-write reconciliation and lock protection.
+
+- Connect complete read-only fresh-target verification and four-target inventory capture to native Rust execution, checking complete two-round preimages, release snapshots and parent finalization against the original file configuration. Remove the old Python verification and capture execution while retaining active shared validation and necessary boundary adapters. Validate nonempty general sources separately from fresh empty targets without expanding recovery authority.
+
+- Remove the rebuild command example that opens Cargo's own help instead of the application interface. Retain the executable planning and confirmed-execution workflow in both documentation languages.
+
+- Fix read-only storage observations clearing OS runtime fields required by Windows platform tools. Reuse the existing whitelist and bound-value precedence without restoring application environment overrides; report fixed safe failure diagnostics.
+
+- Align four-target inventory authorization-projection metadata and current migration ownership-confirmation output. Retain complete-table and unknown-table checks, copy digests and existing inventory-continuation boundaries. Preserve internal inventory failure causes while exposing only fixed safe diagnostics and repair guidance, without replaying completed writes.
+
+- Fix recovery acceptance rejecting current version-five rebuild ledgers while retaining exact-plan, complete-phase and release-predecessor checks. Bind report and ledger bytes before and after reading; failures do not trigger conversion or replay.
+
+- Fix nonproduction rebuild verification rejecting canonical bootstrap authorization-projection events as runtime residue. Strictly verify one event per tenant, its version, payload and undelivered state, while continuing to reject nonempty runtime tables and extra or malformed events.
+
+- Move formal source-rebind orchestration to native Rust, reusing the original run lock and complete history proofs while retaining producer quiescence, matching cache and storage successors, two complete observations, and non-overwriting receipts. Remove the old Python execution dispatch. Safe phase classifications flow through the existing ledger and CLI, preserving redacted CIM error codes and repair guidance.
+
+- Review reset coverage and remove a duplicate old-ledger-version scenario, a self-comparison hash assertion, and a credential comparison already covered by configuration aliases. Retain effective recovery, idempotent reuse, identity drift, password policy, and diagnostic coverage.
+
+- Report the configuration field, path, underlying cause, and repair advice when local object-storage reset preflight fails, requiring inspection of existing ledgers and resources before retrying. Preserve remote-error redaction and no automatic replay. Correct migration import boundaries for worker-only builds.
+
+- Remove the old Python CLI and decoder replaced by native Rust source verification and comparison, together with their forwarding and private-protocol tests. Formal process tests retain environment isolation, failure without success receipts, and unchanged before/after files; shared producers remain.
+
+- Move reboot-observation configuration contracts, original process identities, and kernel boot proofs into the native tool, retaining independent build-drift blockers and original-ledger controller verification. Remove replaced Python role, endpoint, and failed-prefix implementations and their obsolete tests.
+
+- Register physical ownership with the explicit scope during first control/tenant initialization and complete SQL export. Adopt existing unmarked databases through a separate ownership-adopt plan, strict before/after verification, and transactional registration, retaining business adoption, rejection of conflicting ownership, and no-replay boundaries.
+
+- Add strict read-only reconciliation for failed initial generations: preserve unconfirmed parent cleanup and, only after complete Linux terminal evidence and current identity, launcher, and port proofs pass, append reconciliation evidence in a new formal partial-close stage and close the original RustFS supervision tree. Propagate fixed safe cleanup diagnostics to current consumers without fabricating stop or startup success.
+
+- Native initial-generation late failures after runtime publication still execute exact cleanup. Partial closure accepts them only when complete acceptance, failure, stop and exit evidence agrees and the runtime exactly matches the original stop receipt, binding all receipts before and after verification without resending stop or claiming startup success.
+
+- Split native Redis startup into authenticated readiness and acceptance confirmation: `timeout_seconds` remains the readiness budget, followed by a separate 15-second acceptance budget after ack publication. Both sides check deadlines on successful completion, retaining complete source and identity verification and failure cleanup without resetting loop budgets or replaying operations.
+
+- Remove duplicate positive unsigned-ID assertions against the same parser implementation, retaining the public entry's full-range boundaries, invalid-input checks and caller-supplied business error messages.
+
+- Remove obsolete cache resource-stub tests that cannot reach current native stages, retaining existing Rust coverage for unknown writes and recovery. Verify RESP encoding and parsing, original exceptions and no replay at the active Python transport and session boundaries, preserving shared fixtures used by other callers.
+
+- Add a native read-only authority entry for recovery datasets, validating target plans, runtime generations, dataset lineage, independent source and explicit configuration bindings, then rechecking all consumed inputs before returning. Formal frontend consumer migration and complete recovery-chain acceptance remain separate pending work.
+
+- Remove the unused Python Linux Redis startup, supervision, frozen-helper implementation and disabled entry points, together with tests exclusive to that retired implementation. Current start, observe and stop calls continue through the bound Rust tool; retain active Python adapters, readonly historical evidence checks, atomic publication and error/no-replay protections. Historical frozen files and Git records remain unchanged.
+
+- Complete strict partial closure when initial Redis creation succeeds but readiness fails and cleanup has completed. Verify complete original evidence and read-only exit proof without resending stop or fabricating runtime records; unknown, missing, or drifting evidence remains rejected and the original failed scene is preserved.
+
+- Correct native Redis startup timeout diagnostics to distinguish process-creation receipts from final acceptance. Consolidate adjacent duplicate validation of identical inputs without external operations between them, retaining full provenance, identity, authorization and checks across operations without extending startup deadlines.
+
+- Fix native fixture preflight and successor verification rejecting a bare `wsl` command where an absolute path is required. Share controlled PATH resolution that selects only a regular, unlinked launcher from absolute directories; missing or unsafe entries produce fixed redacted diagnostics without weakening tool digests or call deadlines.
+
+- Correct obsolete environment-variable guidance and the Compose mount-path base in production deployment instructions, synchronizing both operations guides. Align alert runbook links with the current Redis and dependency troubleshooting sections while retaining deployment heading-anchor validation.
+
+- Send only the existing review file binding across the cache process-model boundary. Rust reads the complete review and verifies the same byte binding before and after the model; normal and pending/successor paths retain their respective validated canonical provenance. Both cache lifecycle primitives use a child of the currently bound Rust xtask, reusing the original 4 MiB private I/O and whole-process 180-second boundary. Timeout reclaims only the exact primitive handle and leaves services unknown.
+
+- Connect initial fixture Redis startup, recovery start/stop, and supervision to a separate native entry in the bound Linux xtask. Version 2 requests and launches bind complete native_tool provenance; current preflight and tool successors no longer probe Linux Python. Preserve stdin authorization order, same-ELF exec parent-supervisor checks, exact pidfds, exclusive port-closure proof, and failure/unknown receipts. Stable diagnostics disclose neither configuration nor remote stderr. Retain frozen Python and historical evidence until real acceptance is complete, without fallback to legacy execution.
+
+- Add the formal Worker-only library test entry: full backend checks run `--lib` tests with only `bin-worker` enabled after successful all-feature Workspace tests; smart checks run them once only when ryframe is affected, reusing the target directory and test concurrency without a filter. The existing feature command contract checks the generated arguments; product features, existing tests, and AST gates remain intact.
+
+- Remove reviewed redundant tests and fixture-only assertions while retaining configuration redaction, read-only before/after images, real connection causes and budget release, independent catalog fingerprints, capability validation, and exact schedule target lists. Remove the tenant migration source-count test and its obsolete Cargo and targeted resource-test entries. Check name uniqueness in the existing actual Migrator name and separate-ledger case without requiring global alphabetical order; retain the tenant database Clippy compilation surface and effective migration tests in the full Rust gate, and remove unused test imports.
+
+- Fix native controller recovery rewriting legacy ledger key order and preventing formal history reload. Reuse the lifecycle writer that preserves ordering while retaining original intents, semantic after-image digests, and lock-identity checks. The existing recovery case now connects a reachable restart interruption, actual native recovery, and history consumption, retaining Unicode and legacy-writer format coverage while removing the duplicate simulated writer and direct success case.
+
+- Fix the formal CI integration entry omitting the real replica monitor case: explicitly combine `bin-api,bin-migrate` only for the `business_initialization_mysql` test target, retaining `--no-default-features` and product migrate dependency isolation. The existing command contract checks the actual execution arguments.
+
+- Preserve fixture-tree shutdown races: retry Windows creation-time and image queries only for errors 5/31 on the same handle within one shared five-second deadline, and continue waiting for complete member proof when normal exit races with termination. Keep the false termination result when the Unix process group is already absent on the first signal attempt; unknown identities and permission failures still reject control.
+
+- Execute fixture-service controller recovery and complete RustFS tree shutdown directly in Rust, preserving state preimages, original owners, lock identities, and complete member shutdown proof. Redis startup/shutdown and RustFS startup retain their restricted entry points; unknown identities or incomplete shutdown still reject success.
+
+- Register the shared file-configuration tests only in the S3 HTTPS test entry, available with default features. Redis, OTLP and account recovery continue to use the same complete configuration support, retaining all configuration safety assertions and Unix/Windows link failure requirements. Remove the tautological Redis status-enum comparison while preserving the implementation and meaningful tests for unconfigured and unreachable states.
+
+- Fix complete initialization SQL assigning new permission and menu IDs by catalog position instead of matching migration initialization. Export and live initialization share the rule that allocates the next ID only for missing entries, preserving existing IDs, names, ordering, and relationships.
+
+- Fix maintenance build evidence verification depending on surviving Cargo cache files. Normalize the fixed target and original artifact paths through existing ancestors without links, preserving original event, log and frozen-copy checks after cache deletion or rebuilding. Absolute paths, workspace ownership, unique events and role constraints remain enforced; actual builds still require existing artifacts and publish no success receipt on failure.
+
+- Explicitly check the fixed 80% backend Rust byte floor in CI planning, including non-Rust-only changes; keep frontend excluded and vendor separate without changing classification or local report defaults.
+
+- Build and verify ordinary recovery runtime API/Worker artifacts in Rust, registering only adjacent create-only owned copies. Frontend production receipts still use the formal external-build entry or strict reuse. Shared readers use the same native source, build-context and byte validation while retaining original v2 receipts and the fixed B0 adapter contract. Reuse the existing native origin-binding preparation for explicit targeted validation; reject missing or ambiguous write authorization. Remove the retired Python generation-request writer and argument entry, retaining historical readonly reconstruction and its independent drift protection.
+
+- Construct formal generation-request v2 in Rust with explicit coordinator-owned configuration and generated execution-source publication bindings. Carry configuration through startup, producers, four-database capture and successor source projection, including frozen absence of optional common configuration. New START rejects v1; original v1 history verification and safe cleanup of registered resources retain their contracts without rewriting receipts.
+
+- Unify comparison-source capture, verification and build/backup/target consumers in Rust, removing the dedicated Python comparison algorithm and old private branch. Preserve fixed B0 objects and patch, complete sources and the shared published export, avoid Git reconstruction during readonly verification, and reject baseline replacement refs and Git environment redirection.
+
+- Freeze independent executable copies immediately during native four-role builds, verify source and copy digests, and preserve executable permissions; historical receipts no longer depend on mutable shared Cargo paths, and partial failures retain their scene without replay.
+
+- Add independent execution-source publication for business fixtures, binding the original generated differences and candidate contract file into clean backend/frontend repositories while preserving original evidence and refusing overwrite after failure.
+
+- Normalize native paths in newly derived fixture reviews, retaining the original template, worktree, database credential and runtime targets while preventing valid Windows path spellings from failing later preparation.
+- Fix fixture tool preflight rejecting equivalent Windows spellings of the same service receipt path. Tool digests, scope and predecessor constraints remain enforced, and different paths are still rejected.
+- Resolve `generator.target_dir` from the execution backend in Rust for all three maintenance build roles and receipt readers, sharing an explicitly configured cache. Preserve the existing default when unset; reject invalid configuration and links before building, without environment overrides.
+- Switch the formal reference-fixture runtime build entry to native Rust, sharing four-role Cargo artifact and complete source verification while preserving sidecar configuration and no-replay failure contracts. Remove old build mock tests with no independent coverage value; remove the dedicated legacy Python build algorithm and private branch while retaining shared verification and runtime control with current consumers.
+- Connect Rust parent paths for source-generation start and readonly status, reusing the run lock, complete history, and before/after-image checks. Record API/Worker operation IDs before consuming one-time reservations, binding environment files and complete supervision receipts. Reject unauthorized starts, mutating status requests, and orphaned role evidence. Retain old adapters with other current consumers; full real start and recovery acceptance remains pending.
+- Route target storage layout, complete generation comparisons, and Windows actual-argument observation through managed Rust evidence ports, removing dedicated Python/PowerShell/ctypes verification. Unavailable native CIM explicitly rejects observation without fallback or automatic replay. Historical failures select their complete exception and frame contract from the record-bound clean Git producer, rejecting unknown or mixed provenance while preserving cleanup and stopped-process proof requirements. Migration verification and inventory commands explicitly select the execution root's configuration directory.
+- Fix historical storage-failure verification using the completed-stage digest instead of its registered running record. Reuse running-record reconstruction and controller binding checks, reject source, owner, and manifest tampering, and preserve original failure files and exact-cleanup constraints.
+- Reuse the typed Rust supervision engine for fixture API/Worker control and finite frontend commands, preserving role-specific owner/request records, artifact and configuration checks, complete-member closure proofs, and no replay of unknown outcomes. Refuse to adopt old API processes without supervision trees; retain formal build and preparation adapters that still have callers.
+- Move extended-CI file-configuration semantics and diagnostic-artifact sensitive-file exclusions into the sole Rust internal entry, using a locked glob matcher against a temporary file tree to verify exclusions while retaining public logs. Remove duplicate wiring, Shell-spelling, and retired environment-variable text assertions from the old Python database-workflow tests without changing the workflows.
+- Connect the Rust parent execution paths for source verification, verification recovery, generation stop and stop recovery, sharing lock ownership and complete source/process-tree checks. Preserve unknown-write, no-replay and failure-evidence rules. Remaining Python generation start, status, restart and comparison paths still await migration; full positive recovery acceptance is not yet complete.
+- Move independently valuable CI workflow wiring checks into the sole Rust internal test entry, using real YAML/TOML parsing to protect commit ranges, frontend sources, gate scheduling, isolated file configuration, and failure diagnostics. Remove duplicate supply-chain, fixed-count, and retired Python dependency-lock assertions and the original Python test file; workflow behavior is unchanged.
+- Generated tenant-business persistence reuses the shared safe error conversion and removes its duplicate mapper. Add internal diagnostics for missing or stale transactional data-scope projections and readiness, preserving public responses and fail-closed behavior.
+- Preserve both candidate workspaces and nested rollback backups when frontend business generation fails, preventing outer temporary-directory cleanup from invalidating recovery paths. Successful generation still cleans its caches, with unchanged formal installation rules.
+- Record request-correlated categories and safe causes before tenant-data access returns 503, distinguishing projection versions, target connections, placement, and capacity problems. Redacted driver causes remain internal to logs; public responses continue to hide internal causes, with maintenance and fail-closed rules unchanged.
+- Fix procedural macros potentially reusing another worktree's source artifacts when sharing a Cargo target. Every build verifies the current macro sources and preserves the generated fingerprint's modification time when its content is unchanged; a source mismatch or occupied watch sentinel fails explicitly. A real offline, locked regression verifies A→B→A macro expansion, source additions, edits and deletions, and unchanged output, retaining failure evidence without automatically deleting unknown cache objects.
+- Clarify that tenant-table adoption accepts only one target, while subsequent migrations, verification, and status queries support explicit `--all` over registered targets, correcting the documentation's scope ambiguity.
+- Fix tenant-data migration activation advancing scope without invalidating authorization snapshots. An actual transition back to active advances the existing authorization epoch and mirror outbox in the same transaction, followed by synchronization and notification with the new epoch after commit. Idempotency, already-active placement, rollback, and post-commit failures retain fail-closed and no-replay rules; maintenance and cutover are unchanged.
+- Align source authorization-cache plans with the actual product keyspace and v4 snapshot contract, using the same namespace and snapshot suffix while strictly validating data-scope versions, subject versions, and completed password changes. Old formats, unknown fields, and inconsistent versions are rejected without modifying original cache values or the cleanup transaction's single-execution rules.
+- Fix user creation, updates, deletion, and import batches that insert users advancing the data-scope version without invalidating authorization snapshots for other subjects. The same transaction advances the tenant authorization epoch and records the mirror outbox according to the existing cache policy, followed by synchronization of the existing cache after commit. Target-user old-token rejection, batch cursors, and rollback guarantees remain; batches without inserts do not advance the epoch.
+- Replace the fixed 33-key source authorization-cache cleanup Lua with Rust WATCH/MULTI/EXEC on one connection, comparing the complete snapshot before queueing one UNLINK. Conflicts, TTL/ABA changes and unknown EXEC results never retry automatically; receipts distinguish confirmed results from complete-after-image reconciliation, without exposing credentials or cache values in diagnostics. A unique attempt is persisted before Redis commands and binds the original source, producer, and complete frozen observation; its separate execution record distinguishes confirmed results, pre-execution failures, WATCH conflicts, and unknown results. Known no-write outcomes cannot reconcile as success, while a lost receipt for a confirmed result only republishes that result.
+
+
+- Windows resource-directory identity uses a safe third-party high-resolution API and preserves the full 64-bit volume serial number. A 128-bit file ID must convert exactly into the existing u64 inode contract; oversized or non-high-resolution results are rejected without truncation or low-resolution fallback, while hard-link counting remains unchanged.
+
+- Fixture services support strict partial closure when the initial generation fails before bucket writes. Only started services with complete ownership proof are stopped, unstarted steps are checked for absence of side-effect evidence, and failed ledgers and files are retained. Partial closure cannot precede resumed initialization or restart, and unknown outcomes are never replayed automatically.
+
+- Fix source domains for real frontend builds: configuration and identity modules indirectly imported by Vite bind both product and tool digests. The generated-page acceptance configuration is a tool input; test type configuration retains its product binding and also records a tool digest. Complete source validation and conservative product ownership for unknown files remain effective.
+
+- Remove the unused login-budget environment-mapping interface, its private operation, and its dedicated derived-reader chain. Formal login budgets continue to use file configuration and managed ledgers, retaining rate-limit, concurrency, and failure checks.
+
+- CI Required aggregation accepts an explicit JSON input file. The workflow passes the event, action and complete needs document to Rust as data without custom environment fields, retaining existing success, failure, cancellation and skipped-job rules.
+
+- Resource-gate replay validates its manifest before loading test-role configuration, so an invalid manifest reports its own cause instead of an unrelated local service-configuration error.
+
+- The kernel build script checks the actual workspace's source commit on every build and writes the generated constant only when its contents change, preventing shared build caches from retaining another worktree's source or repeatedly updating identical output. Development-source semantics, exact SHA validation, and failure behavior are preserved.
+
+- Unify frontend build-proof and recovery validation in Rust for complete sources, selected file configuration, managed identity and complete dist. Formal consumer contexts no longer select Python. Remove the old Python source-contract entry and duplicate validation algorithms while retaining the actual HTTP server and necessary recovery adapters. Configuration bodies never enter the protocol, and file protection covers formal response publication.
+
+- Remove the retired administrator-password environment lookup from copy diagnostics and keep only APP_ENV in normal target-verification fixtures. Redaction of actual file-bound credentials and negative checks against retired environment overrides remain intact.
+
+- Redis first-generation startup and cache recovery distinguish APP_ENV application selection from OS runtime fields such as TEMP/TMP, reusing restricted child-environment construction and retaining the bound private environment. Arbitrary application and credential overrides remain rejected before side effects, without changes to requests, locks, markers or recovery receipts.
+
+- Fixture service status recommends continuing only after every preceding initial step has passed and no evidence exists for the next step. Failed or running initial steps, or existing evidence for the next step, require evidence reconciliation instead of suggesting a step based on attempt count. Status queries remain read-only.
+
+- RustFS first-generation startup and storage restart use explicit credential-file arguments and the console flag, removing inherited RUSTFS/MINIO environment overrides. Startup intents, historical registration and target verification bind the same complete arguments and credential files without a service environment configuration map, retaining private environment files and process-tree, identity, endpoint and fail-closed checks.
+
+- The formal browser credential broker now strictly reads the current administrator TOML bound by the bootstrap, reusing file-binding and account parsing checks plus the existing password policy. Missing, changed, or invalid credentials fail closed; the broker no longer reads the initial password and retains the actual credential-read requirement and existing local protocol.
+
+- Route fresh-target initialize and resume-initialize through the formal Rust entry, binding configuration directories, reset and migration receipts, inventories and guarded publication, and remove the old Python initialization writer. Bind migration resumes to the complete interrupted file before-image, preserving and strictly distinguishing historical failed read-only receipts from newly produced evidence. Cover registered-restart markers, read-only publication successors and confirmation failure after successful writes; unknown writes remain ineligible for replay.
+
+- Preserve redacted underlying causes for independent tenant database migration and internal diagnostics, share failures across concurrent pool waiters, and keep public error responses unchanged.
+- Every migration repair command explicitly carries a `--config-dir` directory placeholder and quoting guidance, preventing a custom-configuration failure from directing checks to another default database. Connection-failure coverage uses distinct schemas and explicitly retains the shared-control target without bypassing alias validation.
+
+- Migration commands reuse startup credential redaction, including independent tenant targets, and report the phase, selected configuration, repair commands, and conservative write state on stderr while retaining operation and close failures. Successful output and non-executing plans are unchanged; unknown DDL, ledger, or file publication outcomes are never replayed automatically, and discarded independent-target causes are not inferred.
+
+- Reviewed existing kernel, config, and auth tests, removing assertions that only compare distinct derived enum variants. The obsolete-environment override probe now runs explicitly through its parent test, which still verifies exactly one successful probe; file configuration, tenant isolation, and authentication security checks remain intact.
+
+- Linux observer error paths consistently attempt owned-launcher cleanup and wait even after kill fails, bounded by the remaining time before the same 20-second call deadline and limited to a nonblocking check after expiry. Diagnostics retain the primary cause, accurate timeout classification, and cleanup results, explicitly leaving Linux/Git descendant status unknown without automatic replay or changes to source sampling or the 20-second budget.
+
+- Cache read-only status uses a managed Linux xtask for ordinary, registered-successor, partial, and closed generations. Actual exclusive bind followed by close proves port closure, with explicit WSL user/UID, dual-path ELF, and complete compiled-source bindings. Replaced Python status dispatch is removed while startup/shutdown and historical creation evidence remain.
+
+- Model generation and multi-table imports validate resource, table, route and permission conflicts across all registered business modules before installation. Backend-only generation compiles the candidate composition root for authoritative preflight; frontend synchronization reuses existing OpenAPI validation. Plans show the actual stages, and preflight failures preserve both repositories' before-images while reporting causes and repair guidance.
+
+- Replica admission now checks registered control-business table structures after the existing PING and framework verification. Drift removes a replica as a schema hard failure, retaining the two-second budget, three-failure/two-success thresholds and no replay of failed SQL. A same-instance two-owned-schema scenario uses a transparent TLS byte proxy to exercise the real monitor, routing, disconnection, recovery and explicit schema repair without claiming cross-instance or MySQL replication coverage.
+
+- Fix the Windows development supervisor treating a canonical path's drive prefix as a directory. Retain component-by-component link/reparse-point rejection and complete configuration snapshots.
+
+- Fix incorrect rejection of Windows maintenance-tool provenance when canonical and ordinary paths are mixed. Normalize path representation while retaining owning-worktree, link and receipt-boundary validation.
+
+- Describe model-generation persistence targets through resource declarations, avoiding misleading reuse of configured reverse-import sources or target types. Database-import plans continue to show their actual schema source, table batch and target type.
+
+- Bind source registration, capture, inventory and recovery object calls to application configuration files, removing inline credential fallback from the native S3 protocol. Derive public source endpoints from verified files and retain configuration-drift checks, unknown-write rejection and the ban on automatic retries.
+
+- Return 503 with retry guidance consistently for tenant business reads and writes when data-scope projections are missing, unready or stale. Preserve strict versions and transaction fences, avoid misleading product-configuration or login-refresh errors, and apply the same classification in generated repositories.
+
+- Fix valid user-role assignment returning 404 in ordinary tenants that intentionally have no super-administrator role. Remove the redundant super-role precheck while preserving self-assignment restrictions, transactional role ownership and super-administrator checks, and old-token invalidation after authorization changes.
+
+- Classify driver-reported foreign-key violations consistently: deleting a referenced parent or writing a reference to a missing parent returns 409, while connection and transaction failures retain their 503 classification. Do not infer foreign-key violations from error text or expose underlying SQL or field values in conflict responses.
+
+- Complete SQL exports verify actual structures and ownership before business ledger writes, then hold metadata locks while rechecking framework, business and ledger state before recording both framework completion markers. Coverage includes incremental ALTER, defaults, collations, indexes, foreign keys and CHECK/enforced using the existing normalization rules; errors preserve executed DDL and previously valid ledger entries without automatic replay.
+
+- Complete one-pass initialization of shared-control in the same physical database through formal control export-sql. Reuse runtime tenant DDL, slot/fence data statements and migration names, strictly compare shared ownership and create one business ledger for registered Control/Tenant migrations. Verify both ledgers directly after import without another up; independent MySQL targets still migrate separately, and nonempty databases or unknown DDL outcomes are not replayed.
+
+- Fix full CRUD generation for MySQL imports with database clock defaults. Typed insert inputs omit database-generated values; updates preserve database clock semantics and return persisted values. Update fakes and existing CLI/compilation scenarios, continue rejecting unknown expressions, and retain application-managed audit clocks when no database expression is declared.
+
+- Formal adoption of existing tables uses read-only control framework ledger and physical-schema prechecks without requiring new business permissions or menus to be seeded first. Normal verify/API/Worker retain complete access-catalog verification. Confirm adoption by inspecting the original plan, explicitly run up for required access initialization, then perform full verification; preserve rejection of unknown results, schema drift and incorrect targets.
+
+- Fix initial-password-change sessions incorrectly rejecting context reads and password changes after nested routing rewrites the URI. Check the existing method and path allowlist against the original full URI, preserve business and message-ticket restrictions and normal permission checks, and cover nested behavior with HTTP middleware requests.
+
+- Fix generated business models and entities with JSON fields referencing an undeclared direct `serde_json` dependency. Generate the type through the SDK's public export and include a JSON field in the existing real business compilation scenario.
+
+- Reuse the shared ownership fixture and file configuration for real MySQL tenant-projection scenarios on shared-control and an independent dedicated target. Check minimal identity/department facts, stale-version rejection, and complete rollback preimages after publication failure; explicitly close the target pool before successful cleanup and retain failed scenes.
+
+- Initialize the real MySQL first-password-change acceptance case by exporting private initialization SQL through the official migration CLI, importing it into an owned empty database, and verifying it. Preserve ordinary-user password changes, old-credential rejection, refresh, and repeated-migration behavior, and check the administrator's explicit password and first-change flag.
+
+- Declare the shared file-ownership fixture dependency for targeted composition-root MySQL tests, avoiding accidental reliance on unrelated binary features. Existence and active-connection counts explicitly return unsigned values, with safe decoding and database-error-code diagnostics. API and migration dependency boundaries remain independent.
+
+- The generator and formal business fixtures share a fixed build directory through file configuration, avoiding MSVC output-path failures in deeply nested workspaces. Keep the lockfile produced by business creation instead of recomputing it wholesale. Acceptance command failures identify the program and working directory and provide configuration guidance for recognized C1083 invalid-path errors without exposing private subprocess output.
+
+- Source registration now uses the native Rust stage controller to hold target and ledger locks and publish local evidence, removing the former Python writer. Initialization-history tests share one fixture and internal entry point; redundant internal-step assertions covered by complete-history validation are consolidated while recovery and rejection of unknown failures remain protected.
+
+- Move historical producer stop verification into Rust. On Windows, kernel access-denied errors use a managed native CIM query with strict microsecond precision boundaries. CIM failure explicitly rejects verification with repair guidance. Remove the PowerShell/PDH fallback and duplicate Python algorithm; existing callers only forward complete identities and strict results.
+
+- Recheck source trees and every consumed evidence binding before and after full-stack artifact verification, rejecting extra fields in original snapshots. Validate fixed evidence paths before hashing files and keep source-test fixtures in isolated workspace directories. Source-export proofs recheck the complete runtime contract, both configurations, and artifact manifests before and after verification, rejecting duplicate instance IDs, configuration mismatches, and runtime-receipt drift.
 
 - Native source export checks product build inputs, the current build environment and explicit source audits separately. Valid reuse retains the original build snapshot and fingerprint, and the end of the execution window rechecks the complete source and frozen artifacts. Producer registries reject duplicate PID creation generations rather than allowing different names to register the same process more than once.
 

@@ -39,6 +39,11 @@ impl<'a> FakeTransport<'a> {
         if self.fail {
             return Ok(output(1, Vec::new()));
         }
+        assert_eq!(spec.args[0], "--config-dir");
+        assert_eq!(
+            spec.args[1],
+            self.fixture.request["config_dir"].as_str().unwrap()
+        );
         let key = argument(&spec.args, "--target")?;
         let path = Path::new(argument(&spec.args, "--output")?);
         let mut value = raw(self.fixture, key);
@@ -116,7 +121,7 @@ impl Transport for FakeTransport<'_> {
         assert!(spec.work_dir.starts_with(&self.fixture.local));
         let mut result = if spec
             .args
-            .first()
+            .get(2)
             .is_some_and(|arg| arg == "target-inventory")
         {
             self.inventory(&spec)
@@ -189,11 +194,13 @@ fn raw(fixture: &Fixture, key: &str) -> Value {
         .find(|db| db["key"] == key)
         .unwrap();
     let combined = db["kind"] == "combined";
-    let (_, all, kept) = model::table_sets(&fixture.backend, combined).unwrap();
+    let (copied, all, kept) = model::table_sets(&fixture.backend, combined).unwrap();
     let table = |name: &String| {
         let rows = if name == "ryframe_resource_ownership" {
             if combined { 2 } else { 1 }
-        } else if kept.contains(name) || name == "biz_tenant_target_slot" {
+        } else if (kept.contains(name) && !copied.contains(name))
+            || name == "biz_tenant_target_slot"
+        {
             1
         } else {
             0
@@ -292,13 +299,23 @@ fn inventory_target(
         directory,
         transport,
         executable,
-        vec![
-            "target-inventory".into(),
-            "--target".into(),
-            key.into(),
-            "--output".into(),
-            path.display().to_string(),
-        ],
+        crate::recovery::clone::native::target_verify::resume_prefix::configured_command(
+            generation["maintenance"]["artifacts"]["tenant-data"]["executable"]
+                .as_str()
+                .unwrap(),
+            &fixture.request,
+            vec![
+                "target-inventory".into(),
+                "--target".into(),
+                key.into(),
+                "--output".into(),
+                path.display().to_string(),
+            ],
+        )
+        .unwrap()
+        .into_iter()
+        .skip(1)
+        .collect(),
     );
     let db = fixture.request["target"]["databases"]
         .as_array()

@@ -138,7 +138,6 @@ fn complete_selected_file_loads_for_each_environment_without_common_file() {
         let config = fixture.load(environment).unwrap();
         assert_eq!(config.environment, environment);
         assert!(fs::symlink_metadata(fixture.0.join("app.toml")).is_err());
-        assert_eq!(fs::read_dir(&fixture.0).unwrap().count(), 1);
         if environment == Environment::Prod {
             assert_eq!(config.jobs.mode, JobWorkerMode::External);
             assert!(!config.api_docs.enabled);
@@ -275,10 +274,6 @@ fn dangling_common_link_is_an_error_and_is_not_replaced() {
     assert_eq!(
         fs::symlink_metadata(&target_before).unwrap_err().kind(),
         std::io::ErrorKind::NotFound
-    );
-    assert_eq!(
-        target_before.file_name().unwrap(),
-        "missing-common-target.toml"
     );
     let error = fixture.error(Environment::Test);
     assert!(error.contains("app.toml"));

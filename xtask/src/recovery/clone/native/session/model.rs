@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use crate::data::performance_identities::producer_authorization;
 use crate::local_test_path::{LocalTestPathKind, validate_absolute_path, validate_local_test_path};
 
-use super::super::json as json_io;
+use super::super::{json as json_io, resources::common, seed::history};
 
 pub(crate) struct Registration {
     pub root: PathBuf,
@@ -63,9 +63,11 @@ impl Registration {
         {
             return Err("SessionRegistrationMismatch".into());
         }
-        let registration_path = self.run.join("post-copy.json");
-        let registration = producer_authorization::binding(&registration_path)?;
-        self.authorize(request)?;
+        let post = history::post(&self.root, &self.run, None, Some(self.attempt), false)
+            .map_err(|_| "SessionRegistrationRejected")?;
+        let registration_path = common::bound_file(&self.root, &post.descriptor, "会话活动登记")
+            .map_err(|_| "SessionRegistrationRejected")?;
+        self.authorize(request, &post)?;
         let frontend = Path::new(request["frontend"].as_str().ok_or("InvalidFrontendPath")?);
         validate_absolute_path(frontend, LocalTestPathKind::ExistingDirectory)
             .map_err(|_| "InvalidFrontendPath")?;
@@ -83,8 +85,19 @@ impl Registration {
         exact(&request["config"], &["contract", "bindings"])?;
         exact(&request["config"]["contract"], &["timeout_ms", "pacing"])?;
         bindings(&request["config"]["bindings"])?;
-        let identity = self.identity(request)?;
-        if producer_authorization::binding(&registration_path)? != registration {
+        let identity = self.identity(request, &post)?;
+        let current = history::post(&self.root, &self.run, None, Some(self.attempt), false)
+            .map_err(|_| "SessionRegistrationDrift")?;
+        if current.descriptor != post.descriptor
+            || current.request != post.request
+            || current.runtime != post.runtime
+            || common::bound_file(&self.root, &post.descriptor, "会话活动登记")
+                .map_err(|_| "SessionRegistrationDrift")?
+                != registration_path
+            || producer_authorization::binding(&registration_path)
+                .map_err(|_| "SessionRegistrationDrift")?
+                != post.descriptor
+        {
             return Err("SessionRegistrationDrift".into());
         }
         Ok(Initialization {
@@ -93,8 +106,9 @@ impl Registration {
         })
     }
 
-    fn authorize(&self, request: &Value) -> crate::Result<()> {
-        let registration = self.run.join("post-copy.json");
+    fn authorize(&self, request: &Value, post: &history::Post) -> crate::Result<()> {
+        let registration = common::bound_file(&self.root, &post.descriptor, "会话活动登记")
+            .map_err(|_| "SessionRegistrationRejected")?;
         let source = self.root.join("xtask/src/recovery/clone/native/session.rs");
         let launch_path = self
             .run
@@ -145,9 +159,8 @@ impl Registration {
         Ok(())
     }
 
-    fn identity(&self, request: &Value) -> crate::Result<Value> {
-        let registration = json_io::read(&self.run.join("post-copy.json"))?;
-        let source = &registration["source_admin"];
+    fn identity(&self, request: &Value, post: &history::Post) -> crate::Result<Value> {
+        let source = &post.request["source_admin"];
         identity(source)?;
         for field in ["subject_id", "tenant_id", "username", "client_address"] {
             if request["identity"][field] != source[field] {
@@ -156,7 +169,7 @@ impl Registration {
         }
         let password = super::credentials::load(
             &self.root,
-            &registration["administrator_credentials"],
+            &post.request["administrator_credentials"],
             source,
         )?;
         let mut identity = request["identity"].clone();

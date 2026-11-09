@@ -17,12 +17,21 @@ use super::{
     read_json, text_field, valid_sha256, write_new,
 };
 
+#[path = "source_pair/execution.rs"]
+pub(crate) mod execution;
+
 const MAX_RECEIPT_BYTES: u64 = 4 * 1024 * 1024;
 const EMPTY_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 pub(super) fn run(command: &FixtureSourcePairCommand, backend: &Path) -> Result<()> {
+    if let FixtureSourcePairCommand::PublishExecution { output_dir } = command {
+        let receipt = execution::publish(backend, output_dir)?;
+        return print_json(&receipt);
+    }
     let FixtureSourcePairCommand::Publish(options) = command else {
-        println!("cargo xtask check recovery fixture source-pair --output <新文件> --write");
+        println!(
+            "cargo xtask check recovery fixture source-pair --output <新文件> --write\ncargo xtask check recovery fixture source-pair publish-execution --output-dir <新目录> --write"
+        );
         return Ok(());
     };
     publish(backend, &options.output)?;

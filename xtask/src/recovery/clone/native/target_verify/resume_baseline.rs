@@ -2,10 +2,10 @@
 use super::{
     super::{digest, json as json_io},
     evidence_model::*,
-    resume_observations as observations,
+    fresh::selection,
+    prepare_groups, prepare_observations, resume_observations as observations,
 };
 use crate::Result;
-use regex::Regex;
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, path::Path};
 
@@ -76,9 +76,25 @@ pub(super) fn prepared(
     Ok(snapshot["files"].clone())
 }
 
-fn document(backend: &Path, prepared: &Value, descriptor: &Value, request: &Value) -> Result<()> {
+pub(super) fn document(
+    backend: &Path,
+    target: &Path,
+    prepared: &Value,
+    descriptor: &Value,
+    request: &Value,
+) -> Result<()> {
     json_io::exact(prepared, super::resume_model::PREPARE, "prepare")?;
+    check(
+        read(backend, &bound(backend, descriptor)?)? == *request,
+        "prepare 固定请求与调用方正文不同",
+    )?;
     let generation = &prepared["generation"];
+    check(
+        selection::history(backend, target, request)?
+            .iter()
+            .any(|item| item.value == generation["storage"]),
+        "prepare 存储代次未绑定固定请求的完整合法历史",
+    )?;
     json_io::exact(
         generation,
         &[
@@ -127,7 +143,6 @@ fn document(backend: &Path, prepared: &Value, descriptor: &Value, request: &Valu
             && generation["request_sha256"] == digest::plan_hash(request)?
             && generation["review_sha256"] == request["review"]["sha256"]
             && generation["selected"] == selected
-            && generation["storage"] == request["storage"]
             && generation["operator_declared_controlled_generation_only"] == true
             && generation["external_writers_discovered"] == false
             && ["execution", "physical", "configuration"]
@@ -137,7 +152,7 @@ fn document(backend: &Path, prepared: &Value, descriptor: &Value, request: &Valu
     )
 }
 
-fn validate(
+pub(crate) fn validate(
     backend: &Path,
     target: &Path,
     files: &Value,
@@ -146,125 +161,76 @@ fn validate(
 ) -> Result<()> {
     let values = bound_files(backend, target, files)?;
     let names = values.keys().cloned().collect::<BTreeSet<_>>();
-    let mut consumed = BTreeSet::from(["request.json".to_owned(), "prepare.json".to_owned()]);
+    let consumed = BTreeSet::from(["request.json".to_owned(), "prepare.json".to_owned()]);
     check(
         consumed.is_subset(&names) && read(backend, &target.join("request.json"))? == *request,
         "fresh prepare 快照缺少固定请求或结果",
     )?;
     document(
         backend,
+        target,
         &read(backend, &target.join("prepare.json"))?,
         descriptor,
         request,
     )?;
-    for db in json_io::array(&request["target"]["databases"], "目标数据库")? {
-        let paths = observations::stage(
-            &names,
-            &format!("mysql-{}", json_io::text(&db["key"], "数据库键")?),
-        )?;
-        check(paths.len() == 1, "fresh prepare MySQL 观察数量无效")?;
-        let receipt = observations::receipt(backend, target, &paths[0])?;
-        check(
-            receipt["stdout"] == format!("{}\n", json_io::text(&db["server_uuid"], "服务器 UUID")?),
-            "fresh prepare MySQL 缺失观察不属于固定目标",
-        )?;
-        consumed.extend(paths);
+    if names.contains("failure.json") {
+        super::prepare_state::failure(backend, target)?;
     }
-    observations::redis(backend, target, &names, &names, 2)?;
-    let redis_paths = observations::stage(&names, "redis-kernel")?;
-    let pid = request["storage"]["redis"]["pid"]
-        .as_u64()
-        .ok_or("Redis PID 无效")?;
-    let mut stat_count = 0;
-    for name in &redis_paths {
-        let value = observations::receipt(backend, target, name)?;
-        let command = json_io::array(&value["command"], "Redis 命令")?;
-        if command.ends_with(&[json!("/usr/bin/cat"), json!(format!("/proc/{pid}/stat"))]) {
-            stat_count += 1;
-            let identity =
-                observations::process_identity(json_io::text(&value["stdout"], "Redis 输出")?)?;
-            check(
-                identity.0.starts_with(&format!("{pid} (")),
-                "fresh prepare Redis /proc stat 观察不属于固定进程",
-            )?;
-        }
-    }
+    let records = super::evidence_prepare::records(backend, target, descriptor)?;
     check(
-        stat_count == 2,
-        "fresh prepare Redis /proc stat 观察不属于固定进程",
+        records["pending"] == json!([]),
+        "fresh prepare 存在没有显式接管的中断尝试",
     )?;
-    consumed.extend(redis_paths);
-    let pattern = Regex::new(r"^storage-layout-[a-f0-9]{32}\.json$")?;
-    let layouts = names
-        .iter()
-        .filter(|name| pattern.is_match(name))
-        .collect::<Vec<_>>();
-    check(layouts.len() == 2, "fresh prepare 存储目录观察数量无效")?;
-    check(
-        read(backend, &target.join(layouts[0]))? == read(backend, &target.join(layouts[1]))?,
-        "fresh prepare 存储目录两轮观察不一致",
-    )?;
-    consumed.extend(layouts.into_iter().cloned());
-    object_baseline(backend, target, &names, request, &mut consumed)?;
+    let groups = prepare_groups::partition(backend, target, &names, &records)?;
     if names.contains("failure.json")
-        || names.iter().any(|name| name.starts_with("resume-prepare-"))
+        || !json_io::object(&records["intents"], "prepare intents")?.is_empty()
     {
-        let records = super::evidence_prepare::records(backend, target, descriptor)?;
         check(
-            records["pending"] == json!([])
-                && json_io::object(&records["terminals"], "prepare 终态")?
-                    .values()
-                    .any(|item| item[0] == "confirmed"),
+            groups.last().is_some_and(|group| group.confirmed),
             "fresh prepare 失败续作谱系没有完整确认",
         )?;
-        consumed.insert("failure.json".into());
-        for value in json_io::object(&records["intents"], "prepare intent")?.values() {
-            consumed.insert(super::resume_model::descriptor_name(value)?);
-        }
-        for value in json_io::object(&records["terminals"], "prepare 终态")?.values() {
-            consumed.insert(super::resume_model::descriptor_name(&value[2])?);
-        }
     }
-    check(names == consumed, "fresh prepare 快照包含未声明的文件")
-}
-
-fn object_baseline(
-    backend: &Path,
-    target: &Path,
-    names: &BTreeSet<String>,
-    request: &Value,
-    consumed: &mut BTreeSet<String>,
-) -> Result<()> {
-    for stage in ["bucket-readiness", "bucket-versioning", "scoped-list"] {
-        let receipts = observations::objects(backend, target, names, request, stage)?;
-        let buckets = receipts
-            .iter()
-            .map(|item| json_io::text(&item["bucket"], "对象桶").map(str::to_owned))
-            .collect::<Result<BTreeSet<_>>>()?;
+    let candidates = selection::history(backend, target, request)?;
+    let mut complete = false;
+    for group in groups {
+        let published = read(backend, &target.join("prepare.json"))?;
+        let mut matches = BTreeSet::new();
+        let mut best = None;
+        let mut furthest = 0;
+        for candidate in &candidates {
+            if group.published && candidate.value != published["generation"]["storage"] {
+                continue;
+            }
+            let mut progress = 0;
+            match prepare_observations::validate(
+                backend,
+                target,
+                &group.files,
+                request,
+                candidate,
+                group.complete,
+                &mut progress,
+            ) {
+                Ok(()) => {
+                    matches.insert(digest::plan_hash(&candidate.value)?);
+                }
+                Err(error) if best.is_none() || progress > furthest => {
+                    furthest = progress;
+                    best = Some(error);
+                }
+                Err(_) => {}
+            }
+        }
+        if matches.is_empty() {
+            return Err(best.unwrap_or_else(|| "prepare 观察没有合法完整账本代次".into()));
+        }
         check(
-            receipts.len() == 5 && buckets == BUCKETS.map(str::to_owned).into(),
-            "fresh prepare 对象观察未完整覆盖五桶",
+            !group.complete || matches.len() == 1,
+            "prepare 完整观察没有唯一账本代次",
         )?;
-        for value in receipts {
-            if stage == "bucket-versioning" {
-                check(
-                    value["response"]["Status"].is_null(),
-                    "fresh prepare 对象桶启用了版本",
-                )?;
-            }
-            if stage == "scoped-list" {
-                check(
-                    value["response"]["IsTruncated"] == false
-                        && value["response"]
-                            .get("Contents")
-                            .is_none_or(|contents| contents == &json!([])),
-                    "fresh prepare 对象前缀并非明确空范围",
-                )?;
-            }
-        }
-        consumed.extend(observations::stage(names, stage)?);
+        complete |= group.complete;
     }
-    Ok(())
+    check(complete, "prepare 缺少完整只读观察组")
 }
 
 fn bound_files(
@@ -287,4 +253,36 @@ fn bound_files(
         )?;
     }
     Ok(values)
+}
+
+/// 初始化消费者仍保留整个历史树，仅用最近一次完整观察组作资源比较基线。
+pub(crate) fn active(
+    backend: &Path,
+    target: &Path,
+    files: &Value,
+    request: &Value,
+) -> Result<Value> {
+    let prepared = read(backend, &target.join("prepare.json"))?;
+    validate(backend, target, files, &prepared["request"], request)?;
+    let names = observations::file_map(files)?
+        .into_keys()
+        .collect::<BTreeSet<_>>();
+    let records = super::evidence_prepare::records(backend, target, &prepared["request"])?;
+    let groups = prepare_groups::partition(backend, target, &names, &records)?;
+    let active = groups
+        .iter()
+        .rev()
+        .find(|group| group.complete)
+        .ok_or("prepare 没有完整观察组")?;
+    Ok(Value::Array(
+        json_io::array(files, "prepare 完整历史树")?
+            .iter()
+            .filter(|file| {
+                file["path"]
+                    .as_str()
+                    .is_some_and(|name| active.files.contains(name))
+            })
+            .cloned()
+            .collect(),
+    ))
 }

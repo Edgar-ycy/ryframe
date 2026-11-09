@@ -137,6 +137,8 @@ pub struct DatabaseSpec {
     pub schema_revision: Option<String>,
     #[serde(default)]
     pub indexes: Vec<IndexSpec>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub foreign_keys: Vec<super::ForeignKeySpec>,
     #[serde(default)]
     pub soft_delete: Option<SoftDeleteSpec>,
     #[serde(default)]

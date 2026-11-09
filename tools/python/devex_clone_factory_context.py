@@ -9,7 +9,6 @@ from devex_clone_model import linked, local_path
 from devex_clone_source_proof import bound_file
 from devex_clone_target import context
 from devex_clone_target_evidence import evidence
-from devex_clone_target_storage import verify_storage_generation
 from devex_clone_transfer import DatabaseObservation
 from restore_build import file_digest
 from restore_reference_plan import plan_hash
@@ -57,8 +56,7 @@ def _initialization_evidence(backend: Path, filename: Path, owned_lock_identity:
             or result["id"] != request["id"] or result["scope_id"] != request["target"]["scope_id"]):
         raise ValueError("目标初始化发布、原请求或完整准备记录已变化")
     inventory_history(backend, root, result["inventory"], request, resumed=resumed)
-    reset = read_json(regular_file(root / "reset-plan.json"))
-    if evidence("reset-completed", backend, root, manifest=reset["manifest"], sha=reset["plan_hash"]) != result["reset"]:
+    if evidence("reset-completed", backend, root) != result["reset"]:
         raise ValueError("目标 reset 未取得本代次完整完成及释放证明")
     return result, request
 
@@ -88,8 +86,10 @@ def target_history(backend: Path, binding: dict, output: Path, run, *,
                        "owned_lock_identity": owned_lock_identity}
     if owned_lock_identity is not None:
         context_options["lock_output"] = filename.parent
-    observed, resources = context(backend, request, output, run, **context_options)
-    verify_storage_generation(result["generation"], observed, resources.storage_runtime_binding, resources.cache_runtime_binding)
+    descriptor = read_json(filename.parent / "prepare.json")["request"]
+    observed, resources = context(backend, request, output, run, request_descriptor=descriptor, **context_options)
+    evidence("storage-generation", backend, output, expected=result["generation"], actual=observed,
+             runtime=resources.storage_runtime_binding, cache_runtime=resources.cache_runtime_binding)
     bound_file(backend, expected_binding)
     if binding != expected_binding or initialization_history(backend, filename, owned_lock_identity) != (result, request):
         raise ValueError("当前代次核验期间原始初始化证据变化")

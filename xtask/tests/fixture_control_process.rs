@@ -1,4 +1,4 @@
-//! 夹具控制公开入口必须先完成 Rust 参数核验，并只传递单个私有协议。
+//! 夹具控制公开入口的 Rust 参数核验与失败关闭。
 
 use std::{
     fs,
@@ -188,30 +188,65 @@ fn invalid_arguments_exit_two_before_python_starts() {
 }
 
 #[test]
-fn valid_request_replaces_inherited_protocol_and_hides_paths_from_argv() {
+fn mutating_services_reject_invalid_environment_without_side_effects() {
+    for operation in [
+        "rustfs",
+        "redis",
+        "buckets",
+        "close",
+        "reconcile",
+        "recover",
+        "restart",
+    ] {
+        let fixture = Fixture::new();
+        let mut arguments = fixture.valid();
+        arguments[4] = operation.to_owned();
+        arguments.push("--write".to_owned());
+        if matches!(operation, "reconcile" | "recover" | "restart") {
+            arguments.extend([
+                "--owner-binding".to_owned(),
+                fixture.review.to_string_lossy().into_owned(),
+            ]);
+        }
+        let result = invoke(&arguments);
+        assert_eq!(result.status.code(), Some(1));
+        let stdout = String::from_utf8(result.stdout).unwrap();
+        let stderr = String::from_utf8(result.stderr).unwrap();
+        assert!(stdout.is_empty(), "{stdout}");
+        assert!(!stdout.contains("--review"), "{stdout}");
+        assert!(
+            !stdout.contains(fixture.review.to_str().unwrap()),
+            "{stdout}"
+        );
+        assert!(
+            !stdout.contains(fixture.environment.to_str().unwrap()),
+            "{stdout}"
+        );
+        assert!(stderr.contains("任务失败"), "{stderr}");
+        assert!(!stderr.contains("protocol_error"), "{stderr}");
+        assert_eq!(fs::read(&fixture.review).unwrap(), b"{}\n");
+        assert_eq!(fs::read(&fixture.environment).unwrap(), b"{}\n");
+        assert_eq!(fs::read_dir(&fixture.directory).unwrap().count(), 2);
+    }
+}
+
+#[test]
+fn status_uses_native_readonly_validation_and_preserves_original_inputs() {
     let fixture = Fixture::new();
+    let original = br#"{"private_marker":"must-not-be-printed"}"#;
+    for path in [&fixture.review, &fixture.environment] {
+        fs::write(path, original).unwrap();
+    }
     let result = invoke(&fixture.valid());
     assert_eq!(result.status.code(), Some(1));
-    let stdout = String::from_utf8(result.stdout).unwrap();
-    let stderr = String::from_utf8(result.stderr).unwrap();
-    assert!(
-        stdout.contains("tools/python/reference_fixture_services.py"),
-        "{stdout}"
-    );
-    assert!(!stdout.contains("--review"), "{stdout}");
-    assert!(
-        !stdout.contains(fixture.review.to_str().unwrap()),
-        "{stdout}"
-    );
-    assert!(
-        !stdout.contains(fixture.environment.to_str().unwrap()),
-        "{stdout}"
-    );
-    assert!(
-        stderr.contains("reference_fixture_services_failed"),
-        "{stderr}"
-    );
-    assert!(!stderr.contains("protocol_error"), "{stderr}");
+    assert!(result.stdout.is_empty());
+    let error = String::from_utf8(result.stderr).unwrap();
+    assert!(!error.trim().is_empty());
+    assert!(!error.contains("must-not-be-printed"));
+    for path in [&fixture.review, &fixture.environment] {
+        assert_eq!(fs::read(path).unwrap(), original);
+    }
+    assert_eq!(fs::read_dir(&fixture.directory).unwrap().count(), 2);
 }
 
 #[test]
@@ -354,68 +389,41 @@ fn retention_invalid_arguments_exit_two_before_python_starts() {
 }
 
 #[test]
-fn dataset_plan_uses_private_protocol_without_forwarded_values() {
-    let fixture = Fixture::new();
-    let result = invoke(&fixture.dataset_plan());
-    assert_eq!(result.status.code(), Some(1));
-    let stdout = String::from_utf8(result.stdout).unwrap();
-    let stderr = String::from_utf8(result.stderr).unwrap();
-    assert!(
-        stdout.contains("tools/python/reference_fixture_dataset.py"),
-        "{stdout}"
-    );
-    assert!(
-        stdout.contains("-X utf8 -B tools/python/reference_fixture_dataset.py"),
-        "{stdout}"
-    );
-    for private in [
-        "--environment",
-        "--runtime",
-        "--work-dir",
-        "--output",
-        "--side",
-        "数据 work",
-        "base",
-    ] {
-        assert!(!stdout.contains(private), "{stdout}");
+fn native_dataset_invalid_environment_preserves_inputs_and_writes_nothing() {
+    for prepare in [false, true] {
+        let fixture = Fixture::new();
+        let arguments = if prepare {
+            fixture.dataset_prepare()
+        } else {
+            fixture.dataset_plan()
+        };
+        let before = (
+            fs::read(&fixture.environment).unwrap(),
+            fs::read(&fixture.review).unwrap(),
+            fs::read_dir(&fixture.directory).unwrap().count(),
+        );
+        let result = invoke(&arguments);
+        assert_eq!(
+            result.status.code(),
+            Some(1),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(result.stdout.is_empty());
+        let stderr = String::from_utf8(result.stderr).unwrap();
+        assert!(stderr.contains("任务失败"), "{stderr}");
+        assert_eq!(
+            before,
+            (
+                fs::read(&fixture.environment).unwrap(),
+                fs::read(&fixture.review).unwrap(),
+                fs::read_dir(&fixture.directory).unwrap().count(),
+            )
+        );
     }
-    assert!(
-        stderr.contains("reference_fixture_dataset_failed"),
-        "{stderr}"
-    );
-    assert!(!stderr.contains("protocol_error"), "{stderr}");
 }
-
 #[test]
-fn dataset_prepare_uses_private_protocol_without_forwarded_values() {
-    let fixture = Fixture::new();
-    let result = invoke(&fixture.dataset_prepare());
-    assert_eq!(result.status.code(), Some(1));
-    let stdout = String::from_utf8(result.stdout).unwrap();
-    let stderr = String::from_utf8(result.stderr).unwrap();
-    assert!(
-        stdout.contains("tools/python/reference_fixture_dataset.py"),
-        "{stdout}"
-    );
-    for private in [
-        "--environment",
-        "--runtime",
-        "--plan",
-        "--side",
-        "dataset plan.json",
-        "candidate",
-    ] {
-        assert!(!stdout.contains(private), "{stdout}");
-    }
-    assert!(
-        stderr.contains("reference_fixture_dataset_failed"),
-        "{stderr}"
-    );
-    assert!(!stderr.contains("protocol_error"), "{stderr}");
-}
-
-#[test]
-fn dataset_invalid_arguments_exit_two_before_python_starts() {
+fn dataset_invalid_arguments_exit_two_without_output() {
     let fixture = Fixture::new();
     let base = fixture.dataset_plan();
     let mut cases = Vec::new();
@@ -448,6 +456,6 @@ fn dataset_invalid_arguments_exit_two_before_python_starts() {
         let result = invoke(&arguments);
         assert_eq!(result.status.code(), Some(2), "参数：{arguments:?}");
         assert!(String::from_utf8_lossy(&result.stderr).contains("参数错误"));
-        assert!(!String::from_utf8_lossy(&result.stdout).contains("reference_fixture_dataset.py"));
+        assert!(result.stdout.is_empty());
     }
 }

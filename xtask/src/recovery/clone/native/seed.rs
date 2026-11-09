@@ -7,23 +7,75 @@ use serde_json::Value;
 use super::{json, lifecycle::state, resources::common};
 use crate::{
     Result,
+    cli::{SeedRuntimeOperation, SeedRuntimeOptions},
     local_test_path::{LocalTestPathKind, validate_local_test_path},
 };
 
+#[path = "seed/arm_input.rs"]
+pub(in crate::recovery) mod arm_input;
+#[path = "seed/capacity.rs"]
+pub(crate) mod capacity;
+#[path = "seed/cleanup_entry.rs"]
+pub(super) mod cleanup_entry;
 #[path = "seed/current.rs"]
 mod current;
 pub(crate) use current::Current;
 
 #[path = "seed/generation.rs"]
-mod generation;
+pub(crate) mod generation;
 #[path = "seed/history.rs"]
 pub(crate) mod history;
 #[path = "seed/identity.rs"]
 pub(crate) mod identity;
+#[path = "seed/pair_entry.rs"]
+mod pair_entry;
+pub(super) use pair_entry::close_runtime;
+pub(super) use pair_entry::start as start_runtime;
 #[path = "seed/protocol.rs"]
 pub(crate) mod protocol;
+#[path = "seed/rebind.rs"]
+pub(crate) mod rebind;
+#[path = "seed/registration_entry.rs"]
+pub(super) mod registration_entry;
 #[path = "seed/runtime_model.rs"]
 pub(crate) mod runtime_model;
+#[path = "seed/runtime_pair.rs"]
+mod runtime_pair;
+#[path = "seed/shared_export.rs"]
+pub(crate) mod shared_export;
+#[path = "seed/source_registration.rs"]
+pub(crate) mod source_registration;
+#[path = "seed/start_authority.rs"]
+mod start_authority;
+
+pub(super) fn run(backend: &Path, options: &SeedRuntimeOptions) -> Result<Value> {
+    match options.operation {
+        SeedRuntimeOperation::Register => registration_entry::run(backend, options),
+        SeedRuntimeOperation::ArmInput => arm_input::run(backend, options),
+        SeedRuntimeOperation::RecoverSession => {
+            let path = options
+                .producer_binding
+                .as_deref()
+                .ok_or("回收需要明确生产者收据描述文件")?;
+            super::post_process::recover::run(backend, &options.run_dir, "seed-runtime", path)
+        }
+        SeedRuntimeOperation::Status
+        | SeedRuntimeOperation::Stop
+        | SeedRuntimeOperation::Recover => cleanup_entry::run(backend, options),
+        SeedRuntimeOperation::QuotasPlan
+        | SeedRuntimeOperation::QuotasApply
+        | SeedRuntimeOperation::QuotasReconcile
+        | SeedRuntimeOperation::DepartmentsPlan
+        | SeedRuntimeOperation::DepartmentsApply
+        | SeedRuntimeOperation::DepartmentsReconcile
+        | SeedRuntimeOperation::DepartmentsVerify
+        | SeedRuntimeOperation::IdentitiesApply
+        | SeedRuntimeOperation::IdentitiesVerify
+        | SeedRuntimeOperation::Prepare
+        | SeedRuntimeOperation::Start
+        | SeedRuntimeOperation::Close => super::post_process::seed_capacity::run(backend, options),
+    }
+}
 
 pub(crate) fn publish(backend: &Path, run: &Path, request_path: &Path) -> Result<Value> {
     validate_local_test_path(request_path, backend, LocalTestPathKind::ExistingFile)?;

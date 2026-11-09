@@ -4,12 +4,21 @@ use std::path::PathBuf;
 pub(crate) enum FixtureReviewCommand {
     Help,
     Renew(FixtureReviewOptions),
+    AfterReconcile(FixtureReconciledReview),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FixtureReconciledReview {
+    pub(crate) workspace: PathBuf,
+    pub(crate) execution_source: PathBuf,
+    pub(crate) future_root: PathBuf,
+    pub(crate) output: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FixtureReviewOptions {
     pub(crate) template: PathBuf,
-    pub(crate) fixture: PathBuf,
+    pub(crate) execution_source: PathBuf,
     pub(crate) future_root: PathBuf,
     pub(crate) id: String,
     pub(crate) api_port: u16,
@@ -26,10 +35,11 @@ impl FixtureReviewCommand {
         match self {
             Self::Help => "help",
             Self::Renew(_) => "renew",
+            Self::AfterReconcile(_) => "after-reconcile",
         }
     }
 
     pub(crate) const fn writes(&self) -> bool {
-        matches!(self, Self::Renew(_))
+        matches!(self, Self::Renew(_) | Self::AfterReconcile(_))
     }
 }

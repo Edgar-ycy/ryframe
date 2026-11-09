@@ -33,7 +33,7 @@ pub fn write_resource(
     verify_owned_files(&manifest, workspace)?;
     verify_unselected_resource_sources(catalog, resource, &manifest)?;
     schema::validate_evolution(catalog, &manifest, workspace)?;
-    let mut assets = selected_assets(catalog, resource, &manifest)?;
+    let mut assets = selected_assets(catalog, resource, &manifest, workspace.backend_root)?;
 
     for entry in manifest
         .entries

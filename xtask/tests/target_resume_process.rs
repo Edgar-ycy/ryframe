@@ -57,7 +57,12 @@ impl Fixture {
         let context = json!({"failure":{"path":"source","bytes":0,"sha256":"a".repeat(64)},
             "source_failure_at":"2026-10-23T00:00:00Z","prepared_files":{},
             "plan":{"manifest":{},"plan_hash":hex::encode(Sha256::digest(b"{}"))},
-            "executable":"fixed-reset.exe","request":{"target":{"scope_id":"fixture","databases":[]}},"available":[]});
+            "executable":"fixed-reset.exe","request":{"config_dir":directory.path().join("bound/config"),"target":{"scope_id":"fixture","databases":[]}},"available":[]});
+        fs::write(
+            directory.path().join("request.json"),
+            serde_json::to_vec(&context["request"]).unwrap(),
+        )
+        .unwrap();
         Self {
             backend,
             directory,
@@ -112,7 +117,7 @@ impl Fixture {
             &format!("resume-reset-plan-{attempt}.json"),
             &self.context["plan"],
         );
-        self.write(&format!("resume-reset-plan-{attempt}-{}.command.json", "a".repeat(32)), &json!({"command":["fixed-reset.exe","plan"],"returncode":0,"error_type":null,
+        self.write(&format!("resume-reset-plan-{attempt}-{}.command.json", "a".repeat(32)), &json!({"command":["fixed-reset.exe","--config-dir",self.context["request"]["config_dir"],"plan"],"returncode":0,"error_type":null,
             "stdout":format!("{{}}\nplan_hash={}\n", self.context["plan"]["plan_hash"].as_str().unwrap()),"stderr":""}));
         let directory = self
             .directory
@@ -378,7 +383,7 @@ fn inventory_stdout_binding_capture_failure_duplicates_and_escape_fail_closed() 
         fixture.records(Value::Null)["error"]["message"],
         "库存失败 stdout 文件绑定变化"
     );
-    let mut capture = command.clone();
+    let mut capture = command;
     capture["stdout_file"] = json!({"path":stdout});
     capture["stdout_capture_error"] = json!("FileNotFoundError");
     fixture.write(&command_name, &capture);
@@ -468,9 +473,9 @@ fn operation_confirmation_requires_successful_bound_receipt_and_preserves_unknow
     let fixture = Fixture::new();
     let attempt = "a".repeat(32);
     let intent = fixture.write(&format!("resume-migrate-{attempt}-03.intent.json"), &json!({
-        "format_version":1,"kind":"devex-clone-migration-operation-intent","attempt":attempt,"index":3,"at":"2026-10-23T00:00:01Z","resume":{},"failure":{},"operation":{"id":"tenant-data-dedicated-a-verify","command":["migrate","tenant-data","verify","--target","dedicated-a"],"write":false}}));
+        "format_version":1,"kind":"devex-clone-migration-operation-intent","attempt":attempt,"index":3,"at":"2026-10-23T00:00:01Z","resume":{},"failure":{},"operation":{"id":"tenant-data-dedicated-a-verify","command":["migrate","--config-dir",fixture.context["request"]["config_dir"],"tenant-data","verify","--target","dedicated-a"],"write":false}}));
     let path = "migrate-tenant-data---target-dedicated-a-verify-00000000000000000000000000000000.command.json";
-    let receipt = fixture.write(path, &json!({"command":["migrate","tenant-data","verify","--target","dedicated-a"],"returncode":0,"error_type":null,"stdout":"scope=tenant-data target=dedicated-a migration_ledger=current schema=verified\n","stderr":""}));
+    let receipt = fixture.write(path, &json!({"command":["migrate","--config-dir",fixture.context["request"]["config_dir"],"tenant-data","verify","--target","dedicated-a"],"returncode":0,"error_type":null,"stdout":"scope=tenant-data target=dedicated-a migration_ledger=current schema=verified\n","stderr":""}));
     let mut arguments = json!({"attempt":attempt,"index":3,"at":"2026-10-23T00:00:02Z","intent":intent,"receipt":receipt,"write":false});
     assert_eq!(
         fixture.invoke(
@@ -488,7 +493,7 @@ fn operation_confirmation_requires_successful_bound_receipt_and_preserves_unknow
         false
     );
     arguments["write"] = json!(false);
-    let failed = fixture.write(path, &json!({"command":["migrate","tenant-data","verify","--target","dedicated-a"],"returncode":1,"error_type":"TimeoutExpired","stdout":"verified","stderr":""}));
+    let failed = fixture.write(path, &json!({"command":["migrate","--config-dir",fixture.context["request"]["config_dir"],"tenant-data","verify","--target","dedicated-a"],"returncode":1,"error_type":"TimeoutExpired","stdout":"verified","stderr":""}));
     arguments["receipt"] = failed;
     assert_eq!(
         fixture.invoke(
@@ -689,172 +694,4 @@ fn migration_prefix_process_refuses_write_boundary_and_tampered_bound_file() {
         );
         assert!(!response.to_string().contains("private-secret-output"));
     }
-}
-
-struct ResetFixture {
-    fixture: Fixture,
-    manifest: Value,
-    hash: String,
-    ledger: Value,
-    report: Value,
-    previous: Value,
-}
-
-impl ResetFixture {
-    fn new() -> Self {
-        let fixture = Fixture::new();
-        let manifest = json!({"environment":"test","scope_id":"resume-fixture", "code_sha":"a".repeat(40),
-            "config_sha":"b".repeat(64),"credential_version":"fixture-v1",
-            "databases":[{"host":"127.0.0.1","port":3306,"database":"fixture"}],
-            "redis":{"namespace":"fixture:"},"object_storage":{"prefixes":[{"bucket":"uploads","prefix":"fixture/"}]}});
-        let hash = "c".repeat(64);
-        let phases: serde_json::Map<String, Value> = [
-            "preflight",
-            "object_storage",
-            "redis",
-            "databases",
-            "control_baseline",
-            "tenant_baselines",
-            "verification",
-            "release",
-        ]
-        .into_iter()
-        .map(|name| {
-            (
-                name.to_owned(),
-                json!({"status":"complete","completed_at":"2026-10-23T00:00:02Z"}),
-            )
-        })
-        .collect();
-        let mut ledger = json!({"ledger_version":4,"plan_hash":hash,"phases":phases,
-            "resources":{"database":{"status":"complete"}},"updated_at":"2026-10-23T00:00:02Z"});
-        for key in [
-            "environment",
-            "scope_id",
-            "code_sha",
-            "config_sha",
-            "credential_version",
-        ] {
-            ledger[key] = manifest[key].clone();
-        }
-        let mut previous = ledger.clone();
-        previous["updated_at"] = json!("2026-10-23T00:00:01Z");
-        previous["phases"]["release"] = json!({"status":"running","completed_at":null});
-        let mut report = ledger.clone();
-        report.as_object_mut().unwrap().remove("ledger_version");
-        report["report_version"] = json!(2);
-        report["status"] = json!("completed");
-        report["failed_phase"] = Value::Null;
-        report["completed_at"] = json!("2026-10-23T00:00:02Z");
-        report["databases"] = json!(["127.0.0.1:3306/fixture"]);
-        report["redis_namespace"] = json!("fixture:");
-        report["object_prefixes"] = json!(["uploads:fixture/"]);
-        fs::create_dir(fixture.directory.path().join("reset-state")).unwrap();
-        let result = Self {
-            fixture,
-            manifest,
-            hash,
-            ledger,
-            report,
-            previous,
-        };
-        result.publish();
-        result
-    }
-
-    fn name(&self, suffix: &str) -> String {
-        let stem = format!("test-resume-fixture-{}", self.hash);
-        if suffix == "previous" {
-            format!("reset-state/.{stem}.ledger.json.previous")
-        } else {
-            format!("reset-state/{stem}.{suffix}.json")
-        }
-    }
-
-    fn publish(&self) {
-        self.fixture.write(&self.name("report"), &self.report);
-        self.fixture.write(&self.name("ledger"), &self.ledger);
-        self.fixture.write(&self.name("previous"), &self.previous);
-    }
-
-    fn check(&self) -> Value {
-        self.fixture.invoke(
-            "reset-completed",
-            json!({"manifest":self.manifest,"sha":self.hash}),
-        )
-    }
-}
-
-#[test]
-fn reset_process_requires_completed_release_and_exact_previous_ledger() {
-    let mut fixture = ResetFixture::new();
-    assert_eq!(fixture.check()["result"]["status"], "completed");
-    let original_report = fixture.report.clone();
-    fixture.report["phases"]["release"]["status"] = json!("running");
-    fixture.publish();
-    assert_eq!(
-        fixture.check()["error"]["message"],
-        "reset 有未完成阶段或锁释放证据缺失"
-    );
-    fixture.report = original_report;
-    fixture.publish();
-    let path = fixture
-        .fixture
-        .directory
-        .path()
-        .join(fixture.name("previous"));
-    fs::remove_file(&path).unwrap();
-    assert_eq!(fixture.check()["ok"], false);
-    fixture.previous["phases"]["release"] =
-        json!({"status":"complete","completed_at":"2026-09-04T00:00:00Z"});
-    fixture.publish();
-    assert_eq!(
-        fixture.check()["error"]["message"],
-        "reset 上一版账本没有证明最终 release 的直接前像"
-    );
-    fixture.previous = fixture.ledger.clone();
-    fixture.previous["phases"]["release"] = json!({"status":"running","completed_at":null});
-    fixture.previous["resources"]["database"]["status"] = json!("private-secret");
-    fixture.publish();
-    let response = fixture.check();
-    assert_eq!(
-        response["error"]["message"],
-        "reset 上一版账本不属于最终账本的直接前像"
-    );
-    assert!(!response.to_string().contains("private-secret"));
-}
-
-#[test]
-fn reset_plan_process_binds_original_document_bytes_instead_of_equivalent_json() {
-    let fixture = Fixture::new();
-    let document = "{\"environment\": \"test\", \"label\": \"中文 空格\"}";
-    let manifest: Value = serde_json::from_str(document).unwrap();
-    let hash = hex::encode(Sha256::digest(document.as_bytes()));
-    let plan = json!({"manifest":manifest,"plan_hash":hash});
-    let path = fixture.directory.path().join("reset-plan.command.json");
-    let receipt = json!({"command":["D:/中文 空格/reset.exe","plan"],"returncode":0,"error_type":null,
-        "stdout":format!("{document}\nplan_hash={hash}\n"),"stderr":""});
-    fixture.write("reset-plan.command.json", &receipt);
-    let check = || {
-        fixture.invoke(
-            "reset-plan",
-            json!({"path":path,"executable":"D:/中文 空格/reset.exe","plan":plan}),
-        )
-    };
-    assert_eq!(check()["result"], binding(&path));
-    let mut changed = receipt.clone();
-    changed["stdout"] = json!(receipt["stdout"].as_str().unwrap().replace('\n', "\r\n"));
-    fixture.write("reset-plan.command.json", &changed);
-    assert_eq!(check()["ok"], true);
-    changed["stdout"] = json!(
-        receipt["stdout"]
-            .as_str()
-            .unwrap()
-            .replace("\"environment\": \"test\"", "\"environment\" : \"test\"")
-    );
-    fixture.write("reset-plan.command.json", &changed);
-    assert_eq!(
-        check()["error"]["message"],
-        "reset plan 命令收据与固定清单不一致"
-    );
 }

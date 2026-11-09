@@ -1,9 +1,11 @@
+#[cfg(windows)]
+use std::process::Command;
+
 use std::{
     ffi::OsString,
     fs::{self, File},
     io::Write,
     path::Path,
-    process::Command,
     sync::{Arc, Barrier},
     thread,
 };

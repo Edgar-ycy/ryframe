@@ -187,6 +187,20 @@ fn successor_changes_only_explicit_tool_bytes_and_preserves_original() {
     assert_eq!(actual, expected);
     assert_eq!(a, original);
 }
+
+#[test]
+fn windows_review_successor_keeps_original_package_without_wsl_fields() {
+    let process = super::super::model::tests::windows_request();
+    let mut value = json!({"request":{"process":process},"directory":"D:/run",
+        "source_directory":"D:/run","value":{},"source_manifest":{},
+        "tools":{"mysql":{},"mysqldump":{},"rustfs":{},"redis_server":process["tool"]}});
+    assert_eq!(request::run("successor-model", &value).unwrap(), process);
+    value["tool_wsl_path"] = json!("D:/wsl.exe");
+    assert!(request::run("successor-model", &value).is_err());
+    value.as_object_mut().unwrap().remove("tool_wsl_path");
+    value["tools"]["redis_server"]["sha256"] = json!("e".repeat(64));
+    assert!(request::run("successor-model", &value).is_err());
+}
 #[test]
 fn successor_rejects_other_run_resources_or_tool_entry() {
     let a = successor();

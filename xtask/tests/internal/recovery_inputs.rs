@@ -3,6 +3,7 @@ use std::{fs, path::Path};
 use serde_json::{Value, json};
 
 use super::cli::{RecoveryInputsCommand, RestoreInputPublication};
+use super::clone_lifecycle_tests::arm_storage_bindings;
 use super::recovery::inputs::{
     backup, bindings, chain, document, product, publish, reference, reference_configuration, run,
     target,
@@ -48,7 +49,7 @@ fn reference_product_and_bindings_native_chains_succeed() {
     assert_eq!(projected.as_object().unwrap().len(), 2);
     assert_eq!(projected["source"], reference["source"]);
     assert_eq!(projected["tools"], reference["tools"]);
-    assert_eq!(source_request["source"]["s3"].as_object().unwrap().len(), 4);
+    assert_eq!(source_request["source"]["s3"].as_object().unwrap().len(), 1);
     assert_eq!(projected["source"]["s3"].as_object().unwrap().len(), 3);
     assert_eq!(fs::read(&path).unwrap(), before);
     assert_eq!(source_request["tools"].as_object().unwrap().len(), 3);
@@ -73,6 +74,58 @@ fn reference_product_and_bindings_native_chains_succeed() {
     assert_eq!(bindings["record"], read_json(&fixture.record));
     assert_eq!(bindings["manifest"]["id"], reference["id"]);
     assert_eq!(bindings["manifest"]["source_sha"], "a".repeat(40));
+}
+
+#[test]
+fn arm_storage_requires_the_registered_run_prefix_and_same_effective_manifest() {
+    let fixture = Fixture::new();
+    let options = fixture.reference_options(None);
+    let result_before = fs::read(&fixture.arm_input).unwrap();
+    let mut result = read_json(&fixture.arm_input);
+    let manifest_path = Path::new(result["manifest"]["path"].as_str().unwrap()).to_owned();
+    let manifest_before = fs::read(&manifest_path).unwrap();
+    let mut manifest = read_json(&manifest_path);
+    let storage = &manifest["target_storage_run"];
+    let state_path = Path::new(storage["path"].as_str().unwrap()).join("state.json");
+    let (_, other) = arm_storage_bindings(&fixture.root.join("other-storage-run"));
+
+    manifest["target_storage_run"] = other.clone();
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+    result["manifest"] = binding(&manifest_path);
+    fs::write(
+        &fixture.arm_input,
+        serde_json::to_vec_pretty(&result).unwrap(),
+    )
+    .unwrap();
+    let mismatch = reference::build(&fixture.backend, &options).unwrap_err();
+    assert_eq!(
+        mismatch.to_string(),
+        "successor arm-input 清单的 target_storage_run 不一致"
+    );
+
+    result["target_storage_run"] = other;
+    fs::write(
+        &fixture.arm_input,
+        serde_json::to_vec_pretty(&result).unwrap(),
+    )
+    .unwrap();
+    let unrelated = reference::build(&fixture.backend, &options).unwrap_err();
+    assert_eq!(
+        unrelated.to_string(),
+        "target_storage_run 不属于 fresh 初始化登记代次"
+    );
+
+    fs::write(&manifest_path, manifest_before).unwrap();
+    fs::write(&fixture.arm_input, result_before).unwrap();
+    let mut state = read_json(&state_path);
+    state["attempts"][0]["sources"]["fixture"] = json!(false);
+    fs::write(&state_path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+    let drift = reference::build(&fixture.backend, &options).unwrap_err();
+    assert_eq!(drift.to_string(), "历史阶段记录不是当前账本的精确追加前缀");
 }
 
 #[test]
@@ -260,6 +313,11 @@ fn publication_preserves_post_write_drift_and_cleans_pending_files() {
     let fixture = Fixture::new();
     let calls = std::cell::Cell::new(0);
     let value = serde_json::json!({"id": "original"});
+    let rejected = publish::finish("reference", Some(&fixture.output), &value, || {
+        Ok(serde_json::json!({"id": "changed before publication"}))
+    });
+    assert!(rejected.unwrap_err().to_string().contains("发布前"));
+    assert!(!fixture.output.exists());
     let result = publish::finish("reference", Some(&fixture.output), &value, || {
         calls.set(calls.get() + 1);
         Ok(if calls.get() == 1 {
@@ -363,7 +421,8 @@ fn source_reference_projection_rejects_binding_runtime_and_configuration_drift()
     fs::write(&config, &config_before).unwrap();
 
     let mut wrong = request.value.clone();
-    wrong["source"]["s3"]["secret_key"] = Value::String("changed-private-value".into());
+    wrong["source"]["s3"]["configuration"]["sha256"] =
+        Value::String("changed-private-value".into());
     fs::write(&path, serde_json::to_vec(&wrong).unwrap()).unwrap();
     assert!(reference::source_projection(&fixture.backend, &descriptor).is_err());
     let rebound =
@@ -371,7 +430,7 @@ fn source_reference_projection_rejects_binding_runtime_and_configuration_drift()
     let error = reference::source_projection(&fixture.backend, &rebound)
         .unwrap_err()
         .to_string();
-    assert!(error.contains("与绑定私有请求不一致"));
+    assert!(error.contains("应用配置绑定摘要已变化"));
     assert!(!error.contains("changed-private-value"));
     fs::write(&path, &request.raw).unwrap();
     reference::source_projection(&fixture.backend, &descriptor).unwrap();
@@ -478,7 +537,7 @@ fn source_identity_rejects_changed_reference_and_private_credentials_without_wri
     let path = fixture.root.join("source-request.json");
     let original = std::fs::read(&path).unwrap();
     let mut request = read_value(&path);
-    request["source"]["s3"]["secret_key"] = json!("different-private-secret");
+    request["source"]["s3"]["configuration"]["sha256"] = json!("different-private-secret");
     std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
     let mut changed = export.clone();
     changed["source_request"] = binding(&path);
@@ -494,7 +553,7 @@ fn source_identity_rejects_changed_reference_and_private_credentials_without_wri
     .err()
     .unwrap()
     .to_string();
-    assert!(error.contains("object_storage.secret_key与绑定私有请求不一致"));
+    assert!(error.contains("应用配置绑定摘要已变化"));
     assert!(!error.contains("different-private-secret"));
     assert!(!error.contains("source-secret"));
     assert_eq!(std::fs::read(&path).unwrap(), before);

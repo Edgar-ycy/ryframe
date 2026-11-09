@@ -100,12 +100,6 @@ fn migration_status_cli_reports_exact_version_drift() {
 }
 
 #[test]
-fn worker_source_has_no_api_crate_dependency() {
-    assert!(!include_str!("../src/bin/ryframe_worker.rs").contains("ryframe_api"));
-    assert!(!include_str!("../src/bin/ryframe_worker/health.rs").contains("ryframe_api"));
-}
-
-#[test]
 fn worker_http_probe_does_not_enable_api_websocket_features() {
     assert!(WORKSPACE_MANIFEST.contains("axum = { version = \"0.8\", default-features = false }"));
     assert!(WORKSPACE_MANIFEST.contains(
@@ -142,7 +136,6 @@ fn worker_http_probe_does_not_enable_api_websocket_features() {
 #[test]
 fn development_profile_limits_dependency_debug_info() {
     let manifest = WORKSPACE_MANIFEST.replace("\r\n", "\n");
-    assert!(manifest.contains("[profile.dev]\n# "));
     assert!(manifest.contains("\ndebug = 1\n"));
     assert!(manifest.contains("[profile.dev.package.\"*\"]\ndebug = 0"));
     assert!(manifest.contains("[profile.dev.build-override]\ndebug = 0"));

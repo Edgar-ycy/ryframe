@@ -298,13 +298,36 @@ where
         {
             Ok(row.build_token)
         }
-        Some(row) => Err(ryframe_kernel::AppError::StaleRuntimeEpoch(format!(
-            "租户 {tenant_id} 的数据范围投影版本不匹配: expected={expected_version}, actual={}；请刷新会话后重试",
-            row.source_version
-        ))),
-        None => Err(ryframe_kernel::AppError::StaleRuntimeEpoch(format!(
-            "租户 {tenant_id} 尚无可用的数据范围投影，请稍后重试"
-        ))),
+        Some(row) => {
+            tracing::warn!(
+                tenant_data_error = "data_scope_projection_stale",
+                tenant_id,
+                expected = expected_version,
+                actual = row.source_version,
+                ready = row.ready,
+                build_token_valid = row.build_token.len() == 64,
+                "事务数据范围投影尚未就绪；等待同步，禁止忽略版本继续访问"
+            );
+            Err(ryframe_kernel::AppError::TenantDataTargetUnavailable(
+                format!(
+                    "租户 {tenant_id} 的数据范围投影暂不可用: expected={expected_version}, actual={}；请等待投影同步后重试",
+                    row.source_version
+                ),
+                5,
+            ))
+        }
+        None => {
+            tracing::warn!(
+                tenant_data_error = "data_scope_projection_missing",
+                tenant_id,
+                expected = expected_version,
+                "事务数据范围投影不存在；等待同步，禁止忽略版本继续访问"
+            );
+            Err(ryframe_kernel::AppError::TenantDataTargetUnavailable(
+                format!("租户 {tenant_id} 尚无可用的数据范围投影，请等待投影同步后重试"),
+                5,
+            ))
+        }
     }
 }
 

@@ -25,20 +25,13 @@ pub(crate) struct Models {
 }
 
 pub(crate) fn models(context: &Context) -> Result<Models> {
-    let loaded = catalog::load(&context.execution_backend)?;
-    let full_control = catalog::parse_schema(&std::fs::read_to_string(
-        context.execution_backend.join("sql/ryframe_config.sql"),
-    )?)?;
-    let mut full_tenant =
-        catalog::parse_schema(&std::fs::read_to_string(context.execution_backend.join(
-            "crates/ryframe-tenant-db/src/migration/m20260820_000000_tenant_baseline.rs",
-        ))?)?;
-    full_tenant.extend(loaded.tenant.clone());
+    let loaded = catalog::load_ordered(&context.execution_backend, true)?;
+    let (full_control, full_tenant) = loaded.full.ok_or("源导出缺少完整 schema catalog")?;
     Ok(Models {
-        control: loaded.control,
-        tenant: loaded.tenant,
-        full_control,
-        full_tenant,
+        control: catalog::into_catalog(loaded.control),
+        tenant: catalog::into_catalog(loaded.tenant),
+        full_control: catalog::into_catalog(full_control),
+        full_tenant: catalog::into_catalog(full_tenant),
     })
 }
 
@@ -155,7 +148,6 @@ pub(crate) fn dump<T: Transport>(
     let combined = database["kind"].as_str() == Some("combined");
     let catalog = sql::all_columns(&models.control, &models.tenant, combined);
     let directory = context.output().join("databases");
-    fs::create_dir(&directory).map_err(|error| format!("无法创建数据库转储目录：{error}"))?;
     let raw = directory.join(format!("{key}.raw.sql"));
     let output = directory.join(format!("{key}.sql"));
     let defaults = validate_defaults(Path::new(
@@ -169,23 +161,7 @@ pub(crate) fn dump<T: Transport>(
         .get("database")
         .and_then(Value::as_str)
         .ok_or("数据库名称无效")?;
-    let mut args = vec![
-        format!("--defaults-file={}", defaults.display()),
-        "--no-create-info".into(),
-        "--skip-triggers".into(),
-        "--skip-lock-tables".into(),
-        "--skip-add-locks".into(),
-        "--skip-comments".into(),
-        "--skip-disable-keys".into(),
-        "--skip-extended-insert".into(),
-        "--complete-insert".into(),
-        "--hex-blob".into(),
-        "--set-gtid-purged=OFF".into(),
-        "--no-tablespaces".into(),
-        "--default-character-set=utf8mb4".into(),
-        database_name.into(),
-    ];
-    args.extend(catalog.keys().cloned());
+    let args = dump_arguments(&defaults, database_name, catalog.keys().map(String::as_str));
     transport
         .run(command(
             context,
@@ -207,6 +183,31 @@ pub(crate) fn dump<T: Transport>(
             "sha256": digest::file(&output)?.sha256,
         }),
     ))
+}
+
+pub(crate) fn dump_arguments<'a>(
+    defaults: &Path,
+    database_name: &str,
+    tables: impl IntoIterator<Item = &'a str>,
+) -> Vec<String> {
+    let mut args = vec![
+        format!("--defaults-file={}", defaults.display()),
+        "--no-create-info".into(),
+        "--skip-triggers".into(),
+        "--skip-lock-tables".into(),
+        "--skip-add-locks".into(),
+        "--skip-comments".into(),
+        "--skip-disable-keys".into(),
+        "--skip-extended-insert".into(),
+        "--complete-insert".into(),
+        "--hex-blob".into(),
+        "--set-gtid-purged=OFF".into(),
+        "--no-tablespaces".into(),
+        "--default-character-set=utf8mb4".into(),
+        database_name.into(),
+    ];
+    args.extend(tables.into_iter().map(str::to_owned));
+    args
 }
 
 pub(crate) fn mysql<T: Transport>(
@@ -258,11 +259,16 @@ pub(crate) fn run_logged<T: Transport>(
     stdin: Option<Vec<u8>>,
 ) -> Result<()> {
     let work = context.output();
+    let configuration = &context.source()["s3"]["configuration"];
+    super::super::s3::app_configuration::private_configuration(&context.backend, configuration)?;
+    let directory = json_io::text(&configuration["directory"], "来源CLI绑定配置目录")?;
+    let mut actual_args = vec!["--config-dir".to_owned(), directory.to_owned()];
+    actual_args.extend_from_slice(args);
     let command_file = work.join(format!("{stage}.command.json"));
     json_io::write_new(
         &command_file,
         &json!({
-            "command": args,
+            "command": actual_args,
             "cwd": context.execution_backend,
             "remote_operations": "read_only",
         }),
@@ -270,7 +276,7 @@ pub(crate) fn run_logged<T: Transport>(
     let diagnostic = work.join(format!("{stage}.diagnostic.json"));
     let result = transport.run(CommandSpec {
         program: program.to_path_buf(),
-        args: args.to_vec(),
+        args: actual_args,
         cwd: context.execution_backend.clone(),
         environment: mysql_environment(context),
         stdin,

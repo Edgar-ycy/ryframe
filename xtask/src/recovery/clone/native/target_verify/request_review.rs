@@ -9,7 +9,7 @@ use super::super::super::{
     lifecycle::manifest,
 };
 use super::request::KEYS;
-use crate::Result;
+use crate::{Result, recovery::clone::native::cache::windows_tool};
 
 pub(crate) fn read(backend: &Path, descriptor: &Value) -> Result<Value> {
     let binding = exact(
@@ -51,8 +51,19 @@ pub(crate) fn validate(review: &Value) -> Result<()> {
         text(&tool["path"], "审阅工具路径")?;
         digest_shape(&tool["sha256"])?;
     }
-    for key in ["distribution", "resolved_path", "sha256"] {
-        text(&review["tools"]["redis_server"][key], "审阅 Redis 工具")?;
+    let redis = &review["tools"]["redis_server"];
+    if redis["platform"] == "windows" {
+        if ["wsl", "native_tool", "redis_python"]
+            .iter()
+            .any(|key| tools.contains_key(*key))
+        {
+            return Err("Windows Redis 审阅不能混用 WSL 或 Linux Redis 工具绑定".into());
+        }
+        windows_tool::validate(redis)?;
+    } else {
+        for key in ["distribution", "resolved_path", "sha256"] {
+            text(&redis[key], "审阅 Redis 工具")?;
+        }
     }
     let services = json_io::object(
         root.get("services").ok_or("审阅计划服务定义缺失")?,

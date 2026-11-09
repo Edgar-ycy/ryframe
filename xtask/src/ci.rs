@@ -23,6 +23,8 @@ pub(crate) mod databases;
 
 #[path = "ci/frontend_source.rs"]
 pub(crate) mod frontend_source;
+#[path = "ci/full_stack_config.rs"]
+pub(crate) mod full_stack_config;
 #[path = "ci/integration_configuration.rs"]
 pub(crate) mod integration_configuration;
 #[path = "ci/integration_inputs.rs"]
@@ -64,6 +66,15 @@ const WINDOWS_RUST_GATE_PROFILE: &str = "windows-smoke";
 pub(crate) fn run(command: CiCommand, frontend_dir: &Path) -> Result<()> {
     match command {
         CiCommand::Plan(base) => plan(base.as_deref()),
+        CiCommand::FullStackConfig(options) => {
+            let plan = full_stack_config::plan(&options)?;
+            if options.plan {
+                crate::check::render_task_plan(&plan);
+                Ok(())
+            } else {
+                full_stack_config::run(&root_dir(), &options, &plan)
+            }
+        }
         CiCommand::ResourceGateReplay(options) => {
             resource_gate::replay::run(&options, frontend_dir)
         }
@@ -289,30 +300,32 @@ fn verify_formal_contract_source(
     Ok(())
 }
 
+pub(crate) const INTEGRATION_TESTS: &[(&str, &str, Option<&str>)] = &[
+    (
+        "ryframe-db",
+        "mysql_real_protocol",
+        Some("repositories,migration"),
+    ),
+    ("ryframe-adapters", "redis_real_protocol", Some("redis-api")),
+    (
+        "ryframe-generator",
+        "mysql_schema_import",
+        Some("schema-import"),
+    ),
+    (
+        "ryframe",
+        "business_initialization_mysql",
+        Some("bin-api,bin-migrate"),
+    ),
+];
+
 fn integration() -> Result<()> {
     let root = root_dir();
     let configuration = integration_configuration::IntegrationConfiguration::load(&root)?;
     integration_inputs::require_service_inputs(&root)?;
     let targets = ci_target_policy()?;
     let jobs = configuration.test_jobs;
-    for (package, target, features) in [
-        (
-            "ryframe-db",
-            "mysql_real_protocol",
-            Some("repositories,migration"),
-        ),
-        ("ryframe-adapters", "redis_real_protocol", Some("redis-api")),
-        (
-            "ryframe-generator",
-            "mysql_schema_import",
-            Some("schema-import"),
-        ),
-        (
-            "ryframe",
-            "business_initialization_mysql",
-            Some("bin-migrate"),
-        ),
-    ] {
+    for &(package, target, features) in INTEGRATION_TESTS {
         run_owned(
             &root,
             "cargo",

@@ -4,7 +4,7 @@ use crate::{Result, recovery::clone::native::digest};
 use serde_json::{Value, json};
 
 #[path = "policy.rs"]
-mod policy;
+pub(super) mod policy;
 
 pub(super) fn verify(args: &Value) -> Result<Value> {
     if args.get("action").is_some() {

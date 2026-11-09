@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import copy
+from native_s3_client import (configuration as object_configuration,
+                             _invoke as native_invoke, _read_response as native_response)
 from dataclasses import replace
 import json
 import hashlib
@@ -10,6 +12,7 @@ from pathlib import Path
 import subprocess
 import uuid
 
+from artifact_digests import filesystem_path
 from devex_clone import write_plan_result
 from devex_clone_capture import read_json, write_json
 from devex_clone_export_verify import (observe_source_object, observe_source_objects, verify_export_bindings,
@@ -23,13 +26,13 @@ from devex_clone_copy_locks import register_copy_owner
 from devex_clone_live_object import observe_target_object, verify_target_heads
 from devex_clone_object_batch import WORKERS, ordered_batches
 from devex_clone_model import local_path, name, schema_fingerprints
-from devex_clone_source_proof import bound_file, verify_generation
-from devex_clone_target import verify_target
+from devex_clone_source_proof import bound_file, copy_source_generation
+from devex_clone_target_binding import _native as target_binding
 from devex_clone_target_state import generation_lock
 from devex_clone_transfer import DatabaseBasis, GenerationObservation, TransferSteps
 from restore_build import file_digest
 from restore_reference_io import ExternalTools, redact_object_diagnostic, verification_stdout
-from restore_reference_plan import BUCKETS, plan_hash
+from restore_reference_plan import BUCKETS, plan_hash, configuration_binding
 from source_fingerprints import source_check
 
 
@@ -62,28 +65,26 @@ class CloneSession:
     def bind_credentials(self) -> None:
         values = set()
         databases = []
-        for side, config in (("source", self.exported["source"]), ("target", self.target_request["target"])):
-            environment = self.environment.values[side]
+        for side, config in (("source", self.source_request["source"]), ("target", self.target_request["target"])):
+            objects = object_configuration(config["s3"]["configuration"], self.backend) if side == "source" else config["s3"]
             for field in ("access_key", "secret_key"):
-                value = config["s3"].get(field)
+                value = objects.get(field)
                 if not isinstance(value, str) or not value:
                     raise ValueError("复制日志缺少配置文件中的对象凭据")
                 values.add(value)
             databases.extend(config["databases"])
-            if environment.get("RYFRAME_RESET_ADMIN_PASSWORD"):
-                values.add(environment["RYFRAME_RESET_ADMIN_PASSWORD"])
         self.secret_redaction = {f"COPY_PASSWORD_{index}": value for index, value in enumerate(sorted(values))}
         self.database_credentials = {"backend": str(self.backend), "databases": copy.deepcopy(databases)}
         redact_object_diagnostic("", {}, database_credentials=self.database_credentials)
 
-    def command(self, command, **kwargs):
+    def command(self, command, *, digest_output=False, **kwargs):
         # 写请求前就占有诊断文件；不记录 stdin 中的业务 SQL 或明文环境。
         if self.secret_redaction is None:
             raise ValueError("外部命令必须先绑定两侧文件与配置中的实际凭据")
         prefix = "command-" + (self.copy_owner.session_id + "-" if self.copy_owner else "")
         path = self.output / (prefix + uuid.uuid4().hex + ".json")
         redaction = dict(os.environ) | (kwargs.get("env") or {}) | self.secret_redaction
-        private_probe = Path(command[0]).name.lower() in {"powershell.exe", "pwsh.exe"}
+        private_probe = digest_output or Path(command[0]).name.lower() in {"powershell.exe", "pwsh.exe"}
 
         def diagnostic(value):
             if not private_probe:
@@ -116,16 +117,16 @@ class CloneSession:
         return self.output / (name(purpose) + "-" + uuid.uuid4().hex[:8])
 
     def _source_generation(self, selection: str | tuple[str, str] = "all") -> dict:
+        if self.source_storage_run is None:
+            raise ValueError("复制来源代次必须绑定正式运行目录")
         with self.environment.use("source"):
-            if self.source_storage_run is not None:
-                from devex_clone_run import source_storage_binding
+            from devex_clone_run import source_storage_binding
 
-                source_storage_binding(
-                    self.backend, self.source_storage_run, copy_stage=self.copy_stage,
-                )
+            source_storage_binding(
+                self.backend, self.source_storage_run, copy_stage=self.copy_stage,
+            )
             verify_export_bindings(self.backend, self.source_verified, selection=selection)
-            # 夹具源码树不属于当前验收仓库的检查窗口；窗口外完整核验，禁止跨仓库复用窗口结果。
-            current = verify_generation(self.backend, self.source_request, self.run)
+            current = copy_source_generation(self.backend, self.source_storage_run, self.run)
         if current != self.source_verified["generation"]:
             raise ValueError("源实际运行、停止声明、配置或构建代次与导出不同")
         return current
@@ -144,7 +145,7 @@ class CloneSession:
         # 夹具执行树不在当前验收仓库的检查窗口内；采集必须在窗口外完整核验。
         with self.environment.use(side) as environment:
             captured = capture_side_inventory(execution, side, self.tools, receipt,
-                                              self.directory(side + "-inventory"), environment=environment)
+                                              self.directory(side + "-inventory"), environment=environment, evidence_root=self.backend)
         by_name = {db["database"]: db["key"] for db in config["databases"]}
         return {by_name[item.resource["database"]]: item for item in captured.observations}
 
@@ -155,8 +156,11 @@ class CloneSession:
 
             execution, _ = execution_backend(self.backend, request)
             return execution
-        recorded = read_json(bound_file(self.backend, request["maintenance_build"])).get("backend_root")
-        return Path(recorded) if isinstance(recorded, str) and Path(recorded).is_dir() else self.backend
+        return Path(native_response(*native_invoke(
+            "__source-evidence", {"operation": "copy-maintenance-root", "write": False,
+                "arguments": {"backend": str(self.backend), "maintenance_build": request["maintenance_build"]}},
+            subprocess.run, may_write=False,
+        ))[0]["value"]["path"])
 
     def _source_inventory(self) -> dict:
         observed = self._inventory("source")
@@ -187,18 +191,32 @@ class CloneSession:
         initial, self.target_request, _ = self._target_generation()
         # 目标同样来自夹具源码树；必须在该仓库自己的完整核验下复验。
         with self.environment.use("target"):
-            target_proof = verify_target(
-                self.backend, self.target_directory, self.directory("target-precopy"), self.run,
-                storage_run=self.target_storage_run,
+            temporary = os.environ.get("TEMP")
+            other = os.environ.get("TMP")
+            if (not temporary or not other or not Path(temporary).is_absolute()
+                    or not Path(other).is_absolute()
+                    or os.path.normcase(os.path.normpath(temporary)) != os.path.normcase(os.path.normpath(other))):
+                raise ValueError("目标 TEMP/TMP 必须明确绑定同一受管私有目录；请核对目标环境文件")
+            temporary = local_path(self.backend, temporary)
+            if not temporary.is_dir():
+                raise ValueError("目标 TEMP/TMP 必须是已有受管私有目录；不创建或回退系统目录")
+            target_proof = target_binding(
+                "fresh-verify-target", self.backend, initialized=self.target_binding,
+                observation=str(self.directory("target-precopy")),
+                storage_run=None if self.target_storage_run is None else str(self.target_storage_run),
+                temporary_directory=str(temporary), app_env="test", write=True,
             )
         if target_proof["initialized"] != self.target_binding:
             raise ValueError("实际新目标复验不属于外部绑定的初始化代次")
         target = initial["generation"]["selected"]
         target_config = {**self.target_request["target"], "runtime_dir": target["runtime_dir"], "api_url": target["api_url"]}
+        from devex_clone_target_binding import application_config_directory, execution_backend
+        target_config["s3"] = {"configuration": configuration_binding(
+            execution_backend(self.backend, self.target_request)[0], application_config_directory(self.backend, self.target_request))}
         tools = {"mysql": self.source_request["tools"]["mysql"]}
         if tools != self.target_request["tools"]:
             raise ValueError("两侧复制必须绑定同一 MySQL 工具")
-        self.tools = ExternalTools({"source": self.exported["source"], "target": target_config, "tools": tools}, self.output, self.run)
+        self.tools = ExternalTools({"source": self.source_request["source"], "target": target_config, "tools": tools}, self.output, self.run)
         self.source_initial = self._source_inventory()
         by_name = initial["inventory"]["observations"]
         self.initialized = {db["key"]: database_observation(by_name[db["database"]]) for db in target_config["databases"]}
@@ -214,7 +232,7 @@ class CloneSession:
         evidence = {"source_stopped": self.exported["evidence"]["generation-after"],
                     "target_initialized": {"file": (proofs / "initialized.json").relative_to(root).as_posix(), **file_digest(proofs / "initialized.json")},
                     "target_stopped": {"file": (proofs / "stopped.json").relative_to(root).as_posix(), **file_digest(proofs / "stopped.json")}}
-        self.declaration = declaration(self.backend, self.exported, self.source_initial, target_config, self.initialized,
+        self.declaration = declaration(self.backend, self.exported, self.source_initial, {**target_config, "s3": {"endpoint": object_configuration(target_config["s3"]["configuration"], self.backend)["endpoint"]}}, self.initialized,
                                        evidence, copy_id=copy_id, stage=stage,
                                        catalog_root=self._execution_root(self.source_request))
         write_json(self.output / "input.json", self.declaration)
@@ -353,7 +371,7 @@ class CloneSession:
                 if resources.object_keys(bucket) != expected:
                     raise ValueError("目标完整对象范围包含遗漏、额外对象或 owner 缺失")
             resources.tools.verify_objects("target")
-            if resources.redis_state(initialized=True, sentinel=True) != current["redis"]:
+            if resources.redis_state() != current["redis"]:
                 raise ValueError("未启动目标的 Redis 已偏离初始化状态")
         actual = self._inventory("target")
         expected = {key: replace(value, tables=copy.deepcopy(self.source_initial[key].tables)) for key, value in self.initialized.items()}
@@ -370,40 +388,68 @@ class CloneSession:
         self._source_generation()
 
 
+def _copy_failure(backend: Path, phase: str, error: BaseException) -> dict:
+    """只保留完整调用位置；异常正文、源码行、参数和局部变量均不进入记录。"""
+    root = Path(filesystem_path(backend.resolve()))
+    frames = []
+    trace = error.__traceback__
+    while trace is not None:
+        code = trace.tb_frame.f_code
+        filename = Path(filesystem_path(Path(code.co_filename).resolve()))
+        frames.append({"file": filename.relative_to(root).as_posix() if filename.is_relative_to(root) else filename.name,
+                       "function": code.co_name, "line": trace.tb_lineno})
+        trace = trace.tb_next
+    errno, winerror = getattr(error, "errno", None), getattr(error, "winerror", None)
+    return {"format_version": 1, "kind": "devex-copy-failure", "phase": phase,
+            "status": "needs_reconciliation", "error_type": type(error).__name__, "frames": frames,
+            "errno": errno if type(errno) is int else None, "winerror": winerror if type(winerror) is int else None,
+            "automatic_retry": False, "automatic_resource_cleanup": False, "target_ready": False, "restore_success": False}
+
+
 def copy_to_fresh_target(backend: Path, source_export: dict, initialized: dict, source_environment: dict,
                          target_environment: dict, output: Path, *, copy_id: str, stage: str, run=subprocess.run,
                          source_storage_run: Path | None = None,
                          target_storage_run: Path | None = None) -> dict:
     """首次显式复制；失败保留账本与资源，不自动清理、重试或接管已有目标。"""
     session = None
+    phase = "construct"
     try:
         session = CloneSession(
             backend, source_export, initialized, source_environment, target_environment, output, run,
             source_storage_run=source_storage_run, target_storage_run=target_storage_run,
         )
+        phase = "prepare"
         session.prepare(copy_id, stage)
+        phase = "register-owner"
         owner = register_copy_owner(session.backend, session.output)
         session.copy_owner = owner
+        phase = "verify-target"
         with session.environment.use("target"), generation_lock(session.target_directory, copy_owner=owner):
             session.owned_lock_identity = (session.target_directory / "initialize.lock").stat().st_ino
             session.verify_target_owners()
+            phase = "open-ledger"
             ledger = CloneLedger(session.backend, session.output / "ledger", session.plan["plan_sha256"],
                                  session.generation_sha256, create=True, copy_owner=owner)
+            phase = "transfer"
             with ledger:
                 steps = TransferSteps(session.backend, session.plan_file, session.tools, ledger, session, verified_plan=session.verified_plan)
                 for item in session.plan["databases"]:
                     steps.apply_database(item["key"])
                 for item in session.plan["objects"]:
                     steps.apply_object(item["bucket"], item["target_key"])
+                phase = "finalize"
                 steps.finish()
             result = steps.result()
         session.owned_lock_identity = None
         # 仅数据步骤已复核；调度处置、业务消费者和性能来源证明仍由后续显式流程完成。
+        phase = "publish-result"
         write_json(session.output / "result.json", result)
         return result
     except BaseException as error:
         if session is not None:
             session.owned_lock_identity = None
-            write_json(session.output / "failure.json", {"status": "needs_reconciliation", "error_type": type(error).__name__,
-                       "automatic_retry": False, "automatic_resource_cleanup": False, "target_ready": False, "restore_success": False})
+            try:
+                write_json(session.output / "failure.json", _copy_failure(session.backend, phase, error))
+            except BaseException as diagnostic_error:
+                error.add_note(f"复制失败位置证据保存失败：{type(diagnostic_error).__name__}")
         raise

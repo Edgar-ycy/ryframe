@@ -5,72 +5,45 @@ import copy
 import json
 import os
 from pathlib import Path
-import re
 import socket
 import subprocess
 import uuid
 
 from devex_clone_capture import read_json, write_json
-from devex_clone_model import digest, exact
 from devex_clone_source_proof import bound_file
-from devex_clone_target_binding import external_file
-from devex_clone_target_storage import redis_layout, rustfs_layout
-from full_stack_process import process_identity
+from devex_clone_target_binding import application_config_directory
+from devex_clone_target_evidence import evidence
 from native_s3_client import (NativeS3InvocationError, inspect as native_s3_inspect,
                               read as native_s3_read)
-from process_sockets import verify_listener
 from rate_limit_client import load_app_table
 from restore_build import file_digest
 from restore_reference_io import ExternalTools, redact_object_diagnostic
-from restore_reference_plan import BUCKETS, identifier, plan_hash
-
-
-REDIS_MARKER_REBIND_SCRIPT = """local cursor = '0'
-local rounds = 0
-repeat
-  local page = redis.call('SCAN', cursor, 'MATCH', ARGV[1], 'COUNT', '1000')
-  cursor = page[1]
-  if #page[2] ~= 0 then
-    return redis.error_reply('scope namespace is not empty')
-  end
-  rounds = rounds + 1
-  if rounds > 10000 then
-    return redis.error_reply('scope scan exceeded limit')
-  end
-until cursor == '0'
-if redis.call('EXISTS', KEYS[2]) ~= 0 then
-  return redis.error_reply('sentinel exists')
-end
-redis.call('SET', KEYS[1], ARGV[2])
-redis.call('SET', KEYS[2], ARGV[3])
-return 2"""
-
-
-def fixture_redis_tool_wsl(backend: Path, cache_binding: dict) -> dict:
-    """读取夹具缓存代次请求中由账本签发的 WSL 工具指纹；绑定不符时失败关闭。"""
-    outer = read_json(bound_file(backend, cache_binding["generation"]))
-    generation = read_json(bound_file(backend, outer["generation"]))
-    return read_json(bound_file(backend, generation["redis"]["request"]))["wsl"]
+from restore_reference_plan import BUCKETS, plan_hash, configuration_binding
 
 
 class Resources:
     def __init__(self, backend: Path, request: dict, output: Path, selected: dict, review: dict, run,
                  *, execution_backend: Path | None = None, storage_run: Path | None = None,
-                 owned_lock_identity: int | None = None, lock_output: Path | None = None):
+                 owned_lock_identity: int | None = None, lock_output: Path | None = None,
+                 request_descriptor: dict | None = None):
         self.backend, self.request, self.output = backend, request, output
+        self.request_descriptor = request_descriptor
         self.execution_backend = execution_backend or backend
         self.selected, self.review, self.runner = selected, review, run
         self.storage_run, self.storage_runtime_binding = storage_run, None
         self.cache_runtime_binding = None
+        self._selected_redis = None
         self.owned_lock_identity = owned_lock_identity
         self.lock_output = lock_output or output
+        self.object_configuration = configuration_binding(self.execution_backend, application_config_directory(backend, request))
         self.environment = dict(os.environ)
         self.redaction = dict(self.environment)
         self.database_credentials = {"backend": str(backend), "databases": copy.deepcopy(request["target"]["databases"])}
         redact_object_diagnostic("", {}, database_credentials=self.database_credentials)
         for field in ("access_key", "secret_key"):
             self.redaction[field.upper()] = request["target"]["s3"][field]
-        self.tools = ExternalTools({"target": request["target"], "tools": request["tools"]}, output, run,
+        target = {**request["target"], "s3": {"configuration": self.object_configuration}}
+        self.tools = ExternalTools({"target": target, "tools": request["tools"]}, output, run,
                                    before_execute=self.checkpoint)
 
     def checkpoint(self) -> None:
@@ -118,28 +91,6 @@ class Resources:
         # 不指定 database，才能在 CREATE 前观察明确名称；SQL 只来自本模块固定操作。
         return self.command("mysql-" + db["key"], args, data=sql.encode(), env=self.tools.mysql_environment()).stdout.decode("utf-8").strip()
 
-    def database_state(self, db: dict, *, exists: bool, empty: bool = False) -> dict:
-        name = identifier(db["database"])
-        raw = self._mysql(db, f"SELECT @@server_uuid; SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '{name}';")
-        expected = [db["server_uuid"], name] if exists else [db["server_uuid"]]
-        if raw.splitlines() != expected:
-            raise ValueError("目标 MySQL UUID 或精确数据库存在性不符")
-        if empty:
-            tables = self._mysql(db, f"SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = '{name}' ORDER BY TABLE_NAME;")
-            if tables:
-                raise ValueError("本次新库出现非空表或 view，拒绝 reset 接管")
-        return {"server_uuid": db["server_uuid"], "database": name, "exists": exists, "empty_checked": empty}
-
-    def create_database(self, db: dict) -> None:
-        self.database_state(db, exists=False)
-        self._mysql(db, f"CREATE DATABASE `{identifier(db['database'])}` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;")
-
-    def drop_empty_database(self, db: dict) -> None:
-        """只回收已由当前 fresh 代次确认为空的精确数据库。"""
-        self.database_state(db, exists=True, empty=True)
-        self._mysql(db, f"DROP DATABASE `{identifier(db['database'])}`;")
-        self.database_state(db, exists=False)
-
     def _s3(self, stage: str, request: dict, invoke) -> dict:
         if dict(os.environ) != self.environment:
             raise ValueError("初始化进程环境在对象观察期间变化")
@@ -159,8 +110,8 @@ class Resources:
             destination = request.get("destination")
             write_json(path, {"transport": "rust-s3-sigv4", "operation": request["operation"],
                              "scope_id": request["scope_id"],
-                             "endpoint": request["configuration"]["endpoint"],
-                             "configuration_sha256": plan_hash(request["configuration"]),
+                             "endpoint": self.request["target"]["s3"]["endpoint"],
+                             "configuration_sha256": plan_hash(self.request["target"]["s3"]),
                              "bucket": request["bucket"], "returncode": code,
                              "error_type": error_type, "response": response,
                              "key": request.get("key"),
@@ -176,7 +127,7 @@ class Resources:
         target = self.request["target"]
         return self._s3(stage, {
             "format_version": 1, "kind": "ryframe-native-s3-inspect",
-            "scope_id": target["scope_id"], "configuration": target["s3"],
+            "scope_id": target["scope_id"], "configuration_binding": self.object_configuration,
             "bucket": bucket, "operation": operation, "prefix": prefix,
             "continuation": continuation,
         }, native_s3_inspect)
@@ -185,7 +136,7 @@ class Resources:
         target = self.request["target"]
         return self._s3("owner-read", {
             "format_version": 1, "kind": "ryframe-native-s3-read",
-            "scope_id": target["scope_id"], "configuration": target["s3"],
+            "scope_id": target["scope_id"], "configuration_binding": self.object_configuration,
             "bucket": bucket, "operation": "get-object", "key": key,
             "if_match": None, "version": None, "destination": str(destination),
             "max_bytes": 4096,
@@ -287,58 +238,36 @@ class Resources:
                     raise ValueError("Redis 必须使用所选配置文件中的密码和 database 0")
                 return send(parts)
 
-    def redis_state(self, *, initialized: bool, sentinel: bool) -> dict:
-        redis, reset = self.selected["redis"], self.request["reset"]
-        found, cursors, cursor = set(), set(), "0"
-        for _ in range(10000):
-            page = self._redis(["SCAN", cursor, "MATCH", redis["namespace"] + "*", "COUNT", "1000"])
-            if (not isinstance(page, list) or len(page) != 2 or not isinstance(page[0], str)
-                    or not page[0].isdigit() or not isinstance(page[1], list)):
-                raise ValueError("Redis scoped 分页格式错误")
-            for key in page[1]:
-                if not isinstance(key, str) or not key.startswith(redis["namespace"]):
-                    raise ValueError("Redis scoped 分页越界")
-                found.add(key)
-            cursor = page[0]
-            if cursor == "0":
-                break
-            if cursor in cursors:
-                raise ValueError("Redis scoped 分页无法完成")
-            cursors.add(cursor)
-        else:
-            raise ValueError("Redis scoped 分页超限")
-        if found != ({redis["ownership_key"]} if initialized else set()):
-            raise ValueError("Redis namespace 出现未知或旧状态")
-        owner = self._redis(["GET", redis["ownership_key"]])
-        marker = self._redis(["GET", reset["sentinel_key"]])
-        if owner != (redis["ownership_value"] if initialized else None) or marker != (reset["sentinel_value"] if sentinel else None):
-            raise ValueError("Redis owner 或精确 sentinel 与新代次不符")
-        return {"keys": sorted(found), "owner": owner, "sentinel": marker}
+    def _cache_cleanup_native(self, observation: dict, comparisons: list[str], output: Path) -> dict:
+        """固定写端口持有同一 Redis 连接；不拆分 WATCH/EXEC、不自动重试。"""
+        from native_s3_client import _invoke, _read_response
 
-    def create_sentinel(self) -> None:
-        reset = self.request["reset"]
-        if self._redis(["SET", reset["sentinel_key"], reset["sentinel_value"], "NX"]) != "OK":
-            raise ValueError("Redis sentinel NX 未确认创建，禁止覆盖或重放")
-
-    def rebind_restart_redis_markers(self) -> int:
-        """在单条 Redis 脚本内复核空前像并同时恢复 owner 与 sentinel。"""
-        redis, reset = self.selected["redis"], self.request["reset"]
-        result = self._redis([
-            "EVAL", REDIS_MARKER_REBIND_SCRIPT, "2",
-            redis["ownership_key"], reset["sentinel_key"], redis["namespace"] + "*",
-            redis["ownership_value"], reset["sentinel_value"],
-        ])
-        if result != 2:
-            raise ValueError("Redis owner 与 sentinel 原子重绑结果未确认")
+        self.checkpoint()
+        result = _read_response(*_invoke("__source-evidence", {
+            "operation": "runtime-cache-cleanup", "write": True,
+            "arguments": {"backend": str(self.backend), "request": self.request,
+                          "directory": str(output.parent), "output": str(output),
+                          "environment": {"APP_ENV": self.environment.get("APP_ENV")},
+                          "observation": observation, "comparisons": comparisons},
+        }, self.runner, may_write=True))[0]["value"]
+        self.checkpoint()
         return result
 
-    def remove_sentinel(self) -> None:
-        reset = self.request["reset"]
-        if self.redis_state(initialized=False, sentinel=True)["sentinel"] != reset["sentinel_value"]:
-            raise ValueError("Redis sentinel 不属于本次 fresh 目标，拒绝删除")
-        if self._redis(["DEL", reset["sentinel_key"]]) != 1:
-            raise ValueError("Redis sentinel 删除未确认")
-        self.redis_state(initialized=False, sentinel=False)
+    def redis_state(self) -> dict:
+        if self.request_descriptor is None or self._selected_redis is None:
+            raise ValueError("目标 Redis 读取前必须核对实际存储代次")
+        self.checkpoint()
+        value = evidence("redis-initialized-state", self.backend, self.output,
+                         request=self.request_descriptor,
+                         storage_run=None if self.storage_run is None else str(self.storage_run),
+                         redis=self._selected_redis, cache_runtime=self.cache_runtime_binding)
+        if (set(value) != {"keys", "owner", "sentinel"} or not isinstance(value["keys"], list)
+                or any(not isinstance(key, str) for key in value["keys"])
+                or not isinstance(value["owner"], str) or not isinstance(value["sentinel"], str)):
+            raise ValueError("目标 Redis 读取响应无效")
+        self.checkpoint()
+        return value
+
 
     def _cache_owned_lock_identity(self, cache_request: dict) -> int | None:
         initialized = bound_file(self.backend, cache_request["initialized"])
@@ -348,44 +277,26 @@ class Resources:
 
     def storage_identity(self) -> dict:
         self.checkpoint()
+        self._selected_redis = None
         rustfs = self.request["storage"]["rustfs"]
+        redis = self.request["storage"]["redis"]
         fixture = False
         if self.storage_run is not None:
             manifest = read_json(self.storage_run / "manifest.json")
             fixture = manifest.get("kind") == "reference-fixture-service-run"
-            if fixture:
-                from reference_fixture_service_context import runtime_transition
+        if self.storage_run is not None and not fixture:
+            from devex_clone_storage import registered_storage_binding
 
-                expected = {"storage": self.request["storage"]["rustfs"],
-                            "redis": self.request["storage"]["redis"]}
-                self.storage_runtime_binding, self.cache_runtime_binding = runtime_transition(
-                    self.backend, self.storage_run, expected)
-            else:
-                from devex_clone_storage import registered_storage_binding
-
-                self.storage_runtime_binding = registered_storage_binding(self.backend, self.storage_run, "target")
+            self.storage_runtime_binding = registered_storage_binding(self.backend, self.storage_run, "target")
             if self.storage_runtime_binding is not None:
-                if not fixture:
-                    runtime_request = json.loads(bound_file(
-                        self.backend, self.storage_runtime_binding["request"]).read_text(encoding="utf-8"))
-                    original = self.request["storage"]["rustfs"]
-                    if (runtime_request["previous"]["identity"] != original["identity"]
-                            or runtime_request["previous"]["process_receipt"] != original["process_receipt"]
-                            or runtime_request["previous"]["launch_receipt"] != original["launch_receipt"]):
-                        raise ValueError("存储重启证明未绑定本目标的原始 RustFS 收据")
+                runtime_request = json.loads(bound_file(
+                    self.backend, self.storage_runtime_binding["request"]).read_text(encoding="utf-8"))
+                original = self.request["storage"]["rustfs"]
+                if (runtime_request["previous"]["identity"] != original["identity"]
+                        or runtime_request["previous"]["process_receipt"] != original["process_receipt"]
+                        or runtime_request["previous"]["launch_receipt"] != original["launch_receipt"]):
+                    raise ValueError("存储重启证明未绑定本目标的原始 RustFS 收据")
                 rustfs = self.storage_runtime_binding["storage"]
-        exact(rustfs, {"identity", "sha256", "process_receipt", "launch_receipt"})
-        exact(rustfs["identity"], {"pid", "started", "executable"})
-        self.checkpoint()
-        if (rustfs["identity"]["executable"] != self.review["tools"]["rustfs"]["path"]
-                or rustfs["sha256"] != self.review["tools"]["rustfs"]["sha256"]
-                or file_digest(Path(rustfs["identity"]["executable"]))["sha256"] != digest(rustfs["sha256"])
-                or process_identity(rustfs["identity"]["pid"]) != rustfs["identity"]):
-            raise ValueError("RustFS 实际二进制或内核进程代次变化")
-        self.checkpoint()
-        verify_listener(rustfs["identity"]["pid"], self.request["target"]["s3"]["endpoint"])
-        rustfs_layout(self, rustfs, runtime=self.storage_runtime_binding)
-        redis = self.request["storage"]["redis"]
         if self.storage_run is not None and not fixture and self.cache_runtime_binding is None:
             from devex_clone_cache import registered_cache_binding, registration
 
@@ -395,28 +306,15 @@ class Resources:
                 cache_lock_identity = self._cache_owned_lock_identity(cache_request)
             self.cache_runtime_binding = registered_cache_binding(self.backend, self.storage_run,
                                                                  owned_lock_identity=cache_lock_identity)
-        if self.cache_runtime_binding is not None:
-            tools_wsl = None
-            if fixture:
-                from devex_clone_target_runtime_evidence import fixture_restart_generation
-
-                fixture_restart_generation(
-                    self.storage_runtime_binding, self.cache_runtime_binding
-                )
-                # 夹具服务代次可能按续签审阅重启：只允许该代次请求（已经历史校验）签发的
-                # WSL 工具指纹随缓存代次更新，其余物理配置仍必须与本目标原始 Redis 一致。
-                tools_wsl = fixture_redis_tool_wsl(self.backend, self.cache_runtime_binding)
-            else:
-                cache_request = json.loads(bound_file(
-                    self.backend, self.cache_runtime_binding["request"]
-                ).read_text(encoding="utf-8"))
-                if cache_request["previous"] != redis:
-                    raise ValueError("缓存恢复证明未绑定本目标的原始 Redis")
+        if self.cache_runtime_binding is not None and not fixture:
+            cache_request = json.loads(bound_file(
+                self.backend, self.cache_runtime_binding["request"]
+            ).read_text(encoding="utf-8"))
+            if cache_request["previous"] != redis:
+                raise ValueError("缓存恢复证明未绑定本目标的原始 Redis")
             resumed = self.cache_runtime_binding["redis"]
             allowed = {**redis, **{key: resumed[key] for key in ("pid", "started", "run_id")}}
-            if tools_wsl is not None:
-                allowed["wsl"] = tools_wsl
-            elif not fixture and self.cache_runtime_binding.get("tools") is not None:
+            if self.cache_runtime_binding.get("tools") is not None:
                 from devex_clone_cache import generation_request
 
                 output = bound_file(self.backend, self.cache_runtime_binding["tools"]).parent
@@ -424,39 +322,42 @@ class Resources:
                                                     owned_lock_identity=self.owned_lock_identity)
                 if tools != self.cache_runtime_binding["tools"]:
                     raise ValueError("缓存工具后继与已发布代次不符")
-                allowed["wsl"] = process["wsl"]
+                if redis.get("platform") == "windows":
+                    if process["format_version"] != 3 or process["tool"] != redis["tool"]:
+                        raise ValueError("Windows Redis 后继必须保留原登记工具")
+                else:
+                    allowed["wsl"] = process["wsl"]
             if resumed != allowed:
-                raise ValueError("缓存恢复不能改变原 WSL、配置、产物、端口或发行版")
+                raise ValueError("缓存恢复不能改变原配置、产物、端口或未授权工具")
             redis = resumed
-        exact(redis, {"port", "wsl", "distribution", "pid", "started", "executable", "sha256", "run_id", "configuration"})
-        external_file(redis["wsl"])
-        expected = self.review["tools"]["redis_server"]
-        if (redis["distribution"] != expected["distribution"] or redis["executable"] != expected["resolved_path"]
-                or redis["sha256"] != expected["sha256"] or type(redis["pid"]) is not int or redis["pid"] <= 1
-                or not isinstance(redis["started"], str) or not redis["started"].isdigit()
-                or not re.fullmatch(r"[a-f0-9]{40}", redis["run_id"])
-                or self.selected["redis"]["url"] != f"redis://127.0.0.1:{redis['port']}/0"):
-            raise ValueError("Redis 必须是当前明确 WSL 进程与固定工具")
-        prefix = [redis["wsl"]["path"], "--distribution", redis["distribution"], "--exec"]
-        def observe(args):
-            return self.command("redis-kernel", [*prefix, *args]).stdout.decode("utf-8").strip()
-        stat = observe(["/usr/bin/cat", f"/proc/{redis['pid']}/stat"]).rpartition(")")[2].split()
-        actual_exe = observe(["/usr/bin/readlink", "-f", f"/proc/{redis['pid']}/exe"])
-        executable_hash = observe(["/usr/bin/sha256sum", redis["executable"]]).split()[0]
-        info = self._redis(["INFO", "server"])
-        values = {}
-        for line in info.splitlines():
-            if ":" in line and not line.startswith("#"):
-                key, value = line.split(":", 1)
-                if key in values:
-                    raise ValueError("Redis INFO 身份字段重复")
-                values[key] = value
-        if (len(stat) < 20 or stat[19] != redis["started"] or actual_exe != redis["executable"]
-                or executable_hash != redis["sha256"] or values.get("run_id") != redis["run_id"]
-                or values.get("process_id") != str(redis["pid"])):
-            raise ValueError("Redis 端点或内核进程已重启/变化")
-        redis_layout(self, redis, values, observe)
+        if self.request_descriptor is None:
+            raise ValueError("存储布局观察缺少原请求文件绑定")
+        request_path = bound_file(self.backend, self.request_descriptor)
+        if read_json(request_path) != self.request:
+            raise ValueError("存储布局请求与当前绑定文件不同")
+        if fixture:
+            run = str(self.storage_run)
+            projected = evidence("fixture-storage-selection", self.backend, self.output,
+                                 request=self.request_descriptor, storage_run=run)
+            if (set(projected) != {"storage", "runtime", "cache_runtime", "manifest", "state"}
+                    or any(not isinstance(projected[name], dict) for name in ("manifest", "state"))
+                    or not isinstance(projected["storage"], dict)
+                    or set(projected["storage"]) != {"rustfs", "redis"}
+                    or any(not isinstance(value, dict) for value in projected["storage"].values())
+                    or (projected["runtime"] is None) != (projected["cache_runtime"] is None)
+                    or any(projected[name] is not None and not isinstance(projected[name], dict)
+                           for name in ("runtime", "cache_runtime"))):
+                raise ValueError("原生夹具存储选择响应无效；保留现场，不重放")
+            evidence("fixture-storage-layout", self.backend, self.output,
+                     request=self.request_descriptor, storage_run=run, selection=projected)
+            self.checkpoint()
+            self.storage_runtime_binding = projected["runtime"]
+            self.cache_runtime_binding = projected["cache_runtime"]
+            self._selected_redis = projected["storage"]["redis"]
+            return projected["storage"]
+        evidence("storage-layout", self.backend, self.output, request=self.request_descriptor,
+                 storage={"rustfs": rustfs, "redis": redis}, runtime=self.storage_runtime_binding,
+                 cache_runtime=self.cache_runtime_binding)
         self.checkpoint()
-        if process_identity(rustfs["identity"]["pid"]) != rustfs["identity"]:
-            raise ValueError("存储观察结束时 RustFS 进程身份变化")
+        self._selected_redis = redis
         return {"rustfs": rustfs, "redis": redis}

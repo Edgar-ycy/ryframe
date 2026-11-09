@@ -107,7 +107,7 @@ fn exact_four_runs_and_five_scenarios_reject_retries_duplicates_and_prefixes() {
     let mut c = v.clone();
     c["runs"][0]["status"] = json!("skipped");
     cases.push(c);
-    let mut c = v.clone();
+    let mut c = v;
     c["run_id"] = json!("other");
     cases.push(c);
     for c in cases {
@@ -254,6 +254,8 @@ fn private_protocol_rejects_duplicate_fields_wrong_write_and_unknown_operation()
         r#"{"operation":"manifest","operation":"terminal","arguments":{},"write":false}"#,
         r#"{"operation":"terminal","arguments":{},"write":false}"#,
         r#"{"operation":"other","arguments":{},"write":false}"#,
+        r#"{"operation":"worker-origin","arguments":{},"write":true}"#,
+        r#"{"operation":"worker-origin","arguments":{"root":"private-sentinel"},"write":false}"#,
     ] {
         assert!(protocol::execute(raw.as_bytes()).is_err());
     }

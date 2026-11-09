@@ -72,12 +72,13 @@ pub(in super::super) fn plan(
     {
         return Err(rejected("缓存工具后继必须继承 seed 发布前已确认的缓存代次"));
     }
-    let created = history::starts(
+    let created = history::starts_with_tools(
         context,
         &request,
         &descriptor,
         Some(published_number),
         &Value::Null,
+        observe,
     )?;
     let (_, process_output, base) = created.last().ok_or("seed 原缓存缺少已登记的创建收据")?;
     let (runtime, runtime_binding) = history::owned(context, process_output, base)?;

@@ -29,10 +29,7 @@ class RuntimeControlTests(unittest.TestCase):
         self.directory.mkdir()
         write_receipt(self.directory / "binaries.json", {
             name: str(Path(sys.executable).resolve()) for _, name in BINARIES})
-        self.environment = mock.patch.dict(os.environ, {
-            "APP_ENV": "test", "APP_SCOPE_ID": "runtime-control-test", "APP_JOBS_MODE": "external",
-            "APP_JOBS_HEALTH_HOST": "127.0.0.1", "APP_JOBS_HEALTH_PORT": "19210",
-        }, clear=True)
+        self.environment = mock.patch.dict(os.environ, {"APP_ENV": "test"}, clear=True)
         self.environment.start()
         self.addCleanup(self.environment.stop)
         register_runtime(self.root, self.directory, source_config_dir=self.root / "config")
@@ -120,11 +117,13 @@ class RuntimeControlTests(unittest.TestCase):
         self.children[1].wait(timeout=5)
 
     def test_unlocked_observation_creates_no_lock_history_or_receipt(self):
-        before = {path: path.read_bytes() for path in self.directory.rglob("*") if path.is_file()}
+        source = self.root / "config/app.toml"
+        source.write_text(source.read_text(encoding="utf-8").replace("port=18210\n", "port=18211\n"), encoding="utf-8")
+        before = {path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
         result = runtime.observe(
             self.root, self.directory, ("api", "worker"), "http://127.0.0.1:18210"
         )
-        after = {path: path.read_bytes() for path in self.directory.rglob("*") if path.is_file()}
+        after = {path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
         self.assertEqual(before, after)
         self.assertEqual(result["kind"], "devex-clone-runtime-observation")
         self.assertTrue(all(item["state"] == "stopped" for item in result["processes"].values()))
@@ -149,13 +148,11 @@ class RuntimeControlTests(unittest.TestCase):
             self.control("stop")
         self.assertTrue(all(child.poll() is None for child in self.children))
 
-    def test_unknown_listener_and_configuration_or_scope_changes_fail_closed(self):
+    def test_unknown_listener_and_configuration_changes_fail_closed(self):
         self.require_closed_port.side_effect = ValueError("明确端口已有监听")
         with self.assertRaisesRegex(ValueError, "已有监听"):
             self.control("status")
         self.require_closed_port.side_effect = None
-        with mock.patch.dict(os.environ, {"APP_SCOPE_ID": "wrong-test"}):
-            self.control("stop")
         receipt = json.loads((self.directory / "runtime.json").read_text(encoding="utf-8"))
         (Path(receipt["api_config_dir"]) / "app.toml").write_text('[app]\nport=1\n', encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "不匹配"):

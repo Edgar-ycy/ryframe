@@ -35,6 +35,31 @@ fn main() {
         eprintln!("private-password");
         std::process::exit(17);
     }
+    if mode == "compiler-fail" {
+        eprintln!(
+            "private-password: fatal error C1083: Cannot open compiler generated file: Invalid argument"
+        );
+        std::process::exit(17);
+    }
+    if mode.starts_with("pnpm-") {
+        let mut calls = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(directory.join("pnpm-invocations"))
+            .unwrap();
+        writeln!(calls, "{mode}").unwrap();
+        println!("private-password https://user:private-password@example.invalid/private");
+        match mode.as_str() {
+            "pnpm-offline-fail" => {
+                eprintln!("ERR_PNPM_META_FETCH_FAIL ERR_PNPM_NO_OFFLINE_META private-password")
+            }
+            "pnpm-fetch-fail" => eprintln!("ERR_PNPM_META_FETCH_FAIL private-password"),
+            _ => eprintln!(
+                "ERR_PNPM_UNKNOWN_private_password NOT_ERR_PNPM_NO_OFFLINE_META private-password"
+            ),
+        }
+        std::process::exit(17);
+    }
     if mode == "json" {
         eprintln!("编译诊断 private-password");
         println!("{{\"reason\":\"compiler-artifact\"}}");

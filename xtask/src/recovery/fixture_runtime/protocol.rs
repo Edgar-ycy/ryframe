@@ -53,8 +53,12 @@ pub(super) fn execute(raw: &[u8]) -> Result<Value> {
     )?;
     match op {
         "execute" => {
-            let mut api = super::dependency::Python::new(&path(&a["backend_dir"])?)?;
+            let mut api = super::dependency::Native::new(&path(&a["backend_dir"])?)?;
             super::execution::execute(&mut api, a)
+        }
+        "worker-origin" => {
+            strict::exact(a, &[], "Worker 来源只读请求")?;
+            super::worker_origin::capture()
         }
         "manifest" => manifest::capture(
             &path(&a["root"])?,

@@ -96,7 +96,7 @@ pub(crate) fn capture<T: Transport>(
 }
 
 pub(crate) fn logical(value: &Value) -> Result<Value> {
-    let databases = value
+    let mut databases = value
         .get("databases")
         .and_then(Value::as_array)
         .ok_or("库存缺少数据库")?
@@ -122,7 +122,8 @@ pub(crate) fn logical(value: &Value) -> Result<Value> {
             database
         })
         .collect::<Vec<_>>();
-    let objects = value
+    databases.sort_by_key(|database| database["key"].as_str().unwrap_or_default().to_owned());
+    let mut objects = value
         .get("objects")
         .and_then(Value::as_array)
         .ok_or("库存缺少对象")?
@@ -140,6 +141,7 @@ pub(crate) fn logical(value: &Value) -> Result<Value> {
             bucket
         })
         .collect::<Vec<_>>();
+    objects.sort_by_key(|bucket| bucket["bucket"].as_str().unwrap_or_default().to_owned());
     let mut result = value.as_object().cloned().ok_or("库存必须为对象")?;
     result.remove("captured_at");
     result.insert("databases".into(), Value::Array(databases));
@@ -187,9 +189,17 @@ pub(crate) fn object_index(value: &Value) -> Result<BTreeMap<(String, String), V
 }
 
 fn complete(runtime: &Value, targets: Vec<Value>, context: &Context) -> Result<Value> {
-    let declared = context
-        .databases()?
-        .into_iter()
+    complete_selected(runtime, targets, context.source())
+}
+
+/// 合成运行中观察和停机库存共用的四目标事实，不改变两类时间字段的含义。
+pub(crate) fn complete_selected(
+    runtime: &Value,
+    targets: Vec<Value>,
+    selected: &Value,
+) -> Result<Value> {
+    let declared = json_io::array(&selected["databases"], "来源数据库")?
+        .iter()
         .map(|item| item["key"].as_str().unwrap_or_default().to_owned())
         .collect::<BTreeSet<_>>();
     let time_field = if runtime.get("observed_at").is_some() {
@@ -208,31 +218,33 @@ fn complete(runtime: &Value, targets: Vec<Value>, context: &Context) -> Result<V
         "objects",
     ];
     let runtime = json_io::exact(runtime, &fields, "常规库存")?;
-    let by_key = collect_targets(runtime, targets, &declared)?;
+    let mut by_key = collect_targets(runtime, &targets, &declared)?;
     let mut seen = BTreeSet::new();
     check_runtime_databases(runtime, &by_key, &mut seen)?;
+    include_projections(&targets, &mut by_key)?;
     check_empty_targets(&declared, &by_key, &seen)?;
-    Ok(json!({
+    let mut value = json!({
         "scope_id": runtime["scope_id"],
         "source_sha": runtime["source_sha"],
-        "quiesced_at": runtime["quiesced_at"],
         "captured_at": runtime["captured_at"],
         "control_schema_fingerprint": runtime["control_schema_fingerprint"],
         "tenant_schema_fingerprint": runtime["tenant_schema_fingerprint"],
         "databases": declared.into_iter().map(|key| by_key.get(&key).unwrap().clone()).collect::<Vec<_>>(),
         "objects": runtime["objects"],
-    }))
+    });
+    value[time_field] = runtime[time_field].clone();
+    Ok(value)
 }
 
 fn collect_targets(
     runtime: &serde_json::Map<String, Value>,
-    targets: Vec<Value>,
+    targets: &[Value],
     declared: &BTreeSet<String>,
 ) -> Result<BTreeMap<String, Value>> {
     let mut by_key = BTreeMap::new();
     for target in targets {
         let target = exact(
-            &target,
+            target,
             &[
                 "scope_id",
                 "control_schema_fingerprint",
@@ -271,6 +283,36 @@ fn collect_targets(
         return Err("逐目标库存未覆盖全部登记目标".into());
     }
     Ok(by_key)
+}
+
+fn include_projections(targets: &[Value], by_key: &mut BTreeMap<String, Value>) -> Result<()> {
+    for target in targets {
+        let root = &target["target"];
+        let key = root["database"]["key"].as_str().ok_or("库存目标缺少 key")?;
+        let preserved = json_io::array(&root["preserved_tables"], "逐目标保留表")?;
+        let tables = by_key
+            .get_mut(key)
+            .and_then(|database| database.get_mut("tables"))
+            .and_then(Value::as_array_mut)
+            .ok_or("逐目标库存缺少表")?;
+        // 先核对原业务像，再纳入需要随业务恢复的授权投影；账本与归属仍保留原职责。
+        tables.extend(
+            preserved
+                .iter()
+                .filter(|row| {
+                    matches!(
+                        row["table"].as_str(),
+                        Some(
+                            "biz_data_scope_owner"
+                                | "biz_data_scope_dept"
+                                | "biz_data_scope_projection"
+                        )
+                    )
+                })
+                .cloned(),
+        );
+    }
+    Ok(())
 }
 
 fn check_runtime_databases(
@@ -354,6 +396,25 @@ fn validate(
     quiesced_at: &str,
     observed: bool,
 ) -> Result<()> {
+    validate_selected(
+        value,
+        context.source(),
+        models,
+        source_sha,
+        quiesced_at,
+        observed,
+    )
+}
+
+/// 来源运行完整像复用同一库存模型，不借用停机导出的执行资格。
+pub(crate) fn validate_selected(
+    value: &Value,
+    selected: &Value,
+    models: &Models,
+    source_sha: &str,
+    quiesced_at: &str,
+    observed: bool,
+) -> Result<()> {
     let time_field = if observed {
         "observed_at"
     } else {
@@ -370,11 +431,9 @@ fn validate(
         "objects",
     ];
     let root = exact(value, &fields, "源库存")?;
-    let scope = context.source()["scope_id"]
-        .as_str()
-        .ok_or("源 scope 无效")?;
+    let scope = selected["scope_id"].as_str().ok_or("源 scope 无效")?;
     inventory_validate::header(root, scope, source_sha, quiesced_at, observed)?;
-    let declared_values = context.databases()?.into_iter().collect::<Vec<_>>();
+    let declared_values = json_io::array(&selected["databases"], "来源数据库")?;
     let declared = declared_values
         .iter()
         .map(|item| {

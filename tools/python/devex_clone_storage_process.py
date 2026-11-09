@@ -5,31 +5,31 @@ import os
 from pathlib import Path
 import subprocess
 import time
-from types import SimpleNamespace
 
 from devex_clone_capture import read_json, write_json
 from devex_clone_model import exact
 from devex_clone_run_state import binding
 from devex_clone_source_proof import bound_file
-from devex_clone_storage_request import arguments, configuration, identity
-from devex_clone_target_storage import actual_windows_argv
+from devex_clone_storage_request import arguments, identity
+from devex_clone_target_evidence import evidence
+from restore_reference_plan import plan_hash
 from full_stack_process import process_identity, terminate_owned_process
 from process_sockets import verify_listener
 
 
-def actual_arguments(expected: dict, args: list[str]) -> None:
-    observed = actual_windows_argv(SimpleNamespace(runner=subprocess.run), expected)
-    if observed != args:
+def actual_arguments(backend: Path, receipt: dict, expected: dict, args: list[str]) -> None:
+    observed = evidence("process-argv", backend, Path(receipt["path"]).parent, receipt=receipt, identity=expected)
+    if observed["actual_arguments_sha256"] != plan_hash(args):
         raise ValueError("存储进程当前参数不是已登记的完整命令")
 
 
-def running(expected: dict, args: list[str], urls: tuple[str, str], *, listeners=True) -> bool:
+def running(backend: Path, receipt: dict, expected: dict, args: list[str], urls: tuple[str, str], *, listeners=True) -> bool:
     current = process_identity(identity(expected)["pid"])
     if current is None:
         return False
     if current != expected:
         raise ValueError("存储 PID 已被复用，拒绝操作其他内核代次")
-    actual_arguments(expected, args)
+    actual_arguments(backend, receipt, expected, args)
     if listeners:
         for url in urls:
             verify_listener(expected["pid"], url)
@@ -46,14 +46,14 @@ def inspect_attempt(backend: Path, output: Path, registration: dict, controller:
             raise ValueError("存储进程证据缺少启动意图，拒绝猜测来源")
         return None
     intent = read_json(path)
-    exact(intent, {"format_version", "kind", "request", "controller", "attempt", "arguments", "environment"})
+    exact(intent, {"format_version", "kind", "request", "controller", "attempt", "arguments"})
     request_path = bound_file(backend, request_binding or registration)
     if request_binding is not None and request_path != output / "request.json":
         raise ValueError("服务账本嵌入请求必须位于原始启动目录")
     request = read_json(request_path)
     if (intent["format_version"] != 1 or intent["kind"] != "devex-clone-storage-intent"
             or intent["request"] != registration or intent["controller"] != controller or intent["attempt"] != number
-            or intent["arguments"] != arguments(request) or intent["environment"] != configuration(request)):
+            or intent["arguments"] != arguments(request)):
         raise ValueError("存储意图不属于原注册与对应控制阶段")
     bound_file(backend, controller)
     receipt = output / "process.json"
@@ -84,26 +84,11 @@ def inspect_attempt(backend: Path, output: Path, registration: dict, controller:
     if launch_path.exists():
         launch = read_json(launch_path)
         expected = {"format_version": 1, "scope_id": request["scope_id"], "identity": process["identity"],
-                    "arguments": arguments(request), "environment": configuration(request), "credential_files": request["credential_files"]}
+                    "arguments": arguments(request), "credential_files": request["credential_files"]}
         if launch != expected:
             raise ValueError("存储启动参数收据变化")
     return {"state": "recorded", "identity": process["identity"], "process_receipt": binding(receipt),
             "launch_receipt": binding(launch_path) if launch_path.exists() else None, "intent": binding(path)}
-
-
-def stop_record(request: dict, observed: dict, output: Path) -> dict:
-    if observed["state"] == "not_started":
-        return {"state": "stopped", "identity": None, "terminated": False, "process_receipt": None}
-    expected = observed["identity"]
-    urls = request["api_url"], request["console_url"]
-    alive = running(expected, arguments(request), urls, listeners=False)
-    terminated = terminate_owned_process(expected) if alive else False
-    if process_identity(expected["pid"]) is not None:
-        raise ValueError("存储回收后仍存在进程或 PID 已被复用")
-    result = {"state": "stopped", "identity": expected, "terminated": terminated,
-              "process_receipt": observed["process_receipt"]}
-    write_json(output / "stopped.json", result)
-    return result
 
 
 def wait_ready(child, expected: dict, request: dict) -> None:
@@ -122,14 +107,13 @@ def wait_ready(child, expected: dict, request: dict) -> None:
 
 def start(backend: Path, request: dict, environment: dict, output: Path, registration: dict,
           controller: dict, number: int, guard, *, supervised: bool = False) -> dict:
-    args, config = arguments(request), configuration(request)
+    args = arguments(request)
     write_json(output / "intent.json", {"format_version": 1, "kind": "devex-clone-storage-intent", "request": registration,
-               "controller": controller, "attempt": number, "arguments": args, "environment": config})
+               "controller": controller, "attempt": number, "arguments": args})
     child, expected, popen_called = None, None, False
     try:
-        # 不继承任何未登记 RUSTFS 开关；凭据只以原文件路径传入子进程。
-        private = {key: item for key, item in environment.items() if not key.upper().startswith("RUSTFS_")}
-        private.update(config)
+        # 不继承任何 RUSTFS 或 MINIO 环境覆盖；凭据只以原文件路径传入子进程。
+        private = {key: item for key, item in environment.items() if not key.upper().startswith(("RUSTFS_", "MINIO_"))}
         with (output / "stdout.log").open("xb") as stdout, (output / "stderr.log").open("xb") as stderr:
             popen_called = True
             if supervised:
@@ -149,11 +133,11 @@ def start(backend: Path, request: dict, environment: dict, output: Path, registr
                    "lifecycle": "running", "identity": expected, "api_url": request["api_url"], "console_url": request["console_url"],
                    "data_dir": request["data_directory"]["path"], "intent": binding(output / "intent.json")})
         write_json(output / "launch.json", {"format_version": 1, "scope_id": request["scope_id"], "identity": expected,
-                   "arguments": args, "environment": config, "credential_files": request["credential_files"]})
-        actual_arguments(expected, args)
+                   "arguments": args, "credential_files": request["credential_files"]})
+        actual_arguments(backend, binding(output / "process.json"), expected, args)
         wait_ready(child, expected, request)
         guard()
-        if not running(expected, args, (request["api_url"], request["console_url"])):
+        if not running(backend, binding(output / "process.json"), expected, args, (request["api_url"], request["console_url"])):
             raise ValueError("存储最终就绪观察已退出")
         result = {"identity": expected, "sha256": request["executable"]["sha256"],
                   "process_receipt": binding(output / "process.json"), "launch_receipt": binding(output / "launch.json")}

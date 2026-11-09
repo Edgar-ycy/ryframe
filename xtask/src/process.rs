@@ -14,24 +14,28 @@ use crate::{Result, workspace::root_dir};
 
 #[path = "process/child.rs"]
 mod child;
+#[cfg(any(windows, test))]
+#[path = "process/windows_detach.rs"]
+pub(crate) mod windows_detach;
 #[cfg(windows)]
 #[path = "process/windows_members.rs"]
 mod windows_members;
 pub(crate) use child::{ChildGroup, ManagedChild};
 #[path = "process/cancellation.rs"]
 mod cancellation;
+pub(crate) use cancellation::command_output_result_with_timeout;
 #[allow(unused_imports)]
 pub(crate) use cancellation::{
     ProcessCancellation, is_process_cancellation, with_process_cancellation,
 };
-use cancellation::{command_output_result, command_output_result_with_timeout, command_status};
+use cancellation::{command_output_result, command_status};
 #[path = "process/cache.rs"]
 mod cache;
 use cache::configure_cargo_cache;
 #[allow(unused_imports)]
 pub(crate) use cache::rustc_cache_label;
 #[path = "process/exit_status.rs"]
-mod exit_status;
+pub(crate) mod exit_status;
 use exit_status::CommandFailure;
 #[allow(unused_imports)]
 pub(crate) use exit_status::PreservedFailure;
@@ -246,7 +250,7 @@ pub(crate) fn command_output_with_env(
     command_output_impl(dir, executable, args, environment, (true, true), None)
 }
 
-fn command_output_impl(
+pub(crate) fn command_output_impl(
     dir: &Path,
     executable: &str,
     args: &[&str],
@@ -315,7 +319,7 @@ pub(crate) fn command_output_with_input_timeout(
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     command_output_result_with_timeout(command, timeout).map_err(|error| {
         format!(
-            "无法执行一次性 Python 输出协议 `{}`：{error}",
+            "无法执行一次性子进程输出协议 `{}`：{error}",
             command_executable.to_string_lossy()
         )
         .into()
@@ -331,16 +335,6 @@ pub(crate) fn protocol_stdin(input: Option<&[u8]>) -> Result<Stdio> {
     file.write_all(input)?;
     file.seek(SeekFrom::Start(0))?;
     Ok(Stdio::from(file))
-}
-
-/// 捕获长时私有阶段的输出，沿用进程树取消规则，不设置总运行期限。
-pub(crate) fn command_output_with_input(
-    dir: &Path,
-    executable: &str,
-    args: &[&str],
-    input: &[u8],
-) -> Result<String> {
-    command_output_impl(dir, executable, args, &[], (true, true), Some(input))
 }
 
 pub(crate) fn resolved_executable(root: &Path, executable: &str) -> Result<OsString> {
@@ -404,6 +398,12 @@ pub(crate) fn pnpm_version_output(dir: &Path) -> Result<String> {
         .map_err(|error| format!("pnpm --version 输出不是 UTF-8：{error}").into())
 }
 
+pub(crate) fn pnpm_cache_argument(root: &Path) -> Result<Option<String>> {
+    Ok(ryframe_config::ToolSettings::load(root)?
+        .pnpm_cache_dir(root)?
+        .map(|path| format!("--config.cache-dir={}", path.display())))
+}
+
 fn pnpm_command(dir: &Path) -> Result<Command> {
     let executable = pnpm_executable(dir)?;
     let shim_dir = executable
@@ -417,6 +417,9 @@ fn pnpm_command(dir: &Path) -> Result<Command> {
 
     let mut command = Command::new(executable);
     command.current_dir(dir).env("PATH", path);
+    if let Some(cache) = pnpm_cache_argument(&root_dir())? {
+        command.arg(cache);
+    }
     Ok(command)
 }
 
@@ -468,18 +471,11 @@ pub(crate) fn stop_child(child: &mut ManagedChild) -> Result<()> {
     {
         let members = child.member_handles()?;
         child.terminate_tree()?;
-        let deadline = Instant::now() + Duration::from_secs(1);
-        loop {
+        wait_windows_tree(|| {
             let direct_exited = child.try_wait()?.is_some();
             let tree_exited = child.active_process_count()? == Some(0);
-            if direct_exited && tree_exited && members.all_exited()? {
-                break;
-            }
-            if Instant::now() >= deadline {
-                return Err("Windows 子进程树终止后 1 秒内仍有存活进程".into());
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
+            Ok(direct_exited && tree_exited && members.all_exited()?)
+        })?;
     }
     #[cfg(unix)]
     {
@@ -505,6 +501,27 @@ pub(crate) fn stop_child(child: &mut ManagedChild) -> Result<()> {
 
     let _ = child.wait();
     Ok(())
+}
+
+#[cfg(windows)]
+pub(crate) fn close_owned_windows_job(group: &processkit::ProcessGroup) -> Result<()> {
+    let members = windows_members::MemberHandles::capture(group)?;
+    group.kill_all()?;
+    wait_windows_tree(|| Ok(group.stats()?.active_process_count == 0 && members.all_exited()?))
+}
+
+#[cfg(windows)]
+fn wait_windows_tree(mut exited: impl FnMut() -> Result<bool>) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        if exited()? {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err("Windows 子进程树终止后 1 秒内仍有存活进程".into());
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 #[cfg(unix)]

@@ -60,7 +60,7 @@ impl BusinessMigrationSchema {
         Ok(())
     }
 
-    pub(super) async fn verify_before(&self, database: &DatabaseConnection) -> AppResult<()> {
+    pub(super) async fn verify_before<C: ConnectionTrait>(&self, database: &C) -> AppResult<()> {
         for table in self.tables {
             if let Some(before) = table.before {
                 verify_table(database, table.table, before).await?;
@@ -161,9 +161,29 @@ pub async fn verify_business_migrations(
     Ok(())
 }
 
+/// 持有迁移互斥的组合根复用同一会话核验完整业务账本与最终结构。
+pub async fn verify_business_migrations_in_session(
+    database: &sea_orm::DatabaseTransaction,
+    scope: super::BusinessMigrationScope,
+    migrations: &[&dyn BusinessMigration],
+) -> AppResult<()> {
+    validate_business_migration_ledger(database, scope, migrations).await?;
+    let mut latest = std::collections::BTreeMap::new();
+    for migration in migrations {
+        migration.verify_ledger_in_session(database).await?;
+        for table in migration.schema().tables {
+            latest.insert(table.table, table.after);
+        }
+    }
+    for (table, expected) in latest {
+        verify_table(database, table, expected).await?;
+    }
+    Ok(())
+}
+
 /// 只读预检完整范围内已存在的账本及表归属，允许尚未执行的已注册迁移。
-pub async fn validate_business_migration_ledger(
-    database: &DatabaseConnection,
+pub async fn validate_business_migration_ledger<C: ConnectionTrait>(
+    database: &C,
     scope: super::BusinessMigrationScope,
     migrations: &[&dyn BusinessMigration],
 ) -> AppResult<()> {

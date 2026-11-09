@@ -45,7 +45,7 @@ pub(super) fn dispatch(backend: &Path, run: &Path, method: &Value, args: &Value)
     Ok(proof)
 }
 
-fn department_evidence(
+pub(super) fn department_evidence(
     backend: &Path,
     run: &Path,
     request: &Value,

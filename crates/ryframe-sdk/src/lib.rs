@@ -23,18 +23,19 @@ pub use control_catalog::BusinessControlTableDescriptor;
 pub use migration::{
     BusinessAdoptionLedger, BusinessAdoptionManifest, BusinessAdoptionMigration,
     BusinessAdoptionOutcome, BusinessAdoptionPlan, BusinessAdoptionState, BusinessAdoptionTable,
-    BusinessAdoptionTarget, BusinessMigration, BusinessMigrationOrigin, BusinessMigrationSchema,
-    BusinessMigrationScope, BusinessTableSchema, MigrationState, SeaOrmBusinessMigration,
-    apply_business_adoption, business_initialization_statements, inspect_business_adoption,
-    preview_business_adoption, validate_business_migration_ledger, verify_business_migrations,
+    BusinessAdoptionTarget, BusinessInitializationSql, BusinessMigration, BusinessMigrationOrigin,
+    BusinessMigrationSchema, BusinessMigrationScope, BusinessTableSchema, MigrationState,
+    SeaOrmBusinessMigration, apply_business_adoption, business_initialization_statements,
+    inspect_business_adoption, preview_business_adoption, validate_business_migration_ledger,
+    verify_business_migrations, verify_business_migrations_in_session,
 };
 #[cfg(feature = "runtime")]
 pub use module::{BusinessModuleBuilder, RyFrameBusinessModule, sort_modules, validate_modules};
 #[cfg(feature = "api")]
 pub use module::{BusinessRuntimeContext, compose_openapi};
 pub use resource::{
-    ResourceDatabase, ResourceDescriptor, ResourceFieldDescriptor, ResourceIndexDescriptor,
-    ResourceModel,
+    ResourceDatabase, ResourceDescriptor, ResourceFieldDescriptor, ResourceForeignKeyAction,
+    ResourceForeignKeyDescriptor, ResourceForeignKeyMatch, ResourceIndexDescriptor, ResourceModel,
 };
 #[cfg(feature = "api")]
 pub use ryframe_api::{AppState, openapi::OpenApiDocument};

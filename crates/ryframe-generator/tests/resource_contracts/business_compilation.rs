@@ -221,12 +221,26 @@ fn import_batch(backend: &Path) {
         .clone();
     deleted.name = "del_flag".into();
     soft_minimal.columns.push(deleted);
-    let tables = [
-        import_table("biz_memo"),
-        import_table("biz_memo_item"),
-        minimal,
-        soft_minimal,
-    ];
+    let mut memo_item = import_table("biz_memo_item");
+    memo_item
+        .foreign_keys
+        .push(ryframe_generator::import::ForeignKeyInfo {
+            name: "fk_memo_item_memo".into(),
+            columns: vec!["status".into()],
+            referenced_table: "biz_memo".into(),
+            referenced_columns: vec!["status".into()],
+            update_rule: ryframe_generator::import::ForeignKeyAction::Cascade,
+            delete_rule: ryframe_generator::import::ForeignKeyAction::Restrict,
+            match_option: ryframe_generator::import::ForeignKeyMatch::None,
+        });
+    let mut memo = import_table("biz_memo");
+    memo.indexes.push(IndexInfo {
+        name: "uk_memo_status".into(),
+        columns: vec!["status".into()],
+        unique: true,
+        index_type: "BTREE".into(),
+    });
+    let tables = [memo, memo_item, minimal, soft_minimal];
     plan_import_models(backend, &root, &tables, "control", Some("biz_"))
         .unwrap()
         .write()
@@ -313,7 +327,7 @@ fn import_table(name: &str) -> TableInfo {
         collation: (rust_type == "String").then(|| "utf8mb4_bin".into()),
         rust_type: rust_type.into(),
         default: match name {
-            "created_at" => Some("CURRENT_TIMESTAMP(6)".into()),
+            "created_at" | "updated_at" => Some("CURRENT_TIMESTAMP(6)".into()),
             "large_count" => Some(u64::MAX.to_string()),
             "price" => Some("0.125000".into()),
             _ => None,
@@ -323,7 +337,7 @@ fn import_table(name: &str) -> TableInfo {
         } else if name == "created_at" {
             "DEFAULT_GENERATED".into()
         } else if name == "updated_at" {
-            "on update CURRENT_TIMESTAMP(6)".into()
+            "DEFAULT_GENERATED on update CURRENT_TIMESTAMP(6)".into()
         } else {
             String::new()
         },
@@ -394,6 +408,7 @@ pub struct GlobalItem {
     pub id: i64,
     #[resource(unique, filter, sort, sql_type = "VARCHAR(32)")]
     pub code: String,
+    pub payload: Option<ryframe_sdk::serde_json::Value>,
     #[resource(read_only)]
     pub created_at: ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>,
     #[resource(read_only)]

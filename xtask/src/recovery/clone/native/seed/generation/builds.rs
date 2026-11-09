@@ -1,7 +1,7 @@
 //! 复用正式构建验证，再比较允许归一化后的完整收据。
 use super::{Path, Result, Value, bridge, common, document, maintenance};
 
-pub(super) fn verify(backend: &Path, previous: &Value, request: &Value) -> Result<()> {
+pub(crate) fn verify(backend: &Path, previous: &Value, request: &Value) -> Result<()> {
     let old_runtime_path =
         common::bound_file(backend, &previous["backend_build"], "原 API/Worker 构建")?;
     let new_runtime_path =

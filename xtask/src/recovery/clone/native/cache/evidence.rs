@@ -1,12 +1,29 @@
 use super::{
     super::{digest, json as document, resources::common},
     model,
+    native_tool::NativeTool,
 };
 use crate::Result;
+use serde::Deserialize;
 use serde_json::{Value, json};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-pub(super) fn command(request: &Value, output: &Path, action: &str) -> Result<Vec<String>> {
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyLaunch {
+    format_version: u8,
+    request: Value,
+    request_sha256: String,
+    windows_output: String,
+    #[serde(rename = "linux_output")]
+    _linux_output: PathBuf,
+    native_tool: NativeTool,
+}
+
+pub(super) fn historical_arguments(request: &Value, output: &Path) -> Result<Vec<String>> {
+    if request["format_version"] == 2 {
+        return super::native_tool::from_request(request)?.historical_arguments(request, output);
+    }
     let payload = document::read(&output.join("launch-request.json"))?;
     Ok(vec![
         document::text(&request["wsl"]["path"], "WSL 工具")?.into(),
@@ -15,7 +32,7 @@ pub(super) fn command(request: &Value, output: &Path, action: &str) -> Result<Ve
         "--exec".into(),
         document::text(&request["python"]["path"], "Linux 解释器")?.into(),
         document::text(&payload["helpers"]["cache"]["path"], "冻结缓存辅助工具")?.into(),
-        action.into(),
+        "serve".into(),
         "--request".into(),
         model::linux_path(document::text(
             &common::binding(&output.join("launch-request.json"))?["path"],
@@ -29,9 +46,24 @@ pub(super) fn command(request: &Value, output: &Path, action: &str) -> Result<Ve
 fn frozen(request: &Value, output: &Path) -> Result<Value> {
     model::plain(output)?;
     let payload = document::read(&output.join("launch-request.json"))?;
+    let output_path = output.to_str().ok_or("缓存输出路径不是UTF-8")?;
+    let request_sha256 = digest::plan_hash(request)?;
+    if request["format_version"] == 2 {
+        let launch: LegacyLaunch = serde_json::from_value(payload.clone())?;
+        if launch.format_version != 2
+            || launch.request != *request
+            || launch.request_sha256 != request_sha256
+            || launch.windows_output != output_path
+            || serde_json::to_value(&launch.native_tool)? != request["native_tool"]
+        {
+            return Err("缓存原生 launch 请求、路径或工具绑定不同".into());
+        }
+        launch.native_tool.validate()?;
+        return Ok(payload);
+    }
     if payload["request"] != *request
-        || payload["request_sha256"] != digest::plan_hash(request)?
-        || payload["windows_output"] != output.to_str().ok_or("缓存输出路径不是UTF-8")?
+        || payload["request_sha256"] != request_sha256
+        || payload["windows_output"] != output_path
     {
         return Err("Redis 冻结运行不属于明确请求及输出目录".into());
     }
@@ -56,6 +88,12 @@ fn frozen(request: &Value, output: &Path) -> Result<Value> {
 }
 
 pub(super) fn inspect(request: &Value, output: &Path) -> Result<Value> {
+    if request["format_version"] == 3 {
+        #[cfg(windows)]
+        return super::windows::inspect(request, output);
+        #[cfg(not(windows))]
+        return Err("Windows Redis v3 只在本机 Windows 核验".into());
+    }
     model::plain(output)?;
     if !output.join("intent.json").exists() {
         if [
@@ -74,7 +112,7 @@ pub(super) fn inspect(request: &Value, output: &Path) -> Result<Value> {
     let payload = frozen(request, output)?;
     if document::read(&output.join("intent.json"))?
         != json!({
-            "request_sha256":digest::plan_hash(request)?, "arguments":command(request, output, "serve")?,
+            "request_sha256":digest::plan_hash(request)?, "arguments":historical_arguments(request, output)?,
             "launch":common::binding(&output.join("launch-request.json"))?,
         })
     {
@@ -176,11 +214,16 @@ fn recorded(request: &Value, output: &Path, payload: &Value) -> Result<Value> {
     if linux["identity"]["executable"] != request["executable"] {
         return Err("Redis Linux 创建产物不符".into());
     }
-    Ok(
-        json!({"format_version":1,"request_sha256":digest::plan_hash(request)?,"output":output,
+    let mut value = json!({"format_version":1,"request_sha256":digest::plan_hash(request)?,"output":output,
         "launch":common::binding(&output.join("launch-request.json"))?,"launcher":launcher["identity"],
         "linux_identity":linux["identity"],"boot_id":linux["identity"]["boot_id"],
         "launcher_receipt":common::binding(&output.join("launcher.json"))?,
-        "process_receipt":common::binding(&output.join("linux-process.json"))?,"helpers_sha256":digest::plan_hash(&payload["helpers"])?}),
-    )
+        "process_receipt":common::binding(&output.join("linux-process.json"))?});
+    if request["format_version"] == 2 {
+        value["format_version"] = json!(2);
+        value["native_tool_sha256"] = json!(digest::plan_hash(&payload["native_tool"])?);
+    } else {
+        value["helpers_sha256"] = json!(digest::plan_hash(&payload["helpers"])?);
+    }
+    Ok(value)
 }

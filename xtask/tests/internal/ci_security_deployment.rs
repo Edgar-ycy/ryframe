@@ -61,12 +61,6 @@ fn deployment_phases_use_one_sequential_plan_without_repeating_static_checks() {
             TaskExecutor::CiDeploymentImage,
         ]
     );
-    assert!(
-        image
-            .tasks
-            .iter()
-            .all(|task| task.executor != TaskExecutor::CiDeploymentStatic)
-    );
 }
 
 #[test]

@@ -11,6 +11,23 @@ pub(super) const TOOLS: &[&str] = &[
     "wsl",
     "redis_python",
 ];
+const WINDOWS_TOOLS: &[&str] = &["mysql", "mysqldump", "rustfs", "redis_server"];
+
+fn tool_names(tools: &Value) -> Vec<&'static str> {
+    if tools["redis_server"].get("platform").is_some() {
+        WINDOWS_TOOLS.to_vec()
+    } else if tools.get("native_tool").is_some() {
+        TOOLS
+            .iter()
+            .copied()
+            .filter(|name| *name != "redis_python")
+            .chain(["native_tool"])
+            .collect()
+    } else {
+        // 旧预检仅保留原登记字段的只读核验。
+        TOOLS.to_vec()
+    }
+}
 
 pub(super) fn fixture(value: &Value) -> Result<()> {
     check(
@@ -63,15 +80,22 @@ pub(super) fn reset_password(value: &Value) -> Result<()> {
 
 pub(super) fn preflight_binding(review: &Value) -> Result<Value> {
     let message = "夹具审阅计划缺少当前工具预检收据";
-    let tools = review["tools"].as_object();
+    let tools = &review["tools"];
+    let tool_object = tools.as_object().ok_or(message)?;
+    let names = tool_names(tools);
     check(
-        tools.is_some_and(|tools| TOOLS.iter().all(|name| tools.contains_key(*name))),
+        names.iter().all(|name| tool_object.contains_key(*name)),
         message,
     )?;
+    if tools["redis_server"].get("platform").is_some() {
+        super::super::review::validate_windows_tools(tool_object)?;
+    } else if tools.get("native_tool").is_some() {
+        crate::recovery::clone::native::cache::validate_native_tool(&tools["native_tool"])?;
+    }
     let expected = Value::Object(
-        TOOLS
+        names
             .iter()
-            .map(|name| ((*name).into(), review["tools"][*name].clone()))
+            .map(|name| ((*name).into(), tools[*name].clone()))
             .collect(),
     );
     let preflight = &review["preflight"];
@@ -97,21 +121,24 @@ pub(super) fn preflight_binding(review: &Value) -> Result<Value> {
     let seed_scope = review["scopes"]["seed"]["scope_id"]
         .as_str()
         .ok_or(message)?;
-    let run = service_run(review)?;
+    let run = match super::super::review::reconciled::service_run(review)? {
+        Some(run) => run,
+        None => service_run(review)?,
+    };
+    let process = review["services"]["rustfs"]["process_receipt"]
+        .as_str()
+        .map(Path::new)
+        .ok_or(message)?;
     check(
         review["services"]["rustfs"]["scope_id"] == format!("services-{seed_scope}")
-            && review["services"]["rustfs"]["process_receipt"]
-                == run
-                    .join("rustfs")
-                    .join("process.json")
-                    .to_string_lossy()
-                    .as_ref(),
+            && process.is_absolute()
+            && process == run.join("rustfs").join("process.json"),
         message,
     )?;
     Ok(expected)
 }
 
-fn service_run(review: &Value) -> Result<std::path::PathBuf> {
+pub(super) fn service_run(review: &Value) -> Result<std::path::PathBuf> {
     let value = super::super::services::lifecycle::query::dispatch(
         Path::new("."),
         "service-run",
@@ -131,8 +158,8 @@ fn semantics(review: &Value) -> Result<Value> {
     let tools = value["tools"]
         .as_object_mut()
         .ok_or("审阅计划工具定义无效")?;
-    for role in TOOLS {
-        tools.remove(*role);
+    for role in TOOLS.iter().copied().chain(["native_tool"]) {
+        tools.remove(role);
     }
     value
         .as_object_mut()
@@ -156,6 +183,13 @@ pub(super) fn successor(previous: &Value, review: &Value) -> Result<()> {
     super::super::review::validate_review(&structural)?;
     super::super::review::validate_review(review)?;
     preflight_binding(review)?;
+    if ready {
+        check(
+            previous["tools"]["redis_server"]["platform"]
+                == review["tools"]["redis_server"]["platform"],
+            "已就绪 Redis 审阅不能切换工具平台；请新建隔离场景",
+        )?;
+    }
     let expected = semantics(previous)?;
     let mut observed = semantics(review)?;
     if pending {

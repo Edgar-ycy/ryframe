@@ -266,6 +266,7 @@ fn run_case_command(
     switch_worktree(backend_worktree, &execution.case.head, "后端")?;
     switch_worktree(frontend_worktree, &execution.case.frontend_head, "前端")?;
     install_frontend_dependencies(
+        execution.worktree,
         frontend_worktree,
         &execution.tools.corepack,
         execution.base_environment,

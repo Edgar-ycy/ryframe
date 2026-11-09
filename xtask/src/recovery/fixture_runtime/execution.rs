@@ -161,7 +161,6 @@ fn environment(context: &Context) -> Result<Value> {
         "COREPACK_HOME".into(),
         context.binding["tools"]["corepack_home"].clone(),
     );
-    values.insert("PYTHONUTF8".into(), json!("1"));
     for key in ["TEMP", "TMP"] {
         if context.private[key].is_string() {
             values.insert(key.into(), context.private[key].clone());
@@ -184,6 +183,8 @@ fn configuration(binding: &Value, endpoint: &str) -> Result<Value> {
     )?;
     let frontend = plan::validate_endpoint(text(&binding["endpoints"]["frontend"])?)?;
     let mut value = json!({"scopeId":binding["scope_id"],"tenantId":binding["identity"]["tenant_id"],"username":binding["identity"]["username"],"credentialEndpoint":endpoint,"backendDir":binding["backend"]["path"],"runtimeDir":path(&binding["runtime"]["path"])?.parent().ok_or("runtime缺少父目录")?,"python":binding["tools"]["python"]["path"],"requestCapacity":binding["rate_limits"]["request"]["capacity"],"requestWindowSeconds":binding["rate_limits"]["request"]["window_secs"],"loginCapacity":binding["rate_limits"]["login"]["capacity"],"loginWindowSeconds":binding["rate_limits"]["login"]["window_secs"],"loginBudgetState":binding["login_budget"]["path"],"port":frontend.port(),"serverMode":binding["server"],"fixture":"business","runId":binding["run_id"],"channel":"chrome"});
+    value["workerTool"] = json!({"root":binding["tools"]["worker_origin"]["root"],
+        "binding":binding["tools"]["worker_origin"]["binding"]});
     if binding["server"] == "preview" {
         crate::recovery::clone::native::json::exact(
             &binding["response_audit"],

@@ -43,7 +43,7 @@ pub(super) fn load(
         validate_storage(&storage, &observed, &requests["rustfs"], &tree)?;
     }
     let runtime_path = if history["active_generation"]["kind"] == "initial" {
-        context.run.join("redis/runtime.json")
+        context.run.join("redis").join("runtime.json")
     } else {
         Path::new(text(&cache["runtime"], "output")?).join("runtime.json")
     };
@@ -172,7 +172,7 @@ fn validate_storage(
     )
 }
 
-fn inspect(
+pub(super) fn inspect(
     backend: &Path,
     output: &Path,
     registration: &Value,
@@ -192,19 +192,53 @@ fn inspect(
         intent
             == json!({"format_version":1,"kind":"devex-clone-storage-intent",
         "request":registration,"controller":controller,"attempt":number,
-        "arguments":storage::model::arguments(&request)?,"environment":storage::model::configuration(&request)?}),
+        "arguments":storage::model::arguments(&request)?}),
         "存储意图不属于原注册与对应控制阶段",
     )?;
     let receipt_path = output.join("process.json");
     let receipt = read(&receipt_path)?;
     let identity = common::validate_process_identity(&receipt["identity"])?;
-    check(
-        receipt
-            == json!({"format_version":1,"role":"rustfs","scope_id":request["scope_id"],
+    let expected = json!({"format_version":1,"role":"rustfs","scope_id":request["scope_id"],
         "lifecycle":"running","identity":identity,"api_url":request["api_url"],"console_url":request["console_url"],
-        "data_dir":request["data_directory"]["path"],"intent":binding(&intent_path)?})
-            && identity["executable"] == request["executable"]["path"],
-        "存储进程收据不属于该启动意图或实际工具",
+        "data_dir":request["data_directory"]["path"],"intent":binding(&intent_path)?});
+    for (field, reason) in [
+        (
+            "format_version",
+            "存储进程收据版本不符；保留现场并核对原启动工具",
+        ),
+        ("role", "存储进程收据角色不符；保留现场并核对原请求"),
+        ("scope_id", "存储进程收据 scope 不符；保留现场并核对原请求"),
+        (
+            "lifecycle",
+            "存储进程收据生命周期不符；保留现场核对启动结果",
+        ),
+        ("identity", "存储进程收据身份不符；禁止操作未确认进程"),
+        (
+            "api_url",
+            "存储进程收据 API 端点不符；核对冻结请求，不改写原收据",
+        ),
+        (
+            "console_url",
+            "存储进程收据控制台端点不符；核对冻结请求，不改写原收据",
+        ),
+        (
+            "data_dir",
+            "存储进程收据数据目录不符；核对冻结请求，不改写原收据",
+        ),
+        (
+            "intent",
+            "存储进程收据意图绑定不符；核对原 intent 文件完整字节，不重新签发",
+        ),
+    ] {
+        check(receipt[field] == expected[field], reason)?;
+    }
+    check(
+        receipt == expected,
+        "存储进程收据字段集合不符；保留原文件核对未知字段",
+    )?;
+    check(
+        identity["executable"] == request["executable"]["path"],
+        "存储进程可执行文件不符；核对原请求，禁止操作其他程序",
     )?;
     let launch_path = output.join("launch.json");
     let launch = if launch_path.exists() {
@@ -212,7 +246,7 @@ fn inspect(
             read(&launch_path)?
                 == json!({"format_version":1,"scope_id":request["scope_id"],
             "identity":identity,"arguments":storage::model::arguments(&request)?,
-            "environment":storage::model::configuration(&request)?,"credential_files":request["credential_files"]}),
+            "credential_files":request["credential_files"]}),
             "存储启动参数收据变化",
         )?;
         binding(&launch_path)?
@@ -230,6 +264,26 @@ fn effective(context: &Context, original: &Value) -> Result<Value> {
         return Ok(Value::Null);
     }
     let tools = &context.value["documents"]["review"]["tools"];
+    if original["format_version"] == 3 {
+        crate::recovery::clone::native::cache::windows_tool::validate(&tools["redis_server"])?;
+        check(
+            tools["redis_server"] == original["tool"]
+                && ["wsl", "native_tool", "redis_python"]
+                    .iter()
+                    .all(|key| tools.get(*key).is_none()),
+            "Windows Redis 工具续签必须复用原登记工具及运行库",
+        )?;
+        return Ok(Value::Null);
+    }
+    if original["format_version"] == 2 {
+        let effective =
+            crate::recovery::clone::native::cache::native_tool_successor(original, tools)?;
+        return Ok(if effective == *original {
+            Value::Null
+        } else {
+            effective
+        });
+    }
     let redis = &tools["redis_server"];
     let python = &tools["redis_python"];
     check(

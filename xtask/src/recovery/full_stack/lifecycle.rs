@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{Result, recovery::clone::native::json as documents};
 use serde_json::json;
-use std::{fs, time::Duration};
+use std::fs;
 
 pub(super) fn start(context: &Context, port: &mut impl Port) -> Result<()> {
     let url = context.api_url()?;
@@ -17,44 +17,40 @@ pub(super) fn start(context: &Context, port: &mut impl Port) -> Result<()> {
         &receipt,
         &json!({"format_version":1,"state":"starting","automatic_retry_permitted":false}),
     )?;
-    let result: Result<()> = (|| {
-        port.leaf("api-launch")?;
-        wait_ready(port, &url)?;
-        port.leaf("api-probe")?;
-        port.leaf("worker-start")?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let cleanup = port.leaf("api-stop");
+    let record_failure = |api_cleanup_confirmed| {
         journal(
             &receipt,
-            &json!({"format_version":1,"state":"start-failed","api_cleanup_confirmed":cleanup.is_ok(),"automatic_retry_permitted":false}),
-        )?;
-        return match (result, cleanup) {
-            (Err(error), Ok(_)) => Err(format!(
-                "全栈启动失败，API 已按归属回收：{error}；核对 Worker 收据，不自动重试"
-            )
-            .into()),
-            (Err(error), Err(cleanup)) => {
+            &json!({"format_version":1,"state":"start-failed","api_cleanup_confirmed":api_cleanup_confirmed,"automatic_retry_permitted":false}),
+        )
+    };
+    if let Err(error) = port.leaf("api-launch") {
+        record_failure(false)?;
+        return Err(format!(
+            "全栈 API 启动未确认：{error}；保留现场，核对原启动收据后显式执行 collect，不自动重放"
+        )
+        .into());
+    }
+    if let Err(error) = port
+        .leaf("api-probe")
+        .and_then(|_| port.leaf("worker-start"))
+    {
+        let cleanup = port.leaf("api-stop");
+        record_failure(cleanup.is_ok())?;
+        return match cleanup {
+            Ok(cleanup) => {
+                let status = if cleanup["state"] == "stopped" {
+                    "API 已按归属回收"
+                } else {
+                    "未发现已登记的 API 进程"
+                };
+                Err(format!("全栈启动失败，{status}：{error}；核对 Worker 收据，不自动重试").into())
+            }
+            Err(cleanup) => {
                 Err(format!("全栈启动失败：{error}；API 回收未确认：{cleanup}；保留现场").into())
             }
-            _ => unreachable!(),
         };
     }
     journal(&receipt, &json!({"format_version":1,"state":"running"}))
-}
-
-pub(super) fn wait_ready(port: &mut impl Port, url: &str) -> Result<()> {
-    for _ in 0..90 {
-        port.leaf("api-alive")?;
-        if port.ready(url)? {
-            return Ok(());
-        }
-        // 探测同时验证创建身份与监听归属，早退或 PID 复用立即停止等待。
-        // HTTP 尚未就绪时 listener 可能不存在，因此仅在成功后核验 listener。
-        port.sleep(Duration::from_secs(2))?;
-    }
-    Err("API 就绪等待超时".into())
 }
 
 pub(super) fn collect(context: &Context, port: &mut impl Port) -> Result<()> {
@@ -70,11 +66,7 @@ pub(super) fn collect(context: &Context, port: &mut impl Port) -> Result<()> {
     {
         failures.push("Worker 存在控制收据但缺少可信 runtime");
     }
-    if ["api.json", "api-tree.json"]
-        .iter()
-        .any(|v| context.output.join(v).exists())
-        && port.leaf("api-stop").is_err()
-    {
+    if port.leaf("api-stop").is_err() {
         failures.push("API 回收未确认");
     }
     if port.leaf("api-port-free").is_err() {

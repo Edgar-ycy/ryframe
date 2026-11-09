@@ -3,15 +3,12 @@ use std::{
     collections::BTreeMap,
     fs,
     path::Path,
-    process::ExitStatus,
 };
 
 use serde_json::{Value, json};
 
 use crate::recovery::clone::native::{
-    digest,
-    export::transport::{CommandOutput, CommandSpec, Transport},
-    json as json_io,
+    digest, json as json_io,
     resources::common,
     target_verify::{
         input::TargetContext,
@@ -56,10 +53,8 @@ impl Fixture {
             credentials[key] = common::binding(&path).unwrap();
         }
         let launch = json!({"format_version":1, "scope_id":"storage-fixture", "identity":identity,
-            "arguments":rustfs::arguments(&expected, &identity, &data).unwrap(),
-            "environment":{"RUSTFS_CONSOLE_ENABLE":"true",
-                "RUSTFS_ACCESS_KEY_FILE":credentials["access_key"]["path"],
-                "RUSTFS_SECRET_KEY_FILE":credentials["secret_key"]["path"]}, "credential_files":credentials});
+            "arguments":rustfs::arguments(&expected, &identity, &data, &credentials).unwrap(),
+            "credential_files":credentials});
         let process = json!({"format_version":1, "role":"rustfs", "scope_id":"storage-fixture",
             "lifecycle":"running", "identity":identity, "api_url":expected["api"],
             "console_url":expected["console"], "data_dir":data});
@@ -129,11 +124,11 @@ fn rustfs_process_receipt_checks_every_fixed_field() {
 }
 
 #[test]
-fn rustfs_launch_rejects_unknown_fields_and_credential_or_environment_changes() {
+fn rustfs_launch_rejects_unknown_fields_and_credential_or_argument_changes() {
     let fixture = Fixture::new();
     let check = |launch: &Value| {
         rustfs::validate_launch(
-            &fixture.context,
+            &fixture.context.storage_inputs(),
             &fixture.expected,
             &fixture.identity,
             launch,
@@ -141,13 +136,7 @@ fn rustfs_launch_rejects_unknown_fields_and_credential_or_environment_changes() 
         )
     };
     check(&fixture.launch).unwrap();
-    for pointer in [
-        "/format_version",
-        "/scope_id",
-        "/identity",
-        "/arguments",
-        "/environment",
-    ] {
+    for pointer in ["/format_version", "/scope_id", "/identity", "/arguments"] {
         let mut changed = fixture.launch.clone();
         *changed.pointer_mut(pointer).unwrap() = Value::Null;
         assert!(check(&changed).is_err(), "{pointer}");
@@ -190,28 +179,6 @@ fn windows_arguments_keep_empty_unicode_space_quotes_and_backslashes() {
 }
 
 #[test]
-fn rustfs_listener_requires_registered_ipv4_endpoint_owner() {
-    let identity = json!({"pid":42});
-    kernel::validate_listeners(
-        &json!([{"LocalAddress":"127.0.0.1","OwningProcess":42}]),
-        &identity,
-    )
-    .unwrap();
-    for rows in [
-        json!([]),
-        json!({}),
-        json!([{"LocalAddress":"127.0.0.1","OwningProcess":43}]),
-        json!([{"LocalAddress":"::1","OwningProcess":42}]),
-    ] {
-        assert!(kernel::validate_listeners(&rows, &identity).is_err());
-    }
-    kernel::validate_listeners(
-        &json!([{"LocalAddress":"127.0.0.1","OwningProcess":42}, {"LocalAddress":"::","OwningProcess":43}]),
-        &identity,
-    ).unwrap();
-}
-
-#[test]
 fn storage_transition_only_accepts_registered_complete_replacements() {
     let expected = json!({"rustfs":{"identity":1},"redis":{"run_id":"old"}});
     let runtime = json!({"storage":{"identity":2}});
@@ -221,6 +188,75 @@ fn storage_transition_only_accepts_registered_complete_replacements() {
     assert!(generation::validate_transition(&expected, &actual, None, None).is_err());
     let changed = json!({"rustfs":{"identity":2},"redis":{"run_id":"unregistered"}});
     assert!(generation::validate_transition(&expected, &changed, Some(&runtime), None).is_err());
+    let before = json!({"configuration":"fixed", "source":{"head":"fixed"},"storage":expected});
+    let cache = json!({"redis":{"run_id":"new"}});
+    let mut after = before.clone();
+    after["storage"] = json!({"rustfs":{"identity":2},"redis":{"run_id":"new"}});
+    generation::validate_complete(&before, &before, None, None).unwrap();
+    let mut cache_only = before.clone();
+    cache_only["storage"]["redis"] = cache["redis"].clone();
+    generation::validate_complete(&before, &cache_only, None, Some(&cache)).unwrap();
+    generation::validate_complete(&before, &after, Some(&runtime), Some(&cache)).unwrap();
+    assert!(generation::validate_complete(&before, &after, None, Some(&cache)).is_err());
+    assert!(generation::validate_complete(&before, &after, Some(&runtime), None).is_err());
+    for field in ["configuration", "source", "unexpected"] {
+        let mut changed = after.clone();
+        changed[field] = json!("changed");
+        assert!(
+            generation::validate_complete(&before, &changed, Some(&runtime), Some(&cache)).is_err()
+        );
+    }
+    assert_eq!(before["storage"], expected);
+}
+
+#[test]
+fn argument_evidence_checks_receipt_identity_and_is_read_only() {
+    use crate::recovery::{
+        clone::native::target_verify::{evidence_protocol, storage::protocol},
+        fixture_control::services::lifecycle::readonly::process,
+    };
+    let fixture = Fixture::new();
+    let receipt = &fixture.storage["process_receipt"];
+    let root = Path::new(receipt["path"].as_str().unwrap())
+        .parent()
+        .unwrap();
+    let snapshot = || {
+        fs::read_dir(root)
+            .unwrap()
+            .map(|entry| {
+                let path = entry.unwrap().path();
+                let hash = path.is_file().then(|| digest::file(&path).unwrap().sha256);
+                (path, hash)
+            })
+            .collect::<BTreeMap<_, _>>()
+    };
+    let before = snapshot();
+    let expected = process::arguments(&fixture.identity).unwrap();
+    let payload = json!({"format_version":1,"operation":"process-argv","backend":fixture.context.backend,
+        "target":root,"receipt":receipt,"identity":fixture.identity});
+    let result = evidence_protocol::execute(&serde_json::to_vec(&payload).unwrap()).unwrap();
+    assert_eq!(
+        result,
+        json!({"actual_arguments_sha256":digest::plan_hash(&json!(expected)).unwrap(),"remote_writes":0})
+    );
+    assert_eq!(before, snapshot());
+    assert!(
+        protocol::arguments(
+            &fixture.context.backend,
+            &fixture.context.observation_dir,
+            receipt,
+            &fixture.identity
+        )
+        .is_err()
+    );
+    let mut wrong = fixture.identity.clone();
+    wrong["started"] = json!("different-generation");
+    assert!(protocol::arguments(&fixture.context.backend, root, receipt, &wrong).is_err());
+    let mut extra = payload.clone();
+    extra["command"] = json!(["not-authorized"]);
+    assert!(evidence_protocol::execute(&serde_json::to_vec(&extra).unwrap()).is_err());
+    fs::write(root.join("process.json"), b"{}").unwrap();
+    assert!(evidence_protocol::execute(&serde_json::to_vec(&payload).unwrap()).is_err());
 }
 
 #[test]
@@ -294,83 +330,53 @@ fn redis_configuration_reads_all_eight_fields_and_rejects_each_drift() {
     }
 }
 
-struct FakeTransport {
-    output: String,
-    calls: RefCell<Vec<String>>,
-    failure: bool,
-    listeners: Option<Value>,
-}
-
-impl Transport for FakeTransport {
-    fn s3(
-        &self,
-        _: crate::recovery::clone::native::s3::Request,
-    ) -> crate::Result<serde_json::Value> {
-        panic!("该测试不允许对象存储调用")
-    }
-
-    fn run(&self, spec: CommandSpec) -> crate::Result<CommandOutput> {
-        self.calls.borrow_mut().push(spec.label.clone());
-        assert!(spec.stdin.is_none());
-        #[cfg(windows)]
-        let status = {
-            use std::os::windows::process::ExitStatusExt;
-            ExitStatus::from_raw(u32::from(self.failure))
-        };
-        #[cfg(unix)]
-        let status = {
-            use std::os::unix::process::ExitStatusExt;
-            ExitStatus::from_raw(i32::from(self.failure) << 8)
-        };
-        Ok(CommandOutput {
-            status,
-            stdout: if spec.label == "target-storage-listener" {
-                serde_json::to_vec(self.listeners.as_ref().ok_or("缺少假监听结果")?)?
-            } else {
-                self.output.as_bytes().to_vec()
-            },
-            stderr: b"private-command-failure-body".to_vec(),
-        })
-    }
-}
-
 #[test]
-fn kernel_transport_is_read_only_and_does_not_expose_command_failure_body() {
-    let fixture = Fixture::new();
-    let transport = FakeTransport {
-        output: "fixed output".into(),
-        calls: RefCell::new(Vec::new()),
-        failure: false,
-        listeners: None,
-    };
-    let value = kernel::observe(
-        &fixture.context,
-        &transport,
-        "fixed-tool".into(),
-        vec!["fixed-arg".into()],
-        "storage-test",
-    )
-    .unwrap();
-    assert_eq!(value, "fixed output");
-    assert_eq!(transport.calls.borrow().as_slice(), &["storage-test"]);
-    let failed = FakeTransport {
-        output: "private-command-failure-body".into(),
-        calls: RefCell::new(Vec::new()),
-        failure: true,
-        listeners: None,
-    };
-    let error = kernel::observe(
-        &fixture.context,
-        &failed,
-        "fixed-tool".into(),
-        Vec::new(),
-        "storage-test",
-    )
-    .unwrap_err()
-    .to_string();
-    assert!(!error.contains("private-command-failure-body"));
+fn fixed_observations_only_inherit_system_environment_fields() {
+    let mut fixture = Fixture::new();
+    fixture
+        .context
+        .environment
+        .insert("path".into(), "bound-path".into());
+    let actual = fixture.context.storage_inputs().command_environment();
+    assert_eq!(actual["path"], "bound-path");
+    assert_eq!(
+        actual
+            .keys()
+            .filter(|key| key.eq_ignore_ascii_case("PATH"))
+            .count(),
+        1
+    );
+    for (key, value) in &fixture.context.environment {
+        assert_eq!(actual.get(key), Some(value));
+    }
+    for (key, value) in std::env::vars().filter(|(key, _)| {
+        [
+            "SYSTEMROOT",
+            "USERPROFILE",
+            "COMSPEC",
+            "HOME",
+            "TEMP",
+            "LANG",
+        ]
+        .iter()
+        .any(|name| key.eq_ignore_ascii_case(name))
+    }) {
+        if !fixture
+            .context
+            .environment
+            .keys()
+            .any(|bound| bound.eq_ignore_ascii_case(&key))
+        {
+            assert_eq!(actual.get(&key), Some(&value));
+        }
+    }
+    assert!(
+        actual
+            .keys()
+            .filter(|key| key.to_ascii_uppercase().starts_with("APP_"))
+            .all(|key| fixture.context.environment.contains_key(key))
+    );
 }
-
 #[test]
 fn rustfs_fake_observer_checks_arguments_and_publishes_only_digest_evidence() {
     let fixture = Fixture::new();
@@ -384,7 +390,14 @@ fn rustfs_fake_observer_checks_arguments_and_publishes_only_digest_evidence() {
     };
     let review = json!({"services":{"rustfs":fixture.expected},"tools":{"rustfs":{
         "path":fixture.identity["executable"],"sha256":fixture.storage["sha256"]}}});
-    rustfs::verify(&fixture.context, &review, &fixture.storage, None, &observer).unwrap();
+    rustfs::verify(
+        &fixture.context.storage_inputs(),
+        &review,
+        &fixture.storage,
+        None,
+        &observer,
+    )
+    .unwrap();
     assert_eq!(
         observer.calls.borrow().as_slice(),
         &[
@@ -409,7 +422,16 @@ fn rustfs_fake_observer_checks_arguments_and_publishes_only_digest_evidence() {
     let mut changed = fixture.storage.clone();
     changed["identity"]["started"] = json!("0");
     let count = observer.calls.borrow().len();
-    assert!(rustfs::verify(&fixture.context, &review, &changed, None, &observer).is_err());
+    assert!(
+        rustfs::verify(
+            &fixture.context.storage_inputs(),
+            &review,
+            &changed,
+            None,
+            &observer
+        )
+        .is_err()
+    );
     assert_eq!(observer.calls.borrow().len(), count);
 }
 
@@ -430,7 +452,11 @@ impl StorageObserver for FakeObserver {
         Ok(Some(identity))
     }
 
-    fn arguments(&self, _context: &TargetContext, _identity: &Value) -> crate::Result<Vec<String>> {
+    fn arguments(
+        &self,
+        _context: &crate::recovery::clone::native::target_verify::storage::StorageInputs<'_>,
+        _identity: &Value,
+    ) -> crate::Result<Vec<String>> {
         self.calls.borrow_mut().push("target-storage-argv".into());
         self.raced.set(self.change_after_arguments);
         Ok(self.arguments.clone())
@@ -438,22 +464,22 @@ impl StorageObserver for FakeObserver {
 
     fn listener(
         &self,
-        _context: &TargetContext,
+        _context: &crate::recovery::clone::native::target_verify::storage::StorageInputs<'_>,
         identity: &Value,
         _url: &str,
     ) -> crate::Result<()> {
         self.calls
             .borrow_mut()
             .push("target-storage-listener".into());
-        kernel::validate_listeners(
-            &json!([{"LocalAddress":"127.0.0.1","OwningProcess":self.identity["pid"]}]),
-            identity,
-        )
+        if identity != &self.identity {
+            return Err("fixture 监听进程身份不同".into());
+        }
+        Ok(())
     }
 
     fn wsl(
         &self,
-        _context: &TargetContext,
+        _context: &crate::recovery::clone::native::target_verify::storage::StorageInputs<'_>,
         _redis: &Value,
         _args: &[String],
     ) -> crate::Result<String> {
@@ -462,7 +488,7 @@ impl StorageObserver for FakeObserver {
 
     fn redis(
         &self,
-        _context: &TargetContext,
+        _context: &crate::recovery::clone::native::target_verify::storage::StorageInputs<'_>,
         _redis: &Value,
         _parts: &[&str],
     ) -> crate::Result<Value> {
@@ -488,7 +514,14 @@ fn rustfs_observer_pid_race_and_argv_drift_stop_before_evidence() {
             change_after_arguments: race,
         };
         assert!(
-            rustfs::verify(&fixture.context, &review, &fixture.storage, None, &observer).is_err()
+            rustfs::verify(
+                &fixture.context.storage_inputs(),
+                &review,
+                &fixture.storage,
+                None,
+                &observer
+            )
+            .is_err()
         );
         assert_eq!(observer.calls.borrow().as_slice(), &["target-storage-argv"]);
         assert_eq!(

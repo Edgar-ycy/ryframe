@@ -12,6 +12,13 @@ use crate::{
     local_test_path::{LocalTestPathKind, validate_local_test_path},
 };
 
+#[cfg(not(test))]
+#[path = "fixture_storage.rs"]
+pub(in crate::recovery) mod fixture_storage;
+#[cfg(test)]
+#[path = "fixture_storage.rs"]
+pub(crate) mod fixture_storage;
+
 const BASE_FIELDS: &[&str] = &[
     "format_version",
     "kind",
@@ -36,6 +43,38 @@ const SEED_FIELDS: &[&str] = &[
 pub(crate) struct Manifest {
     pub(crate) value: Value,
     pub(crate) digest: FileDigest,
+}
+
+/// 仅供 cache/runtime-target stop/recover：保留登记形状和本地字节绑定，不读取历史资源输入。
+pub(super) fn registered(backend: &Path, path: &Path) -> Result<Manifest> {
+    validate_local_test_path(path, backend, LocalTestPathKind::ExistingFile)?;
+    let before = digest::file(path)?;
+    let value = json_io::read(path)?;
+    let mut fields = BASE_FIELDS.to_vec();
+    if value["copy_stage"] == "seed_to_arm" {
+        fields.extend_from_slice(SEED_FIELDS);
+        if value.get("review_successor").is_some() {
+            fields.extend([
+                "review_successor",
+                "source_export_result",
+                "source_generation",
+            ]);
+        }
+        if value.get("source_rebind").is_some() {
+            fields.push("source_rebind");
+        }
+    }
+    exact(&value, &fields, "固定缓存清理运行清单")?;
+    if value["format_version"].as_u64() != Some(1) || value["kind"] != "devex-clone-run" {
+        return Err("固定缓存清理运行清单类型变化".into());
+    }
+    if digest::file(path)? != before {
+        return Err("缓存清理期间固定运行清单读取发生变化".into());
+    }
+    Ok(Manifest {
+        value,
+        digest: before,
+    })
 }
 
 pub(crate) fn load(backend: &Path, path: &Path) -> Result<Manifest> {
@@ -125,50 +164,70 @@ pub(crate) fn validate(value: &Value, backend: &Path) -> Result<()> {
     Ok(())
 }
 
-fn validate_target_storage(backend: &Path, registration: &Value, value: &Value) -> Result<()> {
-    let descriptor = exact(
-        value,
-        &["path", "manifest", "storage", "cache"],
-        "target_storage_run",
-    )?;
-    let path = PathBuf::from(text(
-        descriptor.get("path").unwrap(),
-        "target_storage_run 路径",
-    )?);
-    validate_local_test_path(&path, backend, LocalTestPathKind::ExistingDirectory)
-        .map_err(|error| format!("target_storage_run 路径无效：{error}"))?;
-    let manifest_path = bound_file(
-        backend,
-        descriptor.get("manifest").unwrap(),
-        "target_storage_run manifest",
-        true,
-    )?;
-    if manifest_path != path.join("manifest.json") {
-        return Err("target_storage_run manifest 不属于固定运行目录".into());
+#[cfg(not(test))]
+pub(in crate::recovery) use target_storage_validation::validate_target_storage;
+#[cfg(test)]
+pub(crate) use target_storage_validation::validate_target_storage;
+
+mod target_storage_validation {
+    use super::super::state;
+    use super::{
+        LocalTestPathKind, Path, PathBuf, Result, Value, bound_file, exact, fixture_storage,
+        json_io, text, validate_cache_binding, validate_local_test_path, validate_storage_binding,
+    };
+
+    pub(crate) fn validate_target_storage(
+        backend: &Path,
+        registration: &Value,
+        value: &Value,
+    ) -> Result<()> {
+        if fixture_storage::resolve(backend, registration, Some(value), false)?.is_some() {
+            return Ok(());
+        }
+        let descriptor = exact(
+            value,
+            &["path", "manifest", "storage", "cache"],
+            "target_storage_run",
+        )?;
+        let path = PathBuf::from(text(
+            descriptor.get("path").unwrap(),
+            "target_storage_run 路径",
+        )?);
+        validate_local_test_path(&path, backend, LocalTestPathKind::ExistingDirectory)
+            .map_err(|error| format!("target_storage_run 路径无效：{error}"))?;
+        let manifest_path = bound_file(
+            backend,
+            descriptor.get("manifest").unwrap(),
+            "target_storage_run manifest",
+            true,
+        )?;
+        if manifest_path != path.join("manifest.json") {
+            return Err("target_storage_run manifest 不属于固定运行目录".into());
+        }
+        validate_storage_binding(backend, descriptor.get("storage").unwrap())?;
+        validate_cache_binding(backend, descriptor.get("cache").unwrap())?;
+        let registration = json_io::read(&bound_file(
+            backend,
+            registration,
+            "target_registration",
+            true,
+        )?)?;
+        let historical = registration
+            .get("storage_run")
+            .ok_or("target_registration 缺少历史 storage_run")?;
+        let historical = exact(
+            historical,
+            &["path", "manifest", "state"],
+            "历史 target_storage_run",
+        )?;
+        if historical.get("path") != descriptor.get("path")
+            || historical.get("manifest") != descriptor.get("manifest")
+        {
+            return Err("target_storage_run 不属于 fresh 初始化登记代次".into());
+        }
+        state::historical(&path, historical.get("state").unwrap(), true)?;
+        Ok(())
     }
-    validate_storage_binding(backend, descriptor.get("storage").unwrap())?;
-    validate_cache_binding(backend, descriptor.get("cache").unwrap())?;
-    let registration = json_io::read(&bound_file(
-        backend,
-        registration,
-        "target_registration",
-        true,
-    )?)?;
-    let historical = registration
-        .get("storage_run")
-        .ok_or("target_registration 缺少历史 storage_run")?;
-    let historical = exact(
-        historical,
-        &["path", "manifest", "state"],
-        "历史 target_storage_run",
-    )?;
-    if historical.get("path") != descriptor.get("path")
-        || historical.get("manifest") != descriptor.get("manifest")
-    {
-        return Err("target_storage_run 不属于 fresh 初始化登记代次".into());
-    }
-    super::state::historical(&path, historical.get("state").unwrap(), true)?;
-    Ok(())
 }
 
 fn validate_storage_binding(backend: &Path, value: &Value) -> Result<()> {
@@ -338,6 +397,14 @@ pub(crate) fn target_storage_path(backend: &Path, value: &Value) -> Result<Optio
     let descriptor = value
         .get("target_storage_run")
         .ok_or("seed_to_arm 清单缺少 target_storage_run")?;
+    if let Some(fixture) = fixture_storage::resolve(
+        backend,
+        &value["target_registration"],
+        Some(descriptor),
+        false,
+    )? {
+        return Ok(Some(fixture.run));
+    }
     let descriptor = exact(
         descriptor,
         &["path", "manifest", "storage", "cache"],

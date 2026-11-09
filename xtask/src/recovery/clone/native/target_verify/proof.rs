@@ -92,6 +92,19 @@ pub(crate) fn history(backend: &Path, target: &Path) -> Result<Value> {
     ] {
         add_required_file(&mut names, backend, target, name)?;
     }
+    let terminal = if target.join("initialized.json").try_exists()? {
+        Some(json_io::read(&target.join("initialized.json"))?)
+    } else {
+        None
+    };
+    if target.join("reset-configuration.json").try_exists()?
+        || terminal.as_ref().is_some_and(|value| {
+            value["reset"].get("configuration").is_some()
+                || value["history"].get("reset-configuration.json").is_some()
+        })
+    {
+        add_required_file(&mut names, backend, target, "reset-configuration.json")?;
+    }
     for stage in ["sentinel", "reset"] {
         for state in ["intent", "confirmed"] {
             add_required_file(
@@ -137,13 +150,18 @@ pub(crate) fn history(backend: &Path, target: &Path) -> Result<Value> {
     Ok(serde_json::to_value(names)?)
 }
 
-pub(crate) fn verify_reset(context: &TargetContext) -> Result<()> {
-    let plan = json_io::read(&context.target_dir.join("reset-plan.json"))?;
-    let manifest = plan.get("manifest").ok_or("reset-plan 缺少 manifest")?;
-    let hash = plan["plan_hash"]
-        .as_str()
-        .ok_or("reset-plan 缺少 plan_hash")?;
-    let observed = super::reset::completed(&context.backend, &context.target_dir, manifest, hash)?;
+pub(crate) fn verify_reset(
+    context: &TargetContext,
+    owner: &super::guard::Generation,
+) -> Result<()> {
+    let observed = super::evidence_reset::history(
+        &context.backend,
+        &context.target_dir,
+        &context.request,
+        &context.initialized["generation"],
+        Some(owner),
+    )?["completed"]
+        .clone();
     if context.initialized.get("reset") != Some(&observed) {
         return Err("目标 reset 完成证据与初始化代次不同".into());
     }

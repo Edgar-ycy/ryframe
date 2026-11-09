@@ -1,8 +1,6 @@
 """逻辑租户例外严格限定，规则缓存不得保存业务内容或检查结论。"""
 import unittest
-from unittest.mock import patch
 
-import devex_clone_rows as source
 from devex_clone_rows import logical_tenant_patterns, reject_physical
 
 
@@ -59,33 +57,7 @@ class CloneRowFilterTests(unittest.TestCase):
                 reject_physical({"nested": [{"scope_id": value}]}, ["source-a"], tenants)
         reject_physical({"scope_id": "safe", "following": "source-a-01"}, ["source-a"], tenants)
 
-    def test_top_level_call_prepares_forbidden_and_logical_rules_once(self):
-        calls = []
-
-        class Token(str):
-            def casefold(self):
-                calls.append(str(self))
-                return super().casefold()
-
-        value = {"safe": ["source-a-01", {"scope_id": "safe", "values": [None, 3, b"safe"]}]}
-        with patch.object(source, "logical_tenant_patterns", wraps=logical_tenant_patterns) as prepare:
-            reject_physical(value, [Token("source-a"), Token("forbidden")], {"source-a-01"})
-            self.assertEqual(prepare.call_count, 1)
-        self.assertEqual(calls, ["source-a", "forbidden"])
-
-    def test_literal_prefilter_only_skips_absent_tenants_and_preserves_regex_boundaries(self):
-        class Pattern:
-            def __init__(self):
-                self.calls = []
-
-            def sub(self, replacement, value):
-                self.calls.append(value)
-                return value.replace("source-a-01", replacement)
-
-        pattern = Pattern()
-        with patch.object(source, "logical_tenant_patterns", return_value=(("source-a-01", pattern),)):
-            reject_physical({"safe": ["ordinary", "source-a-01", b"plain"]}, ["source-a"], {"source-a-01"})
-        self.assertEqual(pattern.calls, ["source-a-01"])
+    def test_logical_tenant_exceptions_reject_prefix_suffix_and_longer_identifiers(self):
         for text in ("prefix_source-a-01", "source-a-01_suffix", "source-a-010"):
             with self.subTest(text=text), self.assertRaises(ValueError):
                 reject_physical(text, ["source-a"], {"source-a-01"})

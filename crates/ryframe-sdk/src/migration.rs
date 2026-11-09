@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use sea_orm::DatabaseConnection;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DatabaseTransaction};
 use sea_orm_migration::{MigrationTrait, SchemaManager};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -16,11 +16,11 @@ pub use adoption::{
     BusinessAdoptionTarget, apply_business_adoption, inspect_business_adoption,
     preview_business_adoption,
 };
-pub use export::business_initialization_statements;
+pub use export::{BusinessInitializationSql, business_initialization_statements};
 pub(crate) use schema::validate_migrations;
 pub use schema::{
     BusinessMigrationSchema, BusinessTableSchema, validate_business_migration_ledger,
-    verify_business_migrations,
+    verify_business_migrations, verify_business_migrations_in_session,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -88,8 +88,11 @@ pub trait BusinessMigration: Send + Sync {
     }
     /// 执行单条迁移；整组执行结束后使用 verify_business_migrations 校验当前实际结构。
     async fn up(&self, database: &DatabaseConnection) -> AppResult<()>;
+    /// 在组合根持有迁移互斥的原会话执行，不额外租用池连接。
+    async fn up_in_session(&self, database: &mut DatabaseTransaction) -> AppResult<()>;
     /// 只校验历史账本元数据；历史表结构可能已被后续向前迁移合法改变。
     async fn verify_ledger(&self, database: &DatabaseConnection) -> AppResult<()>;
+    async fn verify_ledger_in_session(&self, database: &DatabaseTransaction) -> AppResult<()>;
     async fn status(&self, database: &DatabaseConnection) -> AppResult<MigrationState>;
 }
 
@@ -160,38 +163,35 @@ impl BusinessMigration for SeaOrmBusinessMigration {
     }
 
     async fn up(&self, database: &DatabaseConnection) -> AppResult<()> {
-        schema::validate_migration(self)?;
-        if let Some(state) = ledger::state(database, self).await? {
-            state.verify(self)?;
-            return ledger::verify_ownership(database, self).await;
+        if self.execute_ddl(database).await? {
+            ledger::record_executed(database, self)
+                .await
+                .map_err(|error| self.ledger_failure(error))?;
         }
-        ledger::verify_ownership(database, self).await?;
-        self.schema.verify_before(database).await?;
-        ledger::ensure(database).await?;
-        self.migration
-            .up(&SchemaManager::new(database))
-            .await
-            .map_err(|error| AppError::Database(format!("业务迁移 {}/{} 执行失败：{error}；DDL 可能部分提交，未登记本次账本；先核对前后结构，禁止自动重放", self.module, self.id)))?;
-        self.schema.verify_after(database).await.map_err(|error| {
-            AppError::Config(format!(
-                "{error}；迁移 DDL 已执行但结构校验未通过，未登记本次账本"
-            ))
-        })?;
-        ledger::record_executed(database, self)
-            .await
-            .map_err(|error| AppError::Database(format!("业务迁移 {}/{} 的 DDL 已执行并通过结构校验，但账本写入失败：{error}；账本提交结果需重新核对，不自动重放", self.module, self.id)))?;
+        Ok(())
+    }
+
+    async fn up_in_session(&self, database: &mut DatabaseTransaction) -> AppResult<()> {
+        if database.is_open() {
+            return Err(AppError::Config(
+                "同会话业务迁移必须从已结束的根事务开始，不能提交调用方的活跃事务".into(),
+            ));
+        }
+        if self.execute_ddl(database).await? {
+            ledger::write::record_in_session(database, self)
+                .await
+                .map_err(|error| self.ledger_failure(error))?;
+        }
         Ok(())
     }
 
     async fn verify_ledger(&self, database: &DatabaseConnection) -> AppResult<()> {
-        schema::validate_migration(self)?;
-        let state = ledger::state(database, self).await?.ok_or_else(|| {
-            AppError::Config(format!("业务迁移 {}/{} 尚未应用", self.module, self.id))
-        })?;
-        state.verify(self)?;
-        ledger::verify_ownership(database, self).await
+        self.verify_ledger_on(database).await
     }
 
+    async fn verify_ledger_in_session(&self, database: &DatabaseTransaction) -> AppResult<()> {
+        self.verify_ledger_on(database).await
+    }
     async fn status(&self, database: &DatabaseConnection) -> AppResult<MigrationState> {
         schema::validate_migration(self)?;
         let state = ledger::state(database, self).await?;
@@ -214,4 +214,48 @@ impl BusinessMigration for SeaOrmBusinessMigration {
 
 fn database_error(error: sea_orm::DbErr) -> AppError {
     AppError::Database(format!("业务迁移数据库操作失败：{error}"))
+}
+
+impl SeaOrmBusinessMigration {
+    fn ledger_failure(&self, error: AppError) -> AppError {
+        AppError::Database(format!(
+            "业务迁移 {}/{} 的 DDL 已执行并通过结构校验，但账本写入失败或提交结果未知：{error}；先核对权威账本与实际结构，不自动重放",
+            self.module, self.id
+        ))
+    }
+
+    async fn execute_ddl<C>(&self, database: &C) -> AppResult<bool>
+    where
+        C: ConnectionTrait,
+        for<'c> &'c C: sea_orm_migration::IntoSchemaManagerConnection<'c>,
+    {
+        schema::validate_migration(self)?;
+        if let Some(state) = ledger::state(database, self).await? {
+            state.verify(self)?;
+            ledger::verify_ownership(database, self).await?;
+            return Ok(false);
+        }
+        ledger::verify_ownership(database, self).await?;
+        self.schema.verify_before(database).await?;
+        ledger::ensure(database).await?;
+        self.migration.up(&SchemaManager::new(database)).await.map_err(|error|
+            AppError::Database(format!("业务迁移 {}/{} 执行失败：{error}；DDL可能部分提交，未登记本次账本；先核对前后结构，禁止自动重放",self.module,self.id)))?;
+        self.schema.verify_after(database).await.map_err(|error| {
+            AppError::Config(format!(
+                "{error}；迁移DDL已执行但结构校验未通过，未登记本次账本"
+            ))
+        })?;
+        Ok(true)
+    }
+
+    async fn verify_ledger_on<C: ConnectionTrait>(&self, database: &C) -> AppResult<()> {
+        schema::validate_migration(self)?;
+        ledger::state(database, self)
+            .await?
+            .ok_or_else(|| {
+                AppError::Config(format!("业务迁移 {}/{} 尚未应用", self.module, self.id))
+            })?
+            .verify(self)?;
+        ledger::verify_ownership(database, self).await
+    }
 }

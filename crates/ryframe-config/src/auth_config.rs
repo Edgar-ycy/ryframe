@@ -1,7 +1,9 @@
+use std::fmt;
+
 use serde::Deserialize;
 
 /// 认证配置
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AuthConfig {
     /// JWT 签名密钥（生产环境务必修改）
@@ -16,6 +18,19 @@ pub struct AuthConfig {
     /// 登录锁定时间（分钟，默认 30）
     #[serde(default = "default_lockout_duration_minutes")]
     pub lockout_duration_minutes: u32,
+}
+
+impl fmt::Debug for AuthConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AuthConfig")
+            .field("jwt_secret", &"<redacted>")
+            .field("access_token_expire", &self.access_token_expire)
+            .field("refresh_token_expire", &self.refresh_token_expire)
+            .field("max_login_attempts", &self.max_login_attempts)
+            .field("lockout_duration_minutes", &self.lockout_duration_minutes)
+            .finish()
+    }
 }
 
 fn default_max_login_attempts() -> u32 {

@@ -6,7 +6,7 @@ use std::{
     path::Path,
 };
 
-pub(super) fn dispatch(operation: &str, value: serde_json::Value) -> Checked<serde_json::Value> {
+pub(crate) fn dispatch(operation: &str, value: serde_json::Value) -> Checked<serde_json::Value> {
     use serde::Deserialize;
     use serde_json::json;
     #[derive(Deserialize)]

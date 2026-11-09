@@ -4,14 +4,11 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use serde_json::Value;
-
 use super::{
     cli::{
         CheckCommand, Command, FixtureControlCommand, FixtureDatasetCommand, FixtureDatasetInputs,
         FixtureSide, RecoveryCommand, parse,
     },
-    recovery::fixture_control::private_invocation_at,
     workspace::root_dir,
 };
 
@@ -84,7 +81,7 @@ fn command(domain: &str, operation: Option<&str>, values: Vec<String>) -> Vec<St
 }
 
 #[test]
-fn parses_dataset_plan_and_prepare_into_exact_private_protocols() {
+fn parses_dataset_plan_and_prepare_into_native_factory_inputs() {
     let fixture = Fixture::new();
     let work_dir = fixture.controlled_dir.join("数据 work");
     let output = fixture.controlled_dir.join("dataset plan.json");
@@ -110,20 +107,13 @@ fn parses_dataset_plan_and_prepare_into_exact_private_protocols() {
         plan,
         FixtureControlCommand::Dataset(FixtureDatasetCommand::Plan { .. })
     ));
-    let invocation = private_invocation_at(&plan, &root_dir()).unwrap();
-    assert_eq!(
-        invocation.script,
-        "tools/python/reference_fixture_dataset.py"
-    );
-    let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
-    assert_eq!(protocol["domain"], "dataset");
-    assert_eq!(protocol["operation"], "plan");
-    assert_eq!(protocol["environment"], text(&fixture.input));
-    assert_eq!(protocol["runtime"], text(&fixture.controlled_dir));
-    assert_eq!(protocol["work_dir"], text(&work_dir));
-    assert_eq!(protocol["output"], text(&output));
-    assert_eq!(protocol["side"], "base");
-    assert_eq!(protocol["write"], true);
+    let FixtureControlCommand::Dataset(native) = &plan else {
+        unreachable!()
+    };
+    let fields = super::recovery::fixture_control::dataset::fields(native, &root_dir()).unwrap();
+    assert_eq!(fields["side"], "base");
+    assert_eq!(fields["work_dir"], text(&work_dir));
+    assert_eq!(fields["output"], text(&output));
 
     let saved_plan = fixture.controlled_dir.join("saved plan.json");
     fs::write(&saved_plan, b"{}\n").unwrap();
@@ -147,14 +137,14 @@ fn parses_dataset_plan_and_prepare_into_exact_private_protocols() {
         prepare,
         FixtureControlCommand::Dataset(FixtureDatasetCommand::Prepare { .. })
     ));
-    let invocation = private_invocation_at(&prepare, &root_dir()).unwrap();
-    let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
-    assert_eq!(protocol["operation"], "prepare");
-    assert_eq!(protocol["plan"], text(&saved_plan));
-    assert_eq!(protocol["side"], "candidate");
-    assert_eq!(protocol["write"], true);
-    assert!(protocol.get("work_dir").is_none());
-    assert!(protocol.get("output").is_none());
+    let FixtureControlCommand::Dataset(native) = &prepare else {
+        unreachable!()
+    };
+    let fields = super::recovery::fixture_control::dataset::fields(native, &root_dir()).unwrap();
+    assert_eq!(fields["side"], "candidate");
+    assert_eq!(fields["plan"], text(&saved_plan));
+    assert!(!fields.contains_key("work_dir"));
+    assert!(!fields.contains_key("output"));
 }
 
 #[test]
@@ -296,7 +286,7 @@ fn rejects_dataset_artifacts_outside_the_selected_runtime() {
 }
 
 #[test]
-fn private_dataset_fields_recheck_relationships_and_side() {
+fn native_dataset_fields_recheck_relationships_and_side() {
     let fixture = Fixture::new();
     let other_runtime = fixture.path("other runtime");
     fs::create_dir_all(&other_runtime).unwrap();
@@ -337,8 +327,6 @@ fn private_dataset_fields_recheck_relationships_and_side() {
         },
     ];
     for command in invalid {
-        assert!(
-            private_invocation_at(&FixtureControlCommand::Dataset(command), &root_dir()).is_err()
-        );
+        assert!(super::recovery::fixture_control::dataset::fields(&command, &root_dir()).is_err());
     }
 }

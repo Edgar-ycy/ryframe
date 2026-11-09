@@ -1,4 +1,4 @@
-//! 正式 seed 来源入口必须在启动 Python 前拒绝歧义或越界参数。
+//! 正式 seed 来源入口的参数和原生只读、收尾边界。
 
 use std::{
     fs,
@@ -70,7 +70,7 @@ fn status_arguments(run_dir: &std::path::Path) -> Vec<String> {
 }
 
 #[test]
-fn malformed_or_unsafe_requests_exit_two_before_starting_python() {
+fn malformed_or_unsafe_requests_exit_two_before_running_a_stage() {
     let fixture = Fixture::new();
     let valid = status_arguments(&fixture.directory);
     let mut outside = valid.clone();
@@ -93,20 +93,41 @@ fn malformed_or_unsafe_requests_exit_two_before_starting_python() {
 }
 
 #[test]
-fn valid_request_uses_private_stdin_and_hides_paths_from_argv() {
+fn all_seed_source_operations_reject_missing_original_ledger_without_writes() {
     let fixture = Fixture::new();
-    let arguments = status_arguments(&fixture.directory);
-    let result = invoke(&arguments);
-    assert_eq!(result.status.code(), Some(1));
-    let stdout = String::from_utf8_lossy(&result.stdout);
-    let stderr = String::from_utf8_lossy(&result.stderr);
-    assert!(stdout.contains("tools/python/devex_clone.py"), "{stdout}");
-    assert!(stdout.contains("--private-stdin"), "{stdout}");
-    assert!(!stdout.contains("--run-dir"), "{stdout}");
-    assert!(
-        !stdout.contains(fixture.directory.to_str().unwrap()),
-        "{stdout}"
-    );
-    assert!(stderr.contains("任务失败"), "{stderr}");
-    assert!(!stderr.contains("私有协议无效"), "{stderr}");
+    let request = fixture.directory.join("request.json");
+    fs::write(&request, b"{}").unwrap();
+    for (operation, requires_request, writes) in [
+        ("source-register", false, true),
+        ("source-rebind", true, true),
+        ("source-generation-start", true, true),
+        ("source-generation-stop", true, true),
+        ("source-generation-status", false, false),
+        ("source-generation-reboot-status", false, false),
+        ("source-generation-reboot-close", true, true),
+        ("source-generation-recover", true, true),
+        ("source-export", false, true),
+        ("source-export-reconcile", false, true),
+    ] {
+        let mut arguments = status_arguments(&fixture.directory);
+        arguments[7] = operation.to_owned();
+        if requires_request {
+            arguments.extend([
+                "--request".to_owned(),
+                request.to_string_lossy().into_owned(),
+            ]);
+        }
+        if writes {
+            arguments.push("--write".to_owned());
+        }
+        let result = invoke(&arguments);
+        assert_eq!(result.status.code(), Some(1), "{operation}");
+        assert!(result.stdout.is_empty(), "{operation}");
+        assert!(
+            String::from_utf8_lossy(&result.stderr).contains("任务失败"),
+            "{operation}"
+        );
+        assert_eq!(fs::read_dir(&fixture.directory).unwrap().count(), 1);
+        assert_eq!(fs::read(&request).unwrap(), b"{}");
+    }
 }

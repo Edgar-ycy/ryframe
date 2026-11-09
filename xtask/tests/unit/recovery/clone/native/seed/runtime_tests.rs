@@ -1,7 +1,39 @@
 use super::{fixture::Fixture, runtime_model};
 use crate::recovery::clone::native::{json as document, lifecycle::state, resources::common};
 use serde_json::{Value, json};
-use std::fs;
+use std::{fs, path::Path};
+
+#[test]
+fn runtime_handoff_keeps_the_original_os_temporary_directory() {
+    let fixture = Fixture::new();
+    let temp = fixture.run.join("tmp");
+    fs::create_dir(&temp).unwrap();
+    let initial = fixture.run.join("seed-environment-test-initial.json");
+    let api = fixture.run.join("seed-environment-test-api.json");
+    let environment = json!({"APP_ENV":"test","TEMP":temp,"TMP":temp});
+    document::write_new(&initial, &json!({"environment":environment})).unwrap();
+    document::write_new(&api, &json!({"environment":environment})).unwrap();
+    let mut post = super::history::Post {
+        request: json!({"api_environment":common::binding(&api).unwrap()}),
+        descriptor: Value::Null,
+        runtime: fixture.old.clone(),
+    };
+    let manifest = json!({"target_environment":common::binding(&initial).unwrap()});
+    assert_eq!(
+        runtime_model::api_environment(&fixture.backend, &manifest, &post).unwrap(),
+        environment
+    );
+    document::write_replace(&api, &json!({"environment":{"APP_ENV":"test"}})).unwrap();
+    post.request["api_environment"] = common::binding(&api).unwrap();
+    assert!(runtime_model::api_environment(&fixture.backend, &manifest, &post).is_err());
+
+    let invalid = json!({"environment":{"APP_ENV":"test","TEMP":temp}});
+    document::write_replace(&initial, &invalid).unwrap();
+    document::write_replace(&api, &invalid).unwrap();
+    post.request["api_environment"] = common::binding(&api).unwrap();
+    let manifest = json!({"target_environment":common::binding(&initial).unwrap()});
+    assert!(runtime_model::api_environment(&fixture.backend, &manifest, &post).is_err());
+}
 
 fn prepared() -> (Fixture, Value) {
     let mut fixture = Fixture::new();
@@ -153,6 +185,11 @@ fn failed_start_requires_later_exact_double_stop_and_rejects_failed_stop_or_chan
     let (mut fixture, handoff) = prepared();
     let runtime = fixture.run.join("seed-runtime").join("runtime");
     history(&fixture, json!([]));
+    let empty = json!({"state":"stopped","identity":null,"ready":false});
+    let result = json!({"restart_ready":true,"handoff":common::binding(&runtime.join("handoff.json")).unwrap(),
+        "stopped_evidence":runtime_model::stopped(&runtime,&handoff).unwrap(),"runtime":{"operation":"stop",
+            "runtime_directory":runtime,"scope_id":handoff["scope_id"],"processes":{"api":empty,"worker":empty}}});
+    fixture.stage("seed-runtime", "stop", Some(result.clone()), None);
     fixture.stage("seed-runtime", "start", None, Some("ValueError"));
     let saved = state::load(&fixture.run, true).unwrap();
     let failed = saved["attempts"]
@@ -172,10 +209,6 @@ fn failed_start_requires_later_exact_double_stop_and_rejects_failed_stop_or_chan
         )
         .is_err()
     );
-    let empty = json!({"state":"stopped","identity":null,"ready":false});
-    let result = json!({"restart_ready":true,"handoff":common::binding(&runtime.join("handoff.json")).unwrap(),
-        "stopped_evidence":runtime_model::stopped(&runtime,&handoff).unwrap(),"runtime":{"operation":"stop",
-            "runtime_directory":runtime,"scope_id":handoff["scope_id"],"processes":{"api":empty,"worker":empty}}});
     fixture.stage("seed-runtime", "stop", Some(result), None);
     assert!(
         runtime_model::restart_after_stop(
@@ -188,6 +221,17 @@ fn failed_start_requires_later_exact_double_stop_and_rejects_failed_stop_or_chan
         )
         .is_ok()
     );
+    let restart = || {
+        runtime_model::restart_after_stop(
+            &fixture.backend,
+            &fixture.run,
+            &runtime,
+            &handoff,
+            &failed,
+            999,
+        )
+    };
+    rejects_changed_restart_receipts(&runtime, restart);
     let mut forged = failed.clone();
     forged["error_type"] = json!("another");
     assert!(
@@ -229,6 +273,18 @@ fn failed_start_requires_later_exact_double_stop_and_rejects_failed_stop_or_chan
         )
         .is_err()
     );
+}
+
+fn rejects_changed_restart_receipts(runtime: &Path, restart: impl Fn() -> crate::Result<()>) {
+    let api = runtime.join("api.json");
+    document::write_new(&api, &json!({"changed":true})).unwrap();
+    assert!(restart().is_err());
+    fs::remove_file(&api).unwrap();
+    let handoff_file = runtime.join("handoff.json");
+    let original = fs::read(&handoff_file).unwrap();
+    document::write_replace(&handoff_file, &json!({"changed":true})).unwrap();
+    assert!(restart().is_err());
+    fs::write(&handoff_file, original).unwrap();
 }
 
 #[test]

@@ -109,22 +109,11 @@ fn validate_source(backend: &Path, value: &Value) -> Result<()> {
         "源运行目录",
     )?;
     endpoint(source.get("api_url").unwrap(), "源 API 地址", None)?;
-    let s3 = exact(
-        source.get("s3").unwrap(),
-        &["endpoint", "region", "access_key", "secret_key"],
-        "源对象存储",
+    let s3 = exact(source.get("s3").unwrap(), &["configuration"], "源对象存储")?;
+    super::super::clone::native::s3::Configuration::from_app_binding(
+        backend,
+        s3.get("configuration").unwrap(),
     )?;
-    endpoint(s3.get("endpoint").unwrap(), "源对象存储端点", None)?;
-    if !Regex::new(r"^[a-z0-9-]+$")?.is_match(text(s3.get("region").unwrap(), "源对象 region")?)
-    {
-        return Err("源对象 region 无效".into());
-    }
-    for field in ["access_key", "secret_key"] {
-        let credential = text(s3.get(field).unwrap(), "源对象凭据")?;
-        if credential.is_empty() || credential.chars().any(char::is_control) {
-            return Err("源对象凭据必须在绑定文件中直接提供且不能为空".into());
-        }
-    }
     let databases = array(source.get("databases").unwrap(), "源数据库")?;
     if databases.is_empty() {
         return Err("源数据库目标不能为空".into());

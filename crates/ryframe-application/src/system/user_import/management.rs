@@ -5,6 +5,7 @@ impl UserImportService {
         file: Arc<FileService>,
         spreadsheets: Arc<dyn SpreadsheetDocumentProcessor>,
         persistence: Arc<dyn UserImportPersistencePort>,
+        authorization_cache: crate::AuthorizationCache,
         config: crate::UserImportPolicy,
     ) -> Self {
         Self {
@@ -14,6 +15,7 @@ impl UserImportService {
             hash_permits: Arc::new(Semaphore::new(config.hash_parallelism)),
             spreadsheets,
             persistence,
+            authorization_cache,
             config,
         }
     }

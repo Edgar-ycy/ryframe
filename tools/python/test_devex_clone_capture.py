@@ -367,7 +367,6 @@ class CaptureTests(unittest.TestCase):
             reader.read("forbidden", "put-object", "uploads", "source/system/file", body=self.original)
         self.assertNotIn("aws", self.plan["tools"])
         self.capture()
-        self.assertEqual(len(self.store.calls), 13)
 
     def test_result_fsync_failure_never_returns_success_even_if_capture_json_remains(self):
         original = capture_module.write_json

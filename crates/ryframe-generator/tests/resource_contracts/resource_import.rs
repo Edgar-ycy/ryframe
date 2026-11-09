@@ -168,6 +168,8 @@ fn table_import_is_deterministic_and_keeps_business_semantics_pending() {
     );
     assert!(first.spec.database.soft_delete.is_none());
     assert!(first.spec.database.audit.is_none());
+    assert_eq!(first.spec.database.foreign_keys[0].name, "fk_order_tenant");
+    assert_eq!(first.spec.database.foreign_keys[0].columns, ["tenant_id"]);
     assert!(!first.spec.database.bootstrap_migration);
     assert_eq!(
         first.pending_fields,
@@ -369,11 +371,4 @@ fn imported_primary_keys_keep_index_order_and_map_the_physical_id_column() {
             .unwrap_err()
             .contains("映射为 id 时与已有列冲突")
     );
-}
-
-#[cfg(feature = "schema-import")]
-#[test]
-fn schema_import_feature_exposes_mysql_readers() {
-    let _ = ryframe_generator::import::inspect_existing_table;
-    let _ = ryframe_generator::import::list_existing_tables;
 }

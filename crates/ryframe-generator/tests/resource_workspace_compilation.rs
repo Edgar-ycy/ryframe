@@ -1,9 +1,7 @@
 use std::{
-    any::Any,
     fs,
     path::{Path, PathBuf},
     process::Command,
-    sync::OnceLock,
 };
 
 use ryframe_generator::{
@@ -11,7 +9,6 @@ use ryframe_generator::{
     render_resources_with_frontend, write_resource,
 };
 
-static SHARED_WORKSPACE_RESULT: OnceLock<Result<(), String>> = OnceLock::new();
 #[path = "resource_contracts/business_compilation.rs"]
 mod business_compilation;
 #[path = "resource_contracts/frontend_workspace.rs"]
@@ -20,6 +17,8 @@ mod frontend_workspace;
 mod generation_pipeline;
 #[path = "support/resource_workspace.rs"]
 mod resource_workspace_control;
+#[path = "../src/command/staging/snapshot.rs"]
+mod snapshot;
 #[path = "resource_contracts/unsigned_compilation.rs"]
 mod unsigned_compilation;
 
@@ -54,21 +53,9 @@ struct SharedWorkspace {
 }
 
 #[test]
-#[ignore = "完整门禁在共享的临时真实 Workspace 中运行 Cargo 与 vue-tsc"]
-fn order_slice_compiles_in_temporary_real_workspaces() {
-    assert_shared_workspace("Order");
-}
-
-#[test]
-#[ignore = "在共享的临时真实 Workspace 中验证 Post 的 application 与 control DB 生成层"]
-fn post_control_slice_compiles_in_temporary_real_workspace() {
-    assert_shared_workspace("Post");
-}
-
-#[test]
-#[ignore = "在共享的临时真实 Workspace 中验证 Notice 的标准 CRUD 生成层"]
-fn notice_control_slice_compiles_in_temporary_real_workspace() {
-    assert_shared_workspace("Notice");
+#[ignore = "完整门禁在临时真实 Workspace 中验证标准资源、业务 crate、Cargo 与 vue-tsc"]
+fn generated_slices_and_business_crates_compile_in_real_workspaces() {
+    run_shared_workspace().expect("标准资源与业务 crate 的完整 Workspace 验证失败");
 }
 
 #[test]
@@ -125,28 +112,6 @@ fn order_frontend_fixture_protocol_is_repeatable_and_preserves_source() {
     }
 }
 
-fn assert_shared_workspace(resource: &str) {
-    if let Err(error) = SHARED_WORKSPACE_RESULT.get_or_init(|| {
-        std::panic::catch_unwind(run_shared_workspace)
-            .map_err(panic_message)
-            .and_then(|result| result)
-    }) {
-        panic!("{resource} 共享临时 Workspace 验证失败：{error}");
-    }
-}
-
-fn panic_message(payload: Box<dyn Any + Send>) -> String {
-    payload
-        .downcast_ref::<String>()
-        .cloned()
-        .or_else(|| {
-            payload
-                .downcast_ref::<&str>()
-                .map(|value| (*value).to_owned())
-        })
-        .unwrap_or_else(|| "共享临时 Workspace 发生未知 panic".to_owned())
-}
-
 fn run_shared_workspace() -> Result<(), String> {
     let (frontend_source, profile, target_dir) = resource_workspace_control::load()?;
     let profile = VerificationProfile::from_control(&profile)?;
@@ -163,7 +128,7 @@ fn run_shared_workspace() -> Result<(), String> {
     assert_backend_checks(&workspace);
     business_compilation::verify(&workspace.backend, &workspace.cargo_target);
     assert_frontend_checks(&workspace.frontend_source, &workspace.frontend);
-    generation_pipeline::verify(&workspace.frontend_source);
+    generation_pipeline::verify(&workspace.frontend_source, &workspace.cargo_target);
     Ok(())
 }
 
@@ -303,9 +268,12 @@ fn generate_resource_slices(workspace: &SharedWorkspace, profile: VerificationPr
             .join("catalog/resources/notice.toml"),
     )
     .expect("临时 Workspace 中既有的 Notice 清单应有效");
-    let catalog =
-        render_resources_with_frontend(&[order, notice, post], &workspace.frontend_source)
-            .expect("Order 与既有资源应能共同生成");
+    let catalog = render_resources_with_frontend(
+        &workspace.backend_source,
+        &[order, notice, post],
+        &workspace.frontend_source,
+    )
+    .expect("Order 与既有资源应能共同生成");
     let initial_resources: &[&str] = if profile == VerificationProfile::Targeted {
         &["notice", "post", "order"]
     } else {
@@ -351,8 +319,16 @@ fn generate_resource_slices(workspace: &SharedWorkspace, profile: VerificationPr
             },
         )
         .unwrap_or_else(|error| panic!("{resource} 连续生成应成功：{error}"));
-        assert!(repeated.written.is_empty(), "{resource} 连续生成不得写入");
-        assert!(repeated.removed.is_empty(), "{resource} 连续生成不得删除");
+        assert!(
+            repeated.written.is_empty(),
+            "{resource} 连续生成不得写入：{:?}",
+            repeated.written
+        );
+        assert!(
+            repeated.removed.is_empty(),
+            "{resource} 连续生成不得删除：{:?}",
+            repeated.removed
+        );
     }
     let notice_registration = fs::read_to_string(
         workspace

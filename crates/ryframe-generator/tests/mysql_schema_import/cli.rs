@@ -9,21 +9,29 @@ use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
 use super::mysql;
 
+#[path = "cli/adoption_flow.rs"]
+mod adoption_flow;
 #[path = "cli/configuration.rs"]
 mod configuration;
 use configuration::{CapturedConfiguration, PreparedConfiguration};
 
+#[path = "cli/entry_parity.rs"]
+mod entry_parity;
 #[path = "cli/frontend.rs"]
 mod frontend;
 #[path = "../../src/command/staging/snapshot.rs"]
 mod snapshot;
 
+#[path = "../generation_pipeline/conflicts.rs"]
+mod conflicts;
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn actual_cli_imports_two_tables_from_business_subdirectory_without_database_writes() {
     mysql::run_mysql_test("cliimport", |database| async move {
+        let frontend = frontend::Candidate::from_control()?;
         let captured = CapturedConfiguration::capture(&shared_configuration_directory()?)?;
-        mysql::execute(&database, "CREATE TABLE table1 (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, name VARCHAR(32) NOT NULL, price DECIMAL(20,6) NOT NULL DEFAULT 0.125000, UNIQUE KEY uk_table1_name(name)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci").await?;
-        mysql::execute(&database, "CREATE TABLE table2 (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, reference_id BIGINT NULL, name VARCHAR(32) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci").await?;
+        mysql::execute(&database, "CREATE TABLE table1 (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, name VARCHAR(32) NOT NULL, price DECIMAL(20,6) NOT NULL DEFAULT 0.125000, created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), UNIQUE KEY uk_table1_name(name)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci").await?;
+        mysql::execute(&database, "CREATE TABLE table2 (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, reference_id BIGINT NULL, name VARCHAR(32) NOT NULL, created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6), KEY idx_table2_reference(reference_id), CONSTRAINT fk_table2_reference FOREIGN KEY(reference_id) REFERENCES table1(id) ON UPDATE RESTRICT ON DELETE SET NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci").await?;
         mysql::execute(&database, "CREATE TABLE unsupported_table (id BIGINT NOT NULL PRIMARY KEY, payload BIT(8) NOT NULL) ENGINE=InnoDB").await?;
         mysql::execute(&database, "INSERT INTO table1(name,price) VALUES('existing','90071992547409.123456')").await?;
         let schema = database.query_one_raw(Statement::from_string(DbBackend::MySql, "SELECT DATABASE() AS name"))
@@ -35,6 +43,7 @@ async fn actual_cli_imports_two_tables_from_business_subdirectory_without_databa
         let directory = tempfile::tempdir_in(cache).map_err(message)?;
         let root = directory.path().join("backend");
         original.copy_to(&root)?;
+        frontend::configure_target(&root, &original.root)?;
         GenerationBuilder::new(&root).operation(GenerationOperation::NewBusiness("cli-import".into())).write(true).plan()?.execute()?;
         let configuration = captured.prepare(&root, &schema)?;
         verify_physical_binding(&database, &configuration).await?;
@@ -55,11 +64,12 @@ async fn actual_cli_imports_two_tables_from_business_subdirectory_without_databa
             }
         }
         let installed = snapshot::SourceSnapshot::capture(&root)?;
+        verify_generated_schema(&business).await?;
         let delta = before.changes(&root)?;
         assert!(delta.iter().any(|change| change.relative == Path::new("crates/cli-import-business/src/resources/table1.rs") && change.before.is_none() && change.after.is_some()));
         require_success(import(&root, &configuration, "table1,table2", true)?)?;
         installed.verify()?;
-        if let Some(frontend) = frontend::Candidate::from_control()? {
+        if let Some(frontend) = &frontend {
             frontend.configure(&root)?;
             let mut command = import_command(&root, &configuration, "table1,table2")?;
             command.args(["--sync-frontend", "--write"]);
@@ -70,6 +80,41 @@ async fn actual_cli_imports_two_tables_from_business_subdirectory_without_databa
             assert!(installed.changes(&root)?.iter().all(|change| change.relative == Path::new("openapi/openapi.json")));
         }
         mysql::require_count(&database, "SELECT COUNT(*) AS value FROM table1 WHERE name='existing' AND CAST(price AS CHAR)='90071992547409.123456'", 1).await?;
+        mysql::require_count(&database, "SELECT COUNT(*) AS value FROM information_schema.tables WHERE table_schema=DATABASE()", 3).await?;
+        configuration.verify()?;
+        original.verify()?;
+        Ok(())
+    }).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn actual_cli_cross_module_conflict_leaves_third_table_uninstalled() {
+    mysql::run_mysql_test("importconflict", |database| async move {
+        let captured = CapturedConfiguration::capture(&shared_configuration_directory()?)?;
+        for table in ["table1", "table2", "table3"] {
+            mysql::execute(&database, &format!("CREATE TABLE {table} (id BIGINT NOT NULL PRIMARY KEY, name VARCHAR(32) NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci")).await?;
+        }
+        mysql::execute(&database, "INSERT INTO table1 VALUES(1,'existing')").await?;
+        let schema = ryframe_db::connection::physical_identity(&database).await.map_err(message)?.database;
+        let original = snapshot::SourceSnapshot::capture(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))?;
+        let cache = original.root.join(".local-tests/cli-import");
+        fs::create_dir_all(&cache).map_err(message)?;
+        let directory = tempfile::tempdir_in(cache).map_err(message)?;
+        let root = directory.path().join("backend");
+        original.copy_to(&root)?;
+        frontend::configure_target(&root, &original.root)?;
+        GenerationBuilder::new(&root).operation(GenerationOperation::NewBusiness("cli-import".into())).write(true).plan()?.execute()?;
+        let configuration = captured.prepare(&root, &schema)?;
+        verify_physical_binding(&database, &configuration).await?;
+        // 最小有效 baseline：只安装前两表，不跑前端、BIT、重复生成或空库迁移链。
+        require_success(import(&root, &configuration, "table1,table2", true)?)?;
+        let third = root.join("crates/cli-import-business/src/resources/table3.rs");
+        assert!(!third.exists());
+        conflicts::verify(&root, None, "cli_import_business", &[("resource", "业务资源名称冲突")], |_| {
+            require_success(import(&root, &configuration, "table1,table2,table3", true)?)
+        });
+        assert!(!third.exists());
+        mysql::require_count(&database, "SELECT COUNT(*) AS value FROM table1 WHERE id=1 AND name='existing'", 1).await?;
         mysql::require_count(&database, "SELECT COUNT(*) AS value FROM information_schema.tables WHERE table_schema=DATABASE()", 3).await?;
         configuration.verify()?;
         original.verify()?;
@@ -91,6 +136,35 @@ fn import(
     let output = command.output().map_err(message)?;
     configuration.verify()?;
     Ok(output)
+}
+
+async fn verify_generated_schema(business: &Path) -> Result<(), String> {
+    let history: serde_json::Value = serde_json::from_slice(
+        &fs::read(business.join("src/generated/migrations/history.json")).map_err(message)?,
+    )
+    .map_err(message)?;
+    let business = business.to_owned();
+    mysql::run_mysql_test("cli-import-fresh", |database| async move {
+        for resource in history["resources"].as_array().ok_or("缺少迁移资源")? {
+            let initial = &resource["versions"][0];
+            let id = initial["id"].as_str().ok_or("缺少初始迁移 ID")?;
+            super::business_evolution::execute_migration(
+                &database,
+                &business.join(format!("migrations/{id}.rs")),
+            )
+            .await?;
+            let table = resource["descriptor"]["table"]
+                .as_str()
+                .ok_or("缺少迁移表名")?;
+            let actual = ryframe_db::schema::canonical_table_schema(&database, table)
+                .await
+                .map_err(mysql::db_error)?;
+            assert_eq!(actual, initial["canonical"].as_str().ok_or("缺少初始结构")?);
+        }
+        Ok(())
+    })
+    .await;
+    Ok(())
 }
 
 fn import_command(
@@ -116,10 +190,6 @@ fn import_command(
         .arg(directory)
         .current_dir(root.join("crates/cli-import-business/src"))
         .env("APP_ENV", "test");
-    command.env(
-        "CARGO_TARGET_DIR",
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/mysql-schema-cli"),
-    );
     Ok(command)
 }
 

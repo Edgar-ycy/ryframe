@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use ryframe_kernel::{AppError, AppResult};
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, QueryResult, Statement};
+use sea_orm::{ConnectionTrait, DbBackend, QueryResult, Statement};
 
 use super::{BusinessMigration, BusinessMigrationOrigin, BusinessMigrationScope, database_error};
 
@@ -122,7 +122,7 @@ pub(super) async fn exists<C: ConnectionTrait>(database: &C) -> AppResult<bool> 
         .map_err(database_error)
 }
 
-pub(super) async fn ensure(database: &DatabaseConnection) -> AppResult<()> {
+pub(super) async fn ensure<C: ConnectionTrait>(database: &C) -> AppResult<()> {
     database
         .execute_raw(Statement::from_string(
             DbBackend::MySql,

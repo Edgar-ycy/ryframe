@@ -1,0 +1,189 @@
+//! 构建继承系统运行环境、Cargo 缓存及工具链根、目标目录与正整数并发数、prepared 已冻结的三个值。
+use super::super::{model::*, plan, runtime};
+use crate::Result;
+use serde_json::Value;
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
+
+pub(super) struct Inputs {
+    pub root: PathBuf,
+    pub coordinator: PathBuf,
+    pub execution_source: Value,
+    pub bootstrap: PathBuf,
+    pub configuration: PathBuf,
+    pub environment: BTreeMap<String, String>,
+    cargo_target: Option<String>,
+    guards: Vec<Value>,
+    configuration_identity: (u64, u64),
+}
+
+impl Inputs {
+    pub fn protect(
+        &self,
+        extra: impl IntoIterator<Item = PathBuf>,
+    ) -> Result<crate::recovery::clone::native::target_verify::guard::Inputs> {
+        let mut paths = self
+            .guards
+            .iter()
+            .map(|guard| path(&guard["descriptor"]["path"]))
+            .collect::<Result<std::collections::BTreeSet<_>>>()?;
+        paths.extend(extra);
+        let protected = crate::recovery::clone::native::target_verify::guard::Inputs::open(paths)?;
+        self.verify()?;
+        Ok(protected)
+    }
+
+    pub fn load(backend: &Path, environment: &Path) -> Result<Self> {
+        let boot = runtime::bootstrap(backend, environment)?;
+        let bootstrap = path(&boot["bootstrap"])?;
+        let parent = bootstrap.parent().ok_or("夹具环境收据缺少父目录")?;
+        let configuration = path(&boot["config_dir"])?;
+        let configuration_identity = runtime::configuration_identity(&configuration)?;
+        let (receipt, guard) = document(&bootstrap)?;
+        let (values, environment_guard) = document(&parent.join("environment.json"))?;
+        crate::recovery::clone::native::json::exact(&values, &["environment"], "夹具私有环境")?;
+        check(
+            values["environment"] == boot["private"],
+            "夹具环境与 prepared 结果不匹配",
+        )?;
+        let mut guards = plan::input_guards(&receipt)?;
+        guards.extend([guard, environment_guard]);
+        for name in ["app.toml", "app.test.toml"] {
+            guards.push(snapshot(&configuration.join(name), MAX_BYTES)?);
+        }
+        check(
+            runtime::bootstrap(backend, environment)? == boot,
+            "夹具 prepared 输入在冻结期间变化",
+        )?;
+        let root = path(&boot["execution"])?;
+        let mut environment = configured(&boot["private"], std::env::vars_os())?;
+        let cargo_target = crate::recovery::clone::native::bridge::cargo_environment::apply(
+            &root,
+            &mut environment,
+        )?;
+        let value = Self {
+            root,
+            coordinator: backend.to_owned(),
+            execution_source: receipt["plan"]["execution_source"].clone(),
+            bootstrap,
+            configuration,
+            configuration_identity,
+            environment,
+            cargo_target,
+            guards,
+        };
+        value.verify()?;
+        Ok(value)
+    }
+
+    pub fn verify(&self) -> Result<()> {
+        check(
+            crate::recovery::clone::native::bridge::cargo_environment::configured_target(
+                &self.root,
+            )? == self.cargo_target,
+            "构建期间工具文件 generator.target_dir 变化；保留原目录和证据，在新目录显式构建，不自动重放",
+        )?;
+        runtime::bootstrap(&self.coordinator, &self.bootstrap)?;
+        crate::recovery::fixture_control::source_pair::execution::pair(
+            &self.coordinator,
+            &self.root,
+            &self.execution_source,
+        )?;
+        check(
+            runtime::configuration_identity(&self.configuration)? == self.configuration_identity,
+            "夹具构建配置目录身份变化",
+        )?;
+        for guard in &self.guards {
+            unchanged(guard)?;
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn configured(
+    private: &Value,
+    inherited: impl IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+) -> Result<BTreeMap<String, String>> {
+    let private = private.as_object().ok_or("夹具私有环境必须为对象")?;
+    check(
+        private
+            .keys()
+            .all(|key| ["APP_ENV", "TEMP", "TMP"].contains(&key.as_str()))
+            && private.get("APP_ENV").and_then(Value::as_str) == Some("test"),
+        "夹具构建环境必须明确选择 test",
+    )?;
+    let mut values = BTreeMap::new();
+    for (key, value) in inherited {
+        let key = key.to_str().ok_or("系统环境名称不是 Unicode")?;
+        let upper = key.to_ascii_uppercase();
+        if !private.contains_key(&upper)
+            && (system_name(&upper)
+                || matches!(
+                    upper.as_str(),
+                    "CARGO_TARGET_DIR" | "CARGO_BUILD_JOBS" | "CARGO_HOME" | "RUSTUP_HOME"
+                ))
+        {
+            let value = value.to_str().ok_or("系统环境值不是 Unicode")?;
+            if upper == "CARGO_BUILD_JOBS" {
+                // Inputs 在创建输出目录前装配；非法并发数不能进入 Cargo 或留下构建输出。
+                check(
+                    !value.is_empty()
+                        && value.bytes().all(|byte| byte.is_ascii_digit())
+                        && value.bytes().any(|byte| byte != b'0'),
+                    "CARGO_BUILD_JOBS 必须是正整数；删除该工具环境值以使用 Cargo 默认并发",
+                )?;
+            }
+            values.insert(
+                if upper == "CARGO_BUILD_JOBS"
+                    || cfg!(windows) && matches!(upper.as_str(), "CARGO_HOME" | "RUSTUP_HOME")
+                {
+                    upper
+                } else {
+                    key.to_owned()
+                },
+                value.to_owned(),
+            );
+        }
+    }
+    for (key, value) in private {
+        values.insert(key.clone(), text(value)?.to_owned());
+    }
+    Ok(values)
+}
+
+fn system_name(name: &str) -> bool {
+    [
+        "APPDATA",
+        "COMMONPROGRAMFILES",
+        "COMMONPROGRAMFILES(X86)",
+        "COMMONPROGRAMW6432",
+        "COMSPEC",
+        "HOME",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "LANG",
+        "LOCALAPPDATA",
+        "NUMBER_OF_PROCESSORS",
+        "OS",
+        "PATH",
+        "PATHEXT",
+        "PROGRAMDATA",
+        "PROGRAMFILES",
+        "PROGRAMFILES(X86)",
+        "PROGRAMW6432",
+        "SHELL",
+        "SYSTEMDRIVE",
+        "SYSTEMROOT",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "USER",
+        "USERPROFILE",
+        "WINDIR",
+    ]
+    .contains(&name)
+        || name.starts_with("PROCESSOR_")
+        || name.starts_with("LC_")
+}

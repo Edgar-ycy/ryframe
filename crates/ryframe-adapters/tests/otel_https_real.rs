@@ -25,6 +25,7 @@ async fn otlp_exporter_flushes_over_a_real_https_endpoint() {
     let pem = snapshot.ca().unwrap_or_else(|error| panic!("{error}"));
     let root_ca = reqwest::Certificate::from_pem(&pem).expect("解析显式 OTLP HTTPS 测试 CA");
     let http_client = reqwest::Client::builder()
+        .no_proxy()
         .add_root_certificate(root_ca)
         .timeout(std::time::Duration::from_secs(config.export_timeout_secs))
         .build()

@@ -83,6 +83,17 @@ where
     Ok(())
 }
 
+/// 组合根持有目标迁移互斥时，在该会话执行框架迁移，业务迁移随后统一核验。
+pub async fn up_in_session(session: &mut sea_orm::DatabaseTransaction) -> Result<(), DbErr> {
+    tenant_data_catalog().validate().map_err(DbErr::Custom)?;
+    let held = scalar_i64_on(session, "SELECT IS_USED_LOCK(SHA2(CONCAT('ryframe:tenant-data-migration:',DATABASE()),256))=CONNECTION_ID()".into()).await?;
+    if held != 1 {
+        return Err(DbErr::Custom("初始化会话未持有租户迁移互斥".into()));
+    }
+    Migrator::up(&*session, None).await?;
+    session.finish_mysql_root(true).await
+}
+
 async fn release_migration_lock<C>(db: &C) -> Result<(), DbErr>
 where
     C: ConnectionTrait + ?Sized,

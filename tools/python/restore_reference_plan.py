@@ -11,12 +11,12 @@ BUCKETS = {"uploads", "avatar", "exports", "imports", "config-packages"}
 EXCLUDED_TABLES = {"ryframe_resource_ownership", "sys_backup_set", "sys_backup_resource", "sys_restore_run"}
 
 
-def _native(operation: str, arguments: dict):
+def _native(operation: str, arguments: dict, *, write: bool = False):
     response, _ = _read_response(*_invoke(
         "__source-evidence",
-        {"operation": operation, "arguments": arguments, "write": False},
+        {"operation": operation, "arguments": arguments, "write": write},
         subprocess.run,
-        may_write=False,
+        may_write=write,
     ))
     return response["value"]
 

@@ -2,8 +2,123 @@ use serde_json::{Value, json};
 
 use super::{execute, model};
 
+#[test]
+fn copy_generation_accepts_only_the_read_only_registered_run() {
+    let mut request = json!({"operation":"copy-source-generation","write":true,
+        "arguments":{"backend":"relative","run_dir":"relative"}});
+    let reject = |value: &Value| {
+        execute(&serde_json::to_vec(value).unwrap())
+            .unwrap_err()
+            .to_string()
+    };
+    assert!(reject(&request).contains("写入授权"));
+    request["write"] = json!(false);
+    request["arguments"]["source_request"] = json!({"forged":true});
+    assert!(reject(&request).contains("字段"));
+    request["arguments"]
+        .as_object_mut()
+        .unwrap()
+        .remove("source_request");
+    assert!(reject(&request).contains("绝对路径"));
+}
+
+#[test]
+fn full_stack_source_facts_are_read_only_and_reject_undeclared_inputs() {
+    let backend = crate::workspace::root_dir();
+    let local = backend.join(".local-tests");
+    std::fs::create_dir_all(&local).unwrap();
+    let directory = tempfile::tempdir_in(local).unwrap();
+    let marker = directory.path().join("original");
+    std::fs::write(&marker, b"unchanged").unwrap();
+    let request = json!({"operation":"full-stack-source-evidence","write":false,
+        "arguments":{"backend":backend,"directory":directory.path(),"ci":{"run_id":null,"attempt":null}}});
+    assert_eq!(
+        execute(&serde_json::to_vec(&request).unwrap()).unwrap(),
+        Value::Null
+    );
+    let mut changed = request.clone();
+    changed["write"] = json!(true);
+    assert!(execute(&serde_json::to_vec(&changed).unwrap()).is_err());
+    let mut changed = request.clone();
+    changed["arguments"]["source"] = json!({"forged":true});
+    assert!(execute(&serde_json::to_vec(&changed).unwrap()).is_err());
+    let mut changed = request.clone();
+    changed["arguments"]["ci"]["run_id"] = json!(1);
+    assert!(execute(&serde_json::to_vec(&changed).unwrap()).is_err());
+    let mut changed = request;
+    changed["arguments"]["backend"] = json!("relative-backend");
+    assert!(execute(&serde_json::to_vec(&changed).unwrap()).is_err());
+    assert_eq!(std::fs::read(marker).unwrap(), b"unchanged");
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn inventory_capture_requires_local_write_authorization_and_keeps_failed_inputs() {
+    let backend = crate::workspace::root_dir();
+    let local = backend.join(".local-tests");
+    std::fs::create_dir_all(&local).unwrap();
+    let directory = tempfile::Builder::new()
+        .prefix("inventory-port-")
+        .tempdir_in(local)
+        .unwrap();
+    let output = directory.path().join("inventory");
+    let marker = directory.path().join("original.json");
+    std::fs::write(&marker, "original-input").unwrap();
+    let mut request = json!({"operation":"copy-side-inventory-capture","write":false,
+        "arguments":{"evidence_root":backend,"backend":backend,"output":output,"side":"source",
+            "plan":{},"maintenance":null,"configuration":null,"app_env":"prod"}});
+    assert!(execute(&serde_json::to_vec(&request).unwrap()).is_err());
+    assert!(!output.exists());
+    request["write"] = json!(true);
+    request["arguments"]["sql"] = json!("DELETE FROM unrelated");
+    assert!(execute(&serde_json::to_vec(&request).unwrap()).is_err());
+    assert!(!output.exists());
+    request["arguments"].as_object_mut().unwrap().remove("sql");
+    assert!(execute(&serde_json::to_vec(&request).unwrap()).is_err());
+    let failure = crate::recovery::clone::native::json::read(&output.join("failure.json")).unwrap();
+    assert_eq!(failure["remote_writes"], 0);
+    assert_eq!(failure["stage"], "inputs");
+    assert!(!output.join("inventory.json").exists());
+    assert_eq!(std::fs::read_to_string(marker).unwrap(), "original-input");
+    let original_failure = std::fs::read(output.join("failure.json")).unwrap();
+    assert!(execute(&serde_json::to_vec(&request).unwrap()).is_err());
+    assert_eq!(
+        std::fs::read(output.join("failure.json")).unwrap(),
+        original_failure
+    );
+}
+
+#[test]
+fn reboot_observation_protocol_rejects_write_authorization_and_caller_supplied_facts() {
+    let mut request = json!({"operation":"source-generation-reboot-observation","write":true,
+        "arguments":{"backend":"missing","directory":"missing"}});
+    assert!(
+        execute(&serde_json::to_vec(&request).unwrap())
+            .unwrap_err()
+            .to_string()
+            .contains("写入授权")
+    );
+    request["write"] = json!(false);
+    request["arguments"]["boot"] = json!({"boot_ticks":1});
+    assert!(
+        execute(&serde_json::to_vec(&request).unwrap())
+            .unwrap_err()
+            .to_string()
+            .contains("字段")
+    );
+}
+
+#[expect(
+    dead_code,
+    reason = "消费者契约须导入完整产品键工厂；其中三个租户 namespace 函数不属于本授权缓存契约"
+)]
+#[path = "../../../../../../crates/ryframe/src/boot/authorization_cache_keyspace.rs"]
+mod product_authorization_keyspace;
+
 #[path = "business_catalog.rs"]
 mod business_catalog;
+#[path = "dataset_authority.rs"]
+mod dataset_authority;
 
 #[path = "../../../../../src/recovery/source/evidence/tests/staging.rs"]
 mod staging;
@@ -71,8 +186,34 @@ fn cache_plan_requires_exact_namespace_unique_subjects_and_33_registered_keys() 
     assert_eq!(plan.as_array().unwrap().len(), 11);
     assert_eq!(
         plan[1]["keys"]["snapshot"],
-        "ryframe:{seed-unit}:ryframe:authorization:{origin-unit-01}:user:9007199254740994:snapshots"
+        "ryframe:{seed-unit}:authorization:{origin-unit-01}:user:9007199254740994:snapshots:v4"
     );
+    // 产品 RedisNamespace::key 的物理规则由 adapters 独立契约覆盖：只剥离一次逻辑 ryframe:。
+    // 此处直接调用产品纯键函数，避免来源计划与自身错误 fixture 相互证明。
+    let namespace = args["namespace"].as_str().unwrap();
+    for row in plan.as_array().unwrap() {
+        let tenant = row["tenant_id"].as_str().unwrap();
+        let user = row["user_id"].as_str().unwrap().parse::<i64>().unwrap();
+        let logical = [
+            (
+                "tenant_epoch",
+                product_authorization_keyspace::tenant_epoch_key(tenant),
+            ),
+            (
+                "user_version",
+                product_authorization_keyspace::user_version_key(tenant, user),
+            ),
+            (
+                "snapshot",
+                product_authorization_keyspace::snapshot_hash_key(tenant, user),
+            ),
+        ];
+        assert_eq!(row["keys"].as_object().unwrap().len(), 3);
+        for (role, key) in logical {
+            let physical = format!("{namespace}{}", key.strip_prefix("ryframe:").unwrap());
+            assert_eq!(row["keys"][role], physical, "{role}");
+        }
+    }
     for namespace in ["", "ryframe:seed-unit:", "ryframe:{bad scope}:"] {
         let mut changed = args.clone();
         changed["namespace"] = json!(namespace);
@@ -226,6 +367,9 @@ fn source_evidence_protocol_requires_exact_write_authorization_before_dispatch()
         ("staging-create", json!(false)),
         ("staging-create", json!(1)),
         ("source-reference-projection", json!(true)),
+        ("reference-sql-stream-create", json!(false)),
+        ("reference-sql-stream-close", json!(false)),
+        ("reference-sql-stream-read", json!(true)),
     ] {
         let request = json!({"operation":operation,"write":write,"arguments":{}});
         assert!(
@@ -235,4 +379,51 @@ fn source_evidence_protocol_requires_exact_write_authorization_before_dispatch()
                 .contains("写入授权")
         );
     }
+}
+
+#[test]
+fn copy_step_ids_preserve_ledger_hashes_and_fail_closed_on_inexact_vectors() {
+    let mut request = json!({"operation":"reference-copy-step-ids","write":false,
+        "arguments":{"databases":[{"key":"shared-control"},{"key":"dedicated-1"}],
+            "objects":[{"bucket":"uploads","target_key":"side/目录/a.json"},
+                {"bucket":"exports","target_key":"side/目录/a.json"}]}});
+    let call = |value: &Value| execute(&serde_json::to_vec(value).unwrap());
+    // 原逐项摘要协议输出的固定 ID，可直接与既有账本键比较。
+    assert_eq!(
+        call(&request).unwrap(),
+        json!({"databases":["database-075921cce671fc36b9360281d8b631a2",
+                            "database-2e23488b489f7e19b53a25393ac35d28"],
+               "objects":["object-87c0fda0cfaf8d51466fd3b5320075ef",
+                          "object-a19e6131c2dc22a819ac47fcde9093d4"]})
+    );
+
+    for field in ["databases", "objects"] {
+        let mut duplicated = request.clone();
+        let items = duplicated["arguments"][field].as_array_mut().unwrap();
+        let repeated = items[0].clone();
+        items.push(repeated);
+        assert!(
+            call(&duplicated)
+                .unwrap_err()
+                .to_string()
+                .contains("重复或碰撞")
+        );
+    }
+    for malformed in [
+        json!({"databases":[]}),
+        json!({"databases":[{"key":false}],"objects":[]}),
+        json!({"databases":[],"objects":[{"bucket":"uploads","key":"side/a"}]}),
+        json!({"databases":[],"objects":[{"bucket":"uploads","target_key":"side/a","artifact":{}}]}),
+    ] {
+        let mut invalid = request.clone();
+        invalid["arguments"] = malformed;
+        assert!(call(&invalid).is_err());
+    }
+    request["arguments"] = json!({"databases":[],"objects":[]});
+    assert_eq!(
+        call(&request).unwrap(),
+        json!({"databases":[],"objects":[]})
+    );
+    request["write"] = json!(true);
+    assert!(call(&request).unwrap_err().to_string().contains("写入授权"));
 }

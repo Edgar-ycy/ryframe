@@ -101,12 +101,10 @@ class NativeProcessTests(unittest.TestCase):
         self.assertEqual(process_identity(expected["pid"]), expected)
         with patch.object(process, "arguments", return_value=self.args):
             observed = process.inspect_attempt(self.backend, self.output, self.registration, self.controller, 1)
-            recovery = self.root / "recovery"
-            recovery.mkdir()
-            # 参数仍由本机真实 CIM 核验；全局端口由外层完成所有代次回收后统一检查。
-            result = process.stop_record(self.request, observed, recovery)
-        self.assertTrue(result["terminated"])
-        self.assertIsNone(process_identity(expected["pid"]))
+        self.assertEqual(observed["state"], "recorded")
+        self.assertEqual(observed["identity"], expected)
+        self.assertEqual(process_identity(expected["pid"]), expected)
+        # 活跃启动适配的崩溃收据和只读观察仍保留；原身份由既有 cleanup 回收。
 
 
 if __name__ == "__main__":

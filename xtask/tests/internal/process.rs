@@ -15,6 +15,16 @@ use super::process::{
     with_process_log,
 };
 
+/// 捕获长时私有阶段的输出，沿用进程树取消规则，不设置总运行期限。
+pub(super) fn command_output_with_input(
+    dir: &Path,
+    executable: &str,
+    args: &[&str],
+    input: &[u8],
+) -> crate::Result<String> {
+    crate::process::command_output_impl(dir, executable, args, &[], (true, true), Some(input))
+}
+
 #[test]
 fn process_liveness_distinguishes_the_current_and_invalid_pid() {
     assert!(process_is_running(std::process::id()));
@@ -453,6 +463,131 @@ fn write_tool_programs(root: &Path, relative: &str, fields: &[(&str, &str)]) {
     fs::write(root.join(relative), toml::to_string(&document).unwrap()).unwrap();
 }
 
+#[cfg(windows)]
+#[test]
+fn owned_local_paths_accept_native_spelling_without_relaxing_file_or_link_guards() {
+    use super::local_test_path::{LocalTestPathKind as Kind, validate_local_test_path};
+
+    let temporary = tool_program_directory();
+    let root = temporary.path().join("后端 空间");
+    let managed = root.join(".local-tests").join("中文 目录");
+    fs::create_dir_all(&managed).unwrap();
+    let native_root = fs::canonicalize(&root).unwrap();
+    let normal_root =
+        std::path::PathBuf::from(native_root.to_str().unwrap().strip_prefix(r"\\?\").unwrap());
+    let normal = normal_root
+        .join(".local-tests")
+        .join("中文 目录")
+        .join("结果.bin");
+    let native = native_root
+        .join(".local-tests")
+        .join("中文 目录")
+        .join("结果.bin");
+    let roots = [normal_root.as_path(), native_root.as_path()];
+    let values = [normal.as_path(), native.as_path()];
+    for root in roots {
+        for value in values {
+            assert_eq!(
+                validate_local_test_path(value, root, Kind::OutputFile)
+                    .unwrap()
+                    .as_os_str(),
+                value.as_os_str()
+            );
+            assert!(validate_local_test_path(value, root, Kind::ExistingFile).is_err());
+            let directory = value.parent().unwrap();
+            assert!(validate_local_test_path(directory, root, Kind::ExistingDirectory).is_ok());
+            assert!(validate_local_test_path(directory, root, Kind::ExistingFile).is_err());
+        }
+        for bad in [
+            temporary.path().join("outside.bin"),
+            root.join(".local-tests-other").join("结果.bin"),
+            root.join(".local-tests"),
+            std::path::PathBuf::from("relative.bin"),
+            std::path::PathBuf::from(format!(
+                r"{}\..\结果.bin",
+                native.parent().unwrap().display()
+            )),
+            std::path::PathBuf::from(format!(
+                r"{}\.\结果.bin",
+                native.parent().unwrap().display()
+            )),
+        ] {
+            assert!(validate_local_test_path(&bad, root, Kind::OutputFile).is_err());
+        }
+    }
+    assert!(!normal.exists());
+    let target = root.join(".local-tests").join("真实 目标");
+    fs::create_dir(&target).unwrap();
+    let link = managed.join("link");
+    std::os::windows::fs::symlink_dir(&target, &link).unwrap();
+    for root in roots {
+        for value in [
+            normal_root
+                .join(".local-tests")
+                .join("中文 目录")
+                .join("link")
+                .join("结果.bin"),
+            native_root
+                .join(".local-tests")
+                .join("中文 目录")
+                .join("link")
+                .join("结果.bin"),
+        ] {
+            let error = validate_local_test_path(&value, root, Kind::OutputFile).unwrap_err();
+            assert!(error.contains("路径不能经过符号链接或 junction"));
+            assert!(!target.join("结果.bin").exists());
+        }
+    }
+    fs::remove_dir(&link).unwrap();
+    fs::write(&normal, b"owned-original").unwrap();
+    for root in roots {
+        for value in values {
+            let error = validate_local_test_path(value, root, Kind::OutputFile).unwrap_err();
+            assert!(error.contains("输出文件已存在"));
+            assert!(validate_local_test_path(value, root, Kind::ExistingFile).is_ok());
+            assert_eq!(fs::read(value).unwrap(), b"owned-original");
+        }
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn owned_path_components_keep_unc_share_and_drive_boundaries_without_network_io() {
+    use super::local_test_path::strip_local_test_prefix;
+
+    let boundaries = [
+        r"\\server\share\后端 根\.local-tests",
+        r"\\?\UNC\server\share\后端 根\.local-tests",
+    ];
+    let values = [
+        r"\\server\share\后端 根\.local-tests\中文 数据.bin",
+        r"\\?\UNC\server\share\后端 根\.local-tests\中文 数据.bin",
+    ];
+    for boundary in boundaries {
+        for value in values {
+            assert_eq!(
+                strip_local_test_prefix(Path::new(value), Path::new(boundary)),
+                Some(Path::new("中文 数据.bin"))
+            );
+        }
+    }
+    for (value, boundary) in [
+        (r"\\?\UNC\other\share\后端 根\.local-tests\x", boundaries[0]),
+        (
+            r"\\?\UNC\server\other\后端 根\.local-tests\x",
+            boundaries[0],
+        ),
+        (r"E:\后端 根\.local-tests\x", r"D:\后端 根\.local-tests"),
+        (r"\\.\D:\后端 根\.local-tests\x", r"D:\后端 根\.local-tests"),
+        (
+            r"\\server\share\后端 根\.local-tests-other\x",
+            boundaries[1],
+        ),
+    ] {
+        assert!(strip_local_test_prefix(Path::new(value), Path::new(boundary)).is_none());
+    }
+}
+
 #[test]
 fn python_runner_owns_utf8_arguments_and_environment() {
     assert_eq!(
@@ -592,7 +727,7 @@ fn stdin_capture_transports_utf8_once_without_environment_and_preserves_failure(
         value: value.into(),
     })
     .unwrap();
-    let output = super::process::command_output_with_input(
+    let output = command_output_with_input(
         Path::new("."),
         executable.to_str().unwrap(),
         &args,
@@ -618,7 +753,7 @@ fn stdin_capture_transports_utf8_once_without_environment_and_preserves_failure(
         marker: marker.clone(),
     })
     .unwrap();
-    let error = super::process::command_output_with_input(
+    let error = command_output_with_input(
         Path::new("."),
         executable.to_str().unwrap(),
         &args,

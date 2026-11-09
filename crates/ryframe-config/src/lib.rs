@@ -29,7 +29,10 @@ mod user_import_config;
 #[cfg(feature = "tools")]
 pub use release_stage::{ReleaseStage, release_stage, stable_version, workspace_version};
 #[cfg(feature = "tools")]
-pub use tool_config::{GeneratorSettings, ToolSettings, VerificationSettings, WorkspaceSettings};
+pub use tool_config::{
+    GeneratorSettings, LinuxObserverSettings, ToolSettings, VerificationSettings,
+    WindowsRedisSettings, WorkspaceSettings,
+};
 
 pub use app_config::AppSettings;
 pub use auth_config::AuthConfig;
@@ -63,3 +66,14 @@ pub use tenant_data_config::{
 pub use user_import_config::UserImportConfig;
 
 pub use crate::app_config::AppConfig;
+
+#[cfg(all(test, feature = "tools"))]
+fn test_directory(prefix: &str) -> tempfile::TempDir {
+    let parent =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local-tests/config-fixtures");
+    std::fs::create_dir_all(&parent).expect("创建工作区配置测试目录");
+    tempfile::Builder::new()
+        .prefix(prefix)
+        .tempdir_in(parent)
+        .expect("创建隔离配置测试目录")
+}

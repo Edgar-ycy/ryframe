@@ -82,6 +82,36 @@ fn hash(value: &Value) -> String {
 }
 
 #[test]
+fn formal_rebind_rejects_invalid_manifest_without_python_or_new_result() {
+    let fixture = Fixture::new();
+    fixture.write("manifest.json", &json!({}));
+    fixture.write("successor.json", &json!({}));
+    let before = fixture.files();
+    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args([
+            "check",
+            "recovery",
+            "clone",
+            "seed-runtime",
+            "--operation",
+            "source-rebind",
+            "--run-dir",
+        ])
+        .arg(&fixture.run)
+        .arg("--request")
+        .arg(fixture.run.join("successor.json"))
+        .arg("--write")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("Traceback"));
+    assert_eq!(fixture.files(), before);
+    assert!(!fixture.run.join("run.lock").exists());
+    assert!(!fixture.run.join("results").exists());
+}
+
+#[test]
 fn bound_rebind_transition_is_read_only_and_rejects_endpoint_and_unknown_operations() {
     let fixture = Fixture::new();
     let old = json!({"attempt":7,"request":{},"data_directory":{},"api_url":"http://127.0.0.1:29000",
@@ -274,7 +304,7 @@ fn lineage_generation_models_use_existing_bound_protocol_without_writes() {
         "attempts":[{"number":68,"stage":"seed-runtime","mode":"source-generation-start",
             "status":"failed","result":null,"error_type":"ValueError"}],"previous":67}}});
     let mut request: Value =
-        serde_json::from_slice(&fixture.request("coordinator", parameters.clone())).unwrap();
+        serde_json::from_slice(&fixture.request("coordinator", parameters)).unwrap();
     request["operation"] = json!("generation-guard");
     let before = fixture.files();
     let output = invoke(&serde_json::to_vec(&request).unwrap());

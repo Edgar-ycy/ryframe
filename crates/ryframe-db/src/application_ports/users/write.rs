@@ -93,6 +93,15 @@ struct DatabaseUserWriteTransaction {
 
 #[async_trait::async_trait]
 impl UserWriteTransaction for DatabaseUserWriteTransaction {
+    async fn increment_authorization_epoch(
+        &self,
+        tenant_id: &str,
+    ) -> ryframe_kernel::AppResult<i32> {
+        self.authorization_cache
+            .increment_tenant_epoch_in_transaction(&self.transaction, tenant_id)
+            .await
+    }
+
     async fn lock_configuration<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()> {
         TenantConfigTransferRepository
             .lock_tenant_configuration_in_txn(&self.transaction, tenant_id, None)

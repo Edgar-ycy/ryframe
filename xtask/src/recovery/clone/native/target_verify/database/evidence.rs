@@ -9,12 +9,54 @@ use super::super::{
         export::transport::{CommandOutput, CommandSpec, StdoutTarget, Transport},
         json::{self as json_io, text},
     },
-    input::{TargetContext, request_physical},
+    input::request_physical,
+    storage::StorageInputs,
 };
-use crate::Result;
+use crate::{Result, cli::CloneSide};
 
 #[path = "stdout.rs"]
 pub(crate) mod stdout;
+
+/// 交接复用固定 identity/ownership 查询及原有空输出核验规则，不接受任意 SQL。
+pub(crate) fn verify_query<T: Transport, F: Fn() -> Result<()>>(
+    context: &StorageInputs<'_>,
+    configuration: &Value,
+    transport: &T,
+    checkpoint: &F,
+    database: &Value,
+    check: &str,
+) -> Result<String> {
+    verify_query_for_side(
+        context,
+        configuration,
+        CloneSide::Target,
+        transport,
+        checkpoint,
+        database,
+        check,
+    )
+}
+
+/// 两侧交接只复用固定查询，按原配置根保留输出及一次空输出重读。
+pub(crate) fn verify_query_for_side<T: Transport, F: Fn() -> Result<()>>(
+    context: &StorageInputs<'_>,
+    configuration: &Value,
+    side: CloneSide,
+    transport: &T,
+    checkpoint: &F,
+    database: &Value,
+    check: &str,
+) -> Result<String> {
+    let port = Port {
+        configuration: Some(configuration),
+        side,
+        context,
+        transport,
+        checkpoint,
+        directory: context.observation_dir,
+    };
+    Evidence::default().mysql(&port, database, check)
+}
 #[cfg(test)]
 #[path = "../../../../../../tests/internal/target_stdout_native.rs"]
 mod stdout_tests;
@@ -72,7 +114,9 @@ pub(super) struct Evidence {
 }
 
 pub(super) struct Port<'a, T, F> {
-    pub(super) context: &'a TargetContext,
+    pub(super) configuration: Option<&'a Value>,
+    pub(super) side: CloneSide,
+    pub(super) context: &'a StorageInputs<'a>,
     pub(super) transport: &'a T,
     pub(super) checkpoint: &'a F,
     pub(super) directory: &'a Path,
@@ -186,13 +230,23 @@ impl Evidence {
             .and_then(|name| name.to_str())
             .and_then(|name| name.split_once("-target-").map(|(_, key)| key))
             .ok_or("库存输出文件名无效")?;
-        let args = vec![
-            "target-inventory".into(),
-            "--target".into(),
-            key.into(),
-            "--output".into(),
-            output.display().to_string(),
-        ];
+        let args = super::super::resume_prefix::configured_command(
+            port.context
+                .maintenance_executable("tenant-data")?
+                .to_str()
+                .ok_or("库存工具路径不是UTF8")?,
+            port.context.request,
+            vec![
+                "target-inventory".into(),
+                "--target".into(),
+                key.into(),
+                "--output".into(),
+                output.display().to_string(),
+            ],
+        )?
+        .into_iter()
+        .skip(1)
+        .collect();
         let result = self.command(
             port,
             port.context.maintenance_executable("tenant-data")?,
@@ -273,7 +327,7 @@ impl Evidence {
         stdout: Option<&mut stdout::VerifiedStdout>,
     ) -> Result<CommandOutput> {
         (port.checkpoint)()?;
-        let mut environment = port.context.environment.clone();
+        let mut environment = port.context.command_environment();
         environment.remove("MYSQL_PWD");
         let login = port.directory.join("unused-login.cnf");
         if fs::symlink_metadata(&login).is_ok() {
@@ -282,7 +336,7 @@ impl Evidence {
         environment.insert("MYSQL_TEST_LOGIN_FILE".into(), login.display().to_string());
         let mut command = vec![program.display().to_string()];
         command.extend(args.clone());
-        let secrets = secrets(port.context)?;
+        let secrets = secrets(port.context, port.configuration, port.side)?;
         let target = match &stdout {
             Some(output) => output.target()?,
             None => StdoutTarget::Capture,
@@ -372,15 +426,19 @@ impl Evidence {
     }
 }
 
-fn mysql_arguments(context: &TargetContext, database: &Value, check: &str) -> Result<Vec<String>> {
-    let sql = match check {
-        "identity" => "SELECT @@server_uuid, DATABASE();",
-        "ownership" => {
-            "SELECT resource_kind, scope_id, marker FROM ryframe_resource_ownership ORDER BY resource_kind;"
-        }
-        _ => return Err("数据库核验只允许固定 identity 或 ownership 查询".into()),
-    };
-    request_physical::defaults_connection(&context.backend, database)?;
+fn mysql_arguments(
+    context: &StorageInputs<'_>,
+    database: &Value,
+    check: &str,
+) -> Result<Vec<String>> {
+    let sql = verification_sql(check)?;
+    request_physical::defaults_connection(context.backend, database)?;
+    let mut args = mysql_client_arguments(database)?;
+    args.extend(["--execute".to_owned(), sql.to_owned()]);
+    Ok(args)
+}
+
+pub(crate) fn mysql_client_arguments(database: &Value) -> Result<Vec<String>> {
     Ok(vec![
         format!(
             "--defaults-file={}",
@@ -392,12 +450,20 @@ fn mysql_arguments(context: &TargetContext, database: &Value, check: &str) -> Re
         "--skip-column-names".into(),
         "--binary-mode".into(),
         "--default-character-set=utf8mb4".into(),
-        "--execute".into(),
-        sql.into(),
     ])
 }
 
-fn mysql_receipt(
+pub(crate) fn verification_sql(check: &str) -> Result<&'static str> {
+    Ok(match check {
+        "identity" => "SELECT @@server_uuid, DATABASE();",
+        "ownership" => {
+            "SELECT resource_kind, scope_id, marker FROM ryframe_resource_ownership ORDER BY resource_kind;"
+        }
+        _ => return Err("数据库核验只允许固定 identity 或 ownership 查询".into()),
+    })
+}
+
+pub(crate) fn mysql_receipt(
     database: &Value,
     check: &str,
     output: &stdout::VerifiedStdout,
@@ -439,7 +505,11 @@ fn response(output: &CommandOutput) -> Result<String> {
         .to_owned())
 }
 
-fn secrets(context: &TargetContext) -> Result<Vec<String>> {
+fn secrets(
+    context: &StorageInputs<'_>,
+    bound: Option<&Value>,
+    side: CloneSide,
+) -> Result<Vec<String>> {
     let mut result = context
         .environment
         .values()
@@ -447,7 +517,7 @@ fn secrets(context: &TargetContext) -> Result<Vec<String>> {
         .cloned()
         .collect::<Vec<_>>();
     for db in context.databases()? {
-        let connection = request_physical::defaults_connection(&context.backend, &db)?;
+        let connection = request_physical::defaults_connection(context.backend, &db)?;
         if let Some(password) = connection["password"]
             .as_str()
             .filter(|value| !value.is_empty())
@@ -463,13 +533,13 @@ fn secrets(context: &TargetContext) -> Result<Vec<String>> {
             result.push(value.into());
         }
     }
-    let configuration = super::binding::configuration(context)?;
+    let configuration = super::binding::source_configuration(context, bound, side)?;
     let directory = Path::new(text(&configuration["directory"], "库存配置目录")?);
     let table =
         crate::rate_limit::load_app_table(&context.execution_backend()?, Some(directory), "test")
             .map_err(|_| "库存凭据配置无法安全读取")?;
     file_secrets(&serde_json::to_value(table)?, false, &mut result);
-    if super::binding::configuration(context)? != configuration {
+    if super::binding::source_configuration(context, bound, side)? != configuration {
         return Err("采集脱敏字段期间配置已变化".into());
     }
     result.sort_by_key(|value| std::cmp::Reverse(value.len()));

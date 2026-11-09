@@ -13,7 +13,6 @@ import test_devex_clone as clone_fixture
 import devex_clone_export as export
 import devex_clone_source_proof as proof
 from restore_build import ROLES, build_command, file_digest
-from rate_limit_client import load_app_table
 from full_stack_runtime import configuration_digest
 from source_inventory import build_source_domains, canonical_digest
 from restore_reference_io import DATA_HEADER
@@ -41,9 +40,6 @@ class SourceFixture:
             source["databases"].append({**{key: row[key] for key in ("key", "kind", "mode", "server_uuid", "database")},
                                         "defaults_file": str(client), "defaults_sha256": file_digest(client)["sha256"]})
         self.write_config(source)
-        objects = load_app_table(self.backend, {"APP_ENV": "test"}, config_dir=self.backend / "config")["object_storage"]
-        source["s3"] = {field: objects[field] for field in ("endpoint", "region", "access_key", "secret_key")}
-        self.object_configuration = configuration_binding(self.backend, self.backend / "config")
         tool = self.local / "external.exe"
         tool.write_bytes(b"fixed-external-fixture")
         source_inventory = {
@@ -56,7 +52,7 @@ class SourceFixture:
             "format_version": 2, "kind": "restore-backend-build",
             "sources": build_source_domains(source_inventory, "backend"),
             "build": {"commands": {role: build_command(role) for role in ROLES},
-                      "profile": "dev", "target": "fixture", "jobs": "cargo-default",
+                      "profile": "dev", "target": "fixture", "jobs": "4",
                       "toolchain": {"cargo": "fixture", "rustc": "fixture"},
                       "environment": {"variables": [], "sha256": canonical_digest([])}},
             "artifacts": {},
@@ -71,9 +67,16 @@ class SourceFixture:
             identities[role] = {"pid": number, "started": "12345", "executable": str(path)}
         with patch.dict(os.environ, {"APP_ENV": "test"}):
             api_configuration = configuration_digest(self.backend, self.backend / "config")
+            worker_config = self.backend / "worker-config"
+            worker_config.mkdir()
+            for config_file in (self.backend / "config").glob("*.toml"):
+                (worker_config / config_file.name).write_bytes(config_file.read_bytes())
+            worker_configuration = configuration_digest(self.backend, worker_config)
         self.runtime = {"backend_root": str(self.backend), "scope_id": self.scope, "worker_ready_url": "http://127.0.0.1:19210/readyz",
                         "api_config_dir": str(self.backend / "config"),
                         "api_configuration_sha256": api_configuration,
+                        "worker_config_dir": str(worker_config),
+                        "worker_configuration_sha256": worker_configuration,
                         "artifacts": {role: {"path": item["executable"], "sha256": item["sha256"]} for role, item in self.build["artifacts"].items()}}
         self.maintenance = {"format_version": 1, "kind": "devex-clone-tool-build",
                             "source": {"snapshot": self.snapshot, "worktree_fingerprint": self.fingerprint}, "artifacts": {}}
@@ -109,7 +112,7 @@ class SourceFixture:
                         patch.object(proof, "verify_source", side_effect=self.verify_source),
                         patch.object(proof, "verify_tools", side_effect=lambda *_: copy.deepcopy(self.maintenance)),
                         patch.object(proof, "verify_runtime", side_effect=lambda *_: copy.deepcopy(self.runtime)),
-                        patch.object(proof, "process_identity", return_value=None), patch.object(proof, "require_closed_port")]
+                        patch.object(proof, "require_recorded_producer_stopped"), patch.object(proof, "require_closed_port")]
         self.mocks = [value.start() for value in self.patches]
         for value in self.patches:
             test.addCleanup(value.stop)
@@ -128,6 +131,22 @@ class SourceFixture:
     def save_request(self):
         self.request_path.write_text(json.dumps(self.request), encoding="utf-8")
 
+    def relocate_configuration(self):
+        """沿正式 runtime 文件绑定迁至非默认目录，移走默认目录防止测试静默回退。"""
+        parent = self.local / "runtime-configuration"
+        parent.mkdir()
+        for role, name in (("api", "config"), ("worker", "worker-config")):
+            directory = parent / name
+            Path(self.runtime[f"{role}_config_dir"]).rename(directory)
+            self.runtime[f"{role}_config_dir"] = str(directory)
+            self.runtime[f"{role}_configuration_sha256"] = configuration_digest(self.backend, directory)
+        self.object_configuration = configuration_binding(self.backend, parent / "config")
+        self.request["source"]["s3"] = {"configuration": self.object_configuration}
+        self.request["runtime"] = self.bind(self.runtime_dir / "runtime.json", self.runtime)
+        self.registry["runtime_sha256"] = self.request["runtime"]["sha256"]
+        self.request["producers_registry"] = self.bind(self.local / "producers.json", self.registry)
+        self.save_request()
+
     def write_config(self, source):
         config = self.backend / "config"
         config.mkdir(exist_ok=True)
@@ -144,6 +163,8 @@ class SourceFixture:
             content += "[[tenant_data.targets]]\n" + "".join(f"{key}={json.dumps(value)}\n" for key, value in target.items())
         (config / "app.toml").write_text("# 隔离服务连接和凭据全部由 app.test.toml 提供。\n", encoding="utf-8")
         (config / "app.test.toml").write_text(content, encoding="utf-8")
+        self.object_configuration = configuration_binding(self.backend, config)
+        source["s3"] = {"configuration": self.object_configuration}
 
     def inventory(self, command):
         self.inventory_count += 1

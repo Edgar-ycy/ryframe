@@ -71,7 +71,7 @@ class SeedSourceProtocolTests(unittest.TestCase):
         wrong_write["request"]["write"] = 0
         wrong_version = json.loads(self.encoded())
         wrong_version["format_version"] = True
-        missing_request = json.loads(self.encoded("source-rebind"))
+        missing_request = json.loads(self.encoded("source-generation-start"))
         missing_request["request"]["request"] = None
         extra_request = json.loads(self.encoded("source-export"))
         extra_request["request"]["request"] = str(self.request)
@@ -86,10 +86,18 @@ class SeedSourceProtocolTests(unittest.TestCase):
         for source in (
             "{}", json.dumps(unknown), json.dumps(wrong_write), json.dumps(wrong_version),
             json.dumps(missing_request), json.dumps(extra_request), json.dumps(relative),
-            json.dumps(newline), duplicate, "not-json",
+            json.dumps(newline), duplicate, "not-json", self.encoded("source-register"),
+            self.encoded("source-rebind"),
         ):
-            with self.subTest(source=source), self.assertRaises(cli.SeedSourceProtocolError):
-                cli.decode_seed_source_protocol(source)
+            with self.subTest(source=source), patch.object(cli, "execute") as execute:
+                with self.assertRaises(cli.SeedSourceProtocolError):
+                    cli.decode_seed_source_protocol(source)
+                execute.assert_not_called()
+        with patch.object(cli, "execute") as execute, patch.object(cli, "evidence_path") as inputs:
+            with self.assertRaisesRegex(ValueError, "Python seed-runtime 不接受此操作"):
+                cli.dispatch(SimpleNamespace(command="seed-runtime", operation="source-register"), self.backend)
+            execute.assert_not_called()
+            inputs.assert_not_called()
 
     def test_private_protocol_preserves_success_domain_failure_and_removed_environment(self):
         source = self.encoded()

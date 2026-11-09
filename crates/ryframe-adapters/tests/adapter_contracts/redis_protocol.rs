@@ -4,7 +4,7 @@ use ryframe_adapters::{
         bounded_redis_ttl_secs, idempotency_guard_key, idempotency_meta_key,
         idempotency_response_key,
     },
-    monitor::{CacheCommandStatsStatus, parse_redis_command_stats, parse_redis_info},
+    monitor::{parse_redis_command_stats, parse_redis_info},
 };
 use ryframe_config::ResourceScopeId;
 
@@ -71,12 +71,4 @@ fn command_stats_parser_keeps_only_command_entries() {
         Some("calls=3,usec=5")
     );
     assert_eq!(parsed.len(), 1);
-}
-
-#[test]
-fn unavailable_status_remains_distinct_from_not_configured() {
-    assert_ne!(
-        CacheCommandStatsStatus::Unavailable,
-        CacheCommandStatsStatus::NotConfigured
-    );
 }

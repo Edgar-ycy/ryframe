@@ -1,5 +1,22 @@
 use super::*;
 
+#[test]
+fn runtime_stop_proof_accepts_ready_path_only_after_both_ports_are_released() {
+    let api = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let worker = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let api_url = format!("http://{}", api.local_addr().unwrap());
+    let worker_url = format!("http://{}/readyz", worker.local_addr().unwrap());
+    assert!(require_closed_runtime_ports(&api_url, &worker_url).is_err());
+    drop(api);
+    assert!(require_closed_runtime_ports(&api_url, &worker_url).is_err());
+    drop(worker);
+    require_closed_runtime_ports(&api_url, &worker_url).unwrap();
+    for suffix in ["/readyz?token=hidden", "/other", ""] {
+        let invalid = worker_url.replace("/readyz", suffix);
+        assert!(require_closed_runtime_ports(&api_url, &invalid).is_err());
+    }
+}
+
 fn input() -> (Value, BTreeMap<String, Value>) {
     let identity = |pid, started| {
         json!({"pid":pid,"started":started,
@@ -103,10 +120,12 @@ fn runtime_receipts_bind_both_roles_scope_and_the_verified_artifact_executable()
     let mut context = Context {
         backend: backend.clone(),
         run_dir: holder.path().to_owned(),
+        output_dir: holder.path().join("e0001"),
         mode: "run".into(),
         attempt: 1,
         manifest: Value::Null,
         request,
+        object_identity: json!({}),
         request_path: holder.path().join("request.json"),
         environment: BTreeMap::new(),
         execution_backend: backend,
@@ -173,9 +192,11 @@ fn full_runtime_fixture(root: &Path) -> (Context, Value) {
     let context = Context {
         backend: crate::workspace::root_dir(),
         run_dir: root.to_owned(),
+        output_dir: root.join("e0001"),
         mode: "source-register".into(),
         attempt: 1,
         manifest: Value::Null,
+        object_identity: json!({}),
         request: json!({}),
         request_path: root.join("request.json"),
         environment: BTreeMap::from([("APP_ENV".into(), "test".into())]),

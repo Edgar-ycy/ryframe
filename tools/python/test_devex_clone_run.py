@@ -65,13 +65,13 @@ class RunTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertEqual(observed, [("initialized.json", 7)])
 
-    def test_failed_export_preserves_history_and_next_stage_attempt_reuses_run(self):
-        with patch.object(run, "run_export", side_effect=ValueError("fixture")):
+    def test_failed_copy_preserves_history_and_next_stage_attempt_reuses_run(self):
+        with patch.object(run, "run_copy", side_effect=ValueError("fixture")):
             with self.assertRaises(ValueError):
-                run.execute(self.backend, self.directory, "export", "run")
+                run.execute(self.backend, self.directory, "copy", "run")
         self.assertFalse((self.directory / "run.lock").exists())
-        with patch.object(run, "run_export", return_value={"status": "export_verified", "remote_writes": 0}):
-            result = run.execute(self.backend, self.directory, "export", "run")
+        with patch.object(run, "run_copy", return_value={"status": "copy_completed", "remote_writes": 0}):
+            result = run.execute(self.backend, self.directory, "copy", "run")
         self.assertEqual(result["attempt"], 2)
         observed = state.load_state(self.directory)
         self.assertEqual([a["status"] for a in observed["attempts"]], ["failed", "passed"])
@@ -87,57 +87,21 @@ class RunTests(unittest.TestCase):
         namespace = {}
         exec(compile("def fail():\n    password = 'fixture-secret'\n    raise ValueError(password)\n",
                      str(filename), "exec"), namespace)
-        with patch.object(run, "run_export", side_effect=lambda *args: namespace["fail"]()):
+        with patch.object(run, "run_copy", side_effect=lambda *args: namespace["fail"]()):
             with self.assertRaisesRegex(ValueError, "fixture-secret"):
-                run.execute(self.backend, self.directory, "export", "run")
+                run.execute(self.backend, self.directory, "copy", "run")
         failure = read_json(self.directory / "failure-0001.json")
         self.assertEqual(failure["frames"], [{"file": "tools/python/failure_fixture.py", "function": "fail", "line": 3}])
         self.assertNotIn("fixture-secret", json.dumps(failure))
         self.assertNotIn(str(self.backend), json.dumps(failure["frames"]))
 
     def test_diagnostic_write_failure_keeps_original_error_and_failed_stage(self):
-        with patch.object(run, "run_export", side_effect=ValueError("original")), \
+        with patch.object(run, "run_copy", side_effect=ValueError("original")), \
                 patch.object(run, "record_failure", side_effect=OSError("diagnostic")):
             with self.assertRaisesRegex(ValueError, "original") as raised:
-                run.execute(self.backend, self.directory, "export", "run")
+                run.execute(self.backend, self.directory, "copy", "run")
         self.assertEqual(state.load_state(self.directory)["attempts"][-1]["status"], "failed")
         self.assertEqual(raised.exception.__notes__, ["阶段位置证据保存失败：OSError"])
-
-    def test_source_storage_failure_blocks_export_before_existing_proof_is_read(self):
-        with patch("devex_clone_storage.current_storage_binding", side_effect=ValueError("latest storage stopped")) as storage, \
-                patch("devex_clone_export_verify.verify_source_export") as verify, \
-                patch("devex_clone_source.export_source") as export:
-            with self.assertRaisesRegex(ValueError, "storage stopped"):
-                run.execute(self.backend, self.directory, "export", "run")
-        storage.assert_called_once_with(self.backend, self.directory, "source")
-        verify.assert_not_called()
-        export.assert_not_called()
-        self.assertEqual(state.load_state(self.directory)["attempts"][-1]["status"], "failed")
-
-    def test_source_storage_failure_after_export_verification_prevents_publication(self):
-        verified = {"export": {"logical_inventory_sha256": "a" * 64}}
-        original = {key: Path(self.value[key]["path"]).read_bytes() for key in ("source_request", "source_export", "initialized")}
-        with patch("devex_clone_storage.current_storage_binding", side_effect=[None, ValueError("latest storage failed")]) as storage, \
-                patch("devex_clone_export_verify.verify_source_export", return_value=verified) as verify:
-            with self.assertRaisesRegex(ValueError, "storage failed"):
-                run.execute(self.backend, self.directory, "export", "run")
-        self.assertEqual(storage.call_count, 2)
-        verify.assert_called_once_with(self.backend, self.value["source_export"])
-        latest = state.load_state(self.directory)["attempts"][-1]
-        self.assertEqual(latest["status"], "failed")
-        self.assertIsNone(latest["result"])
-        self.assertEqual({key: Path(self.value[key]["path"]).read_bytes() for key in original}, original)
-
-    def test_source_without_storage_registration_retains_existing_export_contract(self):
-        verified = {"export": {"logical_inventory_sha256": "a" * 64}}
-        with patch("devex_clone_storage.current_storage_binding", return_value=None) as storage, \
-                patch("devex_clone_export_verify.verify_source_export", return_value=verified):
-            result = run.execute(self.backend, self.directory, "export", "run")
-        self.assertEqual(result["result"], {"status": "export_verified", "export": self.value["source_export"],
-            "logical_inventory_sha256": "a" * 64, "remote_writes": 0, "restore_qualified": False})
-        self.assertEqual(storage.call_count, 2)
-        self.assertTrue(all(item.args == (self.backend, self.directory, "source") for item in storage.call_args_list))
-        self.assertEqual(state.load_state(self.directory)["attempts"][-1]["status"], "passed")
 
     def test_changed_input_is_rejected_before_any_execution(self):
         Path(self.value["source_environment"]["path"]).write_text('{"environment":{}}', encoding="utf-8")
@@ -145,23 +109,6 @@ class RunTests(unittest.TestCase):
             run.execute(self.backend, self.directory, "copy", "resume")
         operation.assert_not_called()
         self.assertEqual(state.load_state(self.directory)["attempts"], [])
-
-    def test_storage_restart_preflight_failure_does_not_create_attempt_or_lock(self):
-        request = self.local / "storage-request.json"
-        before = {str(path.relative_to(self.directory)): path.read_bytes()
-                  for path in self.directory.rglob("*") if path.is_file()}
-        with patch("devex_clone_storage.preflight_restart", side_effect=PermissionError("protected successor")) as preflight, \
-                patch("devex_clone_storage.execute_storage") as execute, \
-                self.assertRaisesRegex(PermissionError, "protected successor"):
-            run.execute(self.backend, self.directory, "storage-target", "restart",
-                        storage_request=request)
-        preflight.assert_called_once_with(self.backend, self.directory, self.value, "target", request)
-        execute.assert_not_called()
-        self.assertEqual(state.load_state(self.directory)["attempts"], [])
-        self.assertFalse((self.directory / "run.lock").exists())
-        self.assertFalse(any(self.directory.glob("controller-*.json")))
-        self.assertEqual(before, {str(path.relative_to(self.directory)): path.read_bytes()
-                                  for path in self.directory.rglob("*") if path.is_file()})
 
     def test_generation_request_is_rejected_before_attempt_or_controller_is_created(self):
         request = self.local / "generation-request.json"
@@ -247,84 +194,6 @@ class RunTests(unittest.TestCase):
                 protect.assert_not_called()
                 continuation.assert_not_called()
 
-    def test_cache_action_uses_registered_controller_and_fixed_request(self):
-        request = self.local / "cache-input.json"
-        def action(backend, directory, value, mode, number, supplied):
-            self.assertEqual((backend, directory, value, mode, number, supplied),
-                             (self.backend, self.directory, self.value, "restart", 1, request))
-            self.assertEqual(state.load_state(directory)["attempts"][-1]["stage"], "cache-target")
-            self.assertTrue((directory / "controller-0001.json").is_file())
-            self.assertTrue((directory / "run.lock/owner.json").is_file())
-            return {"status": "cache_ready"}
-        with patch("devex_clone_cache.execute_cache", side_effect=action):
-            result = run.execute(self.backend, self.directory, "cache-target", "restart", cache_request=request)
-        self.assertEqual(result["attempt"], 1)
-        self.assertEqual(state.load_state(self.directory)["attempts"][-1]["status"], "passed")
-
-    def test_cache_cleanup_uses_saved_manifest_when_product_or_private_environment_changed(self):
-        Path(self.value["target_environment"]["path"]).write_text('{}', encoding="utf-8")
-        with patch("source_fingerprints.artifact_sources", side_effect=ValueError("changed build")), \
-                patch("devex_clone_cache.execute_cache", return_value={"status": "cache_stopped"}) as stop:
-            result = run.execute(self.backend, self.directory, "cache-target", "stop")
-        self.assertEqual(result["result"]["status"], "cache_stopped")
-        stop.assert_called_once_with(self.backend, self.directory, self.value, "stop", 1, None)
-
-    def test_successor_preflight_is_required_before_bypassing_product_bridge(self):
-        proof = {"successor": "same"}
-        with patch("devex_clone_cache.preflight_successor", return_value=proof) as preflight, \
-                patch("source_fingerprints.artifact_sources", side_effect=AssertionError("old product bridge")), \
-                patch("devex_clone_cache.execute_cache", return_value={"status": "cache_ready"}):
-            run.execute(self.backend, self.directory, "cache-target", "restart", cache_request=self.local / "successor.json")
-        self.assertEqual(preflight.call_count, 2)
-
-    def test_rejected_successor_does_not_create_attempt_or_locks(self):
-        before = {path: path.read_bytes() for path in self.directory.rglob("*") if path.is_file()}
-        with patch("devex_clone_cache.preflight_successor", side_effect=ValueError("different successor")), \
-                patch("devex_clone_cache.execute_cache") as execute, self.assertRaises(ValueError):
-            run.execute(self.backend, self.directory, "cache-target", "restart", cache_request=self.local / "successor.json")
-        execute.assert_not_called()
-        self.assertEqual(before, {path: path.read_bytes() for path in self.directory.rglob("*") if path.is_file()})
-        self.assertFalse((self.directory / "run.lock").exists())
-
-    def test_published_storage_checks_quiet_source_before_skipping_old_product_bridge(self):
-        write_json(self.directory / "seed-runtime.json", {"historical": True})
-        with patch("devex_clone_seed_rebind.published_restart_guard") as published, \
-                patch("devex_clone_storage.preflight_restart") as preflight, \
-                patch("source_fingerprints.artifact_sources", side_effect=AssertionError("old product bridge")), \
-                patch("devex_clone_storage.execute_storage", return_value={"status": "storage_ready"}):
-            run.execute(self.backend, self.directory, "storage-target", "restart")
-        self.assertEqual(published.call_count, 2)
-        preflight.assert_called_once()
-
-    def test_unpublished_or_unknown_storage_cannot_bypass_before_begin(self):
-        write_json(self.directory / "seed-runtime.json", {"historical": True})
-        before = state.binding(self.directory / "state.json")
-        with patch("devex_clone_seed_rebind.published_restart_guard", side_effect=ValueError("unknown write")), \
-                patch("devex_clone_storage.execute_storage") as execute, self.assertRaises(ValueError):
-            run.execute(self.backend, self.directory, "storage-target", "restart")
-        execute.assert_not_called()
-        self.assertEqual(before, state.binding(self.directory / "state.json"))
-        self.assertFalse((self.directory / "run.lock").exists())
-
-    def test_cache_cli_status_is_readonly_and_mutations_require_explicit_write(self):
-        import devex_clone_run_cli as cli
-
-        args = SimpleNamespace(command="cache", run_dir=self.directory, operation="status", request=None, write=False)
-        before = state.binding(self.directory / "state.json")
-        with patch("devex_clone_cache.cache_status", return_value={"status": "cache_unregistered"}) as status, \
-                patch.object(cli, "execute") as execute:
-            self.assertEqual(cli.dispatch(args, self.backend)["status"], "cache_unregistered")
-            status.assert_called_once_with(self.backend, self.directory)
-            for operation in ("restart", "stop", "recover", "reconcile", "resume"):
-                args.operation = operation
-                with self.subTest(operation=operation), self.assertRaises(ValueError):
-                    cli.dispatch(args, self.backend)
-            args.operation, args.write, args.request = "resume", True, self.local / "request.json"
-            with self.assertRaises(ValueError):
-                cli.dispatch(args, self.backend)
-            execute.assert_not_called()
-        self.assertEqual(state.binding(self.directory / "state.json"), before)
-
     def test_runtime_environment_and_identity_are_delegated_without_build(self):
         value = dict(self.value)
         request = self.file("runtime-request", {"source": {"runtime_dir": str(self.local / "runtime"), "api_url": "http://127.0.0.1:18210"}})
@@ -356,15 +225,6 @@ class RunTests(unittest.TestCase):
             path: path.read_bytes() for path in self.local.rglob("*") if path.is_file()
         })
 
-    def test_target_verify_invalid_resume_fails_before_attempt_or_guard(self):
-        before = (self.directory / "state.json").read_bytes()
-        with patch.object(run, "begin") as begin, \
-                patch.object(run, "process_guard", side_effect=AssertionError("不能创建控制 guard")), \
-                self.assertRaisesRegex(ValueError, "只支持首次 run"):
-            run.execute(self.backend, self.directory, "target-verify", "resume")
-        begin.assert_not_called()
-        self.assertEqual((self.directory / "state.json").read_bytes(), before)
-
     def test_stop_does_not_require_current_source_to_match_build(self):
         with patch("source_fingerprints.artifact_sources", side_effect=ValueError("changed product")) as bridge, \
                 patch.object(run, "run_runtime", return_value={"state": "stopped"}):
@@ -393,18 +253,15 @@ class RunTests(unittest.TestCase):
         self.assertEqual(recover.call_args.args[-1], descriptor)
         self.assertEqual(state.load_state(self.directory)['attempts'][0]['mode'], 'recover-session')
 
-    def test_arm_input_is_local_handoff_and_does_not_open_product_bridge_context(self):
+    def test_retired_arm_input_cannot_create_a_python_attempt(self):
         request = self.local / "arm-request.json"
         write_json(request, {"kind": "fixture-arm-input"})
-        expected = {"status": "seed_arm_input_published", "remote_writes": 0}
-        with patch("source_fingerprints.artifact_sources",
-                   side_effect=AssertionError("unexpected product context")) as sources, \
-                patch("devex_clone_seed_runtime.execute_seed", return_value=expected) as publish:
-            result = run.execute(self.backend, self.directory, "seed-runtime", "arm-input",
-                                 seed_request=request)
-        self.assertEqual(result["result"], expected)
-        sources.assert_not_called()
-        self.assertEqual(publish.call_args.args[3:6], ("arm-input", 1, request))
+        original = (self.directory / "state.json").read_bytes()
+        with patch("devex_clone_seed_runtime.execute_seed") as publish, \
+                self.assertRaisesRegex(ValueError, "Rust 正式入口"):
+            run.execute(self.backend, self.directory, "seed-runtime", "arm-input", seed_request=request)
+        publish.assert_not_called()
+        self.assertEqual((self.directory / "state.json").read_bytes(), original)
 
     def test_target_start_requires_complete_copy_and_holds_worker_for_schedule_actions(self):
         output = Path(self.value["copy_directory"])
@@ -430,18 +287,17 @@ class RunTests(unittest.TestCase):
                 run.require_target_copy(self.backend, self.directory, self.value, ("api", "worker"))
 
     def test_partial_ledger_only_allows_a_complete_zero_write_copy(self):
-        from devex_clone_transfer import TransferSteps
-
         output = Path(self.value["copy_directory"])
         output.mkdir()
         saved = {"initialized": self.value["initialized"], "source_export": self.value["source_export"],
                  "plan_sha256": "a" * 64, "generation_sha256": "b" * 64}
         item = {"key": "shared-control"}
+        database_id = "database-075921cce671fc36b9360281d8b631a2"
         result = {"status": "data_steps_verified", "plan_sha256": saved["plan_sha256"],
                   "generation_sha256": saved["generation_sha256"], "written_steps": 0,
                   "source_export_sha256": self.value["source_export"]["sha256"],
                   "fresh_target_sha256": self.value["initialized"]["sha256"], "pending_target_actions": [],
-                  "unchanged_databases": 1, "unchanged_database_images": {TransferSteps.db_step(item): {"observed": True}}}
+                  "unchanged_databases": 1, "unchanged_database_images": {database_id: {"observed": True}}}
         write_json(output / "session.json", saved)
         write_json(output / "result.json", result)
         number = state.begin(self.directory, "copy", "resume", self.sources)
@@ -450,6 +306,10 @@ class RunTests(unittest.TestCase):
         with patch("devex_clone_ledger.CloneLedger") as ledger, patch("devex_clone.verify_plan_result", return_value=SimpleNamespace(plan=plan)):
             ledger.return_value.inspect.return_value = {"status": "partial", "steps": {}}
             run.require_target_copy(self.backend, self.directory, self.value, ("api", "worker"))
+            plan["databases"] = [{"key": "different"}]
+            with self.assertRaises(ValueError):
+                run.require_target_copy(self.backend, self.directory, self.value, ("api",))
+            plan["databases"] = [item]
             plan["objects"] = [{"pending": True}]
             with self.assertRaises(ValueError):
                 run.require_target_copy(self.backend, self.directory, self.value, ("api",))
@@ -464,9 +324,9 @@ class RunTests(unittest.TestCase):
 
     def test_changed_source_during_stage_cannot_publish_success(self):
         with patch("source_fingerprints.current_execution_source", side_effect=[self.sources, {"changed": True}]), \
-                patch.object(run, "run_export", return_value={"status": "export_verified"}):
+                patch.object(run, "run_copy", return_value={"status": "copy_completed"}):
             with self.assertRaises(ValueError):
-                run.execute(self.backend, self.directory, "export", "run")
+                run.execute(self.backend, self.directory, "copy", "run")
         self.assertEqual(state.load_state(self.directory)["attempts"][0]["status"], "failed")
 
     def test_final_source_check_failure_preserves_result_without_publishing_success(self):
@@ -476,9 +336,9 @@ class RunTests(unittest.TestCase):
             raise ValueError("final source check")
 
         with patch("source_fingerprints.artifact_sources", side_effect=source_context), \
-                patch.object(run, "run_export", return_value={"status": "export_verified"}):
+                patch.object(run, "run_copy", return_value={"status": "copy_completed"}):
             with self.assertRaises(ValueError):
-                run.execute(self.backend, self.directory, "export", "run")
+                run.execute(self.backend, self.directory, "copy", "run")
         attempt = state.load_state(self.directory)["attempts"][0]
         self.assertEqual(attempt["status"], "failed")
         self.assertIsNotNone(attempt["result"])
@@ -492,22 +352,22 @@ class RunTests(unittest.TestCase):
             raise OSError("lock release")
 
         with patch.object(run, "claim_run_lock", side_effect=failing_lock), \
-                patch.object(run, "run_export", return_value={"status": "export_verified"}):
+                patch.object(run, "run_copy", return_value={"status": "copy_completed"}):
             with self.assertRaises(OSError):
-                run.execute(self.backend, self.directory, "export", "run")
+                run.execute(self.backend, self.directory, "copy", "run")
         self.assertEqual(state.load_state(self.directory)["attempts"][0]["status"], "failed")
 
     def test_failed_lock_acquisition_does_not_finish_another_attempt(self):
         state.begin(self.directory, "copy", "resume", self.sources)
         with state.run_lock(self.directory), self.assertRaises(ValueError):
-            run.execute(self.backend, self.directory, "export", "run")
+            run.execute(self.backend, self.directory, "copy", "run")
         self.assertEqual(state.load_state(self.directory)["attempts"][0]["status"], "running")
 
     def test_concurrent_control_rejected_and_result_tampering_detected(self):
         with state.run_lock(self.directory), self.assertRaises(ValueError):
-            run.execute(self.backend, self.directory, "export", "run")
-        with patch.object(run, "run_export", return_value={"status": "export_verified"}):
-            run.execute(self.backend, self.directory, "export", "run")
+            run.execute(self.backend, self.directory, "copy", "run")
+        with patch.object(run, "run_copy", return_value={"status": "copy_completed"}):
+            run.execute(self.backend, self.directory, "copy", "run")
         (self.directory / "results/0001.json").write_text('{}', encoding="utf-8")
         with self.assertRaises(ValueError):
             state.load_state(self.directory)

@@ -10,8 +10,8 @@ RyFrame 是面向企业后台的 Rust 2024 框架，与 Vue 3 管理端配套使
 
 后端和前端是独立仓库，以下命令在后端仓库根目录执行。本地示例使用 Windows PowerShell。首次启动、联调和可选的开发步骤都无需手工创建 Git 忽略目录，构建和运行目录由工具按需创建。MySQL、Redis 和 RustFS/MinIO/S3 兼容存储可以在满足版本、协议和连接要求的任意平台或远程服务器运行，不要求 WSL。
 
-1. 安装 rustup，在仓库内运行 `rustup show`，使用 `rust-toolchain.toml` 固定的正式 Rust、rustfmt 和 Clippy。
-2. 准备 MySQL 8.0.16 或更高版本（不以 MariaDB 替代），以及具备当前数据库建库、迁移和业务读写权限的账号。Redis 使用 RESP 连接，当前验收基线为 Redis 7.x（CI 使用 7.4.9），按部署方式提供 AUTH、独立 database 和 TLS。文件存储默认使用本地目录，也支持 RustFS、MinIO 和 S3 兼容服务。
+1. Windows 原生构建先安装 Visual Studio 或 Build Tools 的“Desktop development with C++”工作负载，包含目标架构的 MSVC C/C++ 工具与 Windows SDK，见 [rustup 官方 Windows MSVC 前置说明](https://rust-lang.github.io/rustup/installation/windows-msvc.html)。再安装 rustup，在仓库内运行 `rustup show`，使用 `rust-toolchain.toml` 固定的正式 Rust、rustfmt 和 Clippy。
+2. 准备 MySQL 8.0.16 或更高版本（不以 MariaDB 替代），以及具备当前数据库建库、迁移和业务读写权限的账号。Redis 使用 RESP 连接，当前验收基线为 Redis 7.x（CI 使用 7.4.9），按部署方式提供 AUTH、独立 database 和 TLS。公共配置的文件存储默认使用本地目录，但 `config/app.dev.toml` 会覆盖为 RustFS；不使用对象存储服务时，须按下方片段在私有开发配置中显式改为 `local`。也支持 MinIO 和 S3 兼容服务。实时消息的 WebSocket 票据依赖可用 Redis；`redis.mode="optional"` 下应用就绪不代表实时消息可用，验收实时消息时应配置 `required` 并提供可连接的 Redis。
 3. 使用数据库客户端创建空库，例如：
 
 ```sql
@@ -57,17 +57,17 @@ cargo serve -- --config-dir ../ryframe-dev-config
 
 ## 数据库、配置与 SQL 导入
 
-`APP_ENV=dev|test|prod` 是唯一项目配置环境入口。配置按公共 `app.toml`、必须存在的 `app.<environment>.toml` 依次合并；密码、JWT、监控、Redis 与存储凭据直接使用明文字段。CLI 通过 `--config-dir <directory>` 选择配置目录，默认 `config`，本页本机示例统一显式使用仓库外的 `../ryframe-dev-config`；应用相对路径以当前工作目录解析，生成器相对路径以后端 Workspace 根目录解析。数组在环境文件中整体替换，不能只覆盖其中一项。多库的 primary、replicas、sources，租户共享控制库、共享业务库、独立库，placement、TLS、连接池和须并入应用配置的完整数据库拓扑 TOML 片段见[数据指南](docs/data.md#租户路由)。`app.locales_dir` 在 TOML 中显式指定，默认 `locales`，普通应用相对进程当前工作目录解析；不读取 `APP_LOCALES_DIR`，生产缺少资源严格失败，开发环境可使用内嵌回退。框架维护者的共享 MySQL 测试配置见[集成验证](docs/development.md#集成验证)；真实协议当前未验收。部署四角色模板与私有配置目录已集成，资产结构及 CI 工具测试通过；真实容器、镜像和部署整链仍未验收，局部验证不等于整体门禁通过。
+`APP_ENV=dev|test|prod` 是唯一项目配置环境入口。配置按可省略的公共 `app.toml`、必须存在的 `app.<environment>.toml` 依次递归合并；省略公共文件时，环境文件须完整提供必填配置，已存在但不可读或损坏的公共文件仍失败；密码、JWT、监控、Redis 与存储凭据直接使用明文字段。CLI 通过 `--config-dir <directory>` 选择配置目录，默认 `config`，本页本机示例统一显式使用仓库外的 `../ryframe-dev-config`；应用相对路径以当前工作目录解析，生成器相对路径以后端 Workspace 根目录解析。数组在环境文件中整体替换，不能只覆盖其中一项。多库的 primary、replicas、sources，租户共享控制库、共享业务库、独立库，placement、TLS、连接池和完整数据库拓扑 TOML 片段（须合并到应用配置）见[数据指南](docs/data.md#租户路由)。`app.locales_dir` 在 TOML 中显式指定，默认 `locales`，普通应用相对进程当前工作目录解析；不读取 `APP_LOCALES_DIR`，生产缺少资源严格失败，开发环境可使用内嵌回退。框架维护者的共享 MySQL 测试配置见[集成验证](docs/development.md#集成验证)。部署四角色模板与私有配置目录已集成，资产结构及 CI 工具测试通过；真实容器、镜像和部署整链仍未验收，局部验证不等于整体门禁通过。
 
 ```powershell
 cargo migrate -- --config-dir ../ryframe-dev-config control export-sql --output .local-tests/control-init.sql --write
 ```
 
-推荐使用迁移命令初始化。需要直接导入时，先用上方命令导出完整 SQL。导出命令自动创建产物的父目录。`.local-tests/control-init.sql` 是命令生成的私有 SQL 文件。随后选择空库，按[数据指南](docs/data.md#控制库初始化-sql)遇错即停导入，再执行 `cargo migrate -- --config-dir ../ryframe-dev-config control verify`。正式导出包含密码哈希、后置约束、种子和迁移账本；`sql/ryframe_config.sql` 仅供源码审阅，不能代替正式文件。导入中断不自动重放或清库，也不通过 `control up` 猜测补齐。该 SQL 只初始化控制库；使用租户业务数据时仍须对实际目标执行 `tenant-data up` 和 `verify`。
+推荐使用迁移命令初始化。需要直接导入时，先用上方命令导出完整 SQL。导出命令自动创建产物的父目录。`.local-tests/control-init.sql` 是命令生成的私有 SQL 文件。随后选择空库，按[数据指南](docs/data.md#控制库初始化-sql)遇错即停导入，再执行 `cargo migrate -- --config-dir ../ryframe-dev-config control verify`。正式导出包含密码哈希、后置约束、种子和迁移账本；`sql/ryframe_config.sql` 仅供源码审阅，不能代替正式文件。导入中断不自动重放或清库，也不通过 `control up` 猜测补齐。该 SQL 一次初始化所选物理控制库内的控制面与 `shared-control` 租户数据面，包含两账本及已注册的两侧业务迁移；导入成功后直接执行 `control verify` 与 `tenant-data verify --target shared-control`，无需补初始化 `up`。独立 MySQL 租户目标仍须另行执行 `tenant-data up` 和 `verify`，不会由一份 SQL 跨实例初始化。SQL 在登记每次业务迁移前核验实际结构，最后复核框架结构、业务结构和账本；不一致即停止，不能把合法但偏离声明的 DDL 记为完成。
 
 租户业务库先创建空库并登记目标，再显式执行 `cargo migrate -- --config-dir ../ryframe-dev-config tenant-data up --target <target-key>` 和 `verify`。`--target` 使用配置中的目标键，不是数据库名；`--all` 只处理已登记目标。非生产重建使用 `cargo reset -- <参数>`，先停止 API、Worker 和调度器，步骤见[运维指南](docs/operations.md)。
 
-`cargo xtask dev --config-dir ../ryframe-dev-config` 使用完整私有文件快照管理 API 与 Worker；保存端口或根实例编号后复用二进制切换新代次，失败恢复旧配置与旧端口。相对配置目录以后端 Workspace 根目录解析，也可在工具文件的 `[development].config_dir` 指定；`--plan` 不读配置或执行任务。该监督器改造仍待集成运行验证，不能据此声称完整验收。
+`cargo xtask dev --config-dir ../ryframe-dev-config` 使用完整私有文件快照管理 API 与 Worker；保存端口或根实例编号后复用二进制切换新代次，失败恢复旧配置与旧端口。相对配置目录以后端 Workspace 根目录解析，也可在工具文件的 `[development].config_dir` 指定；`--plan` 不读配置或执行任务。
 
 ## 开发业务
 
@@ -105,6 +105,8 @@ cargo xtask build
 
 契约同步使用本次后端候选 OpenAPI 并原子更新前端派生文件；正式来源绑定与候选同步有不同验证要求。构建核对开始、结束的源码指纹，`--plan` 不执行任务。完整恢复、浏览器与性能验收仍需当前源码证据，不能把历史测量当作改造后的结果；当前不代表已具备正式版发布条件。
 
+`--plan` 的只读约束作用于工具启动后的任务：不执行任务、不编译业务描述符、不连接数据库、不创建锁、生成缓存或报告。`cargo generate` 和 `cargo xtask` 通过现有 Cargo 别名启动，首次使用或工具源码变化时仍可能先编译工具并写入构建目录。需要避免启动构建写入时，先显式构建，再直接运行 Cargo 返回的同一二进制及 `--plan`。
+
 ## 文档
 
 - [架构与扩展](docs/architecture.md)：模块边界、SDK 和业务装配。
@@ -114,3 +116,5 @@ cargo xtask build
 - [运维指南](docs/operations.md)：部署、升级、reset 和排障。
 
 字段、菜单、权限与默认值以 OpenAPI、访问目录、配置结构和命令帮助为准。MQTT、邮件、乐观锁等按需插件属于后续路线，本轮不增加占位接口或额外服务要求。
+
+物理数据库归属由首次初始化登记；既有无归属数据库须显式计划接管，冲突拒绝且不改业务数据。入口与停止生产者要求见[数据指南](docs/data.md#首次初始化与既有数据库归属接管)。

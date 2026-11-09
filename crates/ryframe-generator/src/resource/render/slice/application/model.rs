@@ -16,6 +16,19 @@ pub(crate) fn model(resource: &ResourceIr, header: &str) -> String {
     }
     output.push_str("}\n\n");
 
+    if resource.fields.iter().any(|field| field.database_default()) {
+        output.push_str("#[derive(Clone, Debug, PartialEq)]\n");
+        output.push_str(&format!("pub struct {pascal}Insert {{\n"));
+        for field in resource
+            .fields
+            .iter()
+            .filter(|field| !field.database_default())
+        {
+            output.push_str(&format!("    pub {}: {},\n", field.name, field.rust_type));
+        }
+        output.push_str("}\n\n");
+    }
+
     if !resource.relations.is_empty() {
         output.push_str("#[derive(Clone, Debug, PartialEq)]\n");
         output.push_str(&format!("pub struct {pascal}Detail {{\n"));

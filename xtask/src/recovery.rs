@@ -1,11 +1,12 @@
+#[path = "recovery/frontend_build.rs"]
+pub(crate) mod frontend_build;
 use std::path::Path;
 
 use crate::{
     Result,
     cli::{
-        CloneCommand, FreshTargetCommand, FreshTargetOptions, RecoveryCommand, SeedSourceOptions,
+        CloneCommand, FreshTargetCommand, RecoveryCommand, SeedSourceOperation, SeedSourceOptions,
     },
-    local_test_path::{LocalTestPathKind, validate_local_test_path},
     process::{protocol_stdin, run_with_stdin},
     workspace::root_dir,
 };
@@ -27,6 +28,8 @@ pub(crate) mod full_stack;
 pub(crate) mod inputs;
 #[path = "recovery/monitoring.rs"]
 pub(crate) mod monitoring;
+#[path = "recovery/process_tree.rs"]
+pub(in crate::recovery) mod process_tree;
 #[path = "recovery/reference.rs"]
 pub(crate) mod reference;
 #[path = "recovery/runtime.rs"]
@@ -63,69 +66,74 @@ fn clone_stdin(payload: &str) -> Result<std::process::Stdio> {
 
 fn run_seed_source(options: &SeedSourceOptions) -> Result<()> {
     let root = root_dir();
-    let payload = seed_source_protocol_at(options, &root)?;
-    run_with_stdin(
-        &root,
-        "python",
-        &["-B", "tools/python/devex_clone.py", "--private-stdin"],
-        clone_stdin(&payload)?,
-    )
+    let result = match options.operation {
+        SeedSourceOperation::GenerationStop
+        | SeedSourceOperation::GenerationRecover
+        | SeedSourceOperation::GenerationStatus
+        | SeedSourceOperation::GenerationStart => source::evidence::control::run(&root, options)?,
+        SeedSourceOperation::GenerationRebootStatus => {
+            source::evidence::reboot_status(&root, options)?
+        }
+        SeedSourceOperation::GenerationRebootClose => {
+            source::evidence::reboot_close(&root, options)?
+        }
+        SeedSourceOperation::Rebind => clone::native::seed::rebind::run(&root, options)?,
+        SeedSourceOperation::Export | SeedSourceOperation::ExportReconcile => {
+            if !options.write || options.request.is_some() {
+                return Err("seed 共享导出及采用要求 --write，且不接受外部请求".into());
+            }
+            let mut result = clone::native::lifecycle::stage::run_named(
+                &root,
+                &options.run_dir,
+                "seed-runtime",
+                options.operation.as_str(),
+                &clone::native::seed::shared_export::Runner,
+            )?;
+            let _ = result
+                .as_object_mut()
+                .ok_or("共享导出缺少统一阶段结果")?
+                .remove("result");
+            result
+        }
+        SeedSourceOperation::Register => {
+            if !options.write || options.request.is_some() {
+                return Err("来源登记要求 --write，且不接受外部请求文件".into());
+            }
+            let runner =
+                clone::native::seed::source_registration::runner::SourceRegisterRunner::new(&root);
+            clone::native::lifecycle::stage::run_named(
+                &root,
+                &options.run_dir,
+                "seed-runtime",
+                "source-register",
+                &runner,
+            )?
+        }
+    };
+    println!("{}", serde_json::to_string(&result)?);
+    Ok(())
 }
 
 fn run_clone(command: &CloneCommand) -> Result<()> {
+    let root = root_dir();
     match command {
         CloneCommand::Help => {
             println!("{}", crate::cli::CLONE_USAGE);
-            return Ok(());
+            Ok(())
         }
-        CloneCommand::Plan { .. }
-        | CloneCommand::Verify { .. }
-        | CloneCommand::Init { .. }
-        | CloneCommand::Status { .. }
-        | CloneCommand::Stage { .. }
-        | CloneCommand::Recover { .. }
-        | CloneCommand::Bridge { .. }
-        | CloneCommand::MaintenanceBuild { .. }
-        | CloneCommand::MaintenanceVerify { .. }
-        | CloneCommand::Storage(_) => {
-            return clone::native::run(command, &root_dir());
+        CloneCommand::Runtime(options)
+            if !clone::native::cache::handoff::selected(&root, options)? =>
+        {
+            let payload = clone::protocol(command, &root)?;
+            run_with_stdin(
+                &root,
+                "python",
+                &["-B", "tools/python/devex_clone.py", "--private-stdin"],
+                clone_stdin(&payload)?,
+            )
         }
-        _ => {}
+        _ => clone::native::run(command, &root),
     }
-    let root = root_dir();
-    let payload = clone::protocol(command, &root)?;
-    run_with_stdin(
-        &root,
-        "python",
-        &["-B", "tools/python/devex_clone.py", "--private-stdin"],
-        clone_stdin(&payload)?,
-    )
-}
-
-pub(crate) fn seed_source_protocol_at(options: &SeedSourceOptions, root: &Path) -> Result<String> {
-    validate_local_test_path(&options.run_dir, root, LocalTestPathKind::ExistingDirectory)?;
-    if let Some(request) = &options.request {
-        validate_local_test_path(request, root, LocalTestPathKind::ExistingFile)?;
-    }
-    let protocol = serde_json::json!({
-        "format_version": 1,
-        "kind": "ryframe-xtask-recovery-seed-source",
-        "native_tool": crate::check::python_suite::native_tool_binding()?,
-        "request": {
-            "backend_dir": path_argument(root, "后端目录")?,
-            "operation": options.operation.as_str(),
-            "run_dir": path_argument(&options.run_dir, "seed source 运行目录")?,
-            "request": options.request.as_deref()
-                .map(|value| path_argument(value, "seed source 请求"))
-                .transpose()?,
-            "write": options.write,
-        }
-    });
-    let payload = serde_json::to_string(&protocol)?;
-    if payload.contains(['\r', '\n', '\0']) {
-        return Err("seed source 私有协议不能包含换行符或 NUL".into());
-    }
-    Ok(payload)
 }
 
 fn run_fresh_target(command: &FreshTargetCommand) -> Result<()> {
@@ -137,39 +145,12 @@ fn run_fresh_target(command: &FreshTargetCommand) -> Result<()> {
         );
         return Ok(());
     };
-    let payload = fresh_target_protocol(options)?;
-    run_with_stdin(
-        &root_dir(),
-        "python",
-        &["-B", "tools/python/devex_clone.py", "--private-stdin"],
-        clone_stdin(&payload)?,
-    )
-}
-
-pub(crate) fn fresh_target_protocol(options: &FreshTargetOptions) -> Result<String> {
-    let path = |value: &Path| path_argument(value, "fresh-target 路径");
-    let optional_path = |value: &Option<std::path::PathBuf>| -> Result<Option<String>> {
-        value.as_deref().map(path).transpose()
-    };
-    Ok(serde_json::to_string(&serde_json::json!({
-        "format_version": 1,
-        "kind": "ryframe-xtask-recovery-fresh-target",
-        "native_tool": crate::check::python_suite::native_tool_binding()?,
-        "request": {
-            "backend_dir": path(&root_dir())?,
-            "operation": options.operation.as_str(),
-            "workspace": path(&options.workspace)?,
-            "request": optional_path(&options.request)?,
-            "environment": optional_path(&options.environment)?,
-            "storage_run": optional_path(&options.storage_run)?,
-            "observation_dir": optional_path(&options.observation_dir)?,
-            "write": options.write,
-        }
-    }))?)
-}
-
-fn path_argument(path: &Path, label: &str) -> Result<String> {
-    path.to_str()
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| format!("{label}必须能表示为 UTF-8 命令参数").into())
+    if options.operation.as_str() == "status" {
+        let value = clone::native::target_verify::fresh::observe(&root_dir(), &options.workspace)?;
+        println!("{}", serde_json::to_string(&value)?);
+        return Ok(());
+    }
+    let value = clone::native::target_verify::fresh::dispatch(&root_dir(), options)?;
+    println!("{}", serde_json::to_string(&value)?);
+    Ok(())
 }

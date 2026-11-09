@@ -1,5 +1,5 @@
 use super::{
-    dependency::{Dependencies, FrontendCommand, Python, failure},
+    dependency::{Dependencies, FrontendCommand, Native, failure},
     model::*,
 };
 use crate::{Result, process::ChildGroup, recovery::clone::native::json as strict};
@@ -8,7 +8,6 @@ use std::{
     fs,
     io::{Read, Seek, SeekFrom, Write},
     path::Path,
-    process::Stdio,
     sync::mpsc,
     thread,
     time::{Duration, Instant},
@@ -28,36 +27,27 @@ pub(super) fn command(binding: &Value, arguments: &Value, windows: bool) -> Resu
             "pnpm".into(),
         ]
     };
+    let backend = path(&binding["backend"]["path"])?;
+    if let Some(cache) = crate::process::pnpm_cache_argument(&backend)? {
+        command.push(cache);
+    }
     for arg in args {
         command.push(text(arg)?.into());
     }
     Ok(command)
 }
-pub(super) fn run(api: &mut Python, invocation: FrontendCommand<'_>) -> Result<Value> {
+pub(super) fn run(api: &mut Native, invocation: FrontendCommand<'_>) -> Result<Value> {
+    let (handoff, _request_file) = super::frontend::publish(&api.root, &invocation)?;
     let FrontendCommand {
         binding,
-        arguments,
-        environment,
+        arguments: _,
+        environment: _,
         log,
         directory: directory_path,
         timeout,
         secrets,
     } = invocation;
-    safe(directory_path)?;
-    fs::create_dir(directory_path)?;
-    let mut input = tempfile::tempfile_in(api.root.join(".local-tests"))?;
-    input.write_all(&serde_json::to_vec(&json!({"directory":directory_path,"scope_id":binding["scope_id"],"frontend":binding["frontend"]["path"],"command":command(binding,arguments,cfg!(windows))?,"environment":environment}))?)?;
-    input.seek(SeekFrom::Start(0))?;
-    let mut launch = api.command();
-    launch
-        .arg("--launch")
-        .stdin(input)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    let mut child = ChildGroup::new()?.spawn(launch)?;
-    let reader = child
-        .take_stdout_reader()?
-        .ok_or("浏览器受控进程缺少日志管道")?;
+    let (mut child, reader) = spawn(&api.root, directory_path, &handoff)?;
     let (tx, rx) = mpsc::channel();
     let capture = thread::spawn(move || {
         let _ = tx.send(capture(reader, MAX_LOG as usize));
@@ -68,6 +58,13 @@ pub(super) fn run(api: &mut Python, invocation: FrontendCommand<'_>) -> Result<V
         loop {
             if let Some(status) = child.try_wait()? {
                 code = status.code().filter(|code| *code != 0);
+                if !status.success()
+                    && evidence(api, directory_path, text(&binding["scope_id"])?).is_ok()
+                {
+                    code = completed_exit_code(directory_path)?
+                        .filter(|value| *value != 0)
+                        .or(code);
+                }
                 check(status.success(), "前端命令失败；核对脱敏日志与原始退出状态")?;
                 break;
             }
@@ -108,8 +105,63 @@ pub(super) fn run(api: &mut Python, invocation: FrontendCommand<'_>) -> Result<V
         )),
     }
 }
+
+fn spawn(
+    root: &Path,
+    directory_path: &Path,
+    handoff: &Value,
+) -> Result<(crate::process::ManagedChild, std::io::PipeReader)> {
+    let mut input = tempfile::tempfile_in(root.join(".local-tests"))?;
+    input.write_all(&serde_json::to_vec(&json!({"format_version":1,"kind":"ryframe-full-stack-process","operation":"run-frontend","arguments":{"backend":root,"directory":directory_path,"request_binding":handoff}}))?)?;
+    input.seek(SeekFrom::Start(0))?;
+    let mut launch = crate::process::child_command(std::env::current_exe()?);
+    super::dependency::clean_environment(&mut launch);
+    let (reader, writer) = std::io::pipe()?;
+    launch
+        .arg("__full-stack-process")
+        .stdin(input)
+        .stdout(writer.try_clone()?)
+        .stderr(writer)
+        .current_dir(root);
+    let child = ChildGroup::new()?.spawn(launch)?;
+    Ok((child, reader))
+}
+
+fn completed_exit_code(directory: &Path) -> Result<Option<i32>> {
+    let (tree, tree_guard) = document(&directory.join("frontend-tree.json"))?;
+    let id = text(&tree["operation_id"])?;
+    let (result, result_guard) =
+        document(&directory.join(format!("frontend-tree-{id}-result.json")))?;
+    strict::exact(
+        &result,
+        &[
+            "format_version",
+            "kind",
+            "operation_id",
+            "process",
+            "exit_code",
+            "termination",
+        ],
+        "前端退出收据",
+    )?;
+    check(
+        result["format_version"] == 1
+            && result["kind"] == "full-stack-process-tree-result"
+            && result["operation_id"] == tree["operation_id"]
+            && result["process"] == tree["process"]
+            && matches!(
+                result["termination"].as_str(),
+                Some("natural" | "normal" | "forced")
+            ),
+        "前端退出收据与原树不匹配",
+    )?;
+    let code = i32::try_from(result["exit_code"].as_i64().ok_or("前端退出码无效")?)?;
+    unchanged(&tree_guard)?;
+    unchanged(&result_guard)?;
+    Ok(Some(code))
+}
 type Captured = std::io::Result<(Vec<u8>, bool)>;
-fn finish_log(
+pub(super) fn finish_log(
     rx: mpsc::Receiver<Captured>,
     capture: thread::JoinHandle<()>,
     log: &Path,
@@ -277,18 +329,39 @@ mod tests {
         );
     }
     #[test]
-    fn windows_command_uses_bound_node_and_literal_arguments() {
-        let binding = json!({"tools":{"corepack":{"path":"corepack.cmd"},"node":{"path":"node.exe"},"corepack_entry":{"path":"a b/corepack.js"}}});
-        assert_eq!(
-            command(&binding, &json!(["check", "a&b", "中文"]), true).unwrap(),
-            [
-                "node.exe",
-                "a b/corepack.js",
-                "pnpm",
-                "check",
-                "a&b",
-                "中文"
-            ]
-        );
+    fn frontend_commands_preserve_bound_tools_literal_arguments_and_optional_cache() {
+        let local = crate::workspace::root_dir().join(".local-tests");
+        fs::create_dir_all(&local).unwrap();
+        let root = tempfile::tempdir_in(local).unwrap();
+        let binding = json!({"backend":{"path":root.path()},"tools":{"corepack":{"path":"corepack.cmd"},"node":{"path":"node.exe"},"corepack_entry":{"path":"a b/corepack.js"}}});
+        for configured in [false, true] {
+            if configured {
+                fs::create_dir(root.path().join(".local-tests")).unwrap();
+                fs::write(
+                    root.path().join(".local-tests/tools.toml"),
+                    "[verification]\npnpm_cache_dir='缓存 with spaces'\n",
+                )
+                .unwrap();
+            }
+            for windows in [false, true] {
+                let mut expected: Vec<String> = if windows {
+                    vec!["node.exe".into(), "a b/corepack.js".into(), "pnpm".into()]
+                } else {
+                    vec!["corepack.cmd".into(), "pnpm".into()]
+                };
+                if configured {
+                    expected.push(format!(
+                        "--config.cache-dir={}",
+                        root.path().join("缓存 with spaces").display()
+                    ));
+                }
+                expected.extend(["check", "a&b", "中文"].map(String::from));
+                assert_eq!(
+                    command(&binding, &json!(["check", "a&b", "中文"]), windows).unwrap(),
+                    expected
+                );
+            }
+        }
+        assert!(!root.path().join("缓存 with spaces").exists());
     }
 }

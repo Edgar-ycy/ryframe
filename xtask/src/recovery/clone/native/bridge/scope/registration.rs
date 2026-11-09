@@ -97,6 +97,8 @@ pub(super) fn load(
     }
     Ok(Registered {
         receipt_hash: bridge::digest::plan_hash(&receipt)?,
+        build_path: path.to_path_buf(),
+        build_sha256: document::text(&value["build"]["sha256"], "桥接构建摘要")?.to_owned(),
         build_identity: build_identity(&receipt)?,
         inventory,
         root: declared,

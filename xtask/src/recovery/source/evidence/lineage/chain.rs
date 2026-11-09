@@ -1,9 +1,12 @@
 use super::{Context, dataset::Dataset, documents, fields};
 use crate::{
     Result,
-    recovery::clone::native::{digest, resources::common},
+    recovery::clone::native::{
+        digest, input::BUCKETS, resources::common, s3::protocol::validate_key,
+    },
 };
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 
 pub(super) fn endpoint(value: &Value) -> Result<()> {
     let url =
@@ -221,12 +224,16 @@ pub(super) fn verification(
     endpoint(&target["target"]["api_url"])?;
     endpoint(&target["target"]["frontend_url"])?;
     let source = &args["source"]["request"]["source"];
+    verify_object_coverage(
+        &result["objects"],
+        &dataset.value,
+        dataset.files,
+        &args["copy_plan"],
+    )?;
     if result["status"] != "post_copy_existing_data_verified"
         || result["registration"] != args["post_descriptor"]
         || result["worker_must_remain_stopped"] != true
         || result["restore_qualified"] != false
-        || result["objects"]
-            != json!({"business_objects":dataset.files,"additional_objects":1,"additional_objects_downloaded":true,"all_scoped_keys_verified":true})
         || evidence["format_version"] != 1
         || evidence["status"] != "copy_existing_data_verified"
         || evidence["side"] != "copy_target"
@@ -258,3 +265,59 @@ pub(super) fn verification(
         json!({"result":descriptor,"evidence":result["evidence"],"target":target_descriptor,"target_value":target["target"]}),
     )
 }
+
+fn verify_object_coverage(
+    receipt: &Value,
+    dataset: &Value,
+    files: u64,
+    copy_plan: &Value,
+) -> Result<()> {
+    let scope = copy_plan["target_scope"]
+        .as_str()
+        .ok_or("原复制目标对象 scope 缺失")?;
+    let mut remaining = BTreeMap::new();
+    for item in documents::array(&copy_plan["objects"], "原复制计划对象")? {
+        let bucket = item["bucket"].as_str().ok_or("原复制对象桶无效")?;
+        let key = item["target_key"]
+            .as_str()
+            .ok_or("原复制目标对象 key 无效")?;
+        validate_key(scope, key, false)?;
+        if !BUCKETS.contains(&bucket)
+            || remaining
+                .insert((bucket.to_owned(), key.to_owned()), &item["artifact"])
+                .is_some()
+        {
+            return Err("原复制目标对象桶或 key 重复或无效".into());
+        }
+    }
+    let mut matched = 0_u64;
+    for tenant in documents::array(&dataset["tenants"], "原业务租户")? {
+        for file in documents::array(&tenant["files"], "原业务对象样本")? {
+            let relative = file["file_path"].as_str().ok_or("原业务对象路径缺失")?;
+            let key = format!("{scope}/{relative}");
+            validate_key(scope, &key, false)?;
+            let artifact = remaining
+                .remove(&("uploads".to_owned(), key))
+                .ok_or("原业务对象重复或未匹配原复制计划 uploads")?;
+            if artifact["bytes"] != file["bytes"] || artifact["sha256"] != file["sha256"] {
+                return Err("原业务对象载荷与原复制计划不同".into());
+            }
+            matched += 1;
+        }
+    }
+    // 这里只核对历史 post-copy 观察覆盖，额外对象由完整像门禁另行核对。
+    if matched != files
+        || *receipt
+            != json!({
+                "business_objects":matched, "additional_objects":remaining.len(),
+                "additional_objects_downloaded":true, "all_scoped_keys_verified":true,
+            })
+    {
+        return Err("原业务复验没有覆盖同一复制计划的完整对象范围和精确补集".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[path = "../../../../../tests/unit/recovery/source/evidence/lineage/object_coverage.rs"]
+mod object_coverage_tests;

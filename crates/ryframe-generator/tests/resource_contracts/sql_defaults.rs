@@ -6,8 +6,11 @@ fn spec() -> ResourceSpec {
 
 #[test]
 fn database_clock_precision_ddl_and_canonical_metadata_stay_consistent() {
-    for precision in [0, 3, 6] {
+    for (precision, audit) in [(0, true), (3, true), (6, true), (6, false)] {
         let mut input = spec();
+        if !audit {
+            input.database.audit = None;
+        }
         let field = input
             .fields
             .iter_mut()

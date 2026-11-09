@@ -1,5 +1,8 @@
 //! 已完成初始化写入后的库存续作判定；所有读取都绑定登记与当前完整树。
-use super::super::{resume_baseline, resume_model, resume_observations, resume_prefix};
+use super::super::{
+    evidence_reset::history_request, resume_baseline, resume_model, resume_observations,
+    resume_prefix,
+};
 use super::*;
 
 pub(super) fn failure(value: &Value) -> Result<bool> {
@@ -19,7 +22,7 @@ pub(super) fn failure(value: &Value) -> Result<bool> {
         .all(|field| value[*field] == false))
 }
 
-pub(super) fn state(
+pub(in super::super) fn state(
     backend: &Path,
     target: &Path,
     descriptor: &Value,
@@ -71,6 +74,13 @@ pub(super) fn state(
         &prepared["generation"],
     )?;
     let plan = read(backend, &target.join("reset-plan.json"))?;
+    let configuration = super::super::fresh::initialize::reset_configuration::Snapshot::open(
+        backend,
+        target,
+        &request,
+        &prepared["generation"]["maintenance"],
+    )?;
+    let reset_request = configuration.request(&request)?;
     let available = resume_observations::file_map(&files)?.into_keys().collect();
     let (attempts, retry_files) = super::inventory_records::records(
         &super::inventory_records::Context {
@@ -81,15 +91,15 @@ pub(super) fn state(
             prepared_files,
             plan: &plan,
             executable: executable(&prepared["generation"]["maintenance"], "reset")?,
-            request: &request,
+            request: &reset_request,
             available: &available,
         },
         None,
     )?;
-    let operations = resume_prefix::operations(executable(
-        &prepared["generation"]["maintenance"],
-        "migrate",
-    )?)?;
+    let operations = resume_prefix::operations(
+        executable(&prepared["generation"]["maintenance"], "migrate")?,
+        &request,
+    )?;
     let prefix = resume_prefix::prefix(backend, target, &operations["operations"], true)?;
     let mut required =
         super::super::evidence_creation::paths(target, &creation, &reset, &prefix["completed"])?;
@@ -124,17 +134,43 @@ pub(super) fn state(
         super::super::tree::snapshot(backend, target, owned_lock)? == files,
         "库存续作判定期间目标证据树发生变化",
     )?;
+    configuration.check()?;
     Ok(
         json!({"resumable":true,"reason":null,"failure":failure_binding,"prepared_files":prepared_files,"baseline_files":baseline,"files":files}),
     )
 }
 
-pub(super) fn confirmed(backend: &Path, target: &Path, initialized: &Value) -> bool {
-    verify(backend, target, initialized).is_ok()
+pub(crate) fn confirmed(
+    backend: &Path,
+    target: &Path,
+    initialized: &Value,
+    owner: Option<&super::super::guard::Generation>,
+) -> bool {
+    verify(backend, target, initialized, owner).is_ok()
 }
 
-fn verify(backend: &Path, target: &Path, initialized: &Value) -> Result<()> {
-    let files = super::super::tree::snapshot(backend, target, false)?;
+fn verify(
+    backend: &Path,
+    target: &Path,
+    initialized: &Value,
+    owner: Option<&super::super::guard::Generation>,
+) -> Result<()> {
+    if let Some(owner) = owner {
+        owner.protects(target)?;
+    }
+    let result = verify_evidence(backend, target, initialized, owner);
+    let protected = owner.map_or(Ok(()), |owner| owner.protects(target));
+    result?;
+    protected
+}
+
+fn verify_evidence(
+    backend: &Path,
+    target: &Path,
+    initialized: &Value,
+    owner: Option<&super::super::guard::Generation>,
+) -> Result<()> {
+    let files = super::super::tree::protected_snapshot(backend, target, owner)?;
     let paths = names(target, r"^resume-initialize-.*\.confirmed\.json$")?;
     check(
         paths.len() == 1
@@ -200,6 +236,7 @@ fn verify(backend: &Path, target: &Path, initialized: &Value) -> Result<()> {
         &prepared["request"],
     )?;
     let request = read(backend, &bound(backend, &prepared["request"])?)?;
+    let reset_request = history_request(backend, target, &request, &prepared["generation"], owner)?;
     let available = resume_observations::file_map(&files)?.into_keys().collect();
     super::inventory_records::records(
         &super::inventory_records::Context {
@@ -210,13 +247,18 @@ fn verify(backend: &Path, target: &Path, initialized: &Value) -> Result<()> {
             prepared_files: &value["prepared_files"],
             plan: &read(backend, &target.join("reset-plan.json"))?,
             executable: executable(&prepared["generation"]["maintenance"], "reset")?,
-            request: &request,
+            request: &reset_request,
             available: &available,
         },
         Some((attempt, &value["at"])),
     )?;
     check(
-        super::super::tree::snapshot(backend, target, false)? == files,
+        super::super::tree::protected_snapshot(backend, target, owner)? == files,
         "库存续作判定期间目标证据树发生变化",
+    )?;
+    check(
+        history_request(backend, target, &request, &prepared["generation"], owner)?
+            == reset_request,
+        "库存续作 reset 执行请求在核验期间变化",
     )
 }

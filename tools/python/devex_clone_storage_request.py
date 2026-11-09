@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+from native_s3_client import configuration as object_configuration
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -37,12 +38,9 @@ def identity(value: dict) -> dict:
 def arguments(request: dict) -> list[str]:
     urls = [urlsplit(request[key]) for key in ("api_url", "console_url")]
     return [request["executable"]["path"], "server", "--address", f"{urls[0].hostname}:{urls[0].port}",
-            "--console-address", f"{urls[1].hostname}:{urls[1].port}", request["data_directory"]["path"]]
-
-
-def configuration(request: dict) -> dict:
-    return {"RUSTFS_CONSOLE_ENABLE": "true", **{"RUSTFS_" + key.upper() + "_FILE": item["path"]
-            for key, item in request["credential_files"].items()}}
+            "--console-address", f"{urls[1].hostname}:{urls[1].port}", "--console-enable",
+            "--access-key-file", request["credential_files"]["access_key"]["path"],
+            "--secret-key-file", request["credential_files"]["secret_key"]["path"], request["data_directory"]["path"]]
 
 
 def original_inputs(backend: Path, value: dict, request: dict) -> dict:
@@ -86,6 +84,7 @@ def original_inputs(backend: Path, value: dict, request: dict) -> dict:
         if plan_hash(review) != target["review"]["canonical_sha256"]:
             raise ValueError("目标原始审阅计划摘要不同")
         selected = target["target"]
+        exact(launch, {"format_version", "scope_id", "identity", "arguments", "credential_files"})
         old = target["storage"]["rustfs"]
         expected = review["services"]["rustfs"]
         if (old != {"identity": previous["identity"], "sha256": request["executable"]["sha256"],
@@ -94,9 +93,10 @@ def original_inputs(backend: Path, value: dict, request: dict) -> dict:
                 or expected["scope_id"] != request["scope_id"] or expected["data_dir"] != common["data_dir"]
                 or expected["api"] != request["api_url"] or expected["console"] != request["console_url"]
                 or launch.get("identity") != previous["identity"] or launch.get("arguments") != arguments(request)
-                or launch.get("credential_files") != request["credential_files"] or launch.get("environment") != configuration(request)):
+                or launch.get("credential_files") != request["credential_files"]):
             raise ValueError("目标重启不是原初始化中完整相同存储的代次过渡")
-    if selected["s3"]["endpoint"] != request["api_url"]:
+    objects = object_configuration(selected["s3"]["configuration"], backend) if side == "source" else selected["s3"]
+    if objects["endpoint"] != request["api_url"]:
         raise ValueError("存储端口不是原业务侧对象端点")
     return selected
 
@@ -128,9 +128,10 @@ def validate_request(backend: Path, directory: Path, value: dict, request: dict,
     exact(private, {"environment"})
     if not isinstance(private["environment"], dict) or any(type(k) is not str or type(v) is not str for k, v in private["environment"].items()):
         raise ValueError("存储环境必须是明确文本映射")
+    objects = object_configuration(selected["s3"]["configuration"], backend) if side == "source" else selected["s3"]
     for key, descriptor in request["credential_files"].items():
         contents = bound_file(backend, descriptor).read_text(encoding="utf-8").strip()
-        if not contents or contents != selected["s3"].get(key):
+        if not contents or contents != objects.get(key):
             raise ValueError("存储凭据文件与原业务认证不符")
     return copy.deepcopy(private["environment"])
 

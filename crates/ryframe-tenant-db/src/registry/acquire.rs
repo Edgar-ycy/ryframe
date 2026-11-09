@@ -34,18 +34,20 @@ impl TenantDatabaseTargetRegistry {
             match self.acquire_decision(&target).await? {
                 AcquireDecision::Ready(lease) => return Ok(lease),
                 AcquireDecision::Wait(mut signal) => loop {
-                    let status = *signal.borrow_and_update();
+                    let status = signal.borrow_and_update().clone();
                     match status {
                         OpeningStatus::Ready => break,
-                        OpeningStatus::Failed => {
+                        OpeningStatus::Failed(source) => {
                             return Err(TenantDataError::TargetUnavailable {
                                 target_key: target.key.to_string(),
+                                source,
                             });
                         }
                         OpeningStatus::Pending => {
                             if signal.changed().await.is_err() {
                                 return Err(TenantDataError::TargetUnavailable {
                                     target_key: target.key.to_string(),
+                                    source: None,
                                 });
                             }
                         }
@@ -162,18 +164,27 @@ impl TenantDatabaseTargetRegistry {
                     .unwrap_or(self.inner.default_pool_max_connections)
             });
         let status = match result {
-            Ok(connection) => {
-                let pool = Arc::new(OpenPool::new(connection, reserved, target.health.clone()));
+            Ok((connection, config)) => {
+                let pool = Arc::new(OpenPool::new(
+                    connection,
+                    config,
+                    reserved,
+                    target.health.clone(),
+                ));
                 state.pools.insert(target.key.clone(), pool);
                 OpeningStatus::Ready
             }
-            Err(_) => {
+            Err(error) => {
                 target
                     .health
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .status = TenantDatabaseTargetHealthStatus::Unavailable;
-                OpeningStatus::Failed
+                let source = match error {
+                    TenantDataError::TargetUnavailable { source, .. } => source,
+                    _ => None,
+                };
+                OpeningStatus::Failed(source)
             }
         };
         let _ = signal.send(status);
@@ -182,7 +193,7 @@ impl TenantDatabaseTargetRegistry {
     async fn connect_target(
         &self,
         target: &TargetDefinition,
-    ) -> Result<DatabaseConnection, TenantDataError> {
+    ) -> Result<(DatabaseConnection, DbConnection), TenantDataError> {
         let mysql = target.mysql.as_ref().ok_or_else(|| {
             TenantDataError::InvalidConfiguration(format!("mysql 目标 {} 缺少连接定义", target.key))
         })?;
@@ -213,24 +224,46 @@ impl TenantDatabaseTargetRegistry {
         )
         .await
         .map_err(|error| {
-            tracing::warn!(target = %target.key, %error, "租户数据目标连接失败");
-            TenantDataError::TargetUnavailable {
-                target_key: target.key.to_string(),
-            }
+            connection_failure(
+                target,
+                &connection_config,
+                "租户数据目标连接失败",
+                &error.to_string(),
+            )
         })?;
         ryframe_db::connection::ping(&connection)
             .await
             .map_err(|error| {
-                tracing::warn!(target = %target.key, %error, "租户数据目标健康检查失败");
-                TenantDataError::TargetUnavailable {
-                    target_key: target.key.to_string(),
-                }
+                connection_failure(
+                    target,
+                    &connection_config,
+                    "租户数据目标健康检查失败",
+                    &error.to_string(),
+                )
             })?;
         tracing::info!(
             target = %target.key,
             max_connections = pool_max_connections,
             "租户数据目标连接池已建立"
         );
-        Ok(connection)
+        Ok((connection, connection_config))
     }
 }
+
+fn connection_failure(
+    target: &TargetDefinition,
+    config: &DbConnection,
+    phase: &str,
+    message: &str,
+) -> TenantDataError {
+    let source = crate::error::SafeDatabaseCause::from_connection(config, message);
+    tracing::warn!(target = %target.key, error = %source, "{phase}");
+    TenantDataError::TargetUnavailable {
+        target_key: target.key.to_string(),
+        source: Some(source),
+    }
+}
+
+#[cfg(test)]
+#[path = "../../tests/registry/failures.rs"]
+mod failure_tests;

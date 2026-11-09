@@ -18,6 +18,7 @@ struct Options {
     run_id: Option<String>,
     server: Option<FixtureServer>,
     write: bool,
+    resume: bool,
 }
 
 pub(super) fn parse_fixture_runtime(args: &[String]) -> Result<FixtureRuntimeCommand, CliError> {
@@ -45,6 +46,9 @@ pub(super) fn parse_fixture_runtime(args: &[String]) -> Result<FixtureRuntimeCom
         )));
     }
     let options = parse_options(values)?;
+    if options.resume && operation != "build" {
+        return Err(CliError::new("--resume 只用于 fixture runtime build"));
+    }
     validate_write(operation, options.write)?;
     build_command(operation, options)
 }
@@ -54,6 +58,14 @@ fn parse_options(args: &[String]) -> Result<Options, CliError> {
     let mut index = 0;
     while index < args.len() {
         let name = args[index].as_str();
+        if name == "--resume" {
+            if options.resume {
+                return Err(CliError::new("--resume 不能重复"));
+            }
+            options.resume = true;
+            index += 1;
+            continue;
+        }
         if name == "--write" {
             if options.write {
                 return Err(CliError::new("--write 不能重复"));
@@ -82,6 +94,9 @@ fn parse_options(args: &[String]) -> Result<Options, CliError> {
 fn build_command(operation: &str, options: Options) -> Result<FixtureRuntimeCommand, CliError> {
     let paths = runtime_paths(operation, &options)?;
     match operation {
+        "build" if options.resume => {
+            require_plain(options, FixtureRuntimeCommand::ResumeBuild(paths))
+        }
         "build" => require_plain(options, FixtureRuntimeCommand::Build(paths)),
         "verify" => require_plain(options, FixtureRuntimeCommand::Verify(paths)),
         "start" => require_plain(options, FixtureRuntimeCommand::Start(paths)),
@@ -111,7 +126,7 @@ fn runtime_paths(operation: &str, options: &Options) -> Result<FixtureRuntimePat
         LocalTestPathKind::ExistingFile,
         "环境收据",
     )?;
-    let output_kind = if operation == "build" {
+    let output_kind = if operation == "build" && !options.resume {
         LocalTestPathKind::NewDirectory
     } else {
         LocalTestPathKind::ExistingDirectory

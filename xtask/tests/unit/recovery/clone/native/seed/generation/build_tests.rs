@@ -110,6 +110,7 @@ impl Fixture {
             fs::write(&log, log_text).unwrap();
             let mut command = build_command(feature, binary);
             command.pop();
+            command.truncate(command.len() - 2);
             command.extend([
                 "--jobs".into(),
                 "4".into(),
@@ -136,7 +137,10 @@ impl Drop for Fixture {
             self.execution
                 .starts_with(self.backend.join(".local-tests"))
         );
-        let cleanup = fs::remove_dir_all(&self.execution);
+        let cleanup = crate::ci::resource_gate::replay::remove_partial_worktree_directory(
+            &self.execution,
+            &self.backend.join(".local-tests"),
+        );
         if !std::thread::panicking() {
             cleanup.unwrap();
         }
@@ -154,6 +158,8 @@ fn build_command(feature: &str, name: &str) -> Vec<String> {
         feature,
         "--bin",
         name,
+        "--jobs",
+        "4",
         "--message-format=json",
     ]
     .into_iter()

@@ -11,12 +11,27 @@ frontend_dir = "../ryframe-vue3"
 # frontend_repository = "your-owner/ryframe-vue3"
 
 [verification]
+# 维护工具、API 和 Worker 共用的 Cargo 构建并发；范围 1..64，本机内存不足可覆盖为 1。
+build_jobs = 4
 # Python 检查入口；相对路径以后端根目录解析，缺省从操作系统 PATH 选择 python。
 # python_program = ".local-tests/python/Scripts/python.exe"
 # Node 检查入口；相同路径规则，缺省从操作系统 PATH 选择 node。
 # node_program = ".local-tests/node/node.exe"
+# 可选 pnpm 元数据缓存目录；相对后端根解析，缺省保留 pnpm 标准行为，不创建目录。
+# pnpm_cache_dir = ".local-tests/pnpm-cache"
+
+# Windows Redis 夹具使用显式绑定；复制到本机工具文件并填入实际文件的路径与摘要。
+# 不读取环境覆盖或从 PATH 查找。DLL 表登记该构建所需的同目录文件，仅填写文件名。
+# [verification.windows_redis]
+# program = "<Windows redis-server.exe 的完整绝对路径>"
+# sha256 = "<redis-server.exe 的 64 位小写十六进制 SHA-256>"
+# [verification.windows_redis.dlls]
+# "<依赖 DLL 的文件名>" = "<DLL 的 64 位小写十六进制 SHA-256>"
 
 [generator]
+# Cargo 缓存根；生成器、维护工具直接使用，显式配置时运行/夹具/全栈构建也共用。
+# 相对后端根解析，绝对路径可用；该字段不读取环境覆盖，未配置时各入口保留既定默认行为。
+# target_dir = "target"
 # 结构导入使用的应用配置目录；相对路径以后端工作区为基准。
 # config_dir = "config"
 # 创建自己的业务 crate 后设置 package，避免每次在命令行重复传入。

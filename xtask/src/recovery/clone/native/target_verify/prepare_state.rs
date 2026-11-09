@@ -68,7 +68,7 @@ fn result(
     json!({"resumable":resumable,"prepared":prepared,"reason":reason,"files":files,"pending_attempts":pending})
 }
 
-pub(super) fn state(backend: &Path, target: &Path, request: &Value) -> Result<Value> {
+pub(crate) fn state(backend: &Path, target: &Path, request: &Value) -> Result<Value> {
     bound(backend, request)?;
     validate_local_test_path(target, backend, LocalTestPathKind::StateDirectory)?;
     if !target.try_exists()? {

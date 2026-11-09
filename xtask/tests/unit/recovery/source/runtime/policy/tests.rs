@@ -30,7 +30,7 @@ fn login_rows_reject_duplicate_unsorted_invalid_hex_and_utf8() {
 
 #[test]
 fn unknown_cleanup_reports_observation_without_inventing_command_result() {
-    let cleanup = json!({"execution":"reconciled_unknown_lua_result","deleted":null,
+    let cleanup = json!({"execution":"reconciled_unknown_exec_result","attempt_phase":"normal","deleted":null,
         "expired_snapshot_keys":[],"after":vec![json!({});33]});
     let value = model::remote_writes(&json!({"cleanup":cleanup,"recovered":true})).unwrap();
     assert_eq!(value["confirmed_total_commands"], 22);
@@ -44,7 +44,7 @@ fn unknown_cleanup_reports_observation_without_inventing_command_result() {
 
 #[test]
 fn known_cleanup_requires_exact_accounting() {
-    let mut cleanup = json!({"execution":"confirmed_lua_result","deleted":32,
+    let mut cleanup = json!({"execution":"confirmed_watch_exec","attempt_phase":"normal","deleted":32,
         "expired_snapshot_keys":["snapshot"],"after":vec![json!({});33]});
     let value = model::remote_writes(&json!({"cleanup":cleanup,"recovered":false})).unwrap();
     assert_eq!(value["confirmed_total_commands"], 23);

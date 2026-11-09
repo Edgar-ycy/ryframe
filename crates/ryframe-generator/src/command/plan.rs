@@ -36,6 +36,7 @@ pub struct GenerationBuilder {
 pub struct GenerationPlan {
     pub workspace_root: PathBuf,
     pub config_directory: PathBuf,
+    pub target_dir: PathBuf,
     pub operation: GenerationOperation,
     pub package: String,
     pub models: Vec<String>,
@@ -123,6 +124,7 @@ impl GenerationBuilder {
     pub fn plan(self) -> Result<GenerationPlan, String> {
         let settings =
             ToolSettings::load(&self.root).map_err(|error| error.message().to_owned())?;
+        let target_dir = super::target_directory(&self.root, &settings)?;
         let defaults = &settings.generator;
         let config_directory = resolve_configuration_directory(
             &self.root,
@@ -164,6 +166,7 @@ impl GenerationBuilder {
         let plan = GenerationPlan {
             workspace_root: self.root,
             config_directory,
+            target_dir,
             operation,
             package,
             models,
@@ -188,6 +191,9 @@ impl GenerationBuilder {
 
 impl GenerationPlan {
     pub(super) fn validate(&self) -> Result<(), String> {
+        if super::target_directory(&self.workspace_root, &self.settings)? != self.target_dir {
+            return Err("生成器 target_dir 不同于已解析的工具配置；重新创建生成计划".into());
+        }
         if self.operation == GenerationOperation::Configured {
             return Err("未解析的生成操作；请通过 GenerationBuilder::plan 创建计划".into());
         }
@@ -240,7 +246,6 @@ impl GenerationPlan {
                 "读取锁定的资源描述符",
                 "校验全部模型",
                 "渲染 CRUD 与迁移",
-                "预检所有目标文件",
             ],
             GenerationOperation::Import => vec![
                 "定位业务包",
@@ -249,22 +254,27 @@ impl GenerationPlan {
                 "校验整批表与模型",
                 "渲染模型并注册描述符",
                 "编译候选模型并生成 CRUD 与迁移",
-                "预检所有目标文件",
             ],
             GenerationOperation::Configured => unreachable!("构建计划已解析配置操作"),
         };
-        if self.sync_frontend
-            && matches!(
-                self.operation,
-                GenerationOperation::Resource | GenerationOperation::Import
-            )
-        {
-            tasks.extend([
-                "导出本次候选 OpenAPI",
-                "同步前端契约与派生文件",
-                "生成业务列表表单与路由",
-                "校验候选前端类型",
-            ]);
+        if matches!(
+            self.operation,
+            GenerationOperation::Resource | GenerationOperation::Import
+        ) {
+            if self.sync_frontend {
+                tasks.extend([
+                    "导出本次候选 OpenAPI",
+                    "同步前端契约与派生文件",
+                    "生成业务列表表单与路由",
+                    "校验候选前端类型",
+                ]);
+            } else {
+                tasks.extend([
+                    "编译候选组合根（bin-api）",
+                    "校验全部已注册业务模块、权限与路由",
+                ]);
+            }
+            tasks.push("预检所有目标文件");
         }
         tasks.push(if self.write {
             "事务写入文件"
@@ -277,22 +287,31 @@ impl GenerationPlan {
     pub fn describe(&self) -> String {
         if let GenerationOperation::NewBusiness(module) = &self.operation {
             return format!(
-                "生成计划：创建业务模块={module}，业务包={}，配置目录={}，写入={}\n{}\n计划未执行任务，不访问数据库、不编译描述符、不创建缓存或报告。",
+                "生成计划：创建业务模块={module}，业务包={}，配置目录={}，缓存目录={}，写入={}\n{}\n计划未执行任务，不访问数据库、不编译描述符、不创建缓存或报告。",
                 self.package,
                 self.config_directory.display(),
+                self.target_dir.display(),
                 self.write,
                 self.tasks().join(" → "),
             );
         }
+        let selection = if self.operation == GenerationOperation::Resource {
+            format!(
+                "模型={:?}，持久化目标=资源模型声明（执行时解析）",
+                self.models
+            )
+        } else {
+            format!(
+                "只读结构来源={}，表={:?}，模型目标={}",
+                self.source, self.tables, self.database
+            )
+        };
         format!(
-            "生成计划：操作={:?}，业务包={}，配置目录={}，模型={:?}，只读结构来源={}，表={:?}，模型目标={}，写入={}\n{}\n计划未执行任务，不访问数据库、不编译描述符、不创建缓存或报告。",
+            "生成计划：操作={:?}，业务包={}，配置目录={}，缓存目录={}，{selection}，写入={}\n{}\n计划未执行任务，不访问数据库、不编译描述符、不创建缓存或报告。",
             self.operation,
             self.package,
             self.config_directory.display(),
-            self.models,
-            self.source,
-            self.tables,
-            self.database,
+            self.target_dir.display(),
             self.write,
             self.tasks().join(" → "),
         )

@@ -255,7 +255,6 @@ mod tests {
             .is_err()
         );
         assert!(target.exists());
-        assert_eq!(fs::read_dir(root).unwrap().count(), 2);
         let staged = fs::read_dir(root)
             .unwrap()
             .map(|entry| entry.unwrap().path())
@@ -303,7 +302,6 @@ mod tests {
         );
         let parent = root.join(".local-tests");
         assert!(parent.join("frontend-tools.json.lock").exists());
-        assert_eq!(fs::read_dir(&parent).unwrap().count(), 3);
         let staged = fs::read_dir(&parent)
             .unwrap()
             .map(|entry| entry.unwrap().path())

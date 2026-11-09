@@ -1,8 +1,8 @@
-//! 参考恢复公开入口只通过固定私有协议传递已核验参数。
+//! 参考恢复公开入口在原生执行前核验参数。
 
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{Command, Output},
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -66,36 +66,73 @@ fn strings(values: &[&str]) -> Vec<String> {
     values.iter().map(ToString::to_string).collect()
 }
 
-fn assert_private_invocation(result: Output, script: &str, protected_paths: &[&Path]) {
-    assert_eq!(result.status.code(), Some(1));
-    let stdout = String::from_utf8(result.stdout).unwrap();
-    let stderr = String::from_utf8(result.stderr).unwrap();
-    assert!(stdout.contains(script), "{stdout}");
-    for path in protected_paths {
-        assert!(!stdout.contains(path.to_str().unwrap()), "{stdout}");
-    }
-    assert!(!stdout.contains("--plan"), "{stdout}");
-    assert!(!stdout.contains("--reference-plan"), "{stdout}");
-    assert!(!stderr.contains("protocol_error"), "{stderr}");
-}
-
 #[test]
-fn reference_request_replaces_inherited_protocol_and_hides_paths_from_argv() {
+fn reference_commands_reject_an_invalid_plan_in_rust_without_writes() {
     let fixture = Fixture::new();
     let plan = fixture.file("参考 plan.json");
-    let result = invoke(
-        &[
-            strings(&["check", "recovery", "check-dataset", "--plan"]),
-            vec![plan.to_string_lossy().into_owned()],
-        ]
-        .concat(),
-    );
-    assert!(
-        String::from_utf8_lossy(&result.stderr).contains("restore_reference_failed"),
-        "{}",
-        String::from_utf8_lossy(&result.stderr)
-    );
-    assert_private_invocation(result, "tools/python/restore_reference.py", &[&plan]);
+    let target = fixture.file("目标计划.json");
+    let evidence = target.to_str().unwrap();
+    let backup = fixture.directory.to_str().unwrap();
+    for (command, extra) in [
+        ("check-dataset", Vec::new()),
+        ("check-existing", strings(&["--side", "target"])),
+        ("dataset", strings(&["--write"])),
+        ("plan", strings(&["--target-plan", evidence])),
+        (
+            "backup",
+            strings(&[
+                "--inventory",
+                evidence,
+                "--source-generation",
+                evidence,
+                "--source-export-result",
+                evidence,
+                "--write",
+            ]),
+        ),
+        (
+            "restore",
+            strings(&[
+                "--backup-root",
+                backup,
+                "--record",
+                evidence,
+                "--target-plan",
+                evidence,
+                "--runtime-registration",
+                evidence,
+                "--write",
+            ]),
+        ),
+        (
+            "copy",
+            strings(&["--backup-root", backup, "--copy-id", "check", "--write"]),
+        ),
+        (
+            "damage",
+            strings(&[
+                "--backup-root",
+                backup,
+                "--artifact",
+                "object.bin",
+                "--write",
+            ]),
+        ),
+    ] {
+        let mut arguments = strings(&["check", "recovery", command, "--plan"]);
+        arguments.push(plan.to_string_lossy().into_owned());
+        arguments.extend(extra);
+        let result = invoke(&arguments);
+        assert_eq!(result.status.code(), Some(1), "{command}");
+        assert!(result.stdout.is_empty(), "{command}");
+        let stderr = String::from_utf8(result.stderr).unwrap();
+        assert!(stderr.starts_with("任务失败："), "{command}: {stderr}");
+        assert!(!stderr.contains("restore_reference_failed"), "{stderr}");
+        assert!(!stderr.contains("ignored-private-secret"), "{stderr}");
+    }
+    assert_eq!(fs::read(plan).unwrap(), b"{}\n");
+    assert_eq!(fs::read(target).unwrap(), b"{}\n");
+    assert_eq!(fs::read_dir(&fixture.directory).unwrap().count(), 2);
 }
 
 #[test]

@@ -391,7 +391,7 @@ fn storage_resolution_selects_only_exact_successful_rebind_and_full_prefix() {
     let selected = resolve_plan(&json!({"attempts":rows,"later":&rows[1..]})).unwrap();
     assert_eq!(selected["record"], rows[2]);
     assert_eq!(selected["prefix"], json!(prefix()));
-    let mut bad = rows.clone();
+    let mut bad = rows;
     bad.push(row(55, "seed-runtime", "source-rebind", "passed"));
     assert!(
         resolve_plan(&json!({"attempts":bad,"later":&bad[1..]}))

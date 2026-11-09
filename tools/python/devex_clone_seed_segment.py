@@ -12,6 +12,7 @@ from devex_clone_source_proof import bound_file, require_closed_port, require_re
 from devex_clone_storage import registered_storage_binding
 from devex_clone_storage_request import directory_identity, identity, validate_request
 from restore_reference_plan import plan_hash
+from native_s3_client import _invoke as native_invoke, _read_response as native_response
 
 
 _CACHE_STOP_FIELDS = {"status", "side", "request", "processes", "copy_usable", "remote_writes",
@@ -25,13 +26,6 @@ _FAILED_STOP_CALLS = (
     ("tools/python/devex_clone_storage_process.py", "stop_record"),
     ("tools/python/devex_clone_source_proof.py", "require_closed_port"),
     ("tools/python/process_sockets.py", "verify_windows_port_idle"),
-)
-_FAILED_RESTART_CALLS = (
-    ("tools/python/devex_clone_run.py", "execute"),
-    ("tools/python/devex_clone_storage.py", "execute_storage"),
-    ("tools/python/devex_clone_storage_process.py", "start"),
-    ("tools/python/devex_clone_storage_process.py", "actual_arguments"),
-    ("tools/python/devex_clone_target_storage.py", "actual_windows_argv"),
 )
 _FAILED_RESTART_FILES = {
     "intent.json", "spawned.json", "process.json", "launch.json",
@@ -202,23 +196,18 @@ def _verify_failed_storage_stop(backend: Path, directory: Path, attempt: dict,
 def _verify_failed_storage_restart(backend: Path, directory: Path, attempt: dict,
                                    expected_request: dict, *, require_idle: bool) -> tuple[dict, dict]:
     """只接受创建身份完整、已精确回收且没有额外输出的单个启动失败。"""
-    from devex_clone_storage import controller_binding, registration
+    from devex_clone_storage import registration
     from devex_clone_storage_process import inspect_attempt
 
-    if (attempt["status"] != "failed" or attempt["result"] is not None
-            or attempt["error_type"] != "CalledProcessError"):
-        raise ValueError("分段续作只接受已精确回收的存储身份查询失败")
-    controller = controller_binding(backend, directory, attempt)
-    failure_path = local_path(backend, str(directory / f"failure-{attempt['number']:04d}.json"))
-    failure_descriptor = binding(failure_path)
-    failure = read_json(bound_file(backend, failure_descriptor))
-    if (failure["kind"] != "devex-stage-failure"
-            or failure["attempt"] != attempt["number"] or failure["stage"] != "storage-target"
-            or failure["mode"] != "restart" or failure["error_type"] != attempt["error_type"]
-            or not _failure_call_matches(
-                failure, _FAILED_RESTART_CALLS, "clone.storage-target.restart")
-            or failure["controller"] != controller):
-        raise ValueError("存储重启失败不是固定的启动后身份查询调用链")
+    result, _ = native_response(*native_invoke(
+        "__source-evidence", {"operation": "historical-storage-restart-failure", "write": False,
+            "arguments": {"directory": str(directory), "attempt": attempt}},
+        subprocess.run, may_write=False))
+    exact(result, {"value"})
+    result = result["value"]
+    exact(result, {"failure", "controller"})
+    failure_descriptor, controller = result["failure"], result["controller"]
+    failure_path = bound_file(backend, failure_descriptor)
     controller_value = read_json(bound_file(backend, controller))
     owner = controller_value["owner"]
     exact(owner, {"format_version", "identity", "directory", "manifest_sha256"})
@@ -251,8 +240,8 @@ def _verify_failed_storage_restart(backend: Path, directory: Path, attempt: dict
             or cleanup != {"intent": observed["intent"], "identity": process,
                            "pid": process["pid"], "returncode": 0}):
         raise ValueError("失败存储重启的创建、回收与退出身份不一致")
-    require_recorded_producer_stopped(owner_identity, run=subprocess.run, counter_run=subprocess.run)
-    require_recorded_producer_stopped(process, run=subprocess.run, counter_run=subprocess.run)
+    require_recorded_producer_stopped(owner_identity)
+    require_recorded_producer_stopped(process)
     if require_idle:
         for key in ("api_url", "console_url"):
             require_closed_port(request[key])
@@ -508,7 +497,14 @@ def segmented_resume(backend: Path, directory: Path, attempts: list, archive: di
                     raise ValueError("C68 失败后缺少唯一相邻且完整的 C69 重试授权")
                 replay_records = replay["records"]
                 previous_generation, lifecycle = replay["record"]["number"], lifecycle[2:]
-    exported = None if pending_replay else _verify_generation_tail(lifecycle, previous_generation)
+    arm_at = next((index for index, row in enumerate(lifecycle)
+                   if (row["stage"], row["mode"]) == ("seed-runtime", "arm-input")), len(lifecycle))
+    arm_rows = lifecycle[arm_at:]
+    if any((row["stage"], row["mode"]) != ("seed-runtime", "arm-input") for row in arm_rows):
+        raise ValueError("ARM 签发后不能继续生成或重新导出来源")
+    exported = None if pending_replay else _verify_generation_tail(lifecycle[:arm_at], previous_generation)
+    if arm_rows and exported is None:
+        raise ValueError("ARM 签发要求同一分段来源的正式共享导出")
     if pending_replay and cleanup:
         raise ValueError("C69 重试授权完成前不能清理资源")
     cleanup_records = ()

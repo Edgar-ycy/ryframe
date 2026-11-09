@@ -34,6 +34,7 @@ pub struct DatabaseTransaction {
     conn: Arc<Mutex<InnerConnection>>,
     backend: DbBackend,
     open: bool,
+    session_invalid: bool,
     metric_callback: Option<crate::metric::Callback>,
     record_stmt_in_spans: bool,
 }
@@ -87,6 +88,7 @@ impl DatabaseTransaction {
             conn,
             backend,
             open: true,
+            session_invalid: false,
             metric_callback,
             record_stmt_in_spans,
         };
@@ -232,10 +234,129 @@ impl DatabaseTransaction {
         run_async_transaction_callback(transaction, callback).await
     }
 
+    /// 当前持有者是否仍承担事务结束/回滚责任；不是服务器事务状态或命名锁证明。
+    #[must_use]
+    pub fn is_open(&self) -> bool {
+        self.open && !self.session_invalid
+    }
+
+    fn ensure_session_usable(&self) -> Result<(), DbErr> {
+        if self.session_invalid {
+            Err(conn_err(
+                "保留会话事务结果未知或已取消；连接已标记丢弃，禁止继续或自动重放",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// 只结束深度为一的 MySQL 根事务，保留独占物理会话及其命名锁。
+    /// 开始网络操作前禁用迟到 Drop 回滚；错误或取消后该会话永久失效并丢弃连接。
+    #[cfg(feature = "sqlx-mysql")]
+    pub async fn finish_mysql_root(&mut self, commit: bool) -> Result<(), DbErr> {
+        self.ensure_session_usable()?;
+        if self.backend != DbBackend::MySql {
+            return Err(conn_err("保留会话根事务仅支持 MySQL"));
+        }
+        if !self.open || Arc::strong_count(&self.conn) != 1 {
+            return Err(conn_err(
+                "结束保留会话根事务需要独占的活跃持有者，拒绝嵌套或共享事务",
+            ));
+        }
+        #[cfg(not(feature = "sync"))]
+        let mut guard = self.conn.lock().await;
+        #[cfg(feature = "sync")]
+        let mut guard = self.conn.lock().map_err(|_| DbErr::MutexPoisonError)?;
+        match &mut *guard {
+            InnerConnection::MySql(connection) => {
+                if <sqlx::MySql as sqlx::Database>::TransactionManager::get_transaction_depth(
+                    connection,
+                ) != 1
+                {
+                    return Err(conn_err("finish_mysql_root 仅接受事务深度一"));
+                }
+                connection.close_on_drop();
+                self.open = false;
+                self.session_invalid = true;
+                if commit {
+                    <sqlx::MySql as sqlx::Database>::TransactionManager::commit(connection).await
+                } else {
+                    <sqlx::MySql as sqlx::Database>::TransactionManager::rollback(connection).await
+                }
+                .map_err(sqlx_error_to_query_err)?;
+                self.session_invalid = false;
+                Ok(())
+            }
+            #[cfg(any(
+                feature = "sqlx-postgres",
+                feature = "sqlx-sqlite",
+                feature = "rusqlite",
+                feature = "mock",
+                feature = "proxy"
+            ))]
+            _ => Err(conn_err("保留会话根事务仅支持 MySQL")),
+        }
+    }
+
+    /// 在已结束事务的独占 MySQL 会话上开启新的根事务，不租用第二连接。
+    /// 深度必须为零；失败或取消后禁止继续，迟到 Drop 不会回滚下一代事务。
+    #[cfg(feature = "sqlx-mysql")]
+    pub async fn begin_mysql_root(
+        &mut self,
+        isolation_level: Option<IsolationLevel>,
+        access_mode: Option<AccessMode>,
+    ) -> Result<(), DbErr> {
+        self.ensure_session_usable()?;
+        if self.backend != DbBackend::MySql {
+            return Err(conn_err("保留会话根事务仅支持 MySQL"));
+        }
+        if self.open || Arc::strong_count(&self.conn) != 1 {
+            return Err(conn_err(
+                "开启保留会话根事务需要独占且已结束的持有者，拒绝嵌套或共享事务",
+            ));
+        }
+        #[cfg(not(feature = "sync"))]
+        let mut guard = self.conn.lock().await;
+        #[cfg(feature = "sync")]
+        let mut guard = self.conn.lock().map_err(|_| DbErr::MutexPoisonError)?;
+        match &mut *guard {
+            InnerConnection::MySql(connection) => {
+                if <sqlx::MySql as sqlx::Database>::TransactionManager::get_transaction_depth(
+                    connection,
+                ) != 0
+                {
+                    return Err(conn_err("begin_mysql_root 仅接受事务深度零"));
+                }
+                connection.close_on_drop();
+                self.session_invalid = true;
+                crate::driver::sqlx_mysql::set_transaction_config(
+                    connection,
+                    isolation_level,
+                    access_mode,
+                )
+                .await?;
+                <sqlx::MySql as sqlx::Database>::TransactionManager::begin(connection, None)
+                    .await
+                    .map_err(sqlx_error_to_query_err)?;
+                self.open = true;
+                self.session_invalid = false;
+                Ok(())
+            }
+            #[cfg(any(
+                feature = "sqlx-postgres",
+                feature = "sqlx-sqlite",
+                feature = "rusqlite",
+                feature = "mock",
+                feature = "proxy"
+            ))]
+            _ => Err(conn_err("保留会话根事务仅支持 MySQL")),
+        }
+    }
     /// Commit a transaction
     #[instrument(level = "trace")]
     #[allow(unreachable_code, unused_mut)]
     pub async fn commit(mut self) -> Result<(), DbErr> {
+        self.ensure_session_usable()?;
         let result: Result<(), DbErr> = super::tracing_spans::with_db_span!(
             "sea_orm.commit",
             self.backend,
@@ -293,6 +414,7 @@ impl DatabaseTransaction {
     #[instrument(level = "trace")]
     #[allow(unreachable_code, unused_mut)]
     pub async fn rollback(mut self) -> Result<(), DbErr> {
+        self.ensure_session_usable()?;
         let result: Result<(), DbErr> = super::tracing_spans::with_db_span!(
             "sea_orm.rollback",
             self.backend,
@@ -415,6 +537,7 @@ impl ConnectionTrait for DatabaseTransaction {
     #[instrument(level = "trace", skip(stmt))]
     #[allow(unused_variables)]
     async fn execute_raw(&self, stmt: Statement) -> Result<ExecResult, DbErr> {
+        self.ensure_session_usable()?;
         debug_print!("{}", stmt);
 
         super::tracing_spans::with_db_span!(
@@ -472,6 +595,7 @@ impl ConnectionTrait for DatabaseTransaction {
     #[instrument(level = "trace", skip(sql))]
     #[allow(unused_variables)]
     async fn execute_unprepared(&self, sql: &str) -> Result<ExecResult, DbErr> {
+        self.ensure_session_usable()?;
         debug_print!("{}", sql);
 
         super::tracing_spans::with_db_span!(
@@ -534,6 +658,7 @@ impl ConnectionTrait for DatabaseTransaction {
     #[instrument(level = "trace", skip(stmt))]
     #[allow(unused_variables)]
     async fn query_one_raw(&self, stmt: Statement) -> Result<Option<QueryResult>, DbErr> {
+        self.ensure_session_usable()?;
         debug_print!("{}", stmt);
 
         super::tracing_spans::with_db_span!(
@@ -594,6 +719,7 @@ impl ConnectionTrait for DatabaseTransaction {
     #[instrument(level = "trace", skip(stmt))]
     #[allow(unused_variables)]
     async fn query_all_raw(&self, stmt: Statement) -> Result<Vec<QueryResult>, DbErr> {
+        self.ensure_session_usable()?;
         debug_print!("{}", stmt);
 
         super::tracing_spans::with_db_span!(
@@ -672,6 +798,7 @@ impl StreamTrait for DatabaseTransaction {
         stmt: Statement,
     ) -> Pin<Box<dyn Future<Output = Result<Self::Stream<'a>, DbErr>> + 'a + Send>> {
         Box::pin(async move {
+            self.ensure_session_usable()?;
             #[cfg(not(feature = "sync"))]
             let conn = self.conn.lock().await;
             #[cfg(feature = "sync")]
@@ -691,6 +818,7 @@ impl TransactionTrait for DatabaseTransaction {
 
     #[instrument(level = "trace")]
     async fn begin(&self) -> Result<DatabaseTransaction, DbErr> {
+        self.ensure_session_usable()?;
         DatabaseTransaction::begin(
             Arc::clone(&self.conn),
             self.backend,
@@ -709,6 +837,7 @@ impl TransactionTrait for DatabaseTransaction {
         isolation_level: Option<IsolationLevel>,
         access_mode: Option<AccessMode>,
     ) -> Result<DatabaseTransaction, DbErr> {
+        self.ensure_session_usable()?;
         DatabaseTransaction::begin(
             Arc::clone(&self.conn),
             self.backend,
@@ -726,6 +855,7 @@ impl TransactionTrait for DatabaseTransaction {
         &self,
         options: TransactionOptions,
     ) -> Result<DatabaseTransaction, DbErr> {
+        self.ensure_session_usable()?;
         DatabaseTransaction::begin(
             Arc::clone(&self.conn),
             self.backend,

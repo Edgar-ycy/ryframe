@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use ryframe_application::ports::tenant_data::{TenantDataRow, TenantDataTableDescriptor};
 use ryframe_db::schema::ensure_local_foreign_key_schema;
 use ryframe_tenant_db::{
@@ -89,6 +91,11 @@ fn tenant_data_uses_one_fresh_baseline_and_its_own_ledger() {
     let expected_names = expected_migration_names().collect::<Vec<_>>();
     assert_eq!(actual_names, expected_names);
     assert_eq!(
+        actual_names.iter().copied().collect::<BTreeSet<_>>().len(),
+        actual_names.len(),
+        "实际迁移账本名称不得重复"
+    );
+    assert_eq!(
         migrations.len(),
         2 + ryframe_tenant_db::generated::migrations().len()
     );
@@ -117,15 +124,6 @@ fn generated_fingerprint_matches_shared_catalog_computation() {
         TENANT_DATA_CATALOG.schema_fingerprint(),
         tenant_data_schema_fingerprint()
     );
-}
-
-#[test]
-fn generated_fingerprint_is_independent_from_runtime_catalog_recalculation() {
-    assert_eq!(
-        tenant_data_schema_fingerprint(),
-        ryframe_tenant_db::generated::catalog::GENERATED_TENANT_DATA_SCHEMA_FINGERPRINT
-    );
-    assert_eq!(tenant_data_schema_fingerprint().len(), 64);
 }
 
 #[test]

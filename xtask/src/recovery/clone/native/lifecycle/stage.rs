@@ -5,7 +5,6 @@ use serde_json::{Value, json};
 
 use super::super::export;
 use super::{
-    super::json as json_io,
     lock::{ProcessGuard, RunLock},
     manifest, source, state,
 };
@@ -13,7 +12,6 @@ use crate::{
     Result,
     cli::CloneStage,
     local_test_path::{LocalTestPathKind, validate_local_test_path},
-    process,
 };
 
 pub(crate) struct StageRequest<'a> {
@@ -27,10 +25,6 @@ pub(crate) struct StageRequest<'a> {
 pub(crate) trait StageRunner {
     fn preflight(&self, request: &StageRequest<'_>) -> Result<()>;
     fn execute(&self, request: &StageRequest<'_>) -> Result<Value>;
-}
-
-pub(crate) struct PythonRunner {
-    backend: PathBuf,
 }
 
 pub(crate) struct ExportRunner {
@@ -52,28 +46,6 @@ impl StageRunner for ExportRunner {
 
     fn execute(&self, request: &StageRequest<'_>) -> Result<Value> {
         export::execute(&self.backend, request)
-    }
-}
-
-impl PythonRunner {
-    pub(crate) fn new(backend: &Path) -> Self {
-        Self {
-            backend: backend.to_path_buf(),
-        }
-    }
-}
-
-impl StageRunner for PythonRunner {
-    fn preflight(&self, request: &StageRequest<'_>) -> Result<()> {
-        let value = invoke(&self.backend, request, "preflight")?;
-        if value.get("status").and_then(Value::as_str) != Some("stage_operation_preflight_ready") {
-            return Err("阶段预检未返回受控就绪结果".into());
-        }
-        Ok(())
-    }
-
-    fn execute(&self, request: &StageRequest<'_>) -> Result<Value> {
-        invoke(&self.backend, request, "run")
     }
 }
 
@@ -108,21 +80,33 @@ pub(crate) fn run_named(
         mode,
         attempt: None,
     };
-    let initial_manifest = manifest::load(backend, &run_dir.join("manifest.json"))?;
-    let _ = state::load(run_dir, true)?;
+    let initial_manifest = stage_manifest(backend, run_dir, stage_name, mode)?;
+    let _ = state::load(run_dir, !state::resource_cleanup(stage_name, mode))?;
     runner.preflight(&request)?;
 
     let guard = ProcessGuard::acquire(run_dir)?;
     let run_lock = RunLock::claim(run_dir)?;
-    let execution = execute_claimed(
-        backend,
-        run_dir,
-        stage_name,
-        mode,
-        runner,
-        &initial_manifest.value,
-        &run_lock,
-    );
+    let execution = (|| {
+        if stage_name == "cache-target"
+            || stage_name == "post-copy" && matches!(mode, "register" | "prepare" | "amend")
+            || stage_name == "seed-runtime"
+                && matches!(
+                    mode,
+                    "source-export" | "source-export-reconcile" | "source-generation-reboot-close"
+                )
+        {
+            runner.preflight(&request)?;
+        }
+        execute_claimed(
+            backend,
+            run_dir,
+            stage_name,
+            mode,
+            runner,
+            &initial_manifest.value,
+            &run_lock,
+        )
+    })();
     let release = run_lock.release();
     let finish = match execution {
         Ok(mut outcome) => {
@@ -140,7 +124,7 @@ pub(crate) fn run_named(
                 )
                 .into());
             }
-            finish_unstarted_failure(run_dir, &*error)?;
+            finish_unstarted_failure(run_dir, stage_name, mode, &*error)?;
             Err(error)
         }
     };
@@ -155,6 +139,7 @@ struct LockedOutcome {
     number: u64,
     result: Option<Value>,
     failure: Option<String>,
+    diagnostic: Option<String>,
 }
 
 fn execute_claimed(
@@ -166,16 +151,22 @@ fn execute_claimed(
     initial_manifest: &Value,
     run_lock: &RunLock,
 ) -> Result<LockedOutcome> {
-    let registered = manifest::load(backend, &run_dir.join("manifest.json"))?;
+    let cleanup = state::resource_cleanup(stage, mode);
+    let registered = stage_manifest(backend, run_dir, stage, mode)?;
     if registered.value != *initial_manifest {
         return Err("取得控制锁前验收清单发生变化".into());
     }
-    let _ = state::load(run_dir, true)?;
-    let sources = source::current(backend)?;
+    let _ = state::load(run_dir, !cleanup)?;
+    let sources = match source::current(backend) {
+        Ok(value) => value,
+        Err(_) if cleanup => json!({"source_capture_error_type":"SourceCaptureError"}),
+        Err(error) => return Err(error),
+    };
     let (number, attempt) = state::begin(run_dir, stage, mode, &sources)?;
     let mut failure = state::bind_controller(run_dir, number, &run_lock.owner, &attempt)
         .err()
         .map(|error| failure_type(&*error));
+    let mut diagnostic = None;
     let result = if failure.is_none() {
         let request = StageRequest {
             backend,
@@ -188,6 +179,7 @@ fn execute_claimed(
             Ok(value) => Some(value),
             Err(error) => {
                 failure = Some(failure_type(&*error));
+                diagnostic = safe_diagnostic(error.as_ref());
                 None
             }
         }
@@ -203,20 +195,23 @@ fn execute_claimed(
     {
         failure = Some("NeedsReconciliation".into());
     }
-    match manifest::load(backend, &run_dir.join("manifest.json")) {
+    match stage_manifest(backend, run_dir, stage, mode) {
         Ok(value) if value.value == *initial_manifest => {}
         Ok(_) => failure = Some("ManifestChanged".into()),
         Err(error) => failure = Some(failure_type(&*error)),
     }
-    match source::current(backend) {
-        Ok(value) if value == sources => {}
-        Ok(_) => failure = Some("SourceChanged".into()),
-        Err(error) => failure = Some(failure_type(&*error)),
+    if !cleanup {
+        match source::current(backend) {
+            Ok(value) if value == sources => {}
+            Ok(_) => failure = Some("SourceChanged".into()),
+            Err(error) => failure = Some(failure_type(&*error)),
+        }
     }
     Ok(LockedOutcome {
         number,
         result,
         failure,
+        diagnostic,
     })
 }
 
@@ -245,7 +240,22 @@ fn finalize(run_dir: &Path, stage: &str, mode: &str, outcome: LockedOutcome) -> 
         outcome.failure.as_deref(),
     )?;
     if let Some(failure) = outcome.failure {
-        return Err(format!("阶段 {stage} 未完成：{failure}").into());
+        let diagnostic = outcome
+            .diagnostic
+            .map(|value| format!("；{value}"))
+            .unwrap_or_default();
+        let guidance = if stage == "copy" {
+            format!(
+                "；请核对 {} 及 {} 中 copy_directory 指向目录的 failure.json；保留现场，先核对完整前后像，不自动重试",
+                run_dir
+                    .join(format!("failure-{:04}.json", outcome.number))
+                    .display(),
+                run_dir.join("manifest.json").display(),
+            )
+        } else {
+            String::new()
+        };
+        return Err(format!("阶段 {stage} 未完成：{failure}{diagnostic}{guidance}").into());
     }
     let result = outcome.result.ok_or("成功阶段必须发布实际结果")?;
     Ok(json!({
@@ -260,9 +270,11 @@ fn finalize(run_dir: &Path, stage: &str, mode: &str, outcome: LockedOutcome) -> 
 
 fn finish_unstarted_failure(
     run_dir: &Path,
+    stage: &str,
+    mode: &str,
     error: &(dyn std::error::Error + 'static),
 ) -> Result<()> {
-    let value = state::load(run_dir, true)?;
+    let value = state::load(run_dir, !state::resource_cleanup(stage, mode))?;
     let Some(attempt) = state::running_attempt(&value)? else {
         return Ok(());
     };
@@ -285,54 +297,38 @@ fn finish_unstarted_failure(
     state::finish(run_dir, number, None, Some(&error_type))
 }
 
-pub(crate) fn invoke(backend: &Path, request: &StageRequest<'_>, operation: &str) -> Result<Value> {
-    let payload = protocol(request, operation)?;
-    let output = process::command_output_with_input(
-        backend,
-        "python",
-        &["-B", "tools/python/devex_clone.py", "--private-stdin"],
-        payload.as_bytes(),
-    )
-    .map_err(|error| -> String { format!("阶段资源编排子进程失败：{}", error) })?;
-    let value = json_io::parse_fragment(output.trim(), "阶段资源编排输出")?;
-    if !value.is_object() {
-        return Err("阶段资源编排输出必须为对象".into());
-    }
-    Ok(value)
-}
-
-pub(crate) fn protocol(request: &StageRequest<'_>, operation: &str) -> Result<String> {
-    let attempt = request.attempt;
-    if !matches!(operation, "preflight" | "target-authority" | "run")
-        || (operation == "target-authority"
-            && (request.stage != "target-verify" || request.mode != "run"))
-        || (operation == "run") != attempt.is_some()
-        || attempt == Some(0)
+fn stage_manifest(
+    backend: &Path,
+    run: &Path,
+    stage: &str,
+    mode: &str,
+) -> Result<manifest::Manifest> {
+    let path = run.join("manifest.json");
+    if state::resource_cleanup(stage, mode)
+        || stage == "seed-runtime" && mode == "source-generation-reboot-close"
     {
-        return Err("阶段资源编排 operation 与 attempt 不匹配".into());
+        manifest::registered(backend, &path)
+    } else {
+        manifest::load(backend, &path)
     }
-    let value = json!({
-        "format_version": 1,
-        "kind": "ryframe-xtask-recovery-clone-stage",
-        "native_tool": crate::check::python_suite::native_tool_binding()?,
-        "request": {
-            "backend_dir": path_text(request.backend, "后端目录")?,
-            "run_dir": path_text(request.run_dir, "运行目录")?,
-            "stage": request.stage,
-            "mode": request.mode,
-            "operation": operation,
-            "attempt": attempt,
-            "write": operation == "run",
-        },
-    });
-    let payload = serde_json::to_string(&value)?;
-    if payload.len() > 32 * 1024 || payload.contains(['\r', '\n', '\0']) {
-        return Err("阶段资源编排私有协议过长或包含换行/NUL".into());
-    }
-    Ok(payload)
 }
 
 pub(crate) fn failure_type(error: &(dyn std::error::Error + 'static)) -> String {
+    if let Some((category, _)) = super::super::post_process::diagnostic::diagnostic(error) {
+        return category.into();
+    }
+    if let Some((category, _)) = super::super::cache::handoff::diagnostic(error) {
+        return category;
+    }
+    if let Some((category, _)) = super::super::target_verify::diagnostic(error) {
+        return category;
+    }
+    if let Some((category, _)) = super::super::seed::rebind::diagnostic(error) {
+        return category;
+    }
+    if safe_diagnostic(error).is_some() {
+        return "HistoricalProducerCimUnavailable".into();
+    }
     let text = error.to_string();
     Regex::new(r"开发复制未完成：([A-Za-z0-9_]+)")
         .ok()
@@ -351,7 +347,23 @@ pub(crate) fn failure_type(error: &(dyn std::error::Error + 'static)) -> String 
         .unwrap_or_else(|| "StageError".into())
 }
 
-fn path_text<'a>(path: &'a Path, label: &str) -> Result<&'a str> {
-    path.to_str()
-        .ok_or_else(|| format!("{label}必须为 UTF-8").into())
+fn safe_diagnostic(error: &(dyn std::error::Error + 'static)) -> Option<String> {
+    if let Some((_, diagnostic)) = super::super::post_process::diagnostic::diagnostic(error) {
+        return Some(diagnostic);
+    }
+    if let Some((_, diagnostic)) = super::super::cache::handoff::diagnostic(error) {
+        return Some(diagnostic);
+    }
+    if let Some((_, diagnostic)) = super::super::target_verify::diagnostic(error) {
+        return Some(diagnostic);
+    }
+    if let Some((_, diagnostic)) = super::super::seed::rebind::diagnostic(error) {
+        return Some(diagnostic);
+    }
+    if let Some(error) =
+        error.downcast_ref::<super::super::seed::source_registration::quiet::CimUnavailable>()
+    {
+        return Some(error.to_string());
+    }
+    error.source().and_then(safe_diagnostic)
 }

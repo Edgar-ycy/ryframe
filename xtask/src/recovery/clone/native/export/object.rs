@@ -14,14 +14,14 @@ use crate::Result;
 
 pub(crate) type ObjectIndex = BTreeMap<(String, String), Value>;
 
-pub(super) struct ObjectCall<'a> {
-    pub(super) operation: &'a str,
-    pub(super) bucket: &'a str,
-    pub(super) key: &'a str,
-    pub(super) stdout: StdoutTarget,
-    pub(super) extra: Option<&'a [String]>,
-    pub(super) label: &'a str,
-    pub(super) max_bytes: u64,
+pub(crate) struct ObjectCall<'a> {
+    pub(crate) operation: &'a str,
+    pub(crate) bucket: &'a str,
+    pub(crate) key: &'a str,
+    pub(crate) stdout: StdoutTarget,
+    pub(crate) extra: Option<&'a [String]>,
+    pub(crate) label: &'a str,
+    pub(crate) max_bytes: u64,
 }
 
 pub(crate) fn verify_owners<T: Transport>(
@@ -272,8 +272,8 @@ fn object_request(
         "kind": "devex-clone-object-capture",
         "side": "source",
         "scope_id": context.source()["scope_id"],
-        "endpoint": context.source()["s3"]["endpoint"],
-        "region": context.source()["s3"]["region"],
+        "endpoint": context.object_identity["endpoint"],
+        "region": context.object_identity["region"],
         "bucket": bucket,
         "key": key,
         "expected": expected,
@@ -316,8 +316,8 @@ fn capture_value(
         "bucket": bucket,
         "key": key,
         "scope_id": context.source()["scope_id"],
-        "endpoint": context.source()["s3"]["endpoint"],
-        "region": context.source()["s3"]["region"],
+        "endpoint": context.object_identity["endpoint"],
+        "region": context.object_identity["region"],
         "expected": expected,
         "max_bytes": max_bytes,
         "transport": "rust-s3-sigv4",
@@ -512,13 +512,16 @@ fn object_json<T: Transport>(
     Ok(value)
 }
 
-pub(super) fn object_read<T: Transport>(
+pub(crate) fn object_read<T: Transport>(
     context: &Context,
     transport: &T,
     call: ObjectCall<'_>,
 ) -> Result<Value> {
     use super::super::s3::{Configuration, Operation, Request};
-    let configuration = Configuration::read(&context.source()["s3"])?;
+    let configuration = Configuration::from_app_binding(
+        &context.backend,
+        &context.source()["s3"]["configuration"],
+    )?;
     let mut if_match = None;
     let mut version = None;
     if let Some(extra) = call.extra {
@@ -549,13 +552,15 @@ pub(super) fn object_read<T: Transport>(
         },
         _ => return Err("原生对象读取操作与输出方式不匹配".into()),
     };
-    transport
+    let result: Result<Value> = transport
         .s3(Request {
             configuration,
             bucket: call.bucket.to_owned(),
             operation,
         })
-        .map_err(|error| format!("{}：{error}", call.label).into())
+        .map_err(|error| format!("{}：{error}", call.label).into());
+    Configuration::from_app_binding(&context.backend, &context.source()["s3"]["configuration"])?;
+    result
 }
 
 fn safe_key(value: &str) -> String {

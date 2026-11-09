@@ -4,6 +4,7 @@ import datetime as dt
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 import subprocess
 import sys
 import unittest
@@ -17,12 +18,13 @@ import test_devex_clone_inventory as inventory_fixtures
 from devex_clone_source_fixture import SourceFixture
 from devex_clone_capture import read_json, write_json
 from devex_clone_run_state import binding
+import rate_limit_tool
 from restore_reference_plan import BUCKETS, plan_hash
 
 
 class GenerationImageTests(unittest.TestCase):
     def setUp(self):
-        self.f = inventory_fixtures.InventoryTests()
+        self.f = inventory_fixtures.InventoryFixture()
         self.f.setUp()
         self.addCleanup(self.f.doCleanups)
         self.backend, self.output = self.f.backend, self.f.local / "i"
@@ -36,6 +38,9 @@ class GenerationImageTests(unittest.TestCase):
         self.source = {"request": {"source": self.f.selected, "tools": self.tools, "max_object_bytes": 1024},
                        "seed_target": {"review": review}, "directory": self.f.local,
                        "review_successor": {"source_result": source_registration}}
+        target = self.file("target.json", self.source["seed_target"])
+        self.file("prepare.json", {"request": target})
+        self.source["manifest"] = {"initialized": self.file("initialized.json", {"fixture": "initialized"})}
         build = self.file("source-build.json", {"sources": {"full": {"source": self.f.maintenance["source"]}}})
         self.request = {"backend_build": build, "maintenance_build": binding(self.f.maintenance_file)}
         self.resources = Mock()
@@ -52,7 +57,7 @@ class GenerationImageTests(unittest.TestCase):
         if "__s3-read" in command:
             self.f.calls.append(command)
             request = json.loads(kwargs["input"])
-            self.assertEqual(request["configuration"], self.f.selected["s3"])
+            self.assertEqual(request["configuration_binding"], self.f.object_configuration)
             self.assertFalse(any(name.startswith("AWS_") for name in kwargs["env"]))
             value = SourceFixture.object_response(self.f, request["operation"], request["bucket"],
                                                   request["key"], request["destination"])
@@ -67,9 +72,7 @@ class GenerationImageTests(unittest.TestCase):
                  "control_schema_fingerprint": "c" * 16, "tenant_schema_fingerprint": "d" * 64, "databases": [], "objects": []}
         for db in self.f.selected["databases"]:
             raw = self.f.raw(db["key"])["target"]
-            known = set(self.f.models[1]) | (set(self.f.models[2]) - {"ryframe_resource_ownership", "sys_backup_set", "sys_backup_resource", "sys_restore_run"}
-                                               if db["kind"] == "combined" else set())
-            value["databases"].append({**raw["database"], "tables": [row for row in raw["database"]["tables"] + raw["preserved_tables"] if row["table"] in known]})
+            value["databases"].append(copy.deepcopy(raw["database"]))
         for bucket in sorted(BUCKETS):
             entries = [{"key": self.f.scope + "/post/file.txt", "bytes": 4, "sha256": hashlib.sha256(b"data").hexdigest()}] if bucket == "uploads" else []
             value["objects"].append({"bucket": bucket, "prefix": self.f.scope + "/", "entries": entries})
@@ -82,9 +85,38 @@ class GenerationImageTests(unittest.TestCase):
     def capture(self):
         with patch.dict("os.environ", self.f.environment, clear=True), patch.object(images, "Resources", return_value=self.resources), \
                 patch.object(images, "redis_configuration"), patch.object(images, "verify_tools", return_value=self.f.maintenance), \
-                patch.object(images, "verify_migrations"), patch.object(images, "schema_snapshot", side_effect=self.schema):
+                patch.object(images, "verify_migrations"), patch.object(images, "schema_snapshot", side_effect=self.schema), \
+                patch.object(images, "capture_side_inventory", side_effect=self.native_inventory):
             return images.capture_image(self.backend, self.backend, self.f.selected, self.request, self.source,
                                         self.f.environment, self.output, self.run_external)
+
+    def native_inventory(self, backend, side, tools, maintenance, output, **kwargs):
+        # 完整像编排测试的外部原生端口响应；数据库执行风险由Rust collector契约承担。
+        from dataclasses import asdict
+        from devex_clone_inventory import expected_owners, observation_from_inventory
+        from restore_build import file_digest
+
+        self.assertEqual((backend, side, maintenance), (self.backend, "source", self.f.maintenance_file))
+        output.mkdir()
+        before = {"source": self.f.maintenance["source"], "side": side}
+        artifacts, observations = {}, {}
+        for key in images.KEYS:
+            raw = self.f.raw(key)
+            declared = next(db for db in self.f.selected["databases"] if db["key"] == key)
+            observations[key] = asdict(observation_from_inventory(backend, raw, declared, self.f.scope,
+                expected_owners(self.f.scope, key == "shared-control")))
+            for phase in ("before", "after"):
+                path = output / f"{phase}-target-{key}.json"
+                write_json(path, raw)
+                artifacts[path.name] = file_digest(path)
+        for phase in ("before", "after"):
+            write_json(output / f"binding-{phase}.json", before)
+        receipt = {"format_version": 1, "status": "side_inventory_captured", "side": side, "scope_id": self.f.scope,
+            "binding_sha256": plan_hash(before), "keys": list(images.KEYS), "inventories": artifacts,
+            "observations": observations, "remote_writes": 0, "producer_stopped_proven": False,
+            "fresh_target_proven": False, "target_ready": False, "clone_verified": False, "restore_qualified": False}
+        write_json(output / "inventory.json", receipt)
+        return SimpleNamespace(receipt_file=binding(output / "inventory.json"))
 
     def schema(self, tools, models, phase):
         result = []
@@ -105,8 +137,44 @@ class GenerationImageTests(unittest.TestCase):
     def test_capture_and_readonly_verify_retain_all_raw_databases_five_owners_and_observed_inventory(self):
         descriptor = self.capture()
         before = {str(path): path.read_bytes() for path in self.output.rglob("*") if path.is_file()}
-        with patch("subprocess.run", side_effect=AssertionError("保存像复核不得执行命令")):
+        original_calls = copy.deepcopy(self.f.calls)
+        native_run = subprocess.run
+        native_binding = rate_limit_tool.tool_binding()
+        self.assertIsNotNone(native_binding)
+
+        def readonly_native(command, **kwargs):
+            self.assertEqual(Path(command[0]), Path(native_binding["path"]))
+            request = json.loads(kwargs["input"])
+            if command[1:] == ["__rate-limit", "load-table"]:
+                self.assertEqual(set(request), {"backend", "app_env", "config_dir"})
+                self.assertIn(Path(request["backend"]), {
+                    self.backend.resolve(), Path(__file__).resolve().parents[2],
+                })
+                self.assertEqual({key: request[key] for key in ("app_env", "config_dir")}, {
+                    "app_env": self.f.object_configuration["app_env"],
+                    "config_dir": self.f.object_configuration["directory"],
+                })
+            else:
+                self.assertEqual(command[1:], ["__source-evidence"])
+                self.assertIs(request["write"], False)
+                self.assertIn(request["operation"], {
+                    "reference-plan-hash", "copy-schema-catalog",
+                    "copy-database-observation", "reference-configuration-binding", "reference-copy-metadata",
+                    "reference-safe-file",
+                })
+                if request["operation"] == "reference-safe-file":
+                    self.assertEqual(request["arguments"]["root"], str(self.output))
+                    self.assertIs(request["arguments"]["exists"], True)
+                    self.assertIn(request["arguments"]["relative"], {
+                        f"inventory-{phase}-{name}.json"
+                        for phase in ("before", "after")
+                        for name in ("runtime", *(f"target-{key}" for key in images.KEYS))
+                    })
+            return native_run(command, **kwargs)
+
+        with patch("subprocess.run", side_effect=readonly_native):
             value = self.verify(descriptor)
+        self.assertEqual(self.f.calls, original_calls)
         self.assertEqual(len(value["raw_inventories"]), 8)
         self.assertEqual(len(value["owner_evidence"]), 10)
         self.assertEqual(len(value["schema_evidence"]), 8)

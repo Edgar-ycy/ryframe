@@ -1,8 +1,8 @@
 use std::net::{IpAddr, Ipv4Addr};
 
 use ryframe_kernel::{
-    AppError, ExportCursorWindow, IpCidr, MAX_SNOWFLAKE_WORKER_ID, PageResult, PaginationPolicy,
-    SnowflakeWorkerId, TenantId, ValidatedPageQuery, snowflake::Snowflake,
+    AppError, IpCidr, MAX_SNOWFLAKE_WORKER_ID, PageResult, PaginationPolicy, SnowflakeWorkerId,
+    TenantId, ValidatedPageQuery, snowflake::Snowflake,
 };
 
 const PAGINATION_POLICY: PaginationPolicy = PaginationPolicy::new(10, 100);
@@ -83,14 +83,4 @@ fn page_result_calculates_total_pages_without_copying_records() {
 
     assert_eq!(result.total_pages(), 3);
     assert_eq!(result.records, vec!["a", "b"]);
-}
-
-#[test]
-fn export_cursor_window_preserves_bounds_and_is_copy() {
-    let window = ExportCursorWindow::new(Some(41), 99, 1_000);
-    let copied = window;
-
-    assert_eq!(window.after_id(), Some(41));
-    assert_eq!(copied.upper_id(), 99);
-    assert_eq!(copied.limit(), 1_000);
 }

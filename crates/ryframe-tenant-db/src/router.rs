@@ -206,6 +206,7 @@ impl ScopedTenantRead {
             .await
             .map_err(|_| TenantDataError::TargetUnavailable {
                 target_key: "<scoped-read>".into(),
+                source: None,
             })
     }
 }

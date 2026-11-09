@@ -99,6 +99,11 @@ fn verify_binding(binding: &Value) -> Result<()> {
 pub(super) fn finish(args: &Value) -> Result<Value> {
     exact(args, &["receipt", "result", "failure", "resource_images"])?;
     let receipt = &args["receipt"];
+    let file = check_started(receipt)?;
+    finish_started(file, receipt, args)
+}
+
+pub(super) fn check_started(receipt: &Value) -> Result<&std::path::Path> {
     exact(receipt, &["path", "started", "bytes", "sha256"])?;
     let file = path(&receipt["path"])?;
     unlinked(file)?;
@@ -121,6 +126,10 @@ pub(super) fn finish(args: &Value) -> Result<Value> {
     {
         return Err("运行收据发生变化或已终结，禁止覆盖和重放".into());
     }
+    Ok(file)
+}
+
+fn finish_started(file: &std::path::Path, receipt: &Value, args: &Value) -> Result<Value> {
     let started = DateTime::parse_from_rfc3339(text(&receipt["started"]["started_at"])?)?;
     let completed = Utc::now();
     if completed < started {

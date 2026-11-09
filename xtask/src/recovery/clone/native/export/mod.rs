@@ -5,17 +5,22 @@ use serde_json::Value;
 use super::lifecycle::{manifest, stage::StageRequest};
 use crate::Result;
 
-mod capture;
-mod database;
+pub(crate) mod capture;
+pub(crate) mod database;
+mod evidence;
 pub(crate) mod input;
-mod inventory;
+pub(crate) mod inventory;
 mod inventory_validate;
 pub(crate) mod object;
-mod object_owner;
-mod proof;
+pub(crate) mod object_owner;
+pub(crate) mod proof;
 pub(crate) mod recovery;
 pub(crate) mod transport;
 mod verify;
+
+pub(crate) use evidence::bound_relative;
+pub(crate) use verify::SavedObjectInputs;
+pub(crate) use verify::frozen;
 
 pub(crate) fn preflight(backend: &Path, request: &StageRequest<'_>) -> Result<()> {
     let _ = input::Context::load(backend, request)?;

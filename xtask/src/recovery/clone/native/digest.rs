@@ -21,6 +21,7 @@ pub(crate) fn plan_hash(value: &Value) -> Result<String> {
 }
 
 pub(crate) fn file(path: &Path) -> Result<FileDigest> {
+    crate::recovery::runtime::dataset_authority::reads::file(path)?;
     let metadata = fs::symlink_metadata(path)
         .map_err(|error| format!("无法读取复制证据 {}：{error}", path.display()))?;
     if !metadata.file_type().is_file() || linked(&metadata) {
@@ -62,6 +63,10 @@ pub(crate) fn linked_path(path: &Path) -> Result<Vec<bool>> {
     let mut current = PathBuf::new();
     for component in path.components() {
         current.push(component.as_os_str());
+        // Windows 前缀本身是卷标；追加根分隔符后再核验真实根目录。
+        if matches!(component, Component::Prefix(_)) {
+            continue;
+        }
         match fs::symlink_metadata(&current) {
             Ok(metadata) => result.push(linked(&metadata)),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -99,6 +104,7 @@ pub(crate) fn safe_file(root: &Path, relative: &str) -> Result<PathBuf> {
     if !canonical.starts_with(&canonical_root) {
         return Err("复制证据解析后越过已登记根目录".into());
     }
+    crate::recovery::runtime::dataset_authority::reads::file(&candidate)?;
     Ok(candidate)
 }
 

@@ -106,3 +106,38 @@ fn valid_stdin_binding_is_unchanged_by_all_retired_runtime_variables() {
     assert!(!diagnostics.contains("must-not-leak"));
     assert!(!temp.path().join("result.json").exists());
 }
+
+#[test]
+fn runtime_provenance_child_accepts_only_the_current_native_tool_and_fixed_stdin_contract() {
+    use sha2::{Digest, Sha256};
+
+    let executable = std::path::Path::new(env!("CARGO_BIN_EXE_xtask"));
+    let bytes = std::fs::read(executable).unwrap();
+    let mut tool = serde_json::json!({"format_version":1,"kind":"ryframe-devex-native-tool",
+        "path":executable,"bytes":bytes.len(),"sha256":hex::encode(Sha256::digest(&bytes))});
+    for stage in ["bindings", "native_tool_binding"] {
+        let mut child = Command::new(executable)
+            .arg("__devex-runtime-provenance")
+            .env("APP_DATABASE_PASSWORD", "must-not-leak")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let envelope = serde_json::json!({"request":{},"native_tool":tool});
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(&serde_json::to_vec(&envelope).unwrap())
+            .unwrap();
+        let result = child.wait_with_output().unwrap();
+        assert_eq!(result.status.code(), Some(1));
+        assert!(result.stderr.is_empty());
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&result.stdout).unwrap(),
+            serde_json::json!({"ok":false,"stage":stage})
+        );
+        tool["sha256"] = serde_json::json!("0".repeat(64));
+    }
+}

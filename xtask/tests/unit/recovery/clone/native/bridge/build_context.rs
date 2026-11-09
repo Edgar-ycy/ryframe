@@ -10,10 +10,10 @@ const RUSTC: &str =
 
 #[test]
 fn fixed_versions_and_host_fallback_keep_parent_commands_and_dev_defaults() {
-    let result = from_inputs(CARGO, RUSTC, &BTreeMap::new()).unwrap();
+    let result = from_inputs(CARGO, RUSTC, &BTreeMap::new(), 4).unwrap();
     assert_eq!(result["profile"], "dev");
     assert_eq!(result["target"], "x86_64-pc-windows-msvc");
-    assert_eq!(result["jobs"], "cargo-default");
+    assert_eq!(result["jobs"], "4");
     assert_eq!(
         result["toolchain"],
         json!({"cargo":CARGO.trim(),"rustc":RUSTC.trim()})
@@ -21,13 +21,21 @@ fn fixed_versions_and_host_fallback_keep_parent_commands_and_dev_defaults() {
     for role in ["api", "worker"] {
         assert_eq!(
             result["commands"][role],
-            json!(super::super::build_command(role).unwrap())
+            json!(super::super::build_command(role, 4).unwrap())
         );
+    }
+    super::super::validate_build_context(&result).unwrap();
+    let mut changed = result;
+    changed["jobs"] = json!("1");
+    assert!(super::super::validate_build_context(&changed).is_err());
+    for invalid in [json!("0"), json!("65"), json!("01"), json!(true)] {
+        changed["jobs"] = invalid;
+        assert!(super::super::validate_build_context(&changed).is_err());
     }
 }
 
 #[test]
-fn explicit_target_and_jobs_are_trimmed_and_empty_values_fall_back() {
+fn explicit_target_is_trimmed_and_file_jobs_override_cargo_environment() {
     let environment = BTreeMap::from([
         (
             "CARGO_BUILD_TARGET".into(),
@@ -35,16 +43,16 @@ fn explicit_target_and_jobs_are_trimmed_and_empty_values_fall_back() {
         ),
         ("CARGO_BUILD_JOBS".into(), "  0004  ".into()),
     ]);
-    let result = from_inputs(CARGO, "rustc fixture without host", &environment).unwrap();
+    let result = from_inputs(CARGO, "rustc fixture without host", &environment, 4).unwrap();
     assert_eq!(result["target"], "aarch64-unknown-linux-gnu");
-    assert_eq!(result["jobs"], "0004");
+    assert_eq!(result["jobs"], "4");
     let empty = BTreeMap::from([
         ("CARGO_BUILD_TARGET".into(), "  ".into()),
         ("CARGO_BUILD_JOBS".into(), "  ".into()),
     ]);
-    let result = from_inputs(CARGO, RUSTC, &empty).unwrap();
+    let result = from_inputs(CARGO, RUSTC, &empty, 4).unwrap();
     assert_eq!(result["target"], "x86_64-pc-windows-msvc");
-    assert_eq!(result["jobs"], "cargo-default");
+    assert_eq!(result["jobs"], "4");
 }
 
 #[test]
@@ -55,7 +63,7 @@ fn allowed_tool_environment_is_sorted_hashed_and_never_exposes_values() {
         ("APP_ENV".into(), "test".into()),
         ("PASSWORD".into(), "do-not-record".into()),
     ]);
-    let result = from_inputs(CARGO, RUSTC, &environment).unwrap();
+    let result = from_inputs(CARGO, RUSTC, &environment, 4).unwrap();
     assert_eq!(
         result["environment"]["variables"],
         json!(["PATH", "RUSTFLAGS"])
@@ -68,10 +76,10 @@ fn allowed_tool_environment_is_sorted_hashed_and_never_exposes_values() {
         assert!(!result.to_string().contains(secret));
     }
     environment.insert("PASSWORD".into(), "changed-ignored".into());
-    assert_eq!(from_inputs(CARGO, RUSTC, &environment).unwrap(), result);
+    assert_eq!(from_inputs(CARGO, RUSTC, &environment, 4).unwrap(), result);
     environment.insert("RUSTFLAGS".into(), "changed-tool-input".into());
     assert_ne!(
-        from_inputs(CARGO, RUSTC, &environment).unwrap()["environment"],
+        from_inputs(CARGO, RUSTC, &environment, 4).unwrap()["environment"],
         result["environment"]
     );
 }
@@ -85,7 +93,7 @@ fn allowed_prefixes_and_platform_name_selection_keep_actual_names() {
         ("rustflags".into(), "lowercase-flags".into()),
         ("APP_SECRET".into(), "ignored".into()),
     ]);
-    let result = from_inputs(CARGO, RUSTC, &environment).unwrap();
+    let result = from_inputs(CARGO, RUSTC, &environment, 4).unwrap();
     let mut expected = vec![
         "AR_x86_64_pc_windows_msvc",
         "AWS_LC_SYS_CMAKE_BUILDER",
@@ -99,16 +107,21 @@ fn allowed_prefixes_and_platform_name_selection_keep_actual_names() {
 
 #[test]
 fn invalid_jobs_empty_versions_and_missing_target_fail_without_environment_values() {
-    for jobs in ["0", "000", "-1", "1.5", "secret-invalid-jobs"] {
-        let environment = BTreeMap::from([("CARGO_BUILD_JOBS".into(), jobs.into())]);
-        let error = from_inputs(CARGO, RUSTC, &environment)
-            .unwrap_err()
-            .to_string();
-        assert!(!error.contains(jobs));
+    for jobs in [0, 65, u8::MAX] {
+        assert!(from_inputs(CARGO, RUSTC, &BTreeMap::new(), jobs).is_err());
     }
-    assert!(from_inputs("  ", RUSTC, &BTreeMap::new()).is_err());
-    assert!(from_inputs(CARGO, "\n", &BTreeMap::new()).is_err());
-    assert!(from_inputs(CARGO, "rustc fixture without host", &BTreeMap::new()).is_err());
+    let inherited = BTreeMap::from([("CARGO_BUILD_JOBS".into(), "unregistered".into())]);
+    let configured = from_inputs(CARGO, RUSTC, &inherited, 1).unwrap();
+    assert_eq!(configured["jobs"], "1");
+    for role in ["api", "worker"] {
+        assert_eq!(
+            configured["commands"][role],
+            json!(super::super::build_command(role, 1).unwrap())
+        );
+    }
+    assert!(from_inputs("  ", RUSTC, &BTreeMap::new(), 4).is_err());
+    assert!(from_inputs(CARGO, "\n", &BTreeMap::new(), 4).is_err());
+    assert!(from_inputs(CARGO, "rustc fixture without host", &BTreeMap::new(), 4).is_err());
 }
 
 #[test]

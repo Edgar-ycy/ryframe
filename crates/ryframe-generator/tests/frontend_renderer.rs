@@ -20,7 +20,7 @@ fn frontend_renderer_returns_exact_framework_assets_without_writing() {
     let backend = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let resources = ["notice", "post"]
         .map(|name| load_resource(backend.join(format!("catalog/resources/{name}.toml"))).unwrap());
-    let output = render_frontend_assets(&resources, &frontend, true).unwrap();
+    let output = render_frontend_assets(&backend, &resources, &frontend, true).unwrap();
     assert!(!output.is_empty());
     for asset in output {
         assert_eq!(
@@ -31,11 +31,11 @@ fn frontend_renderer_returns_exact_framework_assets_without_writing() {
         );
     }
     assert!(
-        render_frontend_assets(&[], &frontend, false)
+        render_frontend_assets(&backend, &[], &frontend, false)
             .unwrap()
             .is_empty()
     );
-    let empty = render_frontend_assets(&[], &frontend, true).unwrap();
+    let empty = render_frontend_assets(&backend, &[], &frontend, true).unwrap();
     assert_eq!(empty.len(), 1);
     assert_eq!(empty[0].resource, "__catalog__");
 }
@@ -46,7 +46,7 @@ fn missing_frontend_fails_before_resource_installation() {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.local-tests/frontend-renderer");
     fs::create_dir_all(&parent).unwrap();
     let frontend = tempfile::tempdir_in(parent).unwrap();
-    let error = render_frontend_assets(&[], frontend.path(), false).unwrap_err();
+    let error = render_frontend_assets(frontend.path(), &[], frontend.path(), false).unwrap_err();
     assert!(error.message.contains("入口"));
     assert!(error.message.contains("本批未安装"));
     assert!(error.suggestion.contains("workspace.frontend_dir"));
@@ -77,7 +77,16 @@ fn frontend_renderer_works_in_source_only_candidate_with_chinese_and_spaces() {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../catalog/resources/post.toml"),
     )
     .unwrap();
-    let result = render_frontend_assets(&[post], &candidate, false);
+    let result = render_frontend_assets(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap(),
+        &[post],
+        &candidate,
+        false,
+    );
     let assets = match result {
         Ok(assets) => assets,
         Err(error) => panic!(
@@ -149,7 +158,7 @@ fn verify_selected_frontend_writes(source: &Path, backend: &Path, frontend: &Pat
     let catalog_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../catalog/resources");
     let resources = ["notice", "post"]
         .map(|name| load_resource(catalog_root.join(format!("{name}.toml"))).unwrap());
-    let catalog = render_resources_with_frontend(&resources, source).unwrap();
+    let catalog = render_resources_with_frontend(backend, &resources, source).unwrap();
     let workspace = ResourceWorkspace {
         backend_root: backend,
         frontend_root: Some(frontend),

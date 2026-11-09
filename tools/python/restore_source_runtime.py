@@ -134,14 +134,20 @@ def _cache_observation(resources, namespace: str, subjects: list[dict]) -> tuple
     }, comparisons
 
 
-def _publish_cache_cleanup(
-    resources, observation: dict, output: Path, deleted: int | None, expired: list[str], execution: str
-) -> dict:
+def _cache_attempt_state(output: Path) -> dict:
+    return _source_policy(
+        "runtime-cache-state", backend=str(_evidence_backend(output.parent)),
+        directory=str(output.parent), output=str(output),
+    )
+
+
+def _publish_cache_cleanup(resources, observation: dict, output: Path) -> dict:
     after = [{"key": key, "type": resources._redis(["TYPE", key])}
              for key in _cache_keys(observation["plan"])]
     receipt = _runtime_policy(
-        "cache-publication", observation=observation, deleted=deleted, expired=expired,
-        execution=execution, after=after, cleaned_at=_timestamp(),
+        "cache-publication", backend=str(_evidence_backend(output.parent)),
+        directory=str(output.parent), output=str(output), observation=observation,
+        after=after, cleaned_at=_timestamp(),
     )
     write_json(output, receipt)
     return receipt
@@ -150,17 +156,14 @@ def _publish_cache_cleanup(
 def _execute_cache_cleanup(
     resources, observation: dict, comparisons: list[str], output: Path, *, checkpoint=None
 ) -> dict:
-    keys = _cache_keys(observation["plan"])
     if checkpoint is not None:
         checkpoint()
-    command = _runtime_policy("cache-command", observation=observation, comparisons=comparisons)
-    result = resources._redis(command)
+    verified = resources._cache_cleanup_native(observation, comparisons, output)
     if checkpoint is not None:
         checkpoint()
-    verified = _runtime_policy("cache-result", value=result)
-    return _publish_cache_cleanup(
-        resources, observation, output, verified["deleted"], verified["expired"], "confirmed_lua_result"
-    )
+    if verified.get("status") != "confirmed":
+        raise ValueError(verified["message"])
+    return _publish_cache_cleanup(resources, observation, output)
 
 
 def _clean_authorization_cache(resources, namespace: str, subjects: list[dict], output: Path) -> dict:
@@ -433,16 +436,17 @@ def _validate_pending_recovery_intent(
 
 def _resume_or_execute_cache_cleanup(resources, intent: dict, output: Path, *, checkpoint=None) -> dict:
     frozen = intent["authorization_cache"]
-    keys = _cache_keys(frozen["plan"])
-    types = [resources._redis(["TYPE", key]) for key in keys]
-    observed, comparisons = (None, None) if all(kind == "none" for kind in types) else _cache_observation(
-        resources, frozen["namespace"], frozen["subjects"]
+    state = _cache_attempt_state(output)
+    types = [resources._redis(["TYPE", key]) for key in _cache_keys(frozen["plan"])]
+    observed, comparisons = None, None
+    if state["status"] == "not_attempted" and not all(kind == "none" for kind in types):
+        observed, comparisons = _cache_observation(resources, frozen["namespace"], frozen["subjects"])
+    decision = _source_policy(
+        "runtime-cache-resume", backend=str(_evidence_backend(output.parent)),
+        directory=str(output.parent), output=str(output), frozen=frozen, types=types, observed=observed,
     )
-    decision = _source_policy("runtime-cache-resume", frozen=frozen, types=types, observed=observed)
-    if decision["action"] == "reconcile":
-        return _publish_cache_cleanup(
-            resources, frozen, output, None, decision["expired"], "reconciled_unknown_lua_result",
-        )
+    if decision["action"] == "publish":
+        return _publish_cache_cleanup(resources, frozen, output)
     return _execute_cache_cleanup(resources, frozen, comparisons, output, checkpoint=checkpoint)
 
 
@@ -493,9 +497,13 @@ def execute_source_verification_recovery(
                         )
                     else:
                         pre_manifest = _manifest(directory)
-                        observation, _comparisons = _cache_observation(
-                            resources, resources.selected["redis"]["namespace"], prefix["node"]["subjects"]
-                        )
+                        state = _cache_attempt_state(directory / "cache-cleanup.json")
+                        if state["status"] == "not_attempted":
+                            observation, _comparisons = _cache_observation(
+                                resources, resources.selected["redis"]["namespace"], prefix["node"]["subjects"]
+                            )
+                        else:
+                            observation = state["observation"]
                         intent = _recovery_intent(
                             directory, facts, prefix, recovery_tools, pre_manifest, observation
                         )
@@ -552,7 +560,8 @@ def _verify_cache_receipt(backend: Path, directory: Path, descriptor: dict, subj
     path = bound_file(backend, descriptor)
     if path != directory / "cache-cleanup.json":
         raise ValueError("来源授权缓存清理不属于同一 verification 目录")
-    return _source_policy("runtime-cache-receipt", value=read_json(path), subjects=subjects)
+    return _source_policy("runtime-cache-receipt", backend=str(backend), directory=str(directory),
+                          value=read_json(path), subjects=subjects)
 
 
 def _verify_recovery_chain(

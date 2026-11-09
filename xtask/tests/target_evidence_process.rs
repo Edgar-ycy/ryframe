@@ -34,7 +34,7 @@ fn evidence_protocol_refuses_invalid_input_without_echoing_credentials() {
         vec![b'x'; 1024 * 1024 + 1],
         br#"{"operation":"history","operation":"reset-plan"}"#.to_vec(),
         serde_json::to_vec(&json!({"format_version":1,"operation":"reset-completed",
-            "backend":".","target":".","manifest":{"password":secret},"sha":"bad"}))
+            "backend":".","target":".","unexpected":secret}))
         .unwrap(),
     ] {
         let output = invoke(&["__target-evidence"], &input);
@@ -146,6 +146,11 @@ fn migration_protocol_refuses_private_bad_output_and_binds_successful_operation(
     let parent = backend.join(".local-tests/target-evidence-process");
     std::fs::create_dir_all(&parent).unwrap();
     let directory = tempfile::tempdir_in(parent).unwrap();
+    std::fs::write(
+        directory.path().join("request.json"),
+        serde_json::to_vec(&json!({"config_dir":directory.path().join("bound/config")})).unwrap(),
+    )
+    .unwrap();
     let request = json!({"format_version":1,"operation":"migration-operations",
         "backend":backend,"target":directory.path(),"executable":"fixture-migrate.exe"});
     let output = invoke(

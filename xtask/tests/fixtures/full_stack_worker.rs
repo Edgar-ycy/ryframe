@@ -1,4 +1,4 @@
-//! 隔离 Worker 替身：所有控制值来自文件，不增加测试环境变量。
+//! 隔离 API/Worker 替身：按配置角色选择监听值，不增加测试环境变量。
 use std::{
     env, fs,
     io::{Read, Write},
@@ -26,15 +26,9 @@ fn main() {
     );
     let config = Path::new(&args[1]);
     let root = config.parent().unwrap();
-    let text = fs::read_to_string(config.join("app.test.toml")).unwrap();
-    let port = text
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("health_port="))
-        .unwrap()
-        .parse::<u16>()
-        .unwrap();
+    let (started_marker, host, port) = listener(config);
     let mode = fs::read_to_string(root.join("mode")).unwrap();
-    fs::write(root.join("worker-started"), std::process::id().to_string()).unwrap();
+    fs::write(root.join(started_marker), std::process::id().to_string()).unwrap();
     if mode.starts_with("tree") {
         let mut child = Command::new(env::current_exe().unwrap());
         child
@@ -63,7 +57,7 @@ fn main() {
     if mode == "delay" {
         thread::sleep(Duration::from_secs(1));
     }
-    let listener = TcpListener::bind(("127.0.0.1", port)).unwrap();
+    let listener = TcpListener::bind((host.as_str(), port)).unwrap();
     listener.set_nonblocking(true).unwrap();
     loop {
         if root.join("disable-ready").exists() {
@@ -86,4 +80,36 @@ fn main() {
             Err(error) => panic!("{error}"),
         }
     }
+}
+
+fn listener(config: &Path) -> (&'static str, String, u16) {
+    let (started_marker, section, host, port) =
+        match config.file_name().and_then(|name| name.to_str()) {
+            Some("config") => ("fixture-api-started", "[app]", "host=", "port="),
+            Some("worker-config") => ("worker-started", "[jobs]", "health_host=", "health_port="),
+            _ => panic!("替身只能使用明确的 API 或 Worker 配置目录"),
+        };
+    let text = fs::read_to_string(config.join("app.test.toml")).unwrap();
+    let lines = text
+        .lines()
+        .map(str::trim)
+        .skip_while(|line| *line != section)
+        .skip(1)
+        .take_while(|line| !line.starts_with('['))
+        .collect::<Vec<_>>();
+    let host = lines
+        .iter()
+        .find_map(|line| line.strip_prefix(host))
+        .unwrap()
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap()
+        .to_owned();
+    let port = lines
+        .iter()
+        .find_map(|line| line.strip_prefix(port))
+        .unwrap()
+        .parse()
+        .unwrap();
+    (started_marker, host, port)
 }

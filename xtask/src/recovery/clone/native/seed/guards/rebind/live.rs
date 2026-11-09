@@ -6,7 +6,7 @@ use crate::{
 use serde_json::Value;
 use std::path::Path;
 
-pub(in super::super) fn transition(backend: &Path, input: &Value) -> Result<Value> {
+pub(crate) fn transition(backend: &Path, input: &Value) -> Result<Value> {
     document::exact(input, &["original", "current"], "重绑定现场")?;
     let original = &input["original"];
     let current = &input["current"];
@@ -28,7 +28,7 @@ pub(in super::super) fn transition(backend: &Path, input: &Value) -> Result<Valu
     Ok(Value::Null)
 }
 
-pub(in super::super) fn quiet(backend: &Path, input: &Value) -> Result<Value> {
+pub(crate) fn quiet(backend: &Path, input: &Value) -> Result<Value> {
     document::exact(input, &["registration", "request"], "重绑定生产者静默")?;
     let descriptor = &input["registration"]["producer_lineage"];
     let lineage = common::read_bound(backend, descriptor, "生产者完整谱系")?;

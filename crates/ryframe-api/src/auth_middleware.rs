@@ -6,7 +6,7 @@ use std::{
 
 use crate::http::HttpAppError;
 use axum::{
-    extract::{Request, State},
+    extract::{OriginalUri, Request, State},
     http::{HeaderName, HeaderValue},
     middleware::{self, Next},
     response::Response,
@@ -107,9 +107,9 @@ pub async fn auth_middleware(
     )
     .await?;
     let principal = Arc::new(principal);
-    if principal.password_change_required
-        && !password_change::allowed(request.method(), request.uri().path())
-    {
+    let original_uri = request.extensions().get::<OriginalUri>();
+    let path = original_uri.map_or_else(|| request.uri().path(), |uri| uri.0.path());
+    if principal.password_change_required && !password_change::allowed(request.method(), path) {
         return Err(AppError::PermissionDenied("请先修改初始密码，再访问业务功能".into()).into());
     }
 

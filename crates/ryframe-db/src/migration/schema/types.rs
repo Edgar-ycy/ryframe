@@ -43,6 +43,7 @@ pub(super) struct ExpectedCheck {
 pub(super) struct ExpectedSchema {
     pub(super) tables: BTreeMap<String, ExpectedTable>,
     pub(super) columns: BTreeMap<(String, String), ExpectedColumn>,
+    pub(super) column_order: BTreeMap<(String, String), usize>,
     pub(super) indexes: BTreeMap<(String, String), ExpectedIndex>,
     pub(super) foreign_keys: BTreeMap<(String, String), ExpectedForeignKey>,
     pub(super) checks: BTreeMap<(String, String), ExpectedCheck>,

@@ -20,7 +20,7 @@ import restore_runtime_registration as registration_model
 import restore_runtime
 import runtime_control_lock
 from full_stack_process import process_identity, write_receipt
-from restore_runtime_evidence import read_json_document
+from restore_runtime_evidence import artifact_snapshot, read_json_document
 from restore_runtime_registration import REGISTRATION_LOCK
 from workspace_directory import WorkspaceDirectory
 
@@ -58,9 +58,17 @@ class RestoreRuntimeLifecycleTests(unittest.TestCase):
             "frontend_endpoint": "http://127.0.0.1:15174",
         }
         executable = str(Path(sys.executable).resolve())
+        server = self.base / "registered-frontend.exe"
+        shutil.copyfile(executable, server)
+        tool = artifact_snapshot(server).descriptor()
+        self.native_tool = {"format_version": 1, "kind": "ryframe-native-rate-limit-tool", **tool}
+        patcher = patch.object(launch_model, "tool_binding", return_value=self.native_tool)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.request = {
-            "format_version": 1,
+            "format_version": 2,
             "kind": "restore-runtime-launch-request",
+            "runtime_directory": str(self.runtime),
             "authority": self.authority,
             "registration": self.binding,
             "roots": {
@@ -87,11 +95,7 @@ class RestoreRuntimeLifecycleTests(unittest.TestCase):
                 "coordinator_root": str(ROOT),
                 "coordinator_head": "7" * 40,
                 "inventory_sha256": "8" * 64,
-                "frontend_server": {
-                    "path": str(ROOT / "tools/python/restore_frontend_server.py"),
-                    "bytes": 1,
-                    "sha256": "9" * 64,
-                },
+                "frontend_server": tool,
             },
             "environment": {
                 "document": {
@@ -170,28 +174,58 @@ class RestoreRuntimeLifecycleTests(unittest.TestCase):
             stack.enter_context(patch.object(lifecycle, "require_closed_port"))
             yield
 
-    def test_three_role_generation_starts_reports_and_stops_complete_trees(self):
+    def test_retired_status_and_stop_are_rejected_by_the_python_protocol(self):
+        for operation, fields in (("status", {"write": False}),
+                                  ("stop", {"write": True, "generation": 1})):
+            payload = {
+                "backend_dir": str(self.coordinator), "format_version": 1,
+                "kind": restore_runtime.PROTOCOL_KIND, "operation": operation,
+                "runtime_registration": str(self.args().runtime_registration),
+                "target_plan": str(self.args().target_plan),
+                **fields,
+            }
+            with self.subTest(operation=operation), self.assertRaises(restore_runtime.RuntimeProtocolError):
+                restore_runtime.decode_request(json.dumps(payload))
+
+    def stop_under_recover_lock(self):
+        # 旧 Recover 仍以相同锁调用此内部回收实现。
+        with runtime_control_lock.controller_lock(
+            self.coordinator / ".local-tests",
+            lifecycle._operation("recover", self.binding),
+            REGISTRATION_LOCK,
+        ):
+            return lifecycle._stop_locked(self.args(), self.coordinator)
+
+    def observed_generation(self):
+        *_, state = lifecycle._load_locked(self.args(), self.coordinator)
+        generation = state["generations"][-1]
+        return generation, lifecycle._observe_generation(generation)
+
+    def test_three_role_generation_starts_and_stops_complete_trees(self):
         with self.patched(self.commands()):
             started = lifecycle.start(self.args(), self.coordinator, Mock(), Mock(), Mock())
             self.assertEqual(started["status"], "running")
             launch = read_json_document(Path(started["launch"]["path"])).value
             self.assertEqual(set(launch["processes"]), {"api", "worker", "frontend"})
-            status = lifecycle.status(self.args(), self.coordinator)
-            self.assertEqual(status["status"], "running")
-            identities = [item["identity"] for item in status["processes"].values()]
-            stopped = lifecycle.stop(self.args(), self.coordinator)
+            generation, processes = self.observed_generation()
+            self.assertEqual(generation["status"], "running")
+            self.assertEqual({item["state"] for item in processes.values()}, {"running"})
+            identities = [item["identity"] for item in processes.values()]
+            stopped = self.stop_under_recover_lock()
             self.assertEqual(stopped["status"], "stopped")
             self.assertTrue(all(process_identity(item["pid"]) is None for item in identities))
-            self.assertEqual(lifecycle.status(self.args(), self.coordinator)["status"], "stopped")
+            generation, processes = self.observed_generation()
+            self.assertEqual(generation["status"], "stopped")
+            self.assertEqual({item["state"] for item in processes.values()}, {"stopped"})
 
-    def test_natural_exit_is_reported_from_completion_evidence(self):
+    def test_stop_after_natural_exit_retains_completion_evidence(self):
         with self.patched(self.commands(0.5)):
             lifecycle.start(self.args(), self.coordinator, Mock(), Mock(), Mock())
             time.sleep(1)
-            result = lifecycle.status(self.args(), self.coordinator)
-            self.assertEqual(result["status"], "exited")
-            self.assertEqual({item["state"] for item in result["processes"].values()}, {"stopped"})
-            self.assertEqual(lifecycle.stop(self.args(), self.coordinator)["status"], "stopped")
+            _generation, processes = self.observed_generation()
+            self.assertEqual({item["state"] for item in processes.values()}, {"stopped"})
+            self.assertTrue(all(item["completion"] is not None for item in processes.values()))
+            self.assertEqual(self.stop_under_recover_lock()["status"], "stopped")
 
     def test_process_tree_published_before_state_update_is_fully_reclaimed(self):
         original = lifecycle.save_state
@@ -209,31 +243,29 @@ class RestoreRuntimeLifecycleTests(unittest.TestCase):
         ), self.assertRaisesRegex(RuntimeError, "controller cut"):
             lifecycle.start(self.args(), self.coordinator, Mock(), Mock(), Mock())
         with self.patched(self.commands()):
-            result = lifecycle.status(self.args(), self.coordinator)
-        self.assertEqual(result["status"], "start_failed")
-        self.assertNotIn("running", {item["state"] for item in result["processes"].values()})
+            generation, processes = self.observed_generation()
+        self.assertEqual(generation["status"], "start_failed")
+        self.assertNotIn("running", {item["state"] for item in processes.values()})
 
-    def test_unknown_generation_write_blocks_status_and_stop(self):
+    def test_unknown_generation_write_blocks_stop(self):
         with self.patched(self.commands()):
             lifecycle.start(self.args(), self.coordinator, Mock(), Mock(), Mock())
             unknown = self.runtime / "generation-0001/foreign.json"
             unknown.write_text("{}", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "未登记文件"):
-                lifecycle.status(self.args(), self.coordinator)
-            with self.assertRaisesRegex(ValueError, "未登记文件"):
-                lifecycle.stop(self.args(), self.coordinator)
+                self.stop_under_recover_lock()
             unknown.unlink()
-            self.assertEqual(lifecycle.stop(self.args(), self.coordinator)["status"], "stopped")
+            self.assertEqual(self.stop_under_recover_lock()["status"], "stopped")
 
     def test_cancelled_start_reclaims_trees_and_preserves_failed_generation_without_launch(self):
         with self.patched(self.commands()), patch.object(lifecycle, "_wait_ready", side_effect=KeyboardInterrupt):
             with self.assertRaises(KeyboardInterrupt):
                 lifecycle.start(self.args(), self.coordinator, Mock(), Mock(), Mock())
         with self.patched(self.commands()):
-            result = lifecycle.status(self.args(), self.coordinator)
-        self.assertEqual(result["status"], "start_failed")
-        self.assertNotIn("running", {item["state"] for item in result["processes"].values()})
-        self.assertIsNone(result["launch"])
+            generation, processes = self.observed_generation()
+        self.assertEqual(generation["status"], "start_failed")
+        self.assertNotIn("running", {item["state"] for item in processes.values()})
+        self.assertIsNone(generation["launch"])
         self.assertFalse((self.runtime / "generation-0001/runtime-launch.json").exists())
 
     def test_generation_without_tool_binding_fails_before_process_or_file_write(self):
@@ -253,10 +285,10 @@ class RestoreRuntimeLifecycleTests(unittest.TestCase):
             state["generations"][0]["status"] = "starting"
             state["generations"][0]["launch"] = None
             write_receipt(state_path, state)
-            observed = lifecycle.status(self.args(), self.coordinator)
-            self.assertEqual(observed["status"], "running")
-            self.assertEqual(observed["persisted_status"], "starting")
-            stopped = lifecycle.stop(self.args(), self.coordinator)
+            generation, processes = self.observed_generation()
+            self.assertEqual({item["state"] for item in processes.values()}, {"running"})
+            self.assertEqual(generation["status"], "starting")
+            stopped = self.stop_under_recover_lock()
             self.assertEqual(stopped["status"], "stopped")
             persisted = read_json_document(state_path).value["generations"][0]
             self.assertIsNotNone(persisted["launch"])
@@ -301,10 +333,20 @@ class RestoreRuntimeLifecycleTests(unittest.TestCase):
         self.assertEqual(launch_model.validate_request(self.request), self.request)
         invalid = json.loads(json.dumps(self.request))
         invalid["authority"]["backend_execution_sha"] = "d" * 40
-        invalid["authority"]["backend_adapter_contract"] = "legacy-stable-readiness-b0-v1"
+        invalid["authority"]["backend_adapter_contract"] = launch_model.B0_BACKEND_ADAPTER
+        with self.assertRaisesRegex(ValueError, "必须绑定精确历史产品、执行树和适配合同"):
+            launch_model.validate_request(invalid)
+
+        invalid["authority"].update(
+            frontend_sha=launch_model.B0_HEAD,
+            backend_product_sha="815c5eafb09d4b493319d255fb7ab88ddd02c8b6",
+            backend_execution_sha="c05114bcdf5c369cd74087db6317ce3c8f89bee8",
+        )
         with self.assertRaisesRegex(ValueError, "适配关系"):
             launch_model.validate_request(invalid)
+
         invalid["roots"]["backend_execution"] = str(self.base / "adapter")
+        invalid["roots"]["frontend"] = str(self.base / "frontend")
         self.assertEqual(launch_model.validate_request(invalid), invalid)
 
     def test_lifecycle_documents_reject_boolean_format_versions(self):

@@ -59,8 +59,8 @@ class RestoreImages:
 
     @contextmanager
     def control(self):
-        execution, _ = execution_backend(self.backend, self.arm["target"])
-        with artifact_sources(execution, self.arm["request"]["build_bridges"]), target_storage_control(
+        execution_backend(self.backend, self.arm["target"])
+        with artifact_sources(self.backend, self.arm["request"]["build_bridges"]), target_storage_control(
                 self.backend, Path(self.plan["work_dir"]), self.arm["manifest"]):
             yield self
 
@@ -114,14 +114,15 @@ class RestoreImages:
                     output, self.tools.run, storage_run=Path(self.arm["target_storage_run"]["path"]))
                 if initial != self.arm["initialized"] or request != self.arm["target"]:
                     raise ValueError("恢复库存实际目标代次与已绑定 arm 不同")
-                side = {**request["target"], **{key: resources.selected[key] for key in ("runtime_dir", "api_url")}}
+                side = {**request["target"], "s3": {"configuration": resources.object_configuration},
+                        **{key: resources.selected[key] for key in ("runtime_dir", "api_url")}}
                 tools = ExternalTools({"target": side, "tools": request["tools"]}, output, self.tools.run)
                 captured = capture_side_inventory(resources.execution_backend, "target", tools,
                     bound_file(self.backend, request["maintenance_build"]), output / "inventory",
                     environment=environment, evidence_root=self.backend)
                 databases = {item.resource["database"]: json.loads(json.dumps(asdict(item))) for item in captured.observations}
                 objects, object_evidence = self._objects(resources, tools, output, after=after)
-                redis = resources.redis_state(initialized=True, sentinel=True)
+                redis = resources.redis_state()
                 target_history(self.backend, self.inputs.target.value["fresh_target"]["initialized"],
                     output, self.tools.run, storage_run=Path(self.arm["target_storage_run"]["path"]))
             self.inputs.assert_unchanged()

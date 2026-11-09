@@ -11,14 +11,11 @@ use std::{
     time::Duration,
 };
 
-use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
-
 use crate::Result;
+use serde_json::{Value, json};
 
 const MAX_BOOTSTRAP_BYTES: u64 = 1024 * 1024;
 const MAX_REQUEST_BYTES: usize = 4096;
-const PASSWORD_NAME: &str = "reset-admin-password.txt";
 
 pub(super) struct CredentialBroker {
     endpoint: String,
@@ -83,51 +80,48 @@ impl Drop for CredentialBroker {
 }
 
 fn read_password(bootstrap: &Path) -> Result<String> {
+    super::model::safe(bootstrap)?;
     let metadata = fs::symlink_metadata(bootstrap)?;
     if !metadata.file_type().is_file() || metadata.len() > MAX_BOOTSTRAP_BYTES {
         return Err("浏览器凭据环境必须是大小受限的普通文件".into());
     }
-    let bytes = fs::read(bootstrap)?;
-    let root: Value = serde_json::from_slice(&bytes).map_err(|_| "浏览器凭据环境不是有效 JSON")?;
-    let descriptor = root
-        .get("secret_files")
-        .and_then(Value::as_object)
-        .and_then(|files| files.get(PASSWORD_NAME))
-        .and_then(Value::as_object)
-        .ok_or("浏览器凭据环境缺少管理员密码文件绑定")?;
-    let path = descriptor
-        .get("path")
+    let mut bytes = Vec::new();
+    fs::File::open(bootstrap)?
+        .take(MAX_BOOTSTRAP_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_BOOTSTRAP_BYTES {
+        return Err("浏览器凭据环境超过大小限制".into());
+    }
+    let root = crate::recovery::clone::native::json::parse_fragment(
+        std::str::from_utf8(&bytes).map_err(|_| "浏览器凭据环境不是有效 UTF-8")?,
+        "浏览器凭据环境",
+    )
+    .map_err(|_| "浏览器凭据环境不是有效 JSON")?;
+    let execution = root
+        .get("execution_backend")
         .and_then(Value::as_str)
         .map(Path::new)
-        .filter(|path| path.is_absolute())
-        .ok_or("浏览器管理员密码绑定路径无效")?;
-    let expected_bytes = descriptor
-        .get("bytes")
-        .and_then(Value::as_u64)
-        .ok_or("浏览器管理员密码绑定字节数无效")?;
-    let expected_sha = descriptor
-        .get("sha256")
-        .and_then(Value::as_str)
-        .filter(|value| {
-            value.len() == 64
-                && value
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        })
-        .ok_or("浏览器管理员密码绑定摘要无效")?;
-    let metadata = fs::symlink_metadata(path)?;
-    if !metadata.file_type().is_file() || metadata.len() != expected_bytes {
-        return Err("浏览器管理员密码文件类型或字节数与绑定不一致".into());
-    }
-    let password = fs::read(path)?;
-    let actual_sha = hex::encode(Sha256::digest(&password));
-    if actual_sha != expected_sha {
-        return Err("浏览器管理员密码文件摘要与绑定不一致".into());
-    }
-    let password = String::from_utf8(password).map_err(|_| "浏览器管理员密码文件必须是 UTF-8")?;
-    let password = password.trim().to_owned();
-    if password.is_empty() || password.contains(['\r', '\n', '\0']) {
-        return Err("浏览器管理员密码文件内容无效".into());
+        .ok_or("浏览器凭据环境缺少执行后端路径")?;
+    crate::local_test_path::validate_local_test_path(
+        bootstrap,
+        execution,
+        crate::local_test_path::LocalTestPathKind::ExistingFile,
+    )?;
+    let descriptor = root
+        .get("administrator_credentials")
+        .ok_or("浏览器凭据环境缺少当前管理员凭据绑定")?;
+    let password = crate::recovery::clone::native::session::credentials::load_account(
+        execution, descriptor, "system", "admin",
+    )?;
+    super::super::fixture_control::environment::validate_password(&password)
+        .map_err(|_| "浏览器当前管理员密码不符合密码策略")?;
+    super::model::safe(bootstrap)?;
+    let mut after = Vec::new();
+    fs::File::open(bootstrap)?
+        .take(MAX_BOOTSTRAP_BYTES + 1)
+        .read_to_end(&mut after)?;
+    if after != bytes {
+        return Err("浏览器凭据环境读取期间变化".into());
     }
     Ok(password)
 }
@@ -215,6 +209,7 @@ fn set_failure(failure: &Mutex<Option<&'static str>>, message: &'static str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
     use std::io::Cursor;
     use tempfile::TempDir;
 
@@ -241,17 +236,39 @@ mod tests {
     }
 
     fn fixture(password: &str) -> (TempDir, std::path::PathBuf) {
-        let directory = TempDir::new().unwrap();
-        let secret = directory.path().join(PASSWORD_NAME);
-        fs::write(&secret, password).unwrap();
-        let bootstrap = directory.path().join("bootstrap.json");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join(".local-tests");
+        fs::create_dir_all(&root).unwrap();
+        let directory = tempfile::Builder::new()
+            .prefix("browser-credentials-")
+            .tempdir_in(root)
+            .unwrap();
+        let local = directory.path().join(".local-tests");
+        fs::create_dir(&local).unwrap();
+        let initial = b"Initial-Sentinel-456!";
+        let secret = local.join("reset-admin-password.txt");
+        fs::write(&secret, initial).unwrap();
+        let current = local.join("administrator.toml");
+        let contents = format!(
+            "[administrator]\ntenant_id = \"system\"\nusername = \"admin\"\npassword = {password:?}\n"
+        );
+        fs::write(&current, &contents).unwrap();
+        let bootstrap = local.join("bootstrap.json");
         fs::write(
             &bootstrap,
             serde_json::to_vec(&json!({
-                "secret_files": {PASSWORD_NAME: {
+                "execution_backend": directory.path(),
+                "administrator_credentials": {
+                    "path": current,
+                    "bytes": contents.len(),
+                    "sha256": hex::encode(Sha256::digest(contents.as_bytes()))
+                },
+                "secret_files": {"reset-admin-password.txt": {
                     "path": secret,
-                    "bytes": password.len(),
-                    "sha256": hex::encode(Sha256::digest(password.as_bytes()))
+                    "bytes": initial.len(),
+                    "sha256": hex::encode(Sha256::digest(initial))
                 }}
             }))
             .unwrap(),
@@ -265,32 +282,86 @@ mod tests {
         let (_directory, bootstrap) = fixture("Private-Sentinel-123");
         let broker = CredentialBroker::start(&bootstrap).unwrap();
         assert!(!broker.endpoint().contains("Private-Sentinel-123"));
-        let mut stream = Duplex {
-            input: Cursor::new(b"GET /v1/credentials HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".to_vec()),
-            output: Vec::new(),
-        };
-        exchange(&mut stream, "Private-Sentinel-123").unwrap();
-        let response = String::from_utf8(stream.output).unwrap();
+        assert!(!broker.endpoint().contains("Initial-Sentinel-456!"));
+        let address = broker
+            .endpoint()
+            .strip_prefix("http://")
+            .unwrap()
+            .strip_suffix("/v1/credentials")
+            .unwrap();
+        let mut client = TcpStream::connect(address).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        client
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        client
+            .write_all(b"GET /v1/credentials HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+            .unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
         assert!(response.contains("\r\nCache-Control: no-store\r\n"));
         assert!(response.ends_with(r#"{"password":"Private-Sentinel-123"}"#));
+        assert!(!response.contains("Initial-Sentinel-456!"));
+        let mut stream = Duplex {
+            input: Cursor::new(b"GET /other HTTP/1.1\r\n\r\n".to_vec()),
+            output: Vec::new(),
+        };
+        assert!(exchange(&mut stream, "Private-Sentinel-123").is_err());
+        assert!(stream.output.starts_with(b"HTTP/1.1 400 Bad Request\r\n"));
         assert!(valid_request(
             b"GET /v1/credentials HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
         ));
         assert!(!valid_request(b"GET /other HTTP/1.1\r\n\r\n"));
-        broker.finish(false).unwrap();
+        broker.finish(true).unwrap();
     }
 
     #[test]
     fn rejects_drift_and_a_success_without_a_credential_read() {
-        let (_directory, bootstrap) = fixture("Private-Sentinel-123");
-        let mut value: Value = serde_json::from_slice(&fs::read(&bootstrap).unwrap()).unwrap();
-        value["secret_files"][PASSWORD_NAME]["sha256"] = json!("0".repeat(64));
-        fs::write(&bootstrap, serde_json::to_vec(&value).unwrap()).unwrap();
-        let error = CredentialBroker::start(&bootstrap)
-            .err()
-            .unwrap()
-            .to_string();
-        assert!(!error.contains("Private-Sentinel-123"));
+        for failure in [
+            "digest",
+            "missing-binding",
+            "missing-file",
+            "malformed",
+            "account",
+            "policy",
+        ] {
+            let (_directory, bootstrap) = fixture("Private-Sentinel-123");
+            let mut value: Value = serde_json::from_slice(&fs::read(&bootstrap).unwrap()).unwrap();
+            let path = std::path::PathBuf::from(
+                value["administrator_credentials"]["path"].as_str().unwrap(),
+            );
+            match failure {
+                "digest" => value["administrator_credentials"]["sha256"] = json!("0".repeat(64)),
+                "missing-binding" => {
+                    value
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("administrator_credentials");
+                }
+                "missing-file" => fs::remove_file(&path).unwrap(),
+                _ => {
+                    let contents = fs::read_to_string(&path).unwrap();
+                    let changed = match failure {
+                        "malformed" => format!("{contents}[Private-Sentinel-123"),
+                        "account" => contents.replace("\"admin\"", "\"other\""),
+                        _ => contents.replace("Private-Sentinel-123", "weak"),
+                    };
+                    fs::write(&path, &changed).unwrap();
+                    value["administrator_credentials"]["bytes"] = json!(changed.len());
+                    value["administrator_credentials"]["sha256"] =
+                        json!(hex::encode(Sha256::digest(changed.as_bytes())));
+                }
+            }
+            fs::write(&bootstrap, serde_json::to_vec(&value).unwrap()).unwrap();
+            let error = CredentialBroker::start(&bootstrap)
+                .err()
+                .unwrap()
+                .to_string();
+            assert!(!error.contains("Private-Sentinel-123"));
+            assert!(!error.contains("Initial-Sentinel-456!"));
+        }
 
         let (_directory, bootstrap) = fixture("Private-Sentinel-123");
         let error = CredentialBroker::start(&bootstrap)

@@ -11,6 +11,7 @@ pub(super) trait Runtime {
 }
 
 struct Stream<'a, R, W> {
+    backend: &'a Path,
     input: &'a mut R,
     output: &'a mut W,
     sequence: u64,
@@ -18,6 +19,37 @@ struct Stream<'a, R, W> {
 
 impl<R: BufRead, W: Write> Runtime for Stream<'_, R, W> {
     fn call(&mut self, operation: &str, arguments: Value) -> Result<Value> {
+        if operation == "start" {
+            let backend = self.backend;
+            return super::host_start::start(
+                backend,
+                &arguments["request"],
+                &arguments["private"],
+                Path::new(doc::text(&arguments["output"], "缓存启动目录")?),
+                || {
+                    self.call("checkpoint", arguments["guard"].clone())
+                        .map(|_| ())
+                },
+            );
+        }
+        if operation == "observe" {
+            return super::host_control::observe(
+                self.backend,
+                &arguments["request"],
+                &arguments["runtime"],
+            );
+        }
+        if operation == "stop" {
+            return super::host_control::stop(
+                self.backend,
+                &arguments["request"],
+                &arguments["runtime"],
+                Path::new(doc::text(&arguments["output"], "缓存停止目录")?),
+            );
+        }
+        if matches!(operation, "status" | "predecessor") {
+            return super::readonly::port(self.backend, operation, &arguments);
+        }
         self.sequence += 1;
         writeln!(
             self.output,
@@ -56,10 +88,39 @@ pub(super) fn execute(
     {
         return Err(rejected("缓存阶段协议版本或类型无效"));
     }
+    let arguments = &value["arguments"];
+    if matches!(
+        arguments["action"].as_str(),
+        Some("reboot-starts" | "reboot-generation")
+    ) {
+        return Err(rejected("重启缓存历史仅限原生只读入口"));
+    }
+    if arguments["action"] == "status"
+        || (arguments["action"] == "binding"
+            && arguments["parameters"]["owned_lock_identity"].is_null())
+    {
+        // 当前写控制器的初始化锁不能由跨进程整数冒认；其余查询不再回调 Python。
+        return super::binding::execute_stage(backend, arguments, None);
+    }
+    let parameters = &arguments["parameters"];
+    let supplied = match arguments["action"].as_str() {
+        Some("execute" | "execution-preflight") => Some(&parameters["request_file"]),
+        Some("preflight") => Some(&parameters["filename"]),
+        _ => None,
+    };
+    if let Some(supplied) = supplied {
+        let directory = stage::path(&arguments["directory"])?;
+        super::super::resources::common::local_directory(backend, &directory, "缓存运行目录")?;
+        let supplied = (!supplied.is_null())
+            .then(|| stage::path(supplied))
+            .transpose()?;
+        stage::require_live_request(backend, &directory, supplied.as_deref())?;
+    }
     stage::dispatch(
         backend,
-        &value["arguments"],
+        arguments,
         &mut Stream {
+            backend,
             input,
             output,
             sequence: 0,
@@ -85,11 +146,12 @@ mod tests {
             let mut input = Cursor::new(format!("{reply}\n").into_bytes());
             let mut output = Vec::new();
             let mut runtime = Stream {
+                backend: std::path::Path::new("."),
                 input: &mut input,
                 output: &mut output,
                 sequence: 0,
             };
-            let error = runtime.call("observe", json!({})).unwrap_err();
+            let error = runtime.call("quiet", json!({})).unwrap_err();
             assert!(!error.to_string().contains("private-secret"));
             let sent: Value = serde_json::from_slice(&output).unwrap();
             assert_eq!(sent["sequence"], 1);
@@ -100,24 +162,77 @@ mod tests {
         let mut input = Cursor::new(vec![b' '; 1024 * 1024 + 1]);
         let mut output = Vec::new();
         let mut runtime = Stream {
+            backend: std::path::Path::new("."),
             input: &mut input,
             output: &mut output,
             sequence: 0,
         };
-        assert!(runtime.call("start", json!({})).is_err());
+        assert!(runtime.call("quiet", json!({})).is_err());
         assert_eq!(output.iter().filter(|b| **b == b'\n').count(), 1);
         let mut input = Cursor::new(
             b"{\"sequence\":1,\"ok\":true,\"result\":{\"state\":\"stopped\"}}\n".to_vec(),
         );
         let mut output = Vec::new();
         let mut runtime = Stream {
+            backend: std::path::Path::new("."),
             input: &mut input,
             output: &mut output,
             sequence: 0,
         };
         assert_eq!(
-            runtime.call("status", json!({})).unwrap(),
+            runtime.call("inspect", json!({})).unwrap(),
             json!({"state":"stopped"})
         );
+    }
+    #[test]
+    fn published_binding_query_uses_no_callback_messages_or_resource_writes() {
+        use crate::recovery::clone::native::{
+            json as document, lifecycle::state, resources::common,
+        };
+        let backend = crate::workspace::root_dir();
+        std::fs::create_dir_all(backend.join(".local-tests")).unwrap();
+        let directory = tempfile::Builder::new()
+            .prefix("cache-binding-")
+            .tempdir_in(backend.join(".local-tests"))
+            .unwrap();
+        document::write_new(
+            &directory.path().join("manifest.json"),
+            &json!({"kind":"binding-fixture"}),
+        )
+        .unwrap();
+        state::initialize(directory.path()).unwrap();
+        let before = common::binding(&directory.path().join("state.json")).unwrap();
+        let value = json!({"format_version":1,"kind":"ryframe-cache-process","operation":"stage",
+            "arguments":{"action":"binding","directory":directory.path(),"caller":std::process::id(),
+                "parameters":{"owned_lock_identity":null,"before":null,"frozen":null}}});
+        let mut input = Cursor::new(Vec::<u8>::new());
+        let mut output = Vec::new();
+        assert_eq!(
+            super::execute(&backend, &value, &mut input, &mut output).unwrap(),
+            Value::Null
+        );
+        assert!(output.is_empty());
+        assert_eq!(
+            common::binding(&directory.path().join("state.json")).unwrap(),
+            before
+        );
+        assert!(!directory.path().join("cache-target").exists());
+        assert!(!directory.path().join("run.lock").exists());
+    }
+
+    #[test]
+    fn status_and_predecessor_reject_invalid_requests_without_python_callbacks() {
+        for operation in ["status", "predecessor"] {
+            let mut input = Cursor::new(Vec::<u8>::new());
+            let mut output = Vec::new();
+            let mut runtime = Stream {
+                backend: std::path::Path::new("."),
+                input: &mut input,
+                output: &mut output,
+                sequence: 0,
+            };
+            assert!(runtime.call(operation, json!({})).is_err());
+            assert!(output.is_empty());
+        }
     }
 }

@@ -25,6 +25,30 @@ fn request(operation: &str, arguments: Value) -> Vec<u8> {
     .unwrap()
 }
 
+#[test]
+fn retired_linux_commands_fail_at_cli_dispatch_without_receipts() {
+    let directory = tempfile::tempdir().unwrap();
+    for command in ["__linux-cache", "__linux-cache-exec", "__linux-observer"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+            .arg(command)
+            .current_dir(directory.path())
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("参数错误"));
+        assert!(directory.path().read_dir().unwrap().next().is_none());
+    }
+}
+
+#[test]
+fn retired_cache_session_and_tool_capture_fail_closed() {
+    for operation in ["start-session", "native-tool"] {
+        rejected(invoke(&request(operation, json!({})), &[]));
+    }
+}
+
 fn rejected(output: Output) {
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stderr.is_empty());

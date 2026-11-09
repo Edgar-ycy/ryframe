@@ -16,6 +16,7 @@ pub(super) async fn delete_tenant_rows_batch_in_transaction(
         if slot.as_ref().is_some_and(|slot| slot.tenant_id.is_some()) {
             return Err(TenantDataError::TargetUnavailable {
                 target_key: provision.target_key.clone(),
+                source: None,
             });
         }
         let row = transaction
@@ -31,6 +32,7 @@ pub(super) async fn delete_tenant_rows_batch_in_transaction(
             .map_err(|error| target_write_error(provision, error, "批量清理幂等检查失败"))?
             .ok_or_else(|| TenantDataError::TargetUnavailable {
                 target_key: provision.target_key.clone(),
+                source: None,
             })?;
         if row
             .try_get_by_index::<i64>(0)
@@ -106,6 +108,7 @@ pub(super) async fn cleanup_ownership_in_transaction(
             })?
             .ok_or_else(|| TenantDataError::TargetUnavailable {
                 target_key: provision.target_key.clone(),
+                source: None,
             })?;
         if row.try_get_by_index::<i64>(0).map_err(|error| {
             target_write_error(provision, error, "cleanup 所有权 catalog 结果无效")
@@ -136,6 +139,7 @@ pub(super) async fn finish_tenant_cleanup_in_transaction(
     } else if slot.as_ref().is_some_and(|slot| slot.tenant_id.is_some()) {
         return Err(TenantDataError::TargetUnavailable {
             target_key: provision.target_key.clone(),
+            source: None,
         });
     }
     for descriptor in catalog.tables() {
@@ -152,6 +156,7 @@ pub(super) async fn finish_tenant_cleanup_in_transaction(
             .map_err(|error| target_write_error(provision, error, "清理收口空数据检查失败"))?
             .ok_or_else(|| TenantDataError::TargetUnavailable {
                 target_key: provision.target_key.clone(),
+                source: None,
             })?;
         if row
             .try_get_by_index::<i64>(0)

@@ -30,8 +30,9 @@ class AmendmentTests(unittest.TestCase):
         request = self.file("old-request", self.request)
         number = begin(self.directory, "post-copy", "register", {})
         self.register_attempt = number
-        with patch.object(post, "validate_registration"):
-            result = post.register(self.backend, self.directory, self.value, Path(request["path"]))
+        self.write(self.directory / "post-copy.json", self.request)
+        result = {"status": "post_copy_registered", "registration": binding(self.directory / "post-copy.json"),
+                  "remote_writes": 0, "worker_must_remain_stopped": True, "restore_qualified": False}
         finish(self.directory, number, result=result)
         self.base = binding(self.directory / "post-copy.json")
         self.runtime = self.directory / "post-copy/runtime"
@@ -60,9 +61,8 @@ class AmendmentTests(unittest.TestCase):
         self.failed = begin(self.directory, "runtime-target", "start", {})
         write_json(self.directory / f"controller-{self.failed:04d}.json", {"fixture": "controller"})
         write_json(self.directory / f"failure-{self.failed:04d}.json", {
-            "format_version": 1, "kind": "devex-stage-failure", "attempt": self.failed,
+            "format_version": 2, "kind": "devex-stage-failure", "attempt": self.failed,
             "stage": "runtime-target", "mode": "start", "error_type": "RuntimeError",
-            "frames": [{"file": "tools/python/devex_clone_runtime.py", "function": "_start_one", "line": 1}],
             "controller": binding(self.directory / f"controller-{self.failed:04d}.json")})
         finish(self.directory, self.failed, error=RuntimeError("fixture config rejected"))
         self.stopped = begin(self.directory, "runtime-target", "stop", {})
@@ -80,11 +80,23 @@ class AmendmentTests(unittest.TestCase):
         return load_state(self.directory)["attempts"][-1]["result"]
 
     def publish(self):
-        candidate = self.file("corrected-request", self.corrected)
+        # 本宿主只审核尚执行的登记消费/业务生产者；修订发布与关闭资格由原生正式入口承载。
         number = begin(self.directory, "post-copy", "amend", {})
-        with patch("full_stack_process.process_identity", return_value=None), \
-                patch.object(post, "require_closed_port"):
-            result = post.amend(self.backend, self.directory, self.value, Path(candidate["path"]), number)
+        invalidated = {"prepare": self.prepare, "handoff": binding(self.runtime / "handoff.json"),
+            "runtime": binding(self.runtime / "runtime.json"), "binaries": binding(self.runtime / "binaries.json"),
+            "api_process": binding(self.runtime / "api.json"), "producer_history": binding(self.runtime / "producer-history.json"),
+            "failed_start": {"attempt": self.failed, "controller": binding(self.directory / f"controller-{self.failed:04d}.json"),
+                             "failure": binding(self.directory / f"failure-{self.failed:04d}.json")},
+            "stopped": {"attempt": self.stopped, "result": load_state(self.directory)["attempts"][self.stopped - 1]["result"]}}
+        path = self.directory / "post-copy/amendments/0001.json"
+        path.parent.mkdir()
+        self.write(path, {"format_version": 1, "kind": "devex-clone-post-copy-amendment", "sequence": 1,
+            "run_manifest": binding(self.directory / "manifest.json"), "predecessor": self.base,
+            "request_sha256": post.plan_hash(self.corrected), "api_environment": self.corrected["api_environment"],
+            "invalidated_runtime": invalidated})
+        result = {"status": "post_copy_amended", "registration": binding(path), "sequence": 1,
+            "predecessor": self.base, "runtime_directory": str(self.directory / "post-copy/runtime-0001"),
+            "remote_writes": 0, "worker_must_remain_stopped": True, "restore_qualified": False}
         finish(self.directory, number, result=result)
         return post.registration(self.backend, self.directory)
 
@@ -101,55 +113,8 @@ class AmendmentTests(unittest.TestCase):
             "status": "post_copy_api_prepared", "handoff": binding(runtime / "handoff.json"),
             "worker_started": False})
 
-    def test_amend_preserves_history_and_selects_raw_cors_runtime_generation(self):
-        paths = [self.directory / "post-copy.json", self.runtime / "runtime.json", self.runtime / "binaries.json",
-                 self.runtime / "handoff.json", self.runtime / "api.json", self.runtime / "producer-history.json",
-                 self.directory / "results" / f"{self.register_attempt:04d}.json", Path(self.prepare["path"]),
-                 self.directory / f"controller-{self.failed:04d}.json",
-                 self.directory / f"failure-{self.failed:04d}.json",
-                 self.directory / "results" / f"{self.stopped:04d}.json"]
-        before = {path: path.read_bytes() for path in paths}
-        active = self.publish()
-        self.assertEqual(active.sequence, 1)
-        self.assertEqual(active.runtime, self.directory / "post-copy/runtime-0001")
-        self.assertEqual(active.request, self.corrected)
-        self.assertEqual(active.request["api_environment"], self.corrected["api_environment"])
-        self.assertEqual(read_json(Path(active.request["api_environment"]["path"]))["environment"],
-                         {"APP_ENV": "test"})
-        self.assertEqual({path: path.read_bytes() for path in paths}, before)
-        self.assertFalse((self.directory / "post-copy/current.json").exists())
-        amendment = read_json(Path(active.descriptor["path"]))
-        self.assertNotIn("request", amendment)
-        self.assertEqual(amendment["predecessor"], self.base)
 
-    def test_only_complete_request_and_environment_selector_rebinding_are_accepted(self):
-        cases = []
-        bad_cors = {**self.api, "APP_CORS_ALLOW_ORIGINS": '["http://127.0.0.1:4190"]'}
-        cases.append({**self.corrected, "api_environment": self.file("bad-cors", {"environment": bad_cors})})
-        cases.append({**self.corrected, "unexpected": True})
-        cases.append({**self.corrected, "source_admin": {**self.admin, "subject_id": "10"}})
-        changed = {**self.api, "APP_ENV": "other"}
-        cases.append({**self.corrected, "api_environment": self.file("bad-other-env", {"environment": changed})})
-        for index, candidate in enumerate(cases):
-            path = self.file(f"rejected-{index}", candidate)
-            with self.subTest(index=index), patch("full_stack_process.process_identity", return_value=None), \
-                    patch.object(post, "require_closed_port"), self.assertRaises(ValueError):
-                post.amend(self.backend, self.directory, self.value, Path(path["path"]), 999)
-        self.assertFalse((self.directory / "post-copy/amendments").exists())
 
-    def test_live_api_open_port_or_worker_receipt_blocks_amendment(self):
-        candidate = self.file("corrected-request", self.corrected)
-        with patch("full_stack_process.process_identity", return_value=self.identity), \
-                patch.object(post, "require_closed_port"), self.assertRaises(ValueError):
-            post.amend(self.backend, self.directory, self.value, Path(candidate["path"]), 999)
-        with patch("full_stack_process.process_identity", return_value=None), \
-                patch.object(post, "require_closed_port", side_effect=ValueError("port open")), \
-                self.assertRaises(ValueError):
-            post.amend(self.backend, self.directory, self.value, Path(candidate["path"]), 999)
-        self.write(self.runtime / "worker.json", {"unexpected": True})
-        with patch("full_stack_process.process_identity", return_value=None), \
-                patch.object(post, "require_closed_port"), self.assertRaises(ValueError):
-            post.amend(self.backend, self.directory, self.value, Path(candidate["path"]), 999)
 
     def test_missing_or_changed_evidence_invalidates_published_amendment(self):
         active = self.publish()

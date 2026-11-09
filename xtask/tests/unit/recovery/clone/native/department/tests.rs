@@ -330,3 +330,63 @@ fn protocol_rejects_outside_attempt_and_wrong_sequence_without_creating_manifest
         .is_ok()
     );
 }
+
+#[test]
+fn native_adoption_guard_binds_exact_owner_round_and_successful_fixed_reads() {
+    use crate::recovery::clone::native::input::BUCKETS;
+
+    let fixture = Fixture::new();
+    let phase = format!("live-owner-{}", "a".repeat(32));
+    for bucket in BUCKETS {
+        let name = format!("{phase}-{bucket}");
+        let body = format!("ryframe-owner:v1:{SCOPE}:object-storage:{bucket}");
+        fs::write(fixture.output.join(format!("{name}.bin")), &body).unwrap();
+        fixture.write(&format!("{name}.json"), &json!({"ContentLength":body.len(),
+            "ContentType":"application/octet-stream","ETag":"fixture","LastModified":"2026-11-09T05:03:00Z",
+            "Metadata":{},"AcceptRanges":"bytes"}));
+        fixture.write(
+            &format!("{name}.diagnostic.json"),
+            &json!({"operation":"get-object","returned":true,"checkpoint_passed":true}),
+        );
+    }
+    assert!(fixture.inspect().is_err());
+    let binding = format!("{phase}-binding.json");
+    fixture.write(&binding, &target());
+    let status = format!("seed-enabled-schedules-read-{}.json", "b".repeat(32));
+    let mut query = json!({"format_version":1,"kind":"seed-enabled-schedules-read","side":"target",
+        "target_key":"shared-control","returncode":0,"checkpoint_passed":true,"remote_writes":0});
+    fixture.write(&status, &query);
+    assert_eq!(fixture.inspect().unwrap().as_array().unwrap().len(), 17);
+    let guarded = fixture.invoke("publish").unwrap();
+    assert_eq!(fixture.invoke("inspect").unwrap(), guarded);
+
+    query["side"] = json!("source");
+    fs::write(fixture.output.join(&status), query.to_string()).unwrap();
+    assert!(fixture.inspect().is_err());
+    query["side"] = json!("target");
+    fs::write(fixture.output.join(&status), query.to_string()).unwrap();
+    let other = json!({"scope_id":SCOPE,"endpoint":"http://127.0.0.1:19001","configuration_sha256":"a".repeat(64)});
+    fs::write(fixture.output.join(&binding), other.to_string()).unwrap();
+    assert!(fixture.inspect().is_err());
+}
+
+#[test]
+fn native_database_receipt_allows_only_the_exact_closed_stdin_query() {
+    let fixture = Fixture::new();
+    let stdout = fixture
+        .output
+        .join(format!("mysql-identity-{}.stdout", "a".repeat(32)));
+    let mut value = json!({
+        "command":[fixture.backend.join("mysql.exe"),format!("--defaults-file={}",fixture.output.join("fixed.cnf").display()),
+            "--database=target_shared_control","--batch","--raw","--skip-column-names","--binary-mode",
+            "--default-character-set=utf8mb4","--execute","SELECT @@server_uuid, DATABASE();"],
+        "returncode":0,"error_type":null,"stdin":null,"stdout":"identity","stderr":"",
+        "stdout_file":{"path":stdout}
+    });
+    receipts::read_only(&value, &target()).unwrap();
+    value["command"][9] = json!("SELECT 1;");
+    assert!(receipts::read_only(&value, &target()).is_err());
+    value["command"][9] = json!("SELECT @@server_uuid, DATABASE();");
+    value["stdin"] = json!({"bytes":0});
+    assert!(receipts::read_only(&value, &target()).is_err());
+}

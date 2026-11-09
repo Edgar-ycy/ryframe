@@ -290,7 +290,8 @@ fn original(
     {
         return Err("原部门计划生产者未确认退出或来源登记不同".into());
     }
-    let (failure, _) = receipts::failure(backend, run, candidate, &controller, &controller_value)?;
+    let (failure, failure_value) =
+        receipts::failure(backend, run, candidate, &controller, &controller_value)?;
     let prior = plan::read_prerequisite(backend, run)?;
     plan::dispatch(
         backend,
@@ -330,18 +331,7 @@ fn original(
     if common::read_bound(backend, &authentication, "部门原始初始化")? != expected {
         return Err("原部门计划初始化未绑定当前十租户和模板主体".into());
     }
-    let cleanup = output.join("department-logout-error.json");
-    let cleanup = if fs::symlink_metadata(&cleanup).is_ok() {
-        let descriptor = common::binding(&cleanup)?;
-        if common::read_bound(backend, &descriptor, "部门关闭诊断")?
-            != json!({"error_type":"ValueError"})
-        {
-            return Err("原部门计划关闭诊断发生变化".into());
-        }
-        descriptor
-    } else {
-        Value::Null
-    };
+    let cleanup = logout_diagnostic(backend, &output, &failure_value)?;
     common::bound_file(backend, &plan_descriptor, "部门原始计划")?;
     common::bound_file(backend, &prerequisite, "部门原始前提")?;
     common::bound_file(backend, &observed["receipt"], "部门生产者观察")?;
@@ -350,6 +340,26 @@ fn original(
         "authentication":authentication,"plan":plan_descriptor,"prerequisite":prerequisite,"before":before,
         "original_fingerprints":fingerprints,"cleanup":cleanup}),
     )
+}
+
+fn logout_diagnostic(backend: &Path, output: &Path, failure: &Value) -> Result<Value> {
+    let path = output.join("department-logout-error.json");
+    match fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Value::Null),
+        Err(error) => return Err(error.into()),
+        Ok(_) => {}
+    }
+    let expected = match failure["format_version"].as_u64() {
+        Some(1) => "ValueError",
+        Some(2) => "ProducerLogoutError",
+        _ => return Err("原部门计划关闭诊断不属于已知失败协议".into()),
+    };
+    let descriptor = common::binding(&path)?;
+    if common::read_bound(backend, &descriptor, "部门关闭诊断")? != json!({"error_type":expected})
+    {
+        return Err("原部门计划关闭诊断发生变化".into());
+    }
+    Ok(descriptor)
 }
 
 fn validate_node(

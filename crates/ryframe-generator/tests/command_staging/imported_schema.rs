@@ -47,7 +47,8 @@ fn foreign_key_metadata_does_not_allow_installing_a_migration_without_the_constr
             ),
         ),
     };
-    let error = super::verify_imported_schema(package.path(), &[source]).unwrap_err();
+    let error =
+        super::verify_imported_schema(package.path(), std::slice::from_ref(&source)).unwrap_err();
     assert!(
         error.contains("child") && error.contains("未表达的结构差异"),
         "{error}"
@@ -55,5 +56,11 @@ fn foreign_key_metadata_does_not_allow_installing_a_migration_without_the_constr
     assert!(error.contains("本批未安装"), "{error}");
     #[cfg(feature = "schema-import")]
     assert!(error.contains("外键变化"), "{error}");
-    assert_eq!(fs::read(history).unwrap(), original);
+    assert_eq!(fs::read(&history).unwrap(), original);
+    let mut matching: serde_json::Value = serde_json::from_slice(&original).unwrap();
+    matching["resources"][0]["versions"][0]["canonical"] = source.schema_canonical.clone().into();
+    let matching = serde_json::to_vec(&matching).unwrap();
+    fs::write(&history, &matching).unwrap();
+    super::verify_imported_schema(package.path(), &[source]).unwrap();
+    assert_eq!(fs::read(history).unwrap(), matching);
 }

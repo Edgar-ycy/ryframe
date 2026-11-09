@@ -137,13 +137,11 @@ mod tests {
     }
 
     #[test]
-    fn renewal_failure_cleans_snapshot_and_releases_lease() {
-        assert_pre_commit_cleanup(ApplyLifecyclePhase::SnapshotUploaded);
-    }
+    fn uploaded_snapshot_failure_cleans_snapshot_and_releases_lease() {
+        let phase = ApplyLifecyclePhase::SnapshotUploaded;
 
-    #[test]
-    fn transaction_or_commit_failure_cleans_snapshot_and_releases_lease() {
-        assert_pre_commit_cleanup(ApplyLifecyclePhase::SnapshotUploaded);
+        assert!(phase.requires_snapshot_cleanup());
+        assert!(phase.requires_lease_release());
     }
 
     #[test]
@@ -152,10 +150,5 @@ mod tests {
 
         assert!(!phase.requires_snapshot_cleanup());
         assert!(!phase.requires_lease_release());
-    }
-
-    fn assert_pre_commit_cleanup(phase: ApplyLifecyclePhase) {
-        assert!(phase.requires_snapshot_cleanup());
-        assert!(phase.requires_lease_release());
     }
 }

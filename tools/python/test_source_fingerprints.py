@@ -38,7 +38,7 @@ def execution(value):
 def build_context():
     return {
         "commands": {role: restore_build.build_command(role) for role in restore_build.ROLES},
-        "profile": "dev", "target": "x86_64-pc-windows-msvc", "jobs": "cargo-default",
+        "profile": "dev", "target": "x86_64-pc-windows-msvc", "jobs": "4",
         "toolchain": {"cargo": "cargo fixture", "rustc": "rustc fixture"},
         "environment": {"variables": [], "sha256": source_inventory.canonical_digest([])},
     }
@@ -212,7 +212,7 @@ class SourceFingerprintsTests(unittest.TestCase):
             binary = self.local / f"{name}.exe"
             binary.write_bytes(("fixed " + role).encode())
             command = ["cargo", "build", "--locked", "-p", "ryframe", "--no-default-features",
-                       "--features", feature, "--bin", name, "--message-format=json"]
+                       "--features", feature, "--bin", name, "--jobs", "4", "--message-format=json"]
             artifacts[role] = {"executable": str(binary), "command": command,
                                **restore_build.file_digest(binary)}
         self.receipt = build_receipt(self.original, artifacts)
@@ -233,7 +233,23 @@ class SourceFingerprintsTests(unittest.TestCase):
         sources.write_bridge(self.root, self.build_path, self.inventory_path, self.bridge_path)
         return sources.file_binding(self.bridge_path)
 
+    def initialize_repository(self):
+        (self.root / ".gitignore").write_text(".local-tests/\ntarget/\n", encoding="utf-8")
+        manifest = self.root / "crates/ryframe/Cargo.toml"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text("[package]\nname='fixture'\n", encoding="utf-8")
+        (self.root / "tracked.txt").write_text("before\n", encoding="utf-8")
+        for args in (("init", "--quiet"), ("config", "core.autocrlf", "false"), ("add", "."),
+                     ("-c", "user.name=source-unit", "-c", "user.email=source-unit@example.invalid",
+                      "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "test(recovery): 初始化来源边界夹具")):
+            subprocess.run(["git", "-C", str(self.root), *args], check=True,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return subprocess.check_output(["git", "-C", str(self.root), "rev-parse", "HEAD"]).decode().strip()
+
     def maintenance_bridge(self):
+        self.initialize_repository()
+        actual = CAPTURE(self.root)
+        self.set_current(actual)
         directory = self.local / "maintenance"
         directory.mkdir()
         target = devex_clone_tools.target_directory(self.root)
@@ -253,21 +269,21 @@ class SourceFingerprintsTests(unittest.TestCase):
             log.write_text("fixture\n", encoding="utf-8")
             artifacts[role] = {
                 "executable": str(executable), "cargo_executable": str(cargo_executable),
-                "command": devex_clone_tools.command(role, target),
+                "command": devex_clone_tools.command(self.root, role, target),
                 "cargo_output": {"file": output.name, **restore_build.file_digest(output)},
                 "cargo_log": {"file": log.name, **restore_build.file_digest(log)},
                 **restore_build.file_digest(executable),
             }
         receipt = {
             "format_version": 1, "kind": "devex-clone-tool-build", "backend_root": str(self.root),
-            "source": self.original["source"], "source_inventory": self.original,
+            "source": actual["source"], "source_inventory": actual,
             "toolchain": {"rustc": "fixture", "cargo": "fixture"}, "target_directory": str(target),
             "artifacts": artifacts, "restore_qualified": False, "resources_modified": False,
         }
         build = directory / "build.json"
         build.write_text(json.dumps(receipt), encoding="utf-8")
         inventory_path = directory / "inventory.json"
-        inventory_path.write_text(json.dumps(self.original), encoding="utf-8")
+        inventory_path.write_text(json.dumps(actual), encoding="utf-8")
         bridge_path = self.local / "maintenance-bridge.json"
         sources.write_bridge(self.root, build, inventory_path, bridge_path)
         return sources.file_binding(bridge_path), receipt
@@ -483,9 +499,21 @@ class SourceFingerprintsTests(unittest.TestCase):
             sources.reusable_artifact_source(self.root, receipt)
 
     def test_formal_restore_still_requires_exact_clean_source_inside_bridge(self):
-        binding = self.bridge()
-        with sources.artifact_sources(self.root, [binding]), self.assertRaisesRegex(ValueError, "干净 SHA"):
-            restore_build.verify_build(self.root, self.receipt, "c" * 40)
+        head = self.initialize_repository()
+        (self.root / "tracked.txt").write_text("dirty\n", encoding="utf-8")
+        actual = CAPTURE(self.root)
+        self.assertFalse(actual["source"]["snapshot"]["clean"])
+        self.set_current(actual)
+        context = restore_build._native("context", self.root)
+        self.receipt["sources"] = source_inventory.build_source_domains(actual, "backend")
+        self.receipt["build"] = context
+        self.build_path.write_text(json.dumps(self.receipt), encoding="utf-8")
+        self.inventory_path.write_text(json.dumps(actual), encoding="utf-8")
+        # SHA、完整来源和上下文均真实匹配，必须由 dirty 条件拒绝；桥接不能替代正式验收。
+        with patch.object(restore_build, "build_context", return_value=context):
+            binding = self.bridge()
+            with sources.artifact_sources(self.root, [binding]), self.assertRaisesRegex(ValueError, "精确干净SHA"):
+                restore_build.verify_build(self.root, self.receipt, head)
 
     def test_inventory_reads_current_deleted_and_added_files_and_detects_source_race(self):
         (self.root / ".gitignore").write_text(".local-tests/\n", encoding="utf-8")

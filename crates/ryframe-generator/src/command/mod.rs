@@ -51,3 +51,14 @@ pub fn run_from_args(args: Vec<String>) -> Result<(), String> {
     }
     plan.execute()
 }
+
+/// 构建缓存复用既有无链接路径检查，允许显式配置工作区外的缓存根。
+pub(crate) fn target_directory(
+    root: &std::path::Path,
+    settings: &ryframe_config::ToolSettings,
+) -> Result<std::path::PathBuf, String> {
+    let target = settings
+        .generator_target_dir(root)
+        .map_err(|error| error.message().to_owned())?;
+    staging::safe_target_directory(&target)
+}

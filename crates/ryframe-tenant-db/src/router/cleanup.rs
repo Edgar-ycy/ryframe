@@ -41,6 +41,7 @@ impl TenantDatabaseRouter {
             tracing::warn!(target = target_key, %error, "迁移目标清理事务开启失败");
             TenantDataError::TargetUnavailable {
                 target_key: target_key.into(),
+                source: None,
             }
         })?;
         let result =
@@ -70,6 +71,7 @@ impl TenantDatabaseRouter {
             tracing::warn!(target = target_key, %error, "cleanup 所有权检查事务开启失败");
             TenantDataError::TargetUnavailable {
                 target_key: target_key.into(),
+                source: None,
             }
         })?;
         let result =
@@ -80,6 +82,7 @@ impl TenantDatabaseRouter {
                     tracing::warn!(target = target_key, %error, "cleanup 所有权检查提交失败");
                     TenantDataError::TargetUnavailable {
                         target_key: target_key.into(),
+                        source: None,
                     }
                 })?;
                 Ok(ownership)
@@ -146,6 +149,7 @@ impl TenantDatabaseRouter {
             tracing::warn!(target = target_key, %error, "租户数据批量清理事务开启失败");
             TenantDataError::TargetUnavailable {
                 target_key: target_key.into(),
+                source: None,
             }
         })?;
         let result = delete_tenant_rows_batch_in_transaction(
@@ -162,6 +166,7 @@ impl TenantDatabaseRouter {
                     tracing::warn!(target = target_key, %error, "租户数据批量清理提交失败");
                     TenantDataError::TargetUnavailable {
                         target_key: target_key.into(),
+                        source: None,
                     }
                 })?;
                 Ok(rows)
@@ -193,6 +198,7 @@ impl TenantDatabaseRouter {
             tracing::warn!(target = target_key, %error, "租户数据清理收口事务开启失败");
             TenantDataError::TargetUnavailable {
                 target_key: target_key.into(),
+                source: None,
             }
         })?;
         let result =
@@ -238,6 +244,7 @@ impl TenantDatabaseRouter {
             tracing::warn!(target = target_key, %error, "迁移源清理事务开启失败");
             TenantDataError::TargetUnavailable {
                 target_key: target_key.into(),
+                source: None,
             }
         })?;
         let result =
@@ -288,6 +295,7 @@ async fn clear_tenant_data_in_transaction(
         if slot.as_ref().is_some_and(|slot| slot.tenant_id.is_some()) {
             return Err(TenantDataError::TargetUnavailable {
                 target_key: provision.target_key.clone(),
+                source: None,
             });
         }
         verify_unowned_catalog_empty(transaction, provision, catalog).await?;
@@ -367,6 +375,7 @@ async fn verify_unowned_catalog_empty(
             .map_err(|error| target_write_error(provision, error, "fence absent 数据安全检查失败"))?
             .ok_or_else(|| TenantDataError::TargetUnavailable {
                 target_key: provision.target_key.clone(),
+                source: None,
             })?;
         let exists = row.try_get_by_index::<i64>(0).map_err(|error| {
             target_write_error(provision, error, "fence absent 数据安全检查无效")
@@ -416,6 +425,7 @@ async fn ensure_tenant_tables_empty(
             .map_err(|error| target_write_error(provision, error, "投影空数据检查失败"))?
             .ok_or_else(|| TenantDataError::TargetUnavailable {
                 target_key: provision.target_key.clone(),
+                source: None,
             })?;
         if row
             .try_get_by_index::<i64>(0)

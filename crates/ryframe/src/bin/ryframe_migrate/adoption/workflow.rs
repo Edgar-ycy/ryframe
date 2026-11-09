@@ -5,6 +5,7 @@ use ryframe_sdk::{BusinessAdoptionPlan, BusinessMigrationScope, RyFrameBusinessM
 use ryframe_tenant_db::{TenantDatabasePoolLease, TenantDatabaseTargetRegistry};
 use sea_orm::DatabaseConnection;
 
+use super::super::diagnostic::{Context, Writes, finish};
 use super::{Action, Options};
 
 #[derive(Clone, Copy)]
@@ -16,6 +17,20 @@ enum Task {
     VerifyBaseline,
     Operation,
     Close,
+}
+
+impl Task {
+    fn label(self) -> &'static str {
+        match self {
+            Self::ReadPlan => "读取原接管计划",
+            Self::LoadConfig => "配置加载",
+            Self::RegisterModules => "业务模块登记",
+            Self::Connect => "接管目标连接",
+            Self::VerifyBaseline => "接管基线只读核验",
+            Self::Operation => "接管预览/应用/核对",
+            Self::Close => "接管关闭连接",
+        }
+    }
 }
 
 fn tasks(options: &Options) -> Vec<Task> {
@@ -38,6 +53,7 @@ fn tasks(options: &Options) -> Vec<Task> {
 struct State {
     saved: Option<BusinessAdoptionPlan>,
     config: Option<AppConfig>,
+    environment: Option<Environment>,
     modules: Vec<RyFrameBusinessModule>,
     connection: Option<Connection>,
 }
@@ -71,16 +87,65 @@ pub(super) async fn run(directory: &Path, options: Options) -> Result<(), Box<dy
         return Ok(());
     }
     let mut state = State::default();
+    let mut writes_started = false;
+    let action = match &options.action {
+        Action::Preview { .. } => "preview",
+        Action::Apply(_) => "--apply",
+        Action::Inspect(_) => "--inspect",
+    };
+    let command = format!(
+        "{} adopt {action}",
+        if options.target.is_some() {
+            "tenant-data"
+        } else {
+            "control"
+        }
+    );
     for task in tasks {
+        if matches!(task, Task::Operation) && matches!(options.action, Action::Apply(_)) {
+            writes_started = true;
+        }
         if let Err(error) = execute(task, directory, &options, &mut state).await {
-            if let Some(connection) = state.connection.take()
-                && let Err(close) = connection.close().await
+            let context = Context {
+                directory,
+                environment: state.environment,
+                config: state.config.as_ref(),
+                command: &command,
+                target: options.target.as_deref(),
+            };
+            let writes = if writes_started {
+                Writes::Database
+            } else if matches!(task, Task::Operation | Task::Close)
+                && matches!(
+                    options.action,
+                    Action::Preview {
+                        output: Some(_),
+                        ..
+                    }
+                )
             {
-                return Err(
-                    format!("{error}；关闭目标连接时另有错误：{close}，保留现场先核对").into(),
-                );
-            }
-            return Err(error);
+                Writes::File
+            } else {
+                Writes::None
+            };
+            let phase = if matches!(task, Task::Operation) {
+                match &options.action {
+                    Action::Preview { .. } => "接管预览/计划发布",
+                    Action::Apply(_) => "接管账本应用",
+                    Action::Inspect(_) => "接管计划只读核对",
+                }
+            } else {
+                task.label()
+            };
+            let failure = context.error(phase, writes, error.as_ref());
+            let closed = match state.connection.take() {
+                Some(connection) => connection
+                    .close()
+                    .await
+                    .map_err(|error| context.error("接管失败后关闭连接", writes, error.as_ref())),
+                None => Ok(()),
+            };
+            return finish(Err(failure), closed);
         }
     }
     Ok(())
@@ -93,21 +158,12 @@ async fn execute(
     state: &mut State,
 ) -> Result<(), Box<dyn Error>> {
     match task {
-        Task::ReadPlan => {
-            let path = match &options.action {
-                Action::Apply(path) | Action::Inspect(path) => path,
-                Action::Preview { .. } => return Err("预览任务图不能读取原计划".into()),
-            };
-            let saved = super::read_plan(path)?;
-            if saved.manifest.scope != scope(options) {
-                return Err(
-                    "原计划范围与命令不同，不能跨 control/tenant 接管，尚未连接数据库".into(),
-                );
-            }
-            state.saved = Some(saved);
-        }
+        Task::ReadPlan => read_plan(options, state)?,
         Task::LoadConfig => {
-            state.config = Some(AppConfig::load(directory, Environment::from_env()?)?)
+            let environment = Environment::from_env()
+                .map_err(|_| std::io::Error::other("APP_ENV 必须为 dev、test 或 prod"))?;
+            state.environment = Some(environment);
+            state.config = Some(AppConfig::load(directory, environment)?)
         }
         Task::RegisterModules => state.modules = ryframe::business::registered_business_modules()?,
         Task::Connect => {
@@ -123,13 +179,20 @@ async fn execute(
             let connection = state.connection.as_ref().ok_or("接管任务图缺少连接依赖")?;
             let database = connection.database();
             match connection {
-                Connection::Primary(_) => ryframe_db::migration::verify(database).await?,
+                Connection::Primary(_) => {
+                    ryframe_db::migration::verify_control_baseline(database).await?
+                }
                 Connection::Tenant(_) => {
                     ryframe_tenant_db::migration::ensure_mysql_target_boundary(database).await?
                 }
             }
             if options.target.is_some() {
-                ryframe_tenant_db::migration::verify(database).await?;
+                match connection {
+                    Connection::Primary(_) => {
+                        ryframe_tenant_db::migration::verify_shared_control(database).await?
+                    }
+                    Connection::Tenant(_) => ryframe_tenant_db::migration::verify(database).await?,
+                }
             }
         }
         Task::Operation => {
@@ -155,6 +218,19 @@ async fn execute(
                 .await?
         }
     }
+    Ok(())
+}
+
+fn read_plan(options: &Options, state: &mut State) -> Result<(), Box<dyn Error>> {
+    let path = match &options.action {
+        Action::Apply(path) | Action::Inspect(path) => path,
+        Action::Preview { .. } => return Err("预览任务图不能读取原计划".into()),
+    };
+    let saved = super::read_plan(path)?;
+    if saved.manifest.scope != scope(options) {
+        return Err("原计划范围与命令不同，不能跨 control/tenant 接管，尚未连接数据库".into());
+    }
+    state.saved = Some(saved);
     Ok(())
 }
 

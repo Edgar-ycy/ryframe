@@ -7,6 +7,7 @@ pub(super) fn run(runtime: &mut dyn Runtime, context: &Context) -> Result<Value>
     let unknown = context.unknown()?;
     let mut observations = Value::Null;
     let mut reconciliation = Value::Null;
+    let mut partial_close_rejection = None;
     let next = if !unknown.is_empty() {
         "reconcile-evidence"
     } else if !controller.is_null() {
@@ -25,8 +26,11 @@ pub(super) fn run(runtime: &mut dyn Runtime, context: &Context) -> Result<Value>
         } else {
             "reconcile-evidence"
         }
+    } else if history["initial_complete"] != true && history["closed"] == true {
+        observations = partial::verify_closed(runtime, context)?;
+        "new-scenario"
     } else if history["initial_complete"] != true {
-        initial_operation(context)?
+        initial(runtime, context, &mut partial_close_rejection)?
     } else {
         let services = registered(runtime, context, true)?;
         observations = observe(runtime, &services)?;
@@ -64,11 +68,44 @@ pub(super) fn run(runtime: &mut dyn Runtime, context: &Context) -> Result<Value>
         next
     };
     context.guard(None)?;
-    Ok(
-        json!({"status":"service_status","run":context.run,"controller":controller,"state":context.value["sources"]["state_before"],
+    let mut status = json!({"status":"service_status","run":context.run,"controller":controller,"state":context.value["sources"]["state_before"],
         "services":observations,"unsettled":history["unsettled"],"unknown_recoveries":unknown,"reconciliation":reconciliation,
-        "next_operation":next,"remote_writes":0}),
-    )
+        "next_operation":next,"remote_writes":0});
+    if let Some(rejection) = partial_close_rejection {
+        status["partial_close_rejection"] = rejection;
+    }
+    Ok(status)
+}
+
+fn initial(
+    runtime: &mut dyn Runtime,
+    context: &Context,
+    rejection: &mut Option<Value>,
+) -> Result<&'static str> {
+    let next = initial_operation(context)?;
+    if !matches!(next, "reconcile-evidence" | "buckets") {
+        return Ok(next);
+    }
+    match partial::can_close(runtime, context) {
+        Ok("running") if next == "buckets" => Ok("buckets"),
+        Ok(_) => Ok("close"),
+        Err(error) => {
+            let reason = model::reason(error.as_ref())
+                .map(str::to_owned)
+                .unwrap_or_else(|| {
+                    if error.is::<std::io::Error>() {
+                        super::super::storage::safe_reason(error.as_ref())
+                    } else {
+                        "部分关闭资格核验未完成，原始证据、文件或进程身份无法安全确认".to_owned()
+                    }
+                });
+            *rejection = Some(
+                json!({"category":model::category(error.as_ref()),"reason":reason,
+                "advice":"核对原始首代账本、冻结请求、控制器、启动收据与完整进程树；保留现场，不重签绑定、不重放启动，不绕过状态执行关闭"}),
+            );
+            Ok("reconcile-evidence")
+        }
+    }
 }
 
 fn reconcilable(runtime: &mut dyn Runtime, context: &Context, history: &Value) -> bool {
@@ -77,6 +114,18 @@ fn reconcilable(runtime: &mut dyn Runtime, context: &Context, history: &Value) -
     };
     let proof = (|| {
         let services = registered(runtime, context, false)?;
+        if !context
+            .run
+            .join(format!(
+                "lifecycle-{:04}/stopped.json",
+                failed["number"].as_u64().ok_or("失败阶段编号无效")?
+            ))
+            .try_exists()?
+        {
+            let _proof =
+                super::reconcile_close::qualify(runtime, context, history, failed, &services)?;
+            return Ok((Value::Null, Value::Null));
+        }
         history::evidence::close_evidence(
             &context.run,
             failed,
@@ -94,14 +143,25 @@ fn initial_operation(context: &Context) -> Result<&'static str> {
         .iter()
         .position(|item| item["stage"] == "fixture-services")
         .unwrap_or(attempts.len());
-    let operation = ["rustfs", "redis", "buckets"]
-        .get(count)
-        .ok_or("夹具首代账本未完整就绪，必须先核实失败现场")?;
-    Ok(
-        if count > 0 && count == attempts.len() && !context.run.join(operation).exists() {
-            *operation
-        } else {
-            "reconcile-evidence"
-        },
-    )
+    if count == 0
+        || count != attempts.len()
+        || !attempts[..count]
+            .iter()
+            .all(|attempt| attempt["status"] == "passed")
+    {
+        return Ok("reconcile-evidence");
+    }
+    let Some(operation) = ["rustfs", "redis", "buckets"].get(count).copied() else {
+        return Ok("reconcile-evidence");
+    };
+    let exists = match std::fs::symlink_metadata(context.run.join(operation)) {
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(error.into()),
+    };
+    Ok(if exists {
+        "reconcile-evidence"
+    } else {
+        operation
+    })
 }

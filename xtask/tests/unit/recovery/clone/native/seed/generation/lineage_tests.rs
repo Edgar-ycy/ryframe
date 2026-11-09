@@ -253,7 +253,7 @@ fn source_selection_requires_unique_successful_registration_and_rebind() {
     let registered = json!({"number":52,"stage":"seed-runtime","mode":"source-register","status":"passed","result":request["source_registration"]});
     let rebound = json!({"number":56,"stage":"seed-runtime","mode":"source-rebind","status":"passed","result":request["source_rebind"]});
     let args = json!({"attempts":[registered,rebound],"request":request});
-    let selected = call("select-source", args.clone());
+    let selected = call("select-source", args);
     assert_eq!(selected["rebind"], rebound);
     assert_eq!(selected["prefix"], json!([registered]));
     for rows in [

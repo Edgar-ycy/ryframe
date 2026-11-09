@@ -11,6 +11,7 @@ from devex_clone_model import exact
 from devex_clone_run_state import binding
 from devex_clone_capture import read_json, write_json
 from devex_clone_source_proof import bound_file
+from devex_clone_target_binding import application_config_directory
 from devex_clone_post_process import Producer, cleanup_failure
 from full_stack_process import process_identity
 
@@ -53,9 +54,11 @@ class Bridge(Producer):
     def login(self, *, tenant_ids=None, post_request=None, template_identities=None):
         request = self.context.request if post_request is None else post_request
         selected = self.context.selected
+        config_dir = application_config_directory(self.context.backend, self.context.target)
         config = {'contract': {'timeout_ms': 120000, 'pacing': request['pacing']['contract']},
                   'bindings': {'scope_id': self.context.target_config['scope_id'], 'api_url': selected['api_url'],
-                               'frontend_url': selected['frontend_url'], 'pacing': request['pacing']['bindings']}}
+                               'frontend_url': selected['frontend_url'], 'pacing': request['pacing']['bindings'],
+                               'app_config_dir': str(config_dir)}}
         values = {} if tenant_ids is None else {'tenant_ids': tenant_ids}
         if template_identities is not None:
             if tenant_ids is None:

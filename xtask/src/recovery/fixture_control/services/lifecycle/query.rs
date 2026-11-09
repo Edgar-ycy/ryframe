@@ -5,7 +5,7 @@ pub(crate) fn dispatch(backend: &Path, operation: &str, args: &Value) -> Result<
     match operation {
         "service-registered" => {
             exact(args, &["value", "settled"])?;
-            let mut runtime = runtime::PythonRuntime::new(backend)?;
+            let mut runtime = readonly::NativeRuntime::new(backend);
             registration::load(
                 &mut runtime,
                 backend,
@@ -15,7 +15,7 @@ pub(crate) fn dispatch(backend: &Path, operation: &str, args: &Value) -> Result<
         }
         "service-observe" => {
             exact(args, &["services"])?;
-            let mut runtime = runtime::PythonRuntime::new(backend)?;
+            let mut runtime = readonly::NativeRuntime::new(backend);
             observation::observe(&mut runtime, backend, &args["services"])
         }
         "service-run" => {
@@ -29,7 +29,7 @@ pub(crate) fn dispatch(backend: &Path, operation: &str, args: &Value) -> Result<
         }
         "service-context" => {
             exact(args, &["review", "environment"])?;
-            let mut runtime = runtime::PythonRuntime::new(backend)?;
+            let mut runtime = readonly::NativeRuntime::new(backend);
             context::load(
                 &mut runtime,
                 backend,
@@ -58,7 +58,7 @@ pub(crate) fn dispatch(backend: &Path, operation: &str, args: &Value) -> Result<
         }
         "service-transition" => {
             exact(args, &["run", "expected"])?;
-            let mut runtime = runtime::PythonRuntime::new(backend)?;
+            let mut runtime = readonly::NativeRuntime::new(backend);
             projection::transition(
                 &mut runtime,
                 backend,
@@ -121,7 +121,7 @@ fn environment(backend: &Path, args: &Value) -> Result<Value> {
     exact(args, &["review_file", "review", "environment"])?;
     let (review_file, review) = context::document(backend, Path::new(text(args, "review_file")?))?;
     check(review == args["review"], "夹具审阅与传入快照不同")?;
-    let mut runtime = runtime::PythonRuntime::new(backend)?;
+    let mut runtime = readonly::NativeRuntime::new(backend);
     let (path, value, private) = context::environment(
         &mut runtime,
         backend,
@@ -130,4 +130,20 @@ fn environment(backend: &Path, args: &Value) -> Result<Value> {
         Path::new(text(args, "environment")?),
     )?;
     Ok(json!([path, value, private]))
+}
+
+/// 原生 prepare 只读核定全部历史代次，不增加跨进程操作或控制权限。
+pub(crate) fn storage_history(backend: &Path, run: &Path) -> Result<Value> {
+    let mut runtime = readonly::NativeRuntime::new(backend);
+    projection::historical(&mut runtime, backend, run)
+}
+
+/// 为已冻结 arm 代次复用原服务进程、监听和认证观察。
+pub(in crate::recovery) fn observe_arm_generation(
+    backend: &Path,
+    run: &Path,
+    generation: &Value,
+) -> Result<()> {
+    let mut runtime = readonly::NativeRuntime::new(backend);
+    projection::observe_current(&mut runtime, backend, run, generation)
 }

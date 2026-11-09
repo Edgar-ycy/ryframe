@@ -25,8 +25,9 @@ pub fn authorization_diagnostic_router(state: AppState) -> Router {
 pub(crate) async fn diagnose_user(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
 ) -> HttpResult<Json<ApiResponse<AuthorizationDiagnosticVo>>> {
+    let id = crate::handler_utils::parse_id(&id, "id 必须是 i64 字符串")?;
     state
         .services
         .platform

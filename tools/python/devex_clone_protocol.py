@@ -11,7 +11,7 @@ from types import SimpleNamespace
 PROTOCOL_KIND = "ryframe-xtask-recovery-clone"
 COMMANDS = {
     "plan", "verify", "init", "status", "stage", "runtime", "recover",
-    "recover-copy", "post-copy", "seed-runtime", "storage", "cache",
+    "post-copy", "seed-runtime",
 }
 
 
@@ -126,13 +126,10 @@ def _validate_paths(backend, command, options):
         "stage": (("run_dir", "existing-directory"),),
         "runtime": (("run_dir", "existing-directory"),),
         "recover": (("run_dir", "existing-directory"), ("owner_binding", "existing-file")),
-        "recover-copy": (("run_dir", "existing-directory"), ("owner_binding", "existing-file")),
         "post-copy": (("run_dir", "existing-directory"), ("request", "existing-file"),
                       ("producer_binding", "existing-file")),
         "seed-runtime": (("run_dir", "existing-directory"), ("request", "existing-file"),
                          ("producer_binding", "existing-file")),
-        "storage": (("run_dir", "existing-directory"), ("request", "existing-file")),
-        "cache": (("run_dir", "existing-directory"), ("request", "existing-file")),
     }
     for name, kind in mappings[command]:
         value = options.get(name)
@@ -161,7 +158,7 @@ def _enum(value, allowed, label):
 def effect(command, options):
     if command in {"verify", "status"}:
         return "read-only"
-    if command in {"plan", "init", "recover", "recover-copy"}:
+    if command in {"plan", "init", "recover"}:
         return "evidence-write"
     if command == "stage":
         return ("business-write" if options["stage"] == "copy"
@@ -175,21 +172,13 @@ def effect(command, options):
             "register", "amend", "prepare", "reconcile", "verify",
         } else "business-write")
     if command == "seed-runtime":
-        if options["operation"] == "status":
-            return "read-only"
         if options["operation"] in {
             "register", "quotas-plan", "quotas-reconcile", "departments-plan",
             "departments-reconcile", "departments-verify", "identities-verify",
-            "prepare", "arm-input", "recover",
+            "prepare", "arm-input",
         }:
             return "evidence-write"
         return "business-write"
-    if command == "storage":
-        return "read-only" if options["operation"] == "status" else "business-write"
-    if command == "cache":
-        if options["operation"] == "status":
-            return "read-only"
-        return "evidence-write" if options["operation"] == "reconcile" else "business-write"
     raise CloneProtocolError("clone 私有协议 command 缺少副作用分类")
 
 
@@ -210,16 +199,14 @@ def _base(command, options):
         return {"run_dir": _path(options["run_dir"], "run_dir")}
     if command == "stage":
         _exact(options, {"run_dir", "stage", "mode"}, "stage options")
-        stage = _enum(options["stage"], {"export", "target-verify", "copy"}, "stage")
+        stage = _enum(options["stage"], {"copy"}, "stage")
         mode = _enum(options["mode"], {"run", "reconcile", "resume"}, "mode")
-        if stage == "target-verify" and mode != "run":
-            raise CloneProtocolError("clone 私有协议 target-verify 只支持 run")
         return {
             "run_dir": _path(options["run_dir"], "run_dir"),
             "stage": stage,
             "mode": mode,
         }
-    if command in {"recover", "recover-copy"}:
+    if command == "recover":
         _exact(options, {"run_dir", "owner_binding"}, f"{command} options")
         return {"run_dir": _path(options["run_dir"], "run_dir"),
                 "owner_binding": _path(options["owner_binding"], "owner_binding")}
@@ -244,11 +231,11 @@ def _runtime(options):
 def _post_copy(options):
     _exact(options, {"run_dir", "operation", "request", "producer_binding"}, "post-copy options")
     operation = _enum(options["operation"], {
-        "register", "amend", "prepare", "schedules", "reconcile", "verify", "recover-session",
+        "schedules", "reconcile", "verify", "recover-session",
     }, "operation")
     request = _path(options["request"], "request", optional=True)
     producer = _path(options["producer_binding"], "producer_binding", optional=True)
-    if ((request is not None) != (operation in {"register", "amend"})
+    if (request is not None
             or (producer is not None) != (operation == "recover-session")):
         raise CloneProtocolError("clone 私有协议 post-copy 路径与操作不匹配")
     return {"run_dir": _path(options["run_dir"], "run_dir"), "operation": operation,
@@ -260,8 +247,8 @@ def _seed_runtime(options):
     operations = {
         "register", "quotas-plan", "quotas-apply", "quotas-reconcile",
         "departments-plan", "departments-apply", "departments-reconcile", "departments-verify",
-        "identities-apply", "identities-verify", "prepare", "start", "close", "arm-input",
-        "stop", "status", "recover", "recover-session",
+        "identities-apply", "identities-verify", "prepare", "close", "arm-input",
+        "recover-session",
     }
     operation = _enum(options["operation"], operations, "operation")
     request = _path(options["request"], "request", optional=True)
@@ -271,27 +258,6 @@ def _seed_runtime(options):
         raise CloneProtocolError("clone 私有协议 seed-runtime 路径与操作不匹配")
     return {"run_dir": _path(options["run_dir"], "run_dir"), "operation": operation,
             "request": request, "producer_binding": producer}
-
-
-def _storage(options):
-    _exact(options, {"run_dir", "side", "operation", "request"}, "storage options")
-    operation = _enum(options["operation"], {"restart", "status", "stop", "recover"}, "operation")
-    request = _path(options["request"], "request", optional=True)
-    if request is not None and operation != "restart":
-        raise CloneProtocolError("clone 私有协议仅 storage restart 接受 request")
-    return {"run_dir": _path(options["run_dir"], "run_dir"),
-            "side": _enum(options["side"], {"source", "target"}, "side"),
-            "operation": operation, "request": request}
-
-
-def _cache(options):
-    _exact(options, {"run_dir", "operation", "request"}, "cache options")
-    operation = _enum(options["operation"], {"restart", "status", "stop", "recover", "reconcile", "resume"}, "operation")
-    request = _path(options["request"], "request", optional=True)
-    if request is not None and operation != "restart":
-        raise CloneProtocolError("clone 私有协议仅 cache restart 接受 request")
-    return {"run_dir": _path(options["run_dir"], "run_dir"),
-            "operation": operation, "request": request}
 
 
 def read_private_stdin(stream):
@@ -340,8 +306,6 @@ def decode(source: str):
             "runtime": _runtime,
             "post-copy": _post_copy,
             "seed-runtime": _seed_runtime,
-            "storage": _storage,
-            "cache": _cache,
         }[command](options)
     expected_effect = effect(command, options)
     if request["effect"] != expected_effect:

@@ -12,6 +12,10 @@ pub(crate) mod bridge;
 pub(crate) mod business;
 pub(crate) mod cache;
 pub(crate) mod catalog;
+pub(crate) mod copy_ledger;
+pub(crate) mod copy_owner;
+mod copy_recover;
+pub(crate) mod copy_transfer;
 pub(crate) mod department;
 pub(crate) mod digest;
 pub(crate) mod export;
@@ -19,6 +23,7 @@ pub(crate) mod input;
 pub(crate) mod json;
 pub(crate) mod lifecycle;
 pub(crate) mod maintenance;
+pub(crate) mod maintenance_root;
 pub(crate) mod metadata;
 mod physical;
 mod plan;
@@ -30,6 +35,7 @@ pub(crate) mod seed;
 pub(crate) mod session;
 pub(crate) mod source;
 pub(crate) mod sql;
+pub(crate) mod sql_stream;
 mod state;
 pub(crate) mod target_verify;
 
@@ -41,6 +47,10 @@ pub(crate) fn run(command: &CloneCommand, backend: &Path) -> Result<()> {
         | CloneCommand::Status { .. }
         | CloneCommand::Stage { .. }
         | CloneCommand::Recover { .. } => lifecycle::run(command, backend)?,
+        CloneCommand::RecoverCopy {
+            run_dir,
+            owner_binding,
+        } => copy_recover::run(backend, run_dir, owner_binding)?,
         CloneCommand::Bridge {
             build,
             inventory,
@@ -60,7 +70,11 @@ pub(crate) fn run(command: &CloneCommand, backend: &Path) -> Result<()> {
             maintenance::verify_summary(&receipt)
         }
         CloneCommand::Storage(_) => resources::run(command, backend)?,
-        _ => return Err("clone 原生模块不处理该命令".into()),
+        CloneCommand::Cache(options) => cache::run(backend, options)?,
+        CloneCommand::Runtime(options) => cache::handoff::run(backend, options)?,
+        CloneCommand::PostCopy(options) => post_process::entry::run(backend, options)?,
+        CloneCommand::SeedRuntime(options) => seed::run(backend, options)?,
+        CloneCommand::Help => return Err("clone 原生模块不处理帮助命令".into()),
     };
     println!("{}", serde_json::to_string(&value)?);
     Ok(())

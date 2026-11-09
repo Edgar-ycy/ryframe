@@ -20,7 +20,10 @@ class GuardTransportTests(unittest.TestCase):
         with patch.object(guards, "verified_tool", return_value=executable("bound-tool.exe")), \
                 patch.object(guards, "tool_binding", return_value={"fixture": True}), \
                 patch.object(guards, "run_native", runner):
-            result = guards.guard("identity", {"value": {"fixture": True}})
+            try:
+                result = guards.guard("identity", {"value": {"fixture": True}})
+            finally:
+                runner.assert_called_once()
         return result, runner
 
     def test_valid_response_requires_literal_zero_writes_and_no_retry_permission(self):

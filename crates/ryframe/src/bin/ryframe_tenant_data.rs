@@ -13,6 +13,8 @@ mod context;
 mod output;
 #[path = "ryframe_tenant_data/proof.rs"]
 mod proof;
+#[path = "ryframe_tenant_data/proof_binding.rs"]
+mod proof_binding;
 #[path = "ryframe_tenant_data/proof_file.rs"]
 mod proof_file;
 

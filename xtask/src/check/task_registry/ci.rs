@@ -1,6 +1,26 @@
 use super::{TaskDefinition, TaskExecutor, TaskRepository, TaskStage, TaskWorkingDirectory};
 
-pub(super) const TASKS: [TaskDefinition; 19] = [
+pub(super) const TASKS: [TaskDefinition; 20] = [
+    task_definition!(
+        CiFullStackConfig,
+        "ci.full-stack-config",
+        "prepare_full_stack_configuration",
+        "从文件模板准备隔离全栈配置",
+        Backend,
+        Prerequisite,
+        Backend,
+        None,
+        &[
+            "config/app.toml",
+            "显式 CI 模板和操作元数据",
+            "早期 source-pair.json 与原始双仓"
+        ],
+        &[
+            ".local-tests/full-stack-config",
+            ".local-tests/full-stack-control.json"
+        ],
+        &[]
+    ),
     task_definition!(
         CiFrontendSource,
         "ci.frontend-source",

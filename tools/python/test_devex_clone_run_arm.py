@@ -1,6 +1,7 @@
 """seed_to_arm 统一清单与继承存储的离线约束。"""
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
+import json
 import sys
 import unittest
 from unittest.mock import patch
@@ -55,6 +56,42 @@ class RunArmTests(unittest.TestCase):
         write_json(directory / "manifest.json", {"run": True})
         write_json(directory / "state.json", {"generation": 1})
         return directory
+
+    def test_target_snapshot_uses_complete_release_tree_and_rejects_unowned_lock(self):
+        from devex_clone_target_binding import target_files
+        from devex_clone_target_state import generation_lock
+
+        workspace = self.local / "fresh-workspace"
+        target = workspace / "target"
+        target.mkdir(parents=True)
+        (target / "copy-target.guard").write_bytes(b"\0")
+        registration = {"format_version": 1, "kind": "devex-clone-fresh-target-registration",
+                        "request": self.value["source_request"], "environment": self.value["target_environment"],
+                        "storage_run": self.target_storage_run, "target_directory": str(target)}
+        write_json(workspace / "registration.json", registration)
+        write_json(target / "prepare.json", {"request": registration["request"]})
+        initialized = {"initialized": True}
+        write_json(target / "initialized.json", initialized)
+        write_json(workspace / "prepared-files.json", {"registration": binding(workspace / "registration.json"), "predecessor": None})
+        released = {"format_version": 1, "kind": "devex-clone-fresh-target-initialized-files",
+                    "registration": binding(workspace / "registration.json"),
+                    "predecessor": binding(workspace / "prepared-files.json"), "files": target_files(target)}
+        snapshot_path = workspace / "initialized-files.json"
+        write_json(snapshot_path, released)
+        descriptors = (binding(workspace / "registration.json"), binding(target / "initialized.json"), binding(snapshot_path))
+        original = {path: path.read_bytes() for path in target.iterdir()}
+        # prepared 与历史阶段合同另由现有有效模型覆盖；本例真实执行共享释放快照/文件树校验。
+        with patch("devex_clone_target_binding.prepared_target_files", return_value=[]), \
+                patch.object(run, "initialization_history", return_value=(initialized, {"request": True})):
+            self.assertEqual(run._target_snapshot(self.backend, *descriptors),
+                             (registration, initialized, {"request": True}))
+            with generation_lock(target), self.assertRaises((ValueError, OSError)):
+                run._target_snapshot(self.backend, *descriptors)
+            released["files"] = []
+            snapshot_path.write_text(json.dumps(released), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "完整文件树"):
+                run._target_snapshot(self.backend, descriptors[0], descriptors[1], binding(snapshot_path))
+        self.assertEqual(original, {path: path.read_bytes() for path in target.iterdir()})
 
     def test_seed_to_arm_manifest_requires_published_source_registration(self):
         value = {**self.value, "copy_stage": "seed_to_arm"}
@@ -179,6 +216,38 @@ class RunArmTests(unittest.TestCase):
             self.assertEqual(selected, self.directory)
         snapshot.assert_not_called()
         lock.assert_not_called()
+
+    def test_fixture_arm_storage_uses_native_frozen_and_active_binding(self):
+        storage = self.storage_run()
+        historical = {"path": str(storage), "manifest": binding(storage / "manifest.json"),
+                      "state": binding(storage / "state.json")}
+        registration = self.file("fixture-registration", {
+            "format_version": 1, "kind": "devex-clone-fresh-target-registration",
+            "request": self.value["source_request"], "environment": self.value["target_environment"],
+            "storage_run": historical, "target_directory": str(self.local / "target"),
+        })
+        effective = {"path": str(storage), "manifest": historical["manifest"],
+                     "generation": {"kind": "initial", "rustfs": {}, "redis": {}}}
+        value = {**self.value, "copy_stage": "seed_to_arm",
+                 "target_registration": registration, "target_storage_run": effective}
+        with (
+            patch("devex_clone_target_binding._native", return_value={"binding": effective}) as native,
+            patch.object(run, "_legacy_target_storage_run") as legacy,
+        ):
+            self.assertEqual(run.target_storage_run(self.backend, value, live=False), storage)
+            native.assert_called_once_with("fixture-arm-storage", self.backend,
+                                           registration=registration, binding=effective, active=False)
+            native.reset_mock()
+            self.assertEqual(run.target_storage_run(self.backend, value), storage)
+            native.assert_called_once_with("fixture-arm-storage", self.backend,
+                                           registration=registration, binding=effective, active=True)
+            native.return_value = {"binding": {**effective, "generation": {"kind": "different"}}}
+            with self.assertRaisesRegex(ValueError, "代次发生变化"):
+                run.target_storage_run(self.backend, value)
+            native.side_effect = ValueError("原代次不可用")
+            with self.assertRaisesRegex(ValueError, "原代次不可用"):
+                run.target_storage_run(self.backend, value)
+            legacy.assert_not_called()
 
     def test_ordinary_seed_to_arm_storage_control_keeps_valid_external_run(self):
         storage = self.storage_run()

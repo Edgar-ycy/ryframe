@@ -65,7 +65,9 @@ fn assert_file_level(level: &str, rejected_override: &str, expects_info: bool) {
         "API 输出泄露测试凭据；输出已隐藏"
     );
     assert!(
-        !output.status.success() && text.contains("primary database connection failed"),
+        !output.status.success()
+            && text.contains("阶段=连接池建立")
+            && text.contains("字段=database.primary"),
         "应在数据库握手阶段失败，实际状态={}，输出={text}",
         output.status
     );

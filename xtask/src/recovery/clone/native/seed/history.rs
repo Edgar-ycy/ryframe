@@ -24,25 +24,7 @@ pub(crate) fn post(
 ) -> Result<Post> {
     let saved = state::load(run, !cleanup)?;
     let attempts = state::attempts(&saved)?;
-    let base = base(backend, run, attempts)?;
-    let mut candidates = vec![base];
-    for record in attempts.iter().filter(|row| {
-        row["stage"] == "post-copy" && row["mode"] == "amend" && row["status"] == "passed"
-    }) {
-        if candidates.len() > 9999 {
-            return Err("post-copy amendment 代次无效".into());
-        }
-        let next = amended(
-            backend,
-            run,
-            &saved,
-            candidates.last().ok_or("缺少原始登记")?,
-            record,
-            candidates.len(),
-            cleanup,
-        )?;
-        candidates.push(next);
-    }
+    let mut candidates = post_generations(backend, run, &saved, cleanup)?;
     let selected = if let Some(requested) = requested {
         candidates
             .iter()
@@ -65,6 +47,34 @@ pub(crate) fn post(
         return Err("post-copy 登记历史在读取期间变化".into());
     }
     Ok(candidates.remove(selected))
+}
+
+pub(super) fn post_generations(
+    backend: &Path,
+    run: &Path,
+    saved: &Value,
+    cleanup: bool,
+) -> Result<Vec<Post>> {
+    let attempts = state::attempts(saved)?;
+    let mut candidates = vec![base(backend, run, attempts)?];
+    for record in attempts.iter().filter(|row| {
+        row["stage"] == "post-copy" && row["mode"] == "amend" && row["status"] == "passed"
+    }) {
+        if candidates.len() > 9999 {
+            return Err("post-copy amendment 代次无效".into());
+        }
+        let next = amended(
+            backend,
+            run,
+            saved,
+            candidates.last().ok_or("缺少原始登记")?,
+            record,
+            candidates.len(),
+            cleanup,
+        )?;
+        candidates.push(next);
+    }
+    Ok(candidates)
 }
 
 fn base(backend: &Path, run: &Path, attempts: &[Value]) -> Result<Post> {

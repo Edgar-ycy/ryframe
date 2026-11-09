@@ -14,6 +14,8 @@ use mysql::{
 
 #[path = "mysql_real_protocol/linked_job_states.rs"]
 mod linked_job_states;
+#[path = "mysql_real_protocol/named_sources.rs"]
+mod named_sources;
 
 #[cfg(feature = "migration")]
 fn bootstrap_hashes() -> ryframe_db::migration::BootstrapHashes {
@@ -617,6 +619,7 @@ async fn create_user_detail_tables(database: &DatabaseConnection) -> Result<(), 
         "CREATE TABLE sys_user (\
             id BIGINT NOT NULL PRIMARY KEY, tenant_id VARCHAR(64) NOT NULL,\
             username VARCHAR(64) NOT NULL, password_hash VARCHAR(255) NOT NULL,\
+            password_change_required BOOLEAN NOT NULL DEFAULT 1,\
             nickname VARCHAR(64) NOT NULL, email VARCHAR(128) NOT NULL, phone VARCHAR(32) NOT NULL,\
             avatar VARCHAR(512) NULL, avatar_file_id BIGINT NULL, preferred_locale VARCHAR(32) NULL,\
             status VARCHAR(32) NOT NULL, authorization_version INT NOT NULL, dept_id BIGINT NULL,\

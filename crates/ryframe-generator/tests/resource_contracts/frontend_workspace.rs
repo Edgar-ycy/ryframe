@@ -67,8 +67,18 @@ fn invoke(source: &Path, input: &[u8]) -> Output {
     } else {
         "corepack"
     };
-    let mut child = Command::new(corepack)
-        .args(["pnpm", "--config.verifyDepsBeforeRun=error", "exec", "node"])
+    let backend = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let cache = ryframe_config::ToolSettings::load(&backend)
+        .unwrap()
+        .pnpm_cache_dir(&backend)
+        .unwrap();
+    let mut command = Command::new(corepack);
+    command.arg("pnpm");
+    if let Some(cache) = cache {
+        command.arg(format!("--config.cache-dir={}", cache.display()));
+    }
+    let mut child = command
+        .args(["--config.verifyDepsBeforeRun=error", "exec", "node"])
         .arg(script)
         .current_dir(source)
         .env("COREPACK_ENABLE_NETWORK", "0")

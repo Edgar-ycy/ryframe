@@ -6,12 +6,12 @@ use crate::{
 use serde_json::{Value, json};
 
 mod history;
-pub(super) mod live;
+pub(crate) mod live;
 #[cfg(test)]
 #[path = "../../../../../../tests/unit/recovery/clone/native/seed/guards/rebind/tests.rs"]
 mod tests;
 
-pub(super) fn dispatch(input: &Value) -> Result<Value> {
+pub(crate) fn dispatch(input: &Value) -> Result<Value> {
     document::exact(input, &["action", "input"], "重绑定编排模型")?;
     let args = &input["input"];
     match input["action"].as_str() {

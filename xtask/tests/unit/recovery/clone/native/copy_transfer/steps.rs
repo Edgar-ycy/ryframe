@@ -1,0 +1,210 @@
+use super::*;
+use crate::recovery::clone::native::copy_ledger::session::tests::{ARTIFACT, Fixture, images};
+
+fn declaration(object_count: usize) -> Value {
+    json!({
+        "databases": [{"key":"control", "artifact":{"sha256":ARTIFACT}}],
+        "objects": (0..object_count).map(|index| json!({
+            "bucket":"uploads", "target_key":format!("target-{index}"),
+            "artifact":{"sha256":ARTIFACT},
+        })).collect::<Vec<_>>(),
+    })
+}
+
+struct FixtureIo {
+    current: Map<String, Value>,
+    bases: Map<String, Value>,
+    writes: Vec<String>,
+    batch_sizes: Vec<usize>,
+    stop_at: Option<String>,
+    complete_checks: usize,
+}
+
+impl FixtureIo {
+    fn new(plan: &Plan<'_>) -> Self {
+        let mut current = Map::new();
+        let mut bases = Map::new();
+        for (index, step) in plan.all().enumerate() {
+            let hash = format!("{index:064x}");
+            let (before, after) = if step.kind == Kind::Database {
+                let initial = json!({"kind":"database","resource_sha256":hash,
+                    "schema_sha256":"d".repeat(64), "tables_sha256":"e".repeat(64),
+                    "preserved_sha256":"f".repeat(64)});
+                (initial.clone(), initial)
+            } else {
+                images(char::from_digit(index.try_into().unwrap(), 16).unwrap())
+            };
+            current.insert(step.id.clone(), before.clone());
+            bases.insert(step.id.clone(), json!({"before":before,"after":after}));
+        }
+        Self {
+            current,
+            bases,
+            writes: Vec::new(),
+            batch_sizes: Vec::new(),
+            stop_at: None,
+            complete_checks: 0,
+        }
+    }
+
+    fn snapshot<'a>(
+        &self,
+        steps: impl Iterator<Item = &'a Step<'a>>,
+    ) -> Observation<Map<String, Value>> {
+        let images = steps
+            .map(|step| (step.id.clone(), self.current[&step.id].clone()))
+            .collect::<Map<_, _>>();
+        Observation {
+            evidence: images.clone(),
+            images,
+        }
+    }
+}
+
+impl CopyIo for FixtureIo {
+    type Evidence = Map<String, Value>;
+
+    fn checkpoint(&mut self, _: Option<&Step<'_>>) -> Result<()> {
+        Ok(())
+    }
+
+    fn basis(&mut self, step: &Step<'_>) -> Result<Basis> {
+        Ok(Basis {
+            before: self.bases[&step.id]["before"].clone(),
+            after: self.bases[&step.id]["after"].clone(),
+        })
+    }
+
+    fn observe_databases(&mut self, all: &[Step<'_>]) -> Result<Observation<Self::Evidence>> {
+        assert_eq!(all.len(), 1);
+        Ok(self.snapshot(all.iter()))
+    }
+
+    fn observe_objects(&mut self, selected: &[&Step<'_>]) -> Result<Observation<Self::Evidence>> {
+        self.batch_sizes.push(selected.len());
+        Ok(self.snapshot(selected.iter().copied()))
+    }
+
+    fn check_observation(&mut self, observed: &Observation<Self::Evidence>) -> Result<()> {
+        assert_eq!(observed.images, observed.evidence);
+        Ok(())
+    }
+
+    fn write(&mut self, step: &Step<'_>, session: &mut Session<'_>, basis: &Basis) -> Result<()> {
+        session.write_once(
+            &step.id,
+            &basis.before,
+            &basis.after,
+            step.artifact,
+            |check| {
+                check()?;
+                self.writes.push(step.id.clone());
+                if self.stop_at.as_ref() == Some(&step.id) {
+                    return Err("复制进程结束，资源写入结果未知".into());
+                }
+                self.current.insert(step.id.clone(), basis.after.clone());
+                check()
+            },
+        )
+    }
+
+    fn verify_complete(&mut self) -> Result<()> {
+        self.complete_checks += 1;
+        Ok(())
+    }
+}
+
+#[test]
+fn rejects_unregistered_drift_before_appending_a_reconcile_batch_and_resumes_only_known_before() {
+    let fixture = Fixture::new();
+    let declaration = declaration(5);
+    let plan = Plan::from_verified(&declaration).unwrap();
+    let mut io = FixtureIo::new(&plan);
+    let ids: Vec<_> = plan.objects.iter().map(|step| step.id.clone()).collect();
+    let database = &plan.databases[0].id;
+    io.stop_at = Some(ids[1].clone());
+    assert!(
+        fixture
+            .run(Mode::New, |session, _| {
+                run(&plan, session, Mode::New, &mut io).map(|_| ())
+            })
+            .is_err()
+    );
+    assert_eq!(io.writes, ids[..2]);
+    assert!(
+        fixture
+            .run(Mode::Resume, |session, _| {
+                run(&plan, session, Mode::Resume, &mut io).map(|_| ())
+            })
+            .is_err()
+    );
+
+    let drift = io.bases[&ids[2]]["after"].clone();
+    let before = io.current.insert(ids[2].clone(), drift).unwrap();
+    assert!(
+        fixture
+            .run(Mode::Reconcile, |session, _| {
+                run(&plan, session, Mode::Reconcile, &mut io).map(|_| ())
+            })
+            .is_err()
+    );
+    io.current.insert(ids[2].clone(), before);
+
+    fixture
+        .run(Mode::Reconcile, |session, _| {
+            assert_eq!(session.steps()?[&ids[1]]["phase"], "unknown");
+            let Outcome::Reconciled(receipt) = run(&plan, session, Mode::Reconcile, &mut io)?
+            else {
+                panic!("显式核对必须返回只读核对结果");
+            };
+            assert_eq!(receipt["status"], "copy_reconciled");
+            assert_eq!(receipt["steps"][&ids[0]], "confirmed");
+            assert_eq!(receipt["steps"][&ids[1]], "reconciled_before");
+            assert_eq!(receipt["remote_writes"], 0);
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(io.writes, ids[..2]);
+
+    io.stop_at = None;
+    let receipt = fixture
+        .run(Mode::Resume, |session, _| {
+            let Outcome::Verified {
+                unchanged_databases,
+            } = run(&plan, session, Mode::Resume, &mut io)?
+            else {
+                panic!("完整复制必须通过收尾核验");
+            };
+            assert_eq!(unchanged_databases.len(), 1);
+            assert_eq!(unchanged_databases[database], io.current[database]);
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(receipt["status"], "ledger_evidence_complete");
+    assert_eq!(io.writes, [ids[..2].to_vec(), ids[1..].to_vec()].concat());
+    assert_eq!(io.complete_checks, 1);
+    assert_eq!(io.batch_sizes[io.batch_sizes.len() - 2..], [4, 1]);
+}
+
+#[test]
+fn independently_observes_the_complete_no_write_plan_before_closing_as_partial() {
+    let fixture = Fixture::new();
+    let declaration = declaration(0);
+    let plan = Plan::from_verified(&declaration).unwrap();
+    let mut io = FixtureIo::new(&plan);
+    let receipt = fixture
+        .run(Mode::New, |session, _| {
+            let Outcome::Verified {
+                unchanged_databases,
+            } = run(&plan, session, Mode::New, &mut io)?
+            else {
+                panic!("收尾仍须验全量无写入计划");
+            };
+            assert_eq!(unchanged_databases.len(), 1);
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(receipt["status"], "partial");
+    assert_eq!(io.complete_checks, 1);
+    assert!(io.writes.is_empty());
+}

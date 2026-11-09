@@ -7,8 +7,9 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mysql_verification_fixture import mysql_output
+from restore_build import file_digest
 from restore_reference import work_directory
-from restore_reference_io import DATA_HEADER, ExternalTools, normalize_dump, object_index, validate_dump, validate_insert
+from restore_reference_io import DATA_HEADER, ExternalTools, normalize_dump, object_index, validate_dump
 from restore_reference_fixture import environment, stored_backup
 
 
@@ -37,8 +38,10 @@ class ReferenceIoTests(unittest.TestCase):
                     "INSERT INTO `sys_post` (`name`) VALUES ('unterminated);",
                     "INSERT INTO `sys_post` (`id`) VALUES (1/*comment*/);",
                     "\\! command"):
+            path = self.work / "rejected.sql"
+            path.write_text(DATA_HEADER + sql + "\n", encoding="utf-8")
             with self.assertRaises(ValueError):
-                validate_insert(sql, {"sys_post"})
+                validate_dump(path, {"sys_post"})
 
     def test_mysql_exact_defaults_environment_and_declared_tables_only(self):
         run = Mock(return_value=subprocess.CompletedProcess([], 0, stdout=b"one\n"))
@@ -52,12 +55,41 @@ class ReferenceIoTests(unittest.TestCase):
         self.assertIn("--binary-mode", command)
         self.assertNotIn("MYSQL_PWD", run.call_args.kwargs["env"])
         self.assertEqual(run.call_args.kwargs["timeout"], 1800)
-        root, _ = stored_backup(self.plan, self.work)
-        tools.restore_database(database, ["sys_post"], root / "databases/control.sql")
-        sql = run.call_args.kwargs["input"].decode()
-        self.assertIn("DELETE FROM `sys_post`;", sql)
-        self.assertNotIn("ownership", sql)
-        self.assertNotIn("DROP", sql)
+        source = self.work / "restore-crlf.sql"
+        body = (DATA_HEADER + "INSERT INTO `sys_post` (`id`) VALUES (1);\n").replace("\n", "\r\n").encode()
+        source.write_bytes(body)
+        tools.restore_database(database, ["sys_post"], source, file_digest(source))
+        self.assertEqual(run.call_args.args[0], command)
+        self.assertEqual(
+            run.call_args.kwargs["input"],
+            b"SET SESSION FOREIGN_KEY_CHECKS=0; SET SESSION time_zone='+00:00'; "
+            b"SET SESSION SQL_MODE='NO_AUTO_VALUE_ON_ZERO'; START TRANSACTION;\n"
+            b"DELETE FROM `sys_post`;\n" + body + b"\nCOMMIT;\n",
+        )
+
+    def test_restore_rejects_same_length_valid_sql_replaced_after_native_validation(self):
+        runner = Mock()
+        tools = ExternalTools(self.plan, self.work, runner)
+        database = self.plan["target"]["databases"][0]
+        source, replacement = self.work / "original.sql", self.work / "replacement.sql"
+        body = (DATA_HEADER + "INSERT INTO `sys_post` (`id`) VALUES (1);\n").encode()
+        source.write_bytes(body)
+        replacement.write_bytes(body.replace(b"(1)", b"(2)"))
+        expected = file_digest(source)
+
+        def validate_then_replace(path, tables):
+            proof = validate_dump(path, tables)
+            self.assertEqual(proof, expected)
+            self.assertEqual(validate_dump(replacement, tables)["bytes"], expected["bytes"])
+            replacement.replace(source)
+            return proof
+
+        with patch("restore_reference_io.validate_dump", side_effect=validate_then_replace):
+            with self.assertRaisesRegex(ValueError, "SQL 转储在核验后发生变化"):
+                tools.restore_database(database, ["sys_post"], source, expected)
+        with self.assertRaisesRegex(ValueError, "已核验 SQL 转储与原备份产物绑定不同"):
+            tools.restore_database(database, ["sys_post"], source, expected)
+        runner.assert_not_called()
 
     def test_external_command_checks_generation_immediately_before_runner(self):
         events = []

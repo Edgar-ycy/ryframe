@@ -63,7 +63,7 @@ const KINDS: &[(&str, &str, &str)] = &[
     ),
 ];
 
-pub(super) fn stage(kind: &str) -> Result<&'static str> {
+pub(crate) fn stage(kind: &str) -> Result<&'static str> {
     KINDS
         .iter()
         .find(|item| item.0 == kind)
@@ -71,7 +71,7 @@ pub(super) fn stage(kind: &str) -> Result<&'static str> {
         .ok_or_else(|| "原生生产者类型未登记".into())
 }
 
-pub(super) fn source(backend: &Path, kind: &str) -> Result<PathBuf> {
+pub(crate) fn source(backend: &Path, kind: &str) -> Result<PathBuf> {
     KINDS
         .iter()
         .find(|item| item.0 == kind)
@@ -79,7 +79,7 @@ pub(super) fn source(backend: &Path, kind: &str) -> Result<PathBuf> {
         .ok_or_else(|| "原生生产者类型未登记".into())
 }
 
-pub(super) fn accepts(kind: &str, mode: &str) -> bool {
+pub(crate) fn accepts(kind: &str, mode: &str) -> bool {
     match kind {
         "session" => matches!(mode, "schedules" | "reconcile"),
         "existing" => mode == "verify",
@@ -96,7 +96,13 @@ pub(super) fn accepts(kind: &str, mode: &str) -> bool {
     }
 }
 
-pub(super) fn build(request: &Value) -> Result<Value> {
+pub(crate) fn producer_phase(stage: &str, mode: &str) -> bool {
+    KINDS
+        .iter()
+        .any(|(kind, expected_stage, _)| *expected_stage == stage && accepts(kind, mode))
+}
+
+pub(crate) fn build(request: &Value) -> Result<Value> {
     let object = json_io::exact(
         request,
         &[

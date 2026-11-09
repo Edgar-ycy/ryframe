@@ -3,10 +3,12 @@ use std::{
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
+    sync::OnceLock,
 };
 
 use regex::Regex;
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
 
 use super::super::super::{clone::native, inputs};
 use crate::Result;
@@ -19,6 +21,7 @@ pub(super) fn request(operation: &str, args: &Value) -> Result<Value> {
             exact(args, &["value"])?;
             Ok(Value::String(native::digest::plan_hash(&args["value"])?))
         }
+        "reference-copy-step-ids" => copy_step_ids(args),
         "reference-identifier" => identifier(args, false),
         "reference-scope-identifier" => identifier(args, true),
         "reference-safe-file" => safe_file_request(args),
@@ -35,7 +38,9 @@ pub(super) fn request(operation: &str, args: &Value) -> Result<Value> {
         "reference-inventory-validate" => validate_inventory(args),
         "reference-artifacts-verify" => verify_artifacts(args),
         "reference-copy-metadata" => copy_metadata(args),
-        "reference-sql-line" => sql_line(args),
+        operation @ ("reference-sql-stream-create"
+        | "reference-sql-stream-read"
+        | "reference-sql-stream-close") => native::sql_stream::request(operation, args),
         "reference-sql-normalize" => normalize_dump(args),
         "reference-sql-dump" => validate_dump(args),
         "reference-object-index" => object_index(args),
@@ -51,6 +56,38 @@ fn text<'a>(value: &'a Value, label: &str) -> Result<&'a str> {
     value
         .as_str()
         .ok_or_else(|| format!("{label}必须为字符串").into())
+}
+
+pub(in crate::recovery) fn copy_step_ids(args: &Value) -> Result<Value> {
+    exact(args, &["databases", "objects"])?;
+    let mut seen = BTreeSet::new();
+    let mut databases = Vec::new();
+    for item in native::json::array(&args["databases"], "复制数据库步骤投影")? {
+        exact(item, &["key"])?;
+        text(&item["key"], "复制数据库键")?;
+        databases.push(copy_step_id("database", item, &mut seen)?);
+    }
+    let mut objects = Vec::new();
+    for item in native::json::array(&args["objects"], "复制对象步骤投影")? {
+        exact(item, &["bucket", "target_key"])?;
+        let bucket = text(&item["bucket"], "复制对象桶")?;
+        let target_key = text(&item["target_key"], "复制对象目标键")?;
+        objects.push(copy_step_id(
+            "object",
+            &json!({"bucket":bucket,"key":target_key}),
+            &mut seen,
+        )?);
+    }
+    Ok(json!({"databases":databases,"objects":objects}))
+}
+
+fn copy_step_id(prefix: &str, value: &Value, seen: &mut BTreeSet<String>) -> Result<String> {
+    let digest = native::digest::plan_hash(value)?;
+    let step = format!("{prefix}-{}", &digest[..32]);
+    if !seen.insert(step.clone()) {
+        return Err("数据步骤标识重复或碰撞，不能省略计划资源".into());
+    }
+    Ok(step)
 }
 
 fn identifier(args: &Value, scope: bool) -> Result<Value> {
@@ -206,8 +243,11 @@ fn validate_sql_line(line: &str, tables: &BTreeSet<String>) -> Result<()> {
     if line.len() > 16 * 1024 * 1024 {
         return Err("单行导出超过受限检查大小".into());
     }
-    let structure =
-        Regex::new(r"^INSERT INTO `([a-z0-9_-]+)` \((?:`[a-z0-9_]+`(?:, )?)+\) VALUES \((.*)\);$")?;
+    static STRUCTURE: OnceLock<Regex> = OnceLock::new();
+    let structure = STRUCTURE.get_or_init(|| {
+        Regex::new(r"^INSERT INTO `([a-z0-9_-]+)` \((?:`[a-z0-9_]+`(?:, )?)+\) VALUES \((.*)\);$")
+            .expect("固定 SQL 结构正则必须有效")
+    });
     let captures = structure
         .captures(line)
         .filter(|value| tables.contains(&value[1]))
@@ -230,21 +270,22 @@ fn validate_sql_line(line: &str, tables: &BTreeSet<String>) -> Result<()> {
             plain.push(character);
         }
     }
-    let literals = Regex::new(r"(?:NULL|_binary|0x[0-9A-Fa-f]*|[0-9eE+.,\s-])+")?;
+    static LITERALS: OnceLock<Regex> = OnceLock::new();
+    let literals = LITERALS.get_or_init(|| {
+        Regex::new(r"(?:NULL|_binary|0x[0-9A-Fa-f]*|[0-9eE+.,\s-])+")
+            .expect("固定 SQL 字面量正则必须有效")
+    });
     if quoted || !literals.replace_all(&plain, "").is_empty() {
         return Err("备份 SQL 包含表达式、多语句或无效字符串".into());
     }
     Ok(())
 }
 
-fn sql_line(args: &Value) -> Result<Value> {
-    exact(args, &["line", "tables"])?;
-    validate_sql_line(text(&args["line"], "SQL行")?, &tables(&args["tables"])?)?;
-    Ok(Value::Bool(true))
-}
-
-fn dump_lines(path: &Path, tables: &BTreeSet<String>, normalized: bool) -> Result<Vec<String>> {
-    let source = fs::read_to_string(path).map_err(|_| "SQL转储必须是UTF-8普通文件")?;
+fn dump_lines<'a>(
+    source: &'a str,
+    tables: &BTreeSet<String>,
+    normalized: bool,
+) -> Result<Vec<&'a str>> {
     let session_setting = Regex::new(r"^/\*!\d+ SET .* \*/;$")?;
     let mut lines = Vec::new();
     for (index, line) in source.lines().enumerate() {
@@ -258,7 +299,7 @@ fn dump_lines(path: &Path, tables: &BTreeSet<String>, normalized: bool) -> Resul
             continue;
         }
         validate_sql_line(line, tables)?;
-        lines.push(line.to_owned());
+        lines.push(line);
     }
     if normalized && source.lines().next().is_none() {
         return Err("SQL 产物不是已验证的参考数据转储".into());
@@ -270,7 +311,9 @@ fn normalize_dump(args: &Value) -> Result<Value> {
     exact(args, &["raw", "output", "tables"])?;
     let raw = Path::new(text(&args["raw"], "原始SQL")?);
     let output = Path::new(text(&args["output"], "规范SQL")?);
-    let lines = dump_lines(raw, &tables(&args["tables"])?, false)?;
+    let tables = tables(&args["tables"])?;
+    let source = fs::read_to_string(raw).map_err(|_| "SQL转储必须是UTF-8普通文件")?;
+    let lines = dump_lines(&source, &tables, false)?;
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -285,12 +328,23 @@ fn normalize_dump(args: &Value) -> Result<Value> {
 
 pub(super) fn validate_dump(args: &Value) -> Result<Value> {
     exact(args, &["path", "tables"])?;
-    dump_lines(
-        Path::new(text(&args["path"], "SQL产物")?),
-        &tables(&args["tables"])?,
-        true,
-    )?;
-    Ok(Value::Bool(true))
+    let path = Path::new(text(&args["path"], "SQL产物")?);
+    let tables = tables(&args["tables"])?;
+    let raw = fs::read(path).map_err(|_| "SQL转储必须是UTF-8普通文件")?;
+    let digest = validate_dump_bytes(&raw, &tables)?;
+    Ok(json!({"bytes": digest.bytes, "sha256": digest.sha256}))
+}
+
+pub(in crate::recovery) fn validate_dump_bytes(
+    raw: &[u8],
+    tables: &BTreeSet<String>,
+) -> Result<native::digest::FileDigest> {
+    let source = std::str::from_utf8(raw).map_err(|_| "SQL转储必须是UTF-8普通文件")?;
+    dump_lines(source, tables, true)?;
+    Ok(native::digest::FileDigest {
+        bytes: raw.len() as u64,
+        sha256: hex::encode(Sha256::digest(raw)),
+    })
 }
 
 pub(super) fn object_index(args: &Value) -> Result<Value> {
@@ -387,37 +441,48 @@ mod tests {
     }
 
     #[test]
-    fn sql_validation_accepts_literals_and_rejects_expressions() {
-        let tables = json!(["sys_post"]);
-        let valid =
-            "INSERT INTO `sys_post` (`id`, `name`, `raw`) VALUES (1,'引号\\\'文本',0x4142);";
-        assert!(request("reference-sql-line", &json!({"line":valid,"tables":tables})).is_ok());
-        assert!(
-            request(
-                "reference-sql-line",
-                &json!({"line":"INSERT INTO `sys_post` (`id`) VALUES (SLEEP(1));","tables":["sys_post"]})
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
     fn sql_normalization_is_create_only_and_validated() {
         let directory = tempfile::tempdir().unwrap();
         let raw = directory.path().join("raw.sql");
         let output = directory.path().join("data.sql");
         fs::write(
             &raw,
-            "/*!40101 SET @OLD=1 */;\nINSERT INTO `sys_post` (`id`) VALUES (1);\n",
+            "/*!40101 SET @OLD=1 */;\nINSERT INTO `sys_post` (`id`, `name`, `raw`) VALUES (1,'引号\\\'文本',0x4142);\n",
         )
         .unwrap();
         let args = json!({"raw":raw,"output":output,"tables":["sys_post"]});
         assert_eq!(normalize_dump(&args).unwrap(), Value::Bool(true));
         assert_eq!(
             fs::read_to_string(&output).unwrap(),
-            "-- ryframe-reference-data-v1\nINSERT INTO `sys_post` (`id`) VALUES (1);\n"
+            "-- ryframe-reference-data-v1\nINSERT INTO `sys_post` (`id`, `name`, `raw`) VALUES (1,'引号\\\'文本',0x4142);\n"
         );
         assert!(normalize_dump(&args).is_err());
-        assert!(validate_dump(&json!({"path":output,"tables":["sys_post"]})).is_ok());
+        let proof = json!({"path":output,"tables":["sys_post"]});
+        let lf = fs::read_to_string(&output).unwrap();
+        let crlf = lf.replace('\n', "\r\n");
+        let lf_proof = request("reference-sql-dump", &proof).unwrap();
+        fs::write(&output, crlf.as_bytes()).unwrap();
+        let crlf_proof = request("reference-sql-dump", &proof).unwrap();
+        assert_eq!(
+            crlf_proof,
+            json!({"bytes":crlf.len(),"sha256":hex::encode(Sha256::digest(crlf.as_bytes()))})
+        );
+        assert_ne!(lf_proof["sha256"], crlf_proof["sha256"]);
+        assert!(
+            request(
+                "reference-sql-dump",
+                &json!({"path":output,"tables":["other"]})
+            )
+            .is_err()
+        );
+        fs::write(&output, [0xff]).unwrap();
+        assert!(request("reference-sql-dump", &proof).is_err());
+        fs::write(&raw, "INSERT INTO `sys_post` (`id`) VALUES (SLEEP(1));\n").unwrap();
+        let invalid_output = directory.path().join("invalid.sql");
+        assert!(
+            normalize_dump(&json!({"raw":raw,"output":invalid_output,"tables":["sys_post"]}))
+                .is_err()
+        );
+        assert!(!invalid_output.exists());
     }
 }

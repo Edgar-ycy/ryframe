@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from workspace_directory import WorkspaceDirectory
 import devex_clone_seed_segment as segment
+from devex_clone_storage_request import arguments as storage_arguments
 from devex_clone_capture import read_json, write_json
 from devex_clone_run_state import binding
 from restore_reference_plan import plan_hash
@@ -27,21 +28,28 @@ class FailedStorageRestartEvidenceTests(unittest.TestCase):
         self.output = self.root / "a0008"
         self.output.mkdir(parents=True)
         executable = str((self.directory / "rustfs.exe").resolve())
+        credentials = {}
+        for key in ("access_key", "secret_key"):
+            path = self.data / (key + ".txt")
+            path.write_text("fixture-" + key, encoding="utf-8")
+            credentials[key] = binding(path)
         self.request = {
             "manifest": binding(self.directory / "manifest.json"), "side": "target",
             "scope_id": "fixed-scope", "executable": {"path": executable, "sha256": "a" * 64},
             "data_directory": {"path": str(self.data), "device": self.data.stat().st_dev,
                                "inode": self.data.stat().st_ino},
             "api_url": "http://127.0.0.1:29200", "console_url": "http://127.0.0.1:29201",
-            "credential_files": {},
+            "credential_files": credentials,
         }
         write_json(self.root / "request.json", self.request)
         self.request_binding = binding(self.root / "request.json")
         write_json(self.root / "registration.json", {
             "request": self.request_binding, "manifest": self.request["manifest"], "side": "target"})
-        self.source = {"snapshot": {"head": "a" * 40, "clean": True, "files": [],
+        self.source = {"snapshot": {"head": "d77b605d871a92e79d0c81b3874c7ff576899656", "clean": True, "files": [],
                                     "patch_sha256": hashlib.sha256(b"").hexdigest()},
-                       "fingerprints": {"product": {"sha256": "b" * 64}}}
+                       "worktree_fingerprint": "sha256:" + "c" * 64,
+                       "fingerprints": {name: {"sha256": "b" * 64, "files": 0}
+                                        for name in ("product", "test_tools", "support")}}
         self.attempt = {"number": 8, "stage": "storage-target", "mode": "restart",
                         "status": "failed", "result": None, "error_type": "CalledProcessError",
                         "sources": self.source, "started_at": "before", "finished_at": "after"}
@@ -57,13 +65,15 @@ class FailedStorageRestartEvidenceTests(unittest.TestCase):
                                           "attempt_sha256": plan_hash(initial)})
         self.controller = binding(self.controller_path)
         self.process = {"pid": 24580, "started": "134339570871974524", "executable": executable}
-        arguments = [executable, "server", "--address", "127.0.0.1:29200",
-                     "--console-address", "127.0.0.1:29201", str(self.data)]
-        environment = {"RUSTFS_CONSOLE_ENABLE": "true"}
+        # 该用例消费真实旧 Git 来源及原生核验，不从当前 selector 常量生成调用栈。
+        write_json(self.directory / "state.json", {
+            "format_version": 1, "manifest": self.request["manifest"],
+            "attempts": [{**copy.deepcopy(self.attempt), "number": number}
+                         for number in range(1, 9)]})
+        arguments = storage_arguments(self.request)
         write_json(self.output / "intent.json", {
             "format_version": 1, "kind": "devex-clone-storage-intent", "request": self.request_binding,
-            "controller": self.controller, "attempt": 8, "arguments": arguments,
-            "environment": environment})
+            "controller": self.controller, "attempt": 8, "arguments": arguments})
         intent = binding(self.output / "intent.json")
         write_json(self.output / "spawned.json", {"pid": self.process["pid"], "identity_pending": True})
         write_json(self.output / "process.json", {
@@ -72,7 +82,7 @@ class FailedStorageRestartEvidenceTests(unittest.TestCase):
             "console_url": self.request["console_url"], "data_dir": str(self.data), "intent": intent})
         write_json(self.output / "launch.json", {
             "format_version": 1, "scope_id": "fixed-scope", "identity": self.process,
-            "arguments": arguments, "environment": environment, "credential_files": {}})
+            "arguments": arguments, "credential_files": credentials})
         write_json(self.output / "failure-cleanup.json", {
             "intent": intent, "identity": self.process, "pid": self.process["pid"], "returncode": 0})
         (self.output / "stdout.log").write_bytes(b"closed")
@@ -82,7 +92,12 @@ class FailedStorageRestartEvidenceTests(unittest.TestCase):
             "format_version": 1, "kind": "devex-stage-failure", "attempt": 8,
             "stage": "storage-target", "mode": "restart", "error_type": "CalledProcessError",
             "frames": [{"file": file, "function": function, "line": index + 10}
-                       for index, (file, function) in enumerate(segment._FAILED_RESTART_CALLS)],
+                       for index, (file, function) in enumerate((
+                           ("tools/python/devex_clone_run.py", "execute"),
+                           ("tools/python/devex_clone_storage.py", "execute_storage"),
+                           ("tools/python/devex_clone_storage_process.py", "start"),
+                           ("tools/python/devex_clone_storage_process.py", "actual_arguments"),
+                           ("tools/python/devex_clone_target_storage.py", "actual_windows_argv")))],
             "controller": self.controller})
 
     def verify(self, *, idle=True):
@@ -99,7 +114,7 @@ class FailedStorageRestartEvidenceTests(unittest.TestCase):
         self.assertEqual(request.call_count, 2)
         self.assertEqual([call.args[0] for call in stopped.call_args_list],
                          [read_json(self.controller_path)["owner"]["identity"], self.process])
-        self.assertTrue(all(call.kwargs == {"run": subprocess.run, "counter_run": subprocess.run}
+        self.assertTrue(all(not call.kwargs
                             for call in stopped.call_args_list))
         self.assertEqual([call.args[0] for call in port.call_args_list],
                          [self.request["api_url"], self.request["console_url"]])

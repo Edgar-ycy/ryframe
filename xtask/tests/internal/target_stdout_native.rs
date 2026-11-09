@@ -58,7 +58,7 @@ impl Fixture {
             initialized_binding: json!({}),
             initialized: json!({}),
             request_path: local.join("request.json"),
-            request: json!({"target": {"scope_id": "stdout-fixture", "databases": [database]}, "tools": {"mysql": {"path": mysql, "sha256": digest::file(&mysql).unwrap().sha256}}}),
+            request: json!({"config_dir":root.join("config"),"target": {"scope_id": "stdout-fixture", "databases": [database]}, "tools": {"mysql": {"path": mysql, "sha256": digest::file(&mysql).unwrap().sha256}}}),
             environment: BTreeMap::from([("APP_ENV".into(), "test".into())]),
             observation_dir: local,
         };
@@ -292,6 +292,40 @@ fn system_transport_writes_more_than_capture_limit_through_held_file() {
 }
 
 #[test]
+fn system_transport_delivers_stdin_from_start_to_real_native_child() {
+    let Some(executable) = option_env!("CARGO_BIN_EXE_xtask") else {
+        panic!("真实输入测试缺少 Cargo 绑定的 xtask 产物");
+    };
+    let fixture = Fixture::new();
+    let origin = format!(
+        "https://stdin-delivery-{}.example",
+        uuid::Uuid::new_v4().simple()
+    );
+    let input = serde_json::to_vec(&json!({
+        "format_version": 1, "value": origin, "allow_empty": false,
+    }))
+    .unwrap();
+    let result = SystemTransport
+        .run(CommandSpec {
+            program: PathBuf::from(executable),
+            args: vec!["__frontend-origin".into(), "check".into()],
+            cwd: fixture.root.clone(),
+            environment: std::env::vars().collect(),
+            stdin: Some(input),
+            stdout: StdoutTarget::Capture,
+            work_dir: fixture.context.observation_dir.clone(),
+            label: "原生 stdin 完整交付测试".into(),
+            timeout: Duration::from_secs(10),
+        })
+        .unwrap();
+    assert!(result.status.success(), "真实子进程必须成功消费完整 stdin");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&result.stdout).unwrap(),
+        json!({"format_version": 1, "valid": true, "origin": origin})
+    );
+}
+
+#[test]
 fn system_transport_retains_existing_capture_and_file_behavior() {
     let fixture = Fixture::new();
     let code = "import sys; sys.stdout.buffer.write(b'fixture')";
@@ -313,7 +347,9 @@ fn nonzero_exit_keeps_raw_stdout_and_both_receipts_without_retry() {
     let fake = Fake::new(7, false);
     let mut evidence = Evidence::default();
     let port = Port {
-        context: &fixture.context,
+        configuration: None,
+        side: crate::cli::CloneSide::Target,
+        context: &fixture.context.storage_inputs(),
         transport: &fake,
         checkpoint: &|| Ok(()),
         directory: &fixture.context.observation_dir,
@@ -351,7 +387,9 @@ fn transport_failure_keeps_successful_capture_without_fake_capture_error() {
     let fake = Fake::new(0, true);
     let mut evidence = Evidence::default();
     let port = Port {
-        context: &fixture.context,
+        configuration: None,
+        side: crate::cli::CloneSide::Target,
+        context: &fixture.context.storage_inputs(),
         transport: &fake,
         checkpoint: &|| Ok(()),
         directory: &fixture.context.observation_dir,
@@ -442,7 +480,9 @@ fn drift_between_outer_and_inner_capture_fails_before_response_is_used() {
         Ok(())
     };
     let port = Port {
-        context: &fixture.context,
+        configuration: None,
+        side: crate::cli::CloneSide::Target,
+        context: &fixture.context.storage_inputs(),
         transport: &fake,
         checkpoint: &checkpoint,
         directory: &fixture.context.observation_dir,

@@ -7,7 +7,8 @@ use std::{
 use serde_json::Value;
 
 use super::{
-    TOOLS, command, digest, native_json, path_text, recorded_cargo_path, source, target_directory,
+    TOOLS, command, digest, native_json, normalize_cache_path, path_text, recorded_cargo_path,
+    source, target_directory,
 };
 use crate::{
     Result,
@@ -83,9 +84,10 @@ fn verify_receipt(backend: &Path, filename: &Path, receipt: &Value) -> Result<()
     if let Some(inventory) = receipt.get("source_inventory") {
         source::validate_inventory(inventory)?;
     }
+    let jobs = jobs(receipt)?;
     for (role, _, name) in TOOLS {
         let item = artifacts.get(role).ok_or("维护工具构建收据缺少角色产物")?;
-        verify_artifact(backend, filename, &target, role, name, item)?;
+        verify_artifact(backend, filename, &target, role, name, item, jobs)?;
     }
     Ok(())
 }
@@ -97,6 +99,7 @@ fn verify_artifact(
     role: &str,
     name: &str,
     item: &Value,
+    jobs: u8,
 ) -> Result<()> {
     let item = native_json::exact(
         item,
@@ -115,7 +118,8 @@ fn verify_artifact(
     validate_local_test_path(&executable, backend, LocalTestPathKind::ExistingFile)
         .map_err(|error| format!("维护工具路径无效：{error}"))?;
     if executable.parent() != filename.parent()
-        || item.get("command").and_then(Value::as_array) != Some(&command_values(role, target)?)
+        || item.get("command").and_then(Value::as_array)
+            != Some(&command_values(role, target, jobs)?)
     {
         return Err("维护工具路径或定向构建命令不匹配".into());
     }
@@ -149,9 +153,11 @@ fn verify_artifact(
         .expect("收据具有父目录")
         .join(format!("{role}.cargo.jsonl"));
     let recorded = recorded_cargo_path(backend, name, &fs::read_to_string(output)?)?;
-    let declared = path_value(item.get("cargo_executable").unwrap(), "Cargo 原始产物")?;
-    if recorded != declared || !fs::canonicalize(&recorded)?.starts_with(fs::canonicalize(target)?)
-    {
+    let declared = normalize_cache_path(&path_value(
+        item.get("cargo_executable").unwrap(),
+        "Cargo 原始产物",
+    )?)?;
+    if recorded != declared || !recorded.starts_with(normalize_cache_path(target)?) {
         return Err("维护工具 Cargo 事件与实际构建路径不一致".into());
     }
     Ok(())
@@ -184,8 +190,13 @@ fn verify_log(
     Ok(())
 }
 
-fn command_values(role: &str, target: &Path) -> Result<Vec<Value>> {
-    Ok(command(role, target)?
+pub(super) fn jobs(receipt: &Value) -> Result<u8> {
+    // 后续逐角色比较完整命令；这里只读取固定命令布局中的并发值，不信任任意旗标。
+    super::super::bridge::recorded_jobs(&receipt["artifacts"]["reset"]["command"][11])
+}
+
+fn command_values(role: &str, target: &Path, jobs: u8) -> Result<Vec<Value>> {
+    Ok(command(role, target, jobs)?
         .into_iter()
         .map(Value::String)
         .collect())

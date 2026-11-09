@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use chrono::DateTime;
@@ -112,13 +112,18 @@ fn parse_restore(args: &[String]) -> Result<RestoreCommand, CliError> {
             Ok(command)
         }
         "verify" => {
+            let id = options.take_scalar("--id")?;
+            let runner_root = options.take_directory("--runner-root")?;
+            let [proof, tests, runtime] =
+                crate::recovery::runtime::restore_evidence_paths(&runner_root, &id)
+                    .map_err(|error| CliError::new(format!("--id 无效：{error}")))?;
             let command = RestoreCommand::Verify(RestoreVerifyOptions {
-                id: options.take_scalar("--id")?,
-                proof: options.take_file("--proof")?,
-                tests_receipt: options.take_file("--tests-receipt")?,
-                runtime_receipt: options.take_file("--runtime-receipt")?,
+                id,
+                proof: options.take_runner_file("--proof", &proof)?,
+                tests_receipt: options.take_runner_file("--tests-receipt", &tests)?,
+                runtime_receipt: options.take_runner_file("--runtime-receipt", &runtime)?,
                 target_plan: options.take_file("--target-plan")?,
-                runner_root: options.take_directory("--runner-root")?,
+                runner_root,
                 restore_config_dir: options.take_directory("--restore-config-dir")?,
             });
             options.require_write()?;
@@ -295,6 +300,17 @@ impl NamedOptions {
 
     fn take_file(&mut self, option: &str) -> Result<PathBuf, CliError> {
         self.take_path(option, DataPathRole::ControlledInputFile)
+    }
+
+    fn take_runner_file(&mut self, option: &str, expected: &Path) -> Result<PathBuf, CliError> {
+        let path = self.take_path(option, DataPathRole::ExternalInputFile)?;
+        if path != expected {
+            return Err(CliError::new(format!(
+                "{option} 必须指向本次恢复在 runner 下生成的文件：{}",
+                expected.display()
+            )));
+        }
+        Ok(path)
     }
 
     fn take_directory(&mut self, option: &str) -> Result<PathBuf, CliError> {

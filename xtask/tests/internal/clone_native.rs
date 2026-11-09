@@ -437,6 +437,10 @@ fn sha(content: &[u8]) -> String {
 
 #[path = "clone_native/catalog.rs"]
 mod catalog;
+#[path = "clone_native/jobs.rs"]
+mod jobs;
+#[path = "clone_native/sql.rs"]
+mod sql;
 
 #[test]
 fn native_plan_and_verify_are_deterministic_and_read_only_after_write() {
@@ -462,23 +466,25 @@ fn native_plan_and_verify_are_deterministic_and_read_only_after_write() {
 #[test]
 fn duplicate_unknown_and_missing_json_fields_fail_closed() {
     let mut fixture = Fixture::new();
-    fs::write(
-        &fixture.input,
+    for raw in [
         "{\"format_version\":1,\"format_version\":1}",
-    )
-    .unwrap();
-    assert!(
-        native::run(
-            &CloneCommand::Plan {
-                input: fixture.input.clone(),
-                output: fixture.root.join(".local-tests/duplicate.json"),
-            },
-            &fixture.root,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("重复")
-    );
+        "{\"database_time\":1,\"database_time\":2}",
+        "{\"active\":{\"x\":0,\"x\":1}}",
+    ] {
+        fs::write(&fixture.input, raw).unwrap();
+        assert!(
+            native::run(
+                &CloneCommand::Plan {
+                    input: fixture.input.clone(),
+                    output: fixture.root.join(".local-tests/duplicate.json"),
+                },
+                &fixture.root,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("重复")
+        );
+    }
 
     let mut missing = fixture.value.clone();
     missing.as_object_mut().unwrap().remove("copy_id");

@@ -7,10 +7,12 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 
 from artifact_digests import file_digest
 from full_stack_process import write_receipt
-from source_inventory import git, snapshot, source_domain
+from source_inventory import git, source_domain
+import native_s3_client as native
 
 
 SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
@@ -22,7 +24,6 @@ SOURCE_PAIR_RECEIPT = "source-pair.json"
 FIXTURE_RECEIPT = "fixture.json"
 REFERENCE_FIXTURE_SOURCE_PAIR = "reference-fixture-source-pair"
 BINARY_ROLES = frozenset({"ryframe", "ryframe-worker", "ryframe-reset", "ryframe-migrate"})
-BUSINESS_MODEL = Path("tools/python/fixtures/order-business/src/resources/mod.rs")
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 
 class _DuplicateJsonKey(ValueError):
@@ -137,122 +138,6 @@ def _clean_archive_snapshot(value: object, label: str, expected_head: str) -> di
     return receipt
 
 
-def _stable_snapshots(roots: dict[str, Path], expected: dict) -> dict:
-    observed = {name: snapshot(root)[0] for name, root in roots.items()}
-    if observed != expected:
-        raise ValueError("业务 crate 生成工作树源码快照与 fixture 收据不匹配")
-    repeated = {name: snapshot(root)[0] for name, root in roots.items()}
-    if repeated != observed:
-        raise ValueError("核验 业务 crate 生成工作树期间源码发生变化")
-    return observed
-
-
-def _source_pair(
-    directory: Path,
-    backend_sha: str,
-    frontend_sha: str | None = None,
-    *,
-    fixture_receipt: dict | None = None,
-    fixture_sources: dict | None = None,
-) -> dict:
-    root = directory.resolve(strict=True)
-    pair, _ = _read_json(root / "source-pair.json", "全栈源码组合收据")
-    if pair.get("kind") == REFERENCE_FIXTURE_SOURCE_PAIR:
-        _exact(pair, {"format_version", "kind", "fixture_receipt", "sources"}, "参考夹具源码组合收据")
-        if pair["format_version"] != 1 or fixture_receipt is None or fixture_sources is None:
-            raise ValueError("参考夹具源码组合收据缺少已核验的 fixture")
-        binding = _exact(pair["fixture_receipt"], {"path", "bytes", "sha256"}, "参考夹具 fixture 收据绑定")
-        if binding != fixture_receipt:
-            raise ValueError("参考夹具源码组合未绑定当前 fixture 收据")
-        sources = _exact(pair["sources"], {"backend", "frontend"}, "参考夹具源码组合来源")
-        if sources != fixture_sources:
-            raise ValueError("参考夹具源码组合与 fixture 原始来源不匹配")
-        for name, expected_head in (("backend", backend_sha), ("frontend", frontend_sha)):
-            if expected_head is not None:
-                _clean_archive_snapshot(sources[name], f"参考夹具 {name} 原始来源", expected_head)
-        return {**pair, "receipt": _binding(root / "source-pair.json")}
-
-    _exact(pair, {"format_version", "backend_sha", "frontend_sha", "run_id", "attempt", "sources"}, "全栈源码组合收据")
-    if pair["format_version"] != 1:
-        raise ValueError("全栈源码组合收据格式不受支持")
-    for name in ("backend_sha", "frontend_sha"):
-        if not isinstance(pair[name], str) or COMMIT_PATTERN.fullmatch(pair[name]) is None:
-            raise ValueError("全栈源码组合收据包含无效提交 SHA")
-    sources = _exact(pair["sources"], {"backend", "frontend"}, "全栈源码组合来源")
-    for name, field in (("backend", "backend_sha"), ("frontend", "frontend_sha")):
-        _clean_archive_snapshot(sources[name], f"全栈 {name} 来源", pair[field])
-    if (
-        type(pair["run_id"]) is not int
-        or pair["run_id"] <= 0
-        or type(pair["attempt"]) is not int
-        or pair["attempt"] <= 0
-    ):
-        raise ValueError("全栈源码组合收据包含无效运行身份")
-    if pair["backend_sha"] != backend_sha or (
-        frontend_sha is not None and pair["frontend_sha"] != frontend_sha
-    ):
-        raise ValueError("全栈源码组合与实际验收工作树提交不匹配")
-    for environment, field in (("GITHUB_RUN_ID", "run_id"), ("GITHUB_RUN_ATTEMPT", "attempt")):
-        value = os.environ.get(environment)
-        if value is not None and (not value.isdecimal() or int(value) != pair[field]):
-            raise ValueError("全栈源码组合收据不属于当前 CI attempt")
-    return {**pair, "receipt": _binding(root / "source-pair.json")}
-
-
-def _business_source_evidence(backend: Path, directory: Path) -> dict:
-    fixture_root = backend.parent.resolve(strict=True)
-    receipt_path = fixture_root / "fixture.json"
-    receipt, _ = _read_json(receipt_path, "业务 crate fixture 收据")
-    _exact(
-        receipt,
-        {"format_version", "fixture", "status", "fixture_sha256", "sources", "paths", "generated"},
-        "业务 crate fixture 收据",
-    )
-    if receipt["format_version"] != 1 or receipt["fixture"] != "business" or receipt["status"] != "ready":
-        raise ValueError("业务 crate fixture 尚未完成或格式不受支持")
-    sources = _exact(receipt["sources"], {"backend", "frontend"}, "业务 crate 原始来源")
-    generated = _exact(receipt["generated"], {"backend", "frontend"}, "业务 crate 生成来源")
-    paths = _exact(receipt["paths"], {"backend", "frontend"}, "业务 crate 工作树路径")
-    roots = {
-        name: _canonical_root(paths[name], fixture_root, f"业务 crate {name} 工作树")
-        for name in ("backend", "frontend")
-    }
-    if roots["backend"] != backend or roots["backend"] == roots["frontend"]:
-        raise ValueError("业务 crate fixture 与当前后端工作树不匹配")
-    for name in ("backend", "frontend"):
-        _snapshot(sources[name], f"业务 crate 原始 {name} 来源")
-        _snapshot(generated[name], f"业务 crate 生成 {name} 来源")
-        if sources[name]["head"] != generated[name]["head"]:
-            raise ValueError(f"业务 crate {name} 原始 SHA 与生成工作树 HEAD 不匹配")
-    fixture_binding = _binding(receipt_path)
-    pair = _source_pair(
-        directory,
-        sources["backend"]["head"],
-        sources["frontend"]["head"],
-        fixture_receipt=fixture_binding,
-        fixture_sources=sources,
-    )
-    if pair["sources"] != sources:
-        raise ValueError("业务 crate 原始来源与全栈源码组合收据不匹配")
-    fixture_sha = _sha256(receipt["fixture_sha256"], "业务 crate fixture 内容摘要")
-    definitions = {
-        "model": _binding(roots["backend"] / BUSINESS_MODEL)
-    }
-    if definitions["model"]["sha256"] != fixture_sha:
-        raise ValueError("业务 crate fixture 定义与登记摘要不匹配")
-    actual = _stable_snapshots(roots, generated)
-    return {
-        "format_version": 1,
-        "fixture": "business",
-        "fixture_receipt": fixture_binding,
-        "fixture_definition": definitions,
-        "roots": {name: str(root) for name, root in roots.items()},
-        "source_pair": pair,
-        "original": sources,
-        "generated": actual,
-    }
-
-
 def reference_fixture_source_pair(backend: Path) -> dict:
     """为已完成的 业务 crate fixture 签发本地来源组合，不伪装为 CI 运行。"""
     root = backend.resolve(strict=True).parent
@@ -280,33 +165,18 @@ def reference_fixture_source_pair(backend: Path) -> dict:
 
 
 def full_stack_source_evidence(backend: Path, directory: Path | None = None) -> dict | None:
-    """核对当前全栈源码；非全栈复用入口不隐式要求 fixture 环境。"""
+    """复用全栈生产者的原生来源事实；非全栈入口仍可不提供来源组合。"""
     if directory is None or not (directory / SOURCE_PAIR_RECEIPT).is_file():
         return None
-    root = backend.resolve(strict=True)
-    if (root.parent / FIXTURE_RECEIPT).is_file():
-        # 已绑定工作树与来源组合文件决定夹具类型，不接受外部环境覆盖。
-        return _business_source_evidence(root, directory)
-    pair_input, _ = _read_json(directory / SOURCE_PAIR_RECEIPT, "全栈源码组合")
-    expected = pair_input.get("backend_sha", "")
-    actual_git_root = Path(git(root, "rev-parse", "--show-toplevel").decode().strip()).resolve()
-    if actual_git_root != root:
-        raise ValueError("core 后端必须是实际 Git 工作树根目录")
-    observed = snapshot(root)[0]
-    if COMMIT_PATTERN.fullmatch(expected) is None or observed["head"] != expected:
-        raise ValueError("core 后端源码与本次验收提交不匹配")
-    if snapshot(root)[0] != observed:
-        raise ValueError("核验 core 后端源码期间发生变化")
-    pair = _source_pair(directory, observed["head"])
-    if pair["sources"]["backend"] != observed:
-        raise ValueError("core 后端来源与全栈源码组合收据不匹配")
-    return {
-        "format_version": 1,
-        "fixture": "core",
-        "backend_root": str(root),
-        "source_pair": pair,
-        "original": {"backend": observed},
-    }
+    response, _ = native._read_response(*native._invoke(
+        "__source-evidence", {"operation": "full-stack-source-evidence", "write": False,
+            "arguments": {"backend": str(backend.resolve(strict=True)),
+                          "directory": str(directory.resolve(strict=True)),
+                          "ci": {"run_id": os.environ.get("GITHUB_RUN_ID"),
+                                 "attempt": os.environ.get("GITHUB_RUN_ATTEMPT")}}},
+        subprocess.run, may_write=False,
+    ))
+    return _exact(response, {"value"}, "全栈原生来源响应")["value"]
 
 
 def build_evidence(
@@ -315,6 +185,8 @@ def build_evidence(
     binaries: dict[str, str],
     expected_source: dict | None,
 ) -> dict:
+    from restore_build import _native
+
     if set(binaries) != BINARY_ROLES:
         raise ValueError("全栈构建必须恰好包含 API、Worker、reset 和 migrate")
     source = full_stack_source_evidence(backend, directory)
@@ -329,18 +201,21 @@ def build_evidence(
         "backend_root": str(backend.resolve()),
         "source": source,
         "artifacts": artifacts,
+        "build_jobs": _native("jobs", backend),
     }
 
 
 def verify_build_evidence(backend: Path, directory: Path) -> dict:
     receipt, _ = _read_json(directory / BUILD_EVIDENCE, "全栈构建证据")
-    _exact(receipt, {"format_version", "kind", "backend_root", "source", "artifacts"}, "全栈构建证据")
+    _exact(receipt, {"format_version", "kind", "backend_root", "source", "artifacts", "build_jobs"}, "全栈构建证据")
     if (
         receipt["format_version"] != 1
         or receipt["kind"] != "full-stack-build"
         or receipt["backend_root"] != str(backend.resolve())
         or not isinstance(receipt["artifacts"], dict)
         or not receipt["artifacts"]
+        or type(receipt["build_jobs"]) is not int
+        or not 1 <= receipt["build_jobs"] <= 64
     ):
         raise ValueError("全栈构建证据格式或后端路径无效")
     binaries = {}

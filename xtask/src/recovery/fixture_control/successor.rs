@@ -1,142 +1,52 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use serde_json::{Map, Value};
+use serde_json::{Value, json};
 
 use crate::{
     Result,
-    cli::{
-        FixtureSuccessorArm, FixtureSuccessorCommand, FixtureSuccessorGeneration,
-        FixtureSuccessorRelationship,
+    cli::FixtureSuccessorRelationship,
+    recovery::clone::native::{
+        cache::binding::source::relationship, json as document, resources::common,
     },
-    local_test_path::{LocalTestPathKind, validate_absolute_path},
 };
 
-use super::{insert_path, output_value, path_text, path_value};
+use super::output_value;
 
-pub(super) fn fields(command: &FixtureSuccessorCommand, root: &Path) -> Result<Map<String, Value>> {
-    match command {
-        FixtureSuccessorCommand::Help => Err("successor 帮助没有私有请求".into()),
-        FixtureSuccessorCommand::Relationship(options) => relationship(options, root),
-        FixtureSuccessorCommand::GenerationRequest(options) => generation(options, root),
-        FixtureSuccessorCommand::ArmRequest(options) => arm(options, root),
-    }
-}
+#[path = "successor/arm.rs"]
+pub(super) mod arm;
+#[path = "successor/arm_target.rs"]
+pub(crate) mod arm_target;
 
-fn relationship(options: &FixtureSuccessorRelationship, root: &Path) -> Result<Map<String, Value>> {
-    let mut fields = Map::new();
-    for (name, value) in [
-        ("source_result", options.source_result.as_path()),
-        ("predecessor_review", options.predecessor_review.as_path()),
-        ("predecessor_request", options.predecessor_request.as_path()),
-        ("successor_review", options.successor_review.as_path()),
-        ("seed_request", options.seed_request.as_path()),
-        ("base_request", options.base_request.as_path()),
-        ("candidate_request", options.candidate_request.as_path()),
-    ] {
-        insert_path(
-            &mut fields,
-            name,
-            value,
-            root,
-            LocalTestPathKind::ExistingFile,
-        )?;
+pub(super) fn publish_relationship(
+    root: &Path,
+    options: &FixtureSuccessorRelationship,
+) -> Result<Value> {
+    output_value(&options.output, root, "successor relationship 输出")?;
+    let output = options.output.components().collect::<PathBuf>();
+    let source = common::common_file(root, &options.source_result, "successor 来源结果")?
+        .components()
+        .collect::<PathBuf>();
+    let bind = |path: &Path| relationship::canonical_binding(root, path);
+    let inputs = json!({
+        "id": options.id, "source_result": common::binding(&source)?,
+        "predecessor_review": bind(&options.predecessor_review)?,
+        "predecessor_request": bind(&options.predecessor_request)?,
+        "successor_review": bind(&options.successor_review)?,
+        "requests": {
+            "seed": bind(&options.seed_request)?,
+            "base": bind(&options.base_request)?,
+            "candidate": bind(&options.candidate_request)?,
+        },
+    });
+    let value = relationship::build(root, &inputs)?;
+    document::write_new(&output, &value)?;
+    let published = common::binding(&output)?;
+    if relationship::load(root, &published)? != value {
+        return Err("successor 证据发布后无法重算；保留原输出，禁止重放".into());
     }
-    fields.insert("id".to_owned(), Value::String(options.id.clone()));
-    fields.insert(
-        "output".to_owned(),
-        output_value(&options.output, root, "successor relationship 输出")?,
-    );
-    Ok(fields)
-}
-
-fn generation(options: &FixtureSuccessorGeneration, root: &Path) -> Result<Map<String, Value>> {
-    let mut fields = Map::new();
-    for (name, value) in [
-        ("successor", options.successor.as_path()),
-        ("backend_build", options.backend_build.as_path()),
-        ("maintenance_build", options.maintenance_build.as_path()),
-        ("source_environment", options.source_environment.as_path()),
-    ] {
-        insert_path(
-            &mut fields,
-            name,
-            value,
-            root,
-            LocalTestPathKind::ExistingFile,
-        )?;
-    }
-    for (name, value) in [
-        ("source_backend", Some(&options.source_backend)),
-        ("product_backend", options.product_backend.as_ref()),
-    ] {
-        if let Some(value) = value {
-            validate_absolute_path(value, LocalTestPathKind::ExistingDirectory)?;
-            fields.insert(
-                name.to_owned(),
-                Value::String(path_text(value, name)?.to_owned()),
-            );
-        }
-    }
-    fields.insert(
-        "expected_head".to_owned(),
-        Value::String(options.expected_head.clone()),
-    );
-    fields.insert("id".to_owned(), Value::String(options.id.clone()));
-    if let Some(value) = &options.adapter_contract {
-        fields.insert("adapter_contract".to_owned(), Value::String(value.clone()));
-    }
-    if let Some(output) = &options.output {
-        fields.insert(
-            "output".to_owned(),
-            output_value(output, root, "generation-request 输出")?,
-        );
-    }
-    Ok(fields)
-}
-
-fn arm(options: &FixtureSuccessorArm, root: &Path) -> Result<Map<String, Value>> {
-    let mut fields = Map::new();
-    for (name, value) in [
-        ("successor", options.successor.as_path()),
-        (
-            "source_export_result",
-            options.source_export_result.as_path(),
-        ),
-    ] {
-        insert_path(
-            &mut fields,
-            name,
-            value,
-            root,
-            LocalTestPathKind::ExistingFile,
-        )?;
-    }
-    insert_path(
-        &mut fields,
-        "workspace",
-        &options.workspace,
-        root,
-        LocalTestPathKind::ExistingDirectory,
-    )?;
-    fields.insert("id".to_owned(), Value::String(options.id.clone()));
-    fields.insert(
-        "side".to_owned(),
-        Value::String(options.side.as_str().to_owned()),
-    );
-    fields.insert(
-        "copy_directory".to_owned(),
-        path_value(
-            &options.copy_directory,
-            root,
-            LocalTestPathKind::NewDirectory,
-            "arm 复制目录",
-        )?,
-    );
-    if let Some(output) = &options.output {
-        fields.insert(
-            "output".to_owned(),
-            output_value(output, root, "arm-request 输出")?,
-        );
-    }
-    Ok(fields)
+    Ok(json!({
+        "status":"seed_review_successor_published",
+        "relationship_sha256":value["relationship_sha256"],
+        "remote_writes":0,
+    }))
 }

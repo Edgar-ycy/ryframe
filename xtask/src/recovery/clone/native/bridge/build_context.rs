@@ -106,15 +106,17 @@ pub(crate) fn current(root: &Path) -> Result<Value> {
             return Err("构建工具环境包含重复名称".into());
         }
     }
+    super::cargo_environment::apply(root, &mut environment)?;
     let rustc = version(root, "rustc", "-vV")?;
     let cargo = version(root, "cargo", "-V")?;
-    from_inputs(&cargo, &rustc, &environment)
+    from_inputs(&cargo, &rustc, &environment, super::build_jobs(root)?)
 }
 
-pub(super) fn from_inputs(
+pub(in crate::recovery) fn from_inputs(
     cargo: &str,
     rustc: &str,
     environment: &BTreeMap<String, String>,
+    jobs: u8,
 ) -> Result<Value> {
     let cargo = cargo.trim();
     let rustc = rustc.trim();
@@ -133,19 +135,6 @@ pub(super) fn from_inputs(
     if target.is_empty() {
         return Err("无法确定Cargo构建目标".into());
     }
-    let jobs = environment
-        .get("CARGO_BUILD_JOBS")
-        .map_or("", |value| value.trim());
-    let jobs = if jobs.is_empty() {
-        "cargo-default"
-    } else {
-        jobs
-    };
-    if jobs != "cargo-default"
-        && (!jobs.bytes().all(|b| b.is_ascii_digit()) || jobs.bytes().all(|b| b == b'0'))
-    {
-        return Err("CARGO_BUILD_JOBS必须是正整数".into());
-    }
     let entries = environment.iter().filter(|(name, _)| selected(name))
         .map(|(name, value)| json!({"name":name,"sha256":hex::encode(Sha256::digest(value.as_bytes()))}))
         .collect::<Vec<_>>();
@@ -154,8 +143,8 @@ pub(super) fn from_inputs(
         .map(|entry| entry["name"].clone())
         .collect::<Vec<_>>();
     Ok(
-        json!({"commands":{"api":super::build_command("api")?,"worker":super::build_command("worker")?},
-        "profile":"dev","target":target,"jobs":jobs,"toolchain":{"cargo":cargo,"rustc":rustc},
+        json!({"commands":{"api":super::build_command("api",jobs)?,"worker":super::build_command("worker",jobs)?},
+        "profile":"dev","target":target,"jobs":jobs.to_string(),"toolchain":{"cargo":cargo,"rustc":rustc},
         "environment":{"variables":variables,"sha256":digest::plan_hash(&json!(entries))?}}),
     )
 }

@@ -62,7 +62,9 @@ fn map_error(error: TenantDataError) -> AppError {
         TenantDataError::StalePlacementGeneration { .. } => {
             AppError::StalePlacementGeneration(message)
         }
-        TenantDataError::DataScopeProjectionStale { .. } => AppError::StaleRuntimeEpoch(message),
+        TenantDataError::DataScopeProjectionStale { .. } => {
+            AppError::TenantDataTargetUnavailable(message, 5)
+        }
         TenantDataError::TenantDataMaintenance { .. } => {
             AppError::TenantDataMaintenance(message, 5)
         }
@@ -73,3 +75,7 @@ fn map_error(error: TenantDataError) -> AppError {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/tenant_mapping_contracts/projection_error.rs"]
+mod projection_error;

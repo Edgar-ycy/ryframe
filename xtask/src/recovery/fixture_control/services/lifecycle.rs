@@ -16,16 +16,22 @@ use std::{
     time::Duration,
 };
 
+#[path = "lifecycle/cache_primitive.rs"]
+mod cache_primitive;
 #[path = "lifecycle/close.rs"]
 mod close;
 #[path = "lifecycle/context.rs"]
 mod context;
+#[path = "lifecycle/controller_recovery.rs"]
+mod controller_recovery;
 #[path = "lifecycle/ledger.rs"]
 mod ledger;
 #[path = "lifecycle/model.rs"]
 pub(super) mod model;
 #[path = "lifecycle/observation.rs"]
 mod observation;
+#[path = "lifecycle/partial.rs"]
+pub(super) mod partial;
 #[path = "lifecycle/prepared.rs"]
 mod prepared;
 #[path = "lifecycle/primitive.rs"]
@@ -36,8 +42,12 @@ mod projection;
 pub(crate) mod protocol;
 #[path = "lifecycle/query.rs"]
 pub(crate) mod query;
+#[path = "lifecycle/readonly.rs"]
+pub(crate) mod readonly;
 #[path = "lifecycle/reconcile.rs"]
 mod reconcile;
+#[path = "lifecycle/reconcile_close.rs"]
+mod reconcile_close;
 #[path = "lifecycle/recover.rs"]
 mod recover;
 #[path = "lifecycle/registration.rs"]
@@ -51,6 +61,8 @@ mod status;
 #[cfg(test)]
 #[path = "../../../../tests/unit/recovery/fixture_control/services/lifecycle/tests.rs"]
 mod tests;
+#[path = "lifecycle/tree_control.rs"]
+pub(super) mod tree_control;
 
 use model::{Context, binding, check, read, text};
 
@@ -69,7 +81,18 @@ pub(crate) fn execute(
     write: bool,
 ) -> Result<Value> {
     let outcome = (|| {
-        let mut runtime = runtime::PythonRuntime::new(backend)?;
+        if operation == "status" {
+            return execute_with(
+                &mut readonly::NativeRuntime::new(backend),
+                backend,
+                operation,
+                review,
+                environment,
+                owner,
+                write,
+            );
+        }
+        let mut runtime = runtime::LifecycleRuntime::new(backend)?;
         execute_with(
             &mut runtime,
             backend,
@@ -81,7 +104,9 @@ pub(crate) fn execute(
         )
     })();
     outcome.map_err(|failure: Box<dyn std::error::Error>| {
-        if failure.is::<model::LifecycleError>() {
+        if model::reason(failure.as_ref()).is_some()
+            || crate::recovery::clone::native::cache::policy_message(failure.as_ref()).is_some()
+            || crate::recovery::clone::native::cache::primitive_message(failure.as_ref()).is_some() {
             failure
         } else {
             model::error("夹具生命周期未完成；检查绑定配置、来源摘要、完整账本和进程证据，保留现场，不自动重放")

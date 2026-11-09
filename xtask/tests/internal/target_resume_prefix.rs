@@ -22,8 +22,15 @@ impl Fixture {
         let parent = backend.join(".local-tests/target-resume-prefix");
         fs::create_dir_all(&parent).unwrap();
         let directory = tempfile::tempdir_in(parent).unwrap();
+        let request = json!({"config_dir":directory.path().join("bound/config")});
+        fs::write(
+            directory.path().join("request.json"),
+            serde_json::to_vec(&request).unwrap(),
+        )
+        .unwrap();
         let operations =
-            resume_prefix::operations("fixture-migrate.exe").unwrap()["operations"].clone();
+            resume_prefix::operations("fixture-migrate.exe", &request).unwrap()["operations"]
+                .clone();
         Self {
             backend,
             directory,
@@ -83,7 +90,14 @@ fn sequence_matches_existing_ten_operations_and_exact_platform_output() {
         };
         for (offset, action) in ["up", "verify"].into_iter().enumerate() {
             let item = &operations[index * 2 + offset];
-            let mut command = vec!["fixture-migrate.exe", scope, action];
+            let config = fixture.directory.path().join("bound/config");
+            let mut command = vec![
+                "fixture-migrate.exe",
+                "--config-dir",
+                config.to_str().unwrap(),
+                scope,
+                action,
+            ];
             let stem = if let Some(target) = target {
                 command.extend(["--target", target]);
                 format!("{scope}---target-{target}")
@@ -96,7 +110,7 @@ fn sequence_matches_existing_ten_operations_and_exact_platform_output() {
                     .map(|value| format!("target={value} "))
                     .unwrap_or_default(),
                 if offset == 0 {
-                    "migration=completed schema=verified\n"
+                    "migration=completed schema=verified ownership=verified\n"
                 } else {
                     "migration_ledger=current schema=verified\n"
                 }
@@ -126,6 +140,58 @@ fn every_boundary_requires_missing_readonly_verify_or_explicit_completion() {
             count == 10,
             "complete {count}"
         );
+        if count % 2 == 1 {
+            let mut failed = fixture.receipt(count);
+            failed["returncode"] = Value::Null;
+            failed["error_type"] = json!("FileNotFoundError");
+            failed["stdout"] = json!("");
+            let path = fixture.path(count, 0);
+            let bytes = serde_json::to_vec(&failed).unwrap();
+            fs::write(&path, &bytes).unwrap();
+            // 单份失败命令不能自行授予恢复资格，必须有原阶段失败。
+            assert!(fixture.prefix(false).is_err());
+            fs::write(fixture.directory.path().join("failure.json"), serde_json::to_vec(&json!({
+                "status":"needs_reconciliation","stage":"create_and_reset","at":"2026-10-26T00:00:00Z",
+                "error_type":"FileNotFoundError","reason":"explicit readonly interruption",
+                "automatic_retry":false,"automatic_resource_cleanup":false,"fresh_target_initialized":false,
+                "clone_verified":false,"restore_qualified":false
+            })).unwrap()).unwrap();
+            assert_eq!(fixture.prefix(false).unwrap()["next_index"], count);
+            for field in ["error_type", "returncode", "stdout", "command"] {
+                let mut changed = failed.clone();
+                changed[field] = match field {
+                    "error_type" => json!("PermissionError"),
+                    "returncode" => json!(1),
+                    "stdout" => json!("untrusted output"),
+                    _ => fixture.operations[count - 1]["command"].clone(),
+                };
+                fs::write(&path, serde_json::to_vec(&changed).unwrap()).unwrap();
+                assert!(fixture.prefix(false).is_err(), "{field}");
+            }
+            fs::write(&path, &bytes).unwrap();
+            fs::copy(&path, fixture.path(count, 2)).unwrap();
+            assert!(fixture.prefix(false).is_err());
+            fs::remove_file(fixture.path(count, 2)).unwrap();
+            fs::write(
+                fixture.path(count, 1),
+                serde_json::to_vec(&fixture.receipt(count)).unwrap(),
+            )
+            .unwrap();
+            for index in count + 1..10 {
+                fixture.write(index);
+            }
+            assert!(fixture.prefix(true).is_ok());
+            assert_eq!(
+                resume_prefix::operation_record(
+                    &fixture.backend,
+                    fixture.directory.path(),
+                    &fixture.operations[count]
+                )
+                .unwrap()["path"],
+                json!(fixture.path(count, 1))
+            );
+            assert_eq!(fs::read(path).unwrap(), bytes);
+        }
     }
 }
 
@@ -167,7 +233,7 @@ fn prefix_refuses_holes_duplicates_unknown_names_and_modified_operation_sequence
 
 #[test]
 fn command_receipt_requires_exact_command_status_and_full_output() {
-    for case in 0..9 {
+    for case in 0..10 {
         let fixture = Fixture::new();
         let mut value = fixture.receipt(0);
         match case {
@@ -179,12 +245,20 @@ fn command_receipt_requires_exact_command_status_and_full_output() {
             5 => value["stdout"] = json!("truncated"),
             6 => value["stdout"] = json!(false),
             7 => value["extra"] = json!(1),
-            _ => value
+            8 => value
                 .as_object_mut()
                 .unwrap()
                 .remove("stderr")
                 .map(|_| ())
                 .unwrap(),
+            _ => {
+                value["stdout"] = json!(
+                    value["stdout"]
+                        .as_str()
+                        .unwrap()
+                        .replace(" ownership=verified", "")
+                )
+            }
         }
         fs::write(fixture.path(0, 0), serde_json::to_vec(&value).unwrap()).unwrap();
         assert!(fixture.prefix(false).is_err(), "case {case}");

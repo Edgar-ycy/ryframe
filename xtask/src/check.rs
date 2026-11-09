@@ -61,7 +61,7 @@ pub(crate) use cargo_command::ci_test_jobs_from;
 #[allow(unused_imports)]
 pub(crate) use cargo_command::{
     WORKSPACE_CLIPPY_ARGS, backend_package_operation_args, cargo_operation_jobs,
-    default_test_jobs_from, workspace_clippy_args, workspace_test_args,
+    default_test_jobs_from, worker_lib_test_args, workspace_clippy_args, workspace_test_args,
 };
 #[allow(unused_imports)]
 pub(crate) use change_surface::{
@@ -109,7 +109,7 @@ pub(crate) use policy_tasks::{
 pub(crate) use resource::{
     ResourceWorkspaceProfile, resolve_frontend_dir, resource_test_executable_from_messages,
     resource_workspace_compilation, resource_workspace_control,
-    targeted_resource_workspace_compilation,
+    targeted_resource_workspace_compilation, validate_resource_conflict_tests,
 };
 #[allow(unused_imports)]
 pub(crate) use selection::{

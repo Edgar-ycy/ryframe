@@ -252,7 +252,7 @@ class LineageRecoveryTests(unittest.TestCase):
         request_path = self.output / "request.json"
         request_path.unlink()
         write_json(request_path, request)
-        with patch.object(generation, "REQUEST_FIELDS", set(request)), \
+        with patch.object(generation, "validate_generation_request"), \
                 self.assertRaisesRegex(ValueError, "外部正式请求"):
             recovery._request(self.backend, self.output, request_path)
 
@@ -281,7 +281,7 @@ class LineageRecoveryTests(unittest.TestCase):
         current["maintenance_build"] = {"path": "current-maintenance"}
         write_json(request_path, current)
 
-        with patch.object(generation, "REQUEST_FIELDS", set(internal)), patch.object(
+        with patch.object(
             recovery, "bound_file", side_effect=lambda _root, descriptor: Path(descriptor["path"])
         ), patch.object(generation, "_reregistered_builds") as equivalent:
             request, descriptor, historical, historical_value = recovery._request(
@@ -305,22 +305,20 @@ class LineageRecoveryTests(unittest.TestCase):
             request_path.unlink()
             write_json(request_path, changed)
             with self.subTest(field=field), patch.object(
-                generation, "REQUEST_FIELDS", set(internal)
-            ), patch.object(
                 recovery, "bound_file", side_effect=lambda _root, value: Path(value["path"])
             ), self.assertRaisesRegex(ValueError, "成对"):
                 recovery._request(self.backend, self.output, request_path)
 
         request_path.unlink()
         write_json(request_path, internal)
-        with patch.object(generation, "REQUEST_FIELDS", set(internal)), patch.object(
+        with patch.object(
             recovery, "bound_file", side_effect=lambda _root, value: Path(value["path"])
         ), self.assertRaisesRegex(ValueError, "必须成对"):
             recovery._request(self.backend, self.output, request_path)
 
         request_path.unlink()
         write_json(request_path, current)
-        with patch.object(generation, "REQUEST_FIELDS", set(internal)), patch.object(
+        with patch.object(
             recovery, "bound_file", side_effect=lambda _root, value: Path(value["path"])
         ), patch.object(
             generation, "_reregistered_builds", side_effect=ValueError("构建收据不等价")

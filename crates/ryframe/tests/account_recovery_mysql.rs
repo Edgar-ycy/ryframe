@@ -18,10 +18,24 @@ use ryframe_db::{ControlDatabaseCluster, application_ports, migration};
 use ryframe_kernel::{ActorContext, DataScope};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
+#[path = "account_recovery_mysql/imported_accounts/http.rs"]
+mod account_http;
+#[path = "account_recovery_mysql/cache_faults.rs"]
+mod cache_faults;
+#[path = "boot_contract/configuration_fixture.rs"]
+mod configuration_fixture;
+#[path = "account_recovery_mysql/imported_accounts.rs"]
+mod imported_accounts;
 #[path = "../../ryframe-db/tests/support/mysql.rs"]
 mod mysql;
 #[path = "../../ryframe-adapters/tests/support/configuration.rs"]
 mod redis_configuration;
+#[path = "account_recovery_mysql/role_assignment.rs"]
+mod role_assignment;
+#[path = "account_recovery_mysql/scope_coherence.rs"]
+mod scope_coherence;
+#[path = "account_recovery_mysql/sql_initialization.rs"]
+mod sql_initialization;
 
 const OLD_PASSWORD: &str = "AbandonedRandom123!";
 const NEW_PASSWORD: &str = "RecoveredUser123!";
@@ -52,13 +66,31 @@ async fn initial_user_real_redis_repairs_lagging_authorization_after_password_ch
         configuration,
     };
     mysql::run_mysql_test("account-redis", |database| async {
-        // 无论断言失败或返回错误，都先清理明确的三个键，再交回 MySQL fixture 保留证据。
-        let result = std::panic::AssertUnwindSafe(real_redis_password_change(database, &redis))
-            .catch_unwind()
-            .await;
-        cleanup_authorization_keys(&redis).await?;
+        let mut subjects = vec![2];
+        // 无论断言失败或返回错误，都先精确清理已登记主体的授权键，再交回 MySQL fixture 保留证据。
+        let result = std::panic::AssertUnwindSafe(real_redis_password_change(
+            database,
+            &redis,
+            &mut subjects,
+        ))
+        .catch_unwind()
+        .await;
+        cleanup_authorization_keys(&redis, &subjects).await?;
         match result {
-            Ok(result) => result,
+            Ok(Ok(())) => {
+                let remaining = redis
+                    .scan_keys("*")
+                    .await
+                    .map_err(|_| "复核本次授权缓存测试 scope 清理失败；保留现场，禁止自动重放")?;
+                if !remaining.is_empty() {
+                    return Err(format!(
+                        "授权缓存测试清理失败：本次 scope 仍残留 {} 个键；保留现场，禁止自动重放",
+                        remaining.len()
+                    ));
+                }
+                Ok(())
+            }
+            Ok(Err(error)) => Err(error),
             Err(payload) => std::panic::resume_unwind(payload),
         }
     })
@@ -67,7 +99,8 @@ async fn initial_user_real_redis_repairs_lagging_authorization_after_password_ch
 
 async fn real_redis_password_change(
     database: DatabaseConnection,
-    redis: &RedisClient,
+    redis: &redis_configuration::ScopedClient<RedisClient>,
+    subjects: &mut Vec<i64>,
 ) -> Result<(), String> {
     let hashes = migration::BootstrapHashes::new(
         password::hash("ExplicitAdmin123!").map_err(message)?,
@@ -78,10 +111,11 @@ async fn real_redis_password_change(
         .await
         .map_err(message)?;
     let cache = ryframe::boot::authorization_cache::cache(
-        Some(redis.clone()),
+        Some(redis.client.clone()),
         CacheAvailabilityPolicy::Required,
     );
     let (_, auth) = services_with_cache(database.clone(), cache.clone())?;
+    let auth = Arc::new(auth);
     let initial = auth
         .login("system", "user", "123456")
         .await
@@ -121,6 +155,8 @@ async fn real_redis_password_change(
     assert!(claims.user_authorization_version > initial_version);
     assert_lagging_cache_repaired(redis, &cache, &auth, &claims).await?;
     assert_session_rejected(&auth, &initial).await;
+    cache_faults::verify(&database, redis, &cache, auth.clone(), &changed).await?;
+    scope_coherence::verify(&database, &cache, &auth, &claims, subjects).await?;
     Ok(())
 }
 
@@ -183,16 +219,20 @@ async fn assert_lagging_cache_repaired(
     Ok(())
 }
 
-async fn cleanup_authorization_keys(redis: &RedisClient) -> Result<(), String> {
+async fn cleanup_authorization_keys(redis: &RedisClient, subjects: &[i64]) -> Result<(), String> {
     use ryframe::boot::authorization_cache_keyspace::{
         snapshot_hash_key, tenant_epoch_key, user_version_key,
     };
-    let keys = [
-        tenant_epoch_key("system"),
-        user_version_key("system", 2),
-        snapshot_hash_key("system", 2),
-    ]
-    .map(|key| redis.scoped_key(&key));
+    let mut keys = vec![redis.scoped_key(&tenant_epoch_key("system"))];
+    for &subject in subjects {
+        keys.extend(
+            [
+                user_version_key("system", subject),
+                snapshot_hash_key("system", subject),
+            ]
+            .map(|key| redis.scoped_key(&key)),
+        );
+    }
     let mut connection = redis.conn().clone();
     let _: usize = connection
         .del(&keys)
@@ -202,7 +242,7 @@ async fn cleanup_authorization_keys(redis: &RedisClient) -> Result<(), String> {
         .exists(&keys)
         .await
         .map_err(|_| "复核授权键清理失败；保留现场，不自动重放")?;
-    assert_eq!(remaining, 0, "本次 scope 的三个已知授权键必须全部清理");
+    assert_eq!(remaining, 0, "本次 scope 已登记主体的授权键必须全部清理");
     Ok(())
 }
 
@@ -216,14 +256,7 @@ async fn initial_user_login_requires_and_completes_password_change() {
     }
     initialize();
     mysql::run_mysql_test("initial-user-login", |database| async move {
-        let hashes = migration::BootstrapHashes::new(
-            password::hash("ExplicitAdmin123!").map_err(message)?,
-            password::hash("123456").map_err(message)?,
-        )
-        .map_err(message)?;
-        migration::up(&database, Some(&hashes))
-            .await
-            .map_err(message)?;
+        let exported = sql_initialization::import(&database).await?;
         let (_, auth) = services(database.clone())?;
         let initial = auth
             .login("system", "user", "123456")
@@ -272,6 +305,35 @@ async fn initial_user_login_requires_and_completes_password_change() {
                 .user_info
                 .password_change_required
         );
+        let admin = auth
+            .login("system", "admin", sql_initialization::ADMIN_PASSWORD)
+            .await
+            .map_err(message)?;
+        assert!(admin.user_info.password_change_required);
+        assert!(auth.login("system", "admin", "123456").await.is_err());
+        profile
+            .change_password(
+                &administrator(),
+                sql_initialization::ADMIN_PASSWORD,
+                "ChangedAdmin123!",
+            )
+            .await
+            .map_err(message)?;
+        assert_session_rejected(&auth, &admin).await;
+        assert!(
+            auth.login("system", "admin", sql_initialization::ADMIN_PASSWORD)
+                .await
+                .is_err()
+        );
+        assert!(
+            !auth
+                .login("system", "admin", "ChangedAdmin123!")
+                .await
+                .map_err(message)?
+                .user_info
+                .password_change_required
+        );
+        exported.finish()?;
         Ok(())
     })
     .await;

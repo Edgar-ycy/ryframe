@@ -27,7 +27,7 @@ class ResumeTests(unittest.TestCase):
     def continue_copy(self, mode, **environments):
         values = self.case.environments | environments
         return continue_copy(self.backend, self.output, values["source"], values["target"],
-                             mode=mode, run=self.case.case.runner)
+                             mode=mode, run=self.case.case.runner, source_storage_run=self.case.run_dir)
 
     def interrupted(self, failure="commit-response-lost"):
         self.case.case.runner.failure = failure
@@ -79,7 +79,7 @@ class ResumeTests(unittest.TestCase):
         paths = [self.output / name for name in ("plan.json", "input.json", "session.json")]
         original = {path: path.read_bytes() for path in paths}
         with patch.object(factory.CloneSession, "prepare", side_effect=AssertionError("must not prepare again")), \
-                patch.object(factory, "verify_target", side_effect=AssertionError("copied target is not fresh")):
+                patch.object(factory, "target_binding", side_effect=AssertionError("copied target is not fresh")):
             result = self.continue_copy("reconcile")
             self.assertEqual(result["steps"], {})
             self.assertEqual(len(result["pending_steps"]), 3)

@@ -12,6 +12,7 @@ use crate::Result;
 pub(crate) const MAX_JSON_BYTES: u64 = 16 * 1024 * 1024;
 
 pub(crate) fn read(path: &Path) -> Result<Value> {
+    crate::recovery::runtime::dataset_authority::reads::file(path)?;
     let metadata = fs::symlink_metadata(path)?;
     if !metadata.file_type().is_file() || linked_metadata(&metadata) {
         return Err("复制清单必须是普通文件，不能经过链接或 junction".into());

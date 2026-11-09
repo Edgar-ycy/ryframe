@@ -2,6 +2,7 @@
 from native_s3_client import _invoke as native_invoke, _read_response as native_response
 from dataclasses import asdict
 import copy
+from native_s3_client import configuration as object_configuration
 import hashlib
 import json
 import os
@@ -23,18 +24,18 @@ from devex_clone_post import registration, registered, validate_registration, pa
 from devex_clone_post_model import action_input, administrator, full_row_sql, exact_directory
 from devex_clone_post_process import require_quiet
 from devex_clone_run_state import binding
-from devex_clone_source_proof import bound_file, verify_generation, require_closed_port, verify_api_address
+from devex_clone_source_proof import bound_file, copy_source_generation, require_closed_port, verify_api_address
 from devex_clone_target_binding import request_binding, external_file, application_config_directory
 from devex_clone_target_resources import Resources
-from devex_clone_target_storage import actual_windows_argv
+from devex_clone_target_evidence import evidence
 from devex_clone_tools import verify as verify_tools
 from devex_provenance import verify_source
 from full_stack_process import process_identity, read_process
-from full_stack_runtime import verify_runtime, register_runtime, worker_ready_url
+from full_stack_runtime import verify_runtime, worker_ready_url
 from process_sockets import verify_listener
 from restore_build import verify_build_artifacts
 from restore_reference_io import ExternalTools, redact_object_diagnostic, verification_stdout
-from restore_reference_plan import plan_hash, BUCKETS
+from restore_reference_plan import plan_hash, BUCKETS, configuration_binding
 from source_fingerprints import source_check
 
 
@@ -49,10 +50,11 @@ def execution_root(backend: Path, request: dict) -> Path:
         from devex_clone_target_binding import execution_backend
 
         return execution_backend(backend, request)[0]
-    recorded = read_json(bound_file(backend, request["maintenance_build"])).get("backend_root")
-    if not isinstance(recorded, str):
-        raise ValueError("维护构建收据缺少执行后端根")
-    return local_path(backend, recorded)
+    return Path(native_response(*native_invoke(
+        "__source-evidence", {"operation": "copy-maintenance-root", "write": False,
+            "arguments": {"backend": str(backend), "maintenance_build": request["maintenance_build"]}},
+        subprocess.run, may_write=False,
+    ))[0]["value"]["path"])
 
 
 class Context:
@@ -77,6 +79,7 @@ class Context:
             self.ledger_frames = plan_hash(self.ledger.frames)
             self.initial, self.target = initialization_history(backend, bound_file(backend, value["initialized"]),
                                                                owned_lock_identity)
+            self.target_descriptor = read_json(bound_file(backend, value["initialized"]).parent / "prepare.json")["request"]
             self.review, self.selected = request_binding(backend, self.target)
             self.private = {"source": read_json(bound_file(backend, value["source_environment"]))["environment"],
                             "target_initial": read_json(bound_file(backend, value["target_environment"]))["environment"],
@@ -95,13 +98,16 @@ class Context:
             self.output = output_base / f"attempt-{number:04d}"
             self.output.mkdir()
             self.target_config = {**self.target["target"], "runtime_dir": str(self.runtime), "api_url": self.selected["api_url"]}
+            self.target_config["s3"] = {"configuration": configuration_binding(
+                execution_root(backend, self.target), application_config_directory(backend, self.target))}
             self.tool_plan = {"source": self.source_config, "target": self.target_config, "tools": self.target["tools"]}
             self.build = read_json(bound_file(backend, self.request["backend_build"]))
             self.redaction = {}
             self.database_credentials = {"backend": str(backend), "databases": []}
             for side, config in (("source", self.source_config), ("target", self.target_config)):
+                objects = object_configuration(config["s3"]["configuration"], backend)
                 for field in ("access_key", "secret_key"):
-                    self.redaction[f"SECRET_{side}_{field}"] = config["s3"][field]
+                    self.redaction[f"SECRET_{side}_{field}"] = objects[field]
                 self.database_credentials["databases"].extend(copy.deepcopy(config["databases"]))
             redact_object_diagnostic("", {}, database_credentials=self.database_credentials)
 
@@ -174,7 +180,7 @@ class Context:
             absent(Path(self.selected["runtime_dir"]))
             storage_run = self.resolved_storage_run()
             resources = Resources(self.backend, self.target, self.output, self.selected, self.review, self.run,
-                                  storage_run=storage_run)
+                                  storage_run=storage_run, request_descriptor=self.target_descriptor)
             resources.storage_identity()
             resources.tools.verify_databases("target")
             resources.tools.verify_objects("target")
@@ -193,7 +199,9 @@ class Context:
         identity = read_process(self.runtime, "api", self.target_config["scope_id"])
         if (process_identity(identity["pid"]) != identity
                 or identity["executable"] != self.build["artifacts"]["api"]["executable"]
-                or actual_windows_argv(resources, identity) != [identity["executable"]]):
+                or evidence("process-argv", self.backend, self.runtime,
+                            receipt=binding(self.runtime / "api.json"), identity=identity)["actual_arguments_sha256"] != plan_hash(
+                                [identity["executable"], "--config-dir", contract["api_config_dir"]])):
             raise ValueError("API 内核身份、产物或实际命令发生变化")
         for role in ("api", "worker"):
             artifact = self.build["artifacts"][role]
@@ -201,39 +209,6 @@ class Context:
                 raise ValueError("API runtime 使用其他产物")
         verify_listener(identity["pid"], self.selected["api_url"])
 
-    def prepare(self):
-        self.before_api()
-        maintenance = self.bindings()
-        if self.runtime.exists():
-            exact_directory(self.runtime)
-            if {p.name for p in self.runtime.iterdir()} - {"binaries.json", "runtime.json", "handoff.json"}:
-                raise ValueError("已有运行历史不能重新准备或覆盖")
-        else:
-            self.runtime.mkdir()
-        binaries = {"ryframe": self.build["artifacts"]["api"]["executable"],
-                    "ryframe-worker": self.build["artifacts"]["worker"]["executable"],
-                    "ryframe-reset": maintenance["artifacts"]["reset"]["executable"],
-                    "ryframe-migrate": maintenance["artifacts"]["migrate"]["executable"]}
-        filename = self.runtime / "binaries.json"
-        if filename.exists():
-            if read_json(filename) != binaries:
-                raise ValueError("准备中的 runtime 产物不同，拒绝覆盖")
-        else:
-            write_json(filename, binaries)
-        with self.environments.use("target"):
-            register_runtime(self.backend, self.runtime, source_config_dir=application_config_directory(self.backend, self.target))
-        handoff = {"registration": self.request_binding, "runtime": binding(self.runtime / "runtime.json"),
-                   "binaries": binding(filename), "api_url": self.selected["api_url"], "worker_started": False}
-        filename = self.runtime / "handoff.json"
-        if filename.exists():
-            if read_json(filename) != handoff:
-                raise ValueError("准备中的 runtime 交接不同，拒绝覆盖")
-        else:
-            write_json(filename, handoff)
-        self.bindings()
-        self.target_guard(api=False)
-        return {"status": "post_copy_api_prepared", "handoff": binding(filename), "worker_started": False,
-                "restore_qualified": False}
 
     def business_binding(self):
         reference = read_json(bound_file(self.backend, self.request["reference_plan"]))
@@ -276,7 +251,7 @@ class Context:
     def directory(self, label):
         return self.output / (label + '-' + uuid.uuid4().hex)
 
-    def run(self, command, **kwargs):
+    def run(self, command, *, digest_output=False, **kwargs):
         filename = self.directory('command').with_suffix('.json')
         stdout, stderr, code, failure = b'', b'', None, None
         try:
@@ -290,7 +265,7 @@ class Context:
         finally:
             stdout, output_evidence = verification_stdout(kwargs.get("stdout"), stdout)
             redaction = dict(os.environ) | (kwargs.get('env') or {}) | self.redaction
-            private = Path(command[0]).name.lower() in {'powershell.exe', 'pwsh.exe'}
+            private = digest_output or Path(command[0]).name.lower() in {'powershell.exe', 'pwsh.exe'}
             def diagnostic(value):
                 if not private:
                     return redact_object_diagnostic(value, redaction, database_credentials=self.database_credentials)
@@ -302,7 +277,7 @@ class Context:
 
     def source_guard(self, *, complete=False):
         with self.environments.use('source') as environment:
-            if verify_generation(self.backend, self.source['request'], self.run) != self.source['generation']:
+            if copy_source_generation(self.backend, self.directory_root, self.run) != self.source['generation']:
                 raise ValueError('停止的来源代次变化')
             tools = ExternalTools(self.tool_plan, self.output, self.run)
             tools.verify_databases('source')

@@ -132,7 +132,7 @@ fn missing_python_process_reports_the_exact_unicode_path() {
     )
     .unwrap_err();
     let text = error.to_string();
-    assert!(text.contains("无法执行一次性 Python 输出协议"), "{text}");
+    assert!(text.contains("无法执行一次性子进程输出协议"), "{text}");
     assert!(text.contains("不存在-python.exe"), "{text}");
 }
 

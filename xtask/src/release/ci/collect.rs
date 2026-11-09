@@ -79,11 +79,9 @@ where
     loop {
         let evidence =
             await_evidence_with(required, deadline, &mut collect_run, &mut now, &mut sleep)?;
-        if evidence.len() < 2 {
-            return Err("缺少后端扩展 CI 运行，无法读取真实全栈收据".into());
-        }
-        let backend_sha = &required[0].sha;
-        let receipts = read_pairs(&evidence[1], backend_sha, frontend_sha, fixture_sha256)?;
+        let (extended, selected) = extended_evidence(required, &evidence)?;
+        let backend_sha = &extended.sha;
+        let receipts = read_pairs(selected, backend_sha, frontend_sha, fixture_sha256)?;
         let Some(receipts_object) = receipts.as_object() else {
             return Err("全栈源码组合收据必须是 JSON 对象".into());
         };
@@ -96,7 +94,7 @@ where
             return Err("全栈证据必须同时包含 core 和 business".into());
         }
         for receipt in receipts_object.values() {
-            validate_pair(receipt, &evidence[1], backend_sha, frontend_sha)?;
+            validate_pair(receipt, selected, backend_sha, frontend_sha)?;
         }
         validate_fixture(
             receipts_object["business"].get("fixture"),
@@ -128,6 +126,33 @@ where
         }
         sleep(remaining.min(Duration::from_secs(15)));
     }
+}
+
+fn extended_evidence<'a>(
+    required: &'a [Requirement],
+    evidence: &'a [Value],
+) -> Result<(&'a Requirement, &'a Value)> {
+    if evidence.len() < 2 || evidence.len() != required.len() {
+        return Err("发布 CI 声明与证据必须完整对应，且至少包含两个运行".into());
+    }
+    let mut extended = None;
+    for (requirement, receipt) in required.iter().zip(evidence) {
+        if receipt.get("repository").and_then(Value::as_str)
+            != Some(requirement.repository.as_str())
+            || receipt.get("workflow").and_then(Value::as_str)
+                != Some(requirement.workflow.as_str())
+            || receipt.get("sha").and_then(Value::as_str) != Some(requirement.sha.as_str())
+        {
+            return Err("发布 CI 证据与对应声明的仓库、工作流或源码 SHA 不一致".into());
+        }
+        if requirement.workflow == "extended-ci.yml" {
+            if extended.is_some() {
+                return Err("发布 CI 声明包含重复的 extended-ci.yml，无法选择全栈收据".into());
+            }
+            extended = Some((requirement, receipt));
+        }
+    }
+    extended.ok_or_else(|| "发布 CI 声明缺少 extended-ci.yml，无法读取全栈收据".into())
 }
 
 pub(crate) fn await_evidence_with<C, N, S>(

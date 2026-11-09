@@ -12,7 +12,7 @@ from devex_clone_inventory import expected_owners
 from devex_clone_model import digest, exact, local_path
 from devex_clone_seed_arm import verify_published_arm_input
 from devex_clone_target_binding import execution_backend, request_binding
-from restore_comparison_source import verify_comparison_sources
+from restore_reference_plan import _native
 from restore_reference_backup import backup_source, bound_document, document_binding, validate_backup_result
 from restore_reference_plan import BUCKETS, identifier, plan_hash, scope_identifier, validate_inventory, validate_plan, verify_artifacts
 from restore_runtime_evidence import canonical_endpoint, read_json_document, reject_link_or_reparse, timestamp
@@ -200,7 +200,9 @@ def capture_target_plan(backend: Path, plan: dict, *, backup_receipt: Path,
                  (backup_receipt, comparison_sources, arm_input, fresh_target_verify, product_plan)]
     backup, comparison, arm_document, fresh, product = documents
     copied, _manifest = _backup(backend, plan, backup)
-    sources = verify_comparison_sources(backend, comparison.value, read_only=read_only)
+    sources = _native("comparison-verify", {
+        "backend": str(backend), "value": comparison.value, "read_only": read_only,
+    }, write=not read_only)
     side = plan["target_side"]
     name = {"base": "b0", "candidate": "b1"}[side]
     source_arm = sources["arms"][name]

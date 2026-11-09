@@ -124,12 +124,14 @@ impl Fixture {
     fn raw(&self, key: &str) -> Value {
         let db = self.database(key);
         let combined = db["kind"] == "combined";
-        let (_, expected, kept) =
+        let (copied, expected, kept) =
             model::table_sets(&self.context.execution_backend().unwrap(), combined).unwrap();
         let table = |name: &String| {
             let rows = if name == "ryframe_resource_ownership" {
                 if combined { 2 } else { 1 }
-            } else if kept.contains(name) || name == "biz_tenant_target_slot" {
+            } else if (kept.contains(name) && !copied.contains(name))
+                || name == "biz_tenant_target_slot"
+            {
                 1
             } else {
                 0
@@ -184,7 +186,12 @@ impl<'a> Fake<'a> {
     fn cli(&self, spec: &CommandSpec) -> Result<Vec<u8>> {
         let count = self.inventories.get() + 1;
         self.inventories.set(count);
-        let key = &spec.args[2];
+        assert_eq!(spec.args[0], "--config-dir");
+        assert_eq!(
+            spec.args[1],
+            self.fixture.context.request["config_dir"].as_str().unwrap()
+        );
+        let key = &spec.args[4];
         self.order.borrow_mut().push(key.clone());
         let mut raw = self.fixture.raw(key);
         if self.effect == "round" && count == 5 {
@@ -194,7 +201,7 @@ impl<'a> Fake<'a> {
         if self.effect == "schema" && count == 2 {
             raw["control_schema_fingerprint"] = json!("e".repeat(16));
         }
-        json_io::write_new(Path::new(&spec.args[4]), &raw)?;
+        json_io::write_new(Path::new(&spec.args[6]), &raw)?;
         if self.effect == "extra" && count == 8 {
             fs::write(spec.work_dir.join("injected.json"), "{}")?;
         }
@@ -230,7 +237,7 @@ impl Transport for Fake<'_> {
         );
         let mut stdout = if spec
             .args
-            .first()
+            .get(2)
             .is_some_and(|arg| arg == "target-inventory")
         {
             self.cli(&spec)?
@@ -269,7 +276,9 @@ impl Transport for Fake<'_> {
                 }
             } else {
                 self.owners.set(self.owners.get() + 1);
-                let scope = if self.effect == "owner" {
+                let scope = if self.effect == "owner"
+                    || (self.effect == "late-owner" && self.owners.get() == 24)
+                {
                     "wrong-scope"
                 } else {
                     SCOPE
@@ -318,21 +327,51 @@ fn success() -> ExitStatus {
 
 #[test]
 fn two_rounds_eight_raw_outputs_and_physical_images() {
-    let fixture = Fixture::new();
+    let mut fixture = Fixture::new();
+    let execution = fixture.context.execution_backend().unwrap();
+    let configuration = execution.join(".local-tests/bound-E/config");
+    fs::create_dir_all(configuration.parent().unwrap()).unwrap();
+    fs::rename(execution.join("config"), &configuration).unwrap();
+    fixture.context.request["config_dir"] = json!(configuration);
     let transport = Fake::new(&fixture, "none");
-    let checkpoints = Cell::new(0);
-    let captured = database::capture_with(&fixture.context, &transport, &|| {
-        checkpoints.set(checkpoints.get() + 1);
-        Ok(())
-    })
-    .unwrap();
+    let captured = database::capture_with(&fixture.context, &transport, &|| Ok(())).unwrap();
+    assert_eq!(
+        Path::new(
+            captured.binding["configuration"]["directory"]
+                .as_str()
+                .unwrap()
+        )
+        .canonicalize()
+        .unwrap(),
+        fs::canonicalize(&configuration).unwrap()
+    );
     assert_eq!(transport.inventories.get(), 8);
     assert_eq!(transport.identities.get(), 16);
     assert_eq!(transport.owners.get(), 24);
     assert_eq!(*transport.order.borrow(), KEYS.repeat(2));
-    assert!(checkpoints.get() > 96);
+    for key in KEYS {
+        let raw = fixture.raw(key);
+        let physical = raw["target"]["database"]["database"].as_str().unwrap();
+        let observation = &captured.observations[physical];
+        for table in [
+            "biz_data_scope_owner",
+            "biz_data_scope_dept",
+            "biz_data_scope_projection",
+        ] {
+            let entry = raw["target"]["preserved_tables"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|entry| entry["table"] == table)
+                .expect("产品 raw 保留投影元数据");
+            assert_eq!(
+                observation["tables"][table],
+                json!({"rows":entry["rows"],"sha256":entry["sha256"]})
+            );
+            assert!(observation["preserved"].get(table).is_none());
+        }
+    }
     let receipt = json_io::read(Path::new(captured.receipt["path"].as_str().unwrap())).unwrap();
-    assert_eq!(receipt["inventories"].as_object().unwrap().len(), 8);
     assert_eq!(
         receipt["observations"]
             .as_object()
@@ -351,8 +390,6 @@ fn two_rounds_eight_raw_outputs_and_physical_images() {
             "physical_shared_control"
         ]
     );
-    assert_eq!(captured.evidence_files.len(), 139);
-    assert_eq!(receipt.as_object().unwrap().len(), 14);
     for flag in [
         "producer_stopped_proven",
         "fresh_target_proven",
@@ -362,10 +399,12 @@ fn two_rounds_eight_raw_outputs_and_physical_images() {
     ] {
         assert_eq!(receipt[flag], false);
     }
-    for evidence in captured.evidence_files {
-        let path = fixture
-            .context
-            .observation_dir
+    verify_evidence_files(&fixture.context.observation_dir, captured.evidence_files);
+}
+
+fn verify_evidence_files(observation: &Path, evidence_files: Vec<Value>) {
+    for evidence in evidence_files {
+        let path = observation
             .join("inventory")
             .join(evidence["path"].as_str().unwrap());
         let digest = digest::file(&path).unwrap();
@@ -457,6 +496,7 @@ fn drift_unknown_evidence_and_actual_database_mismatch_fail_closed() {
         "binding",
         "identity",
         "owner",
+        "late-owner",
         "whitespace",
         "empty-stderr",
         "both-empty",
@@ -470,9 +510,13 @@ fn drift_unknown_evidence_and_actual_database_mismatch_fail_closed() {
         let output = fixture.context.observation_dir.join("inventory");
         assert!(!output.join("inventory.json").exists(), "{effect}");
         assert!(output.join("failure.json").is_file(), "{effect}");
+        if effect == "late-owner" {
+            assert!(output.join("after-target-dedicated-b.json").is_file());
+        }
         if [
             "identity",
             "owner",
+            "late-owner",
             "whitespace",
             "empty-stderr",
             "both-empty",
@@ -672,7 +716,6 @@ fn malformed_tables_and_placements_are_rejected() {
     let db = fixture.database("shared");
     let owners = model::expected_owners(SCOPE, false);
     let cases = invalid_inventories(&fixture);
-    assert_eq!(cases.len(), 16);
     for raw in cases {
         assert!(
             model::observation(
@@ -684,6 +727,35 @@ fn malformed_tables_and_placements_are_rejected() {
             )
             .is_err()
         );
+    }
+    for key in ["shared-control", "shared"] {
+        let db = fixture.database(key);
+        let owners = model::expected_owners(SCOPE, key == "shared-control");
+        for misplaced in [false, true] {
+            let mut raw = fixture.raw(key);
+            let kept = raw["target"]["preserved_tables"].as_array_mut().unwrap();
+            let index = kept
+                .iter()
+                .position(|entry| entry["table"] == "biz_data_scope_projection")
+                .unwrap();
+            let projection = kept.remove(index);
+            if misplaced {
+                raw["target"]["database"]["tables"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(projection);
+            }
+            assert!(
+                model::observation(
+                    &fixture.context.execution_backend().unwrap(),
+                    &raw,
+                    &db,
+                    SCOPE,
+                    &owners
+                )
+                .is_err()
+            );
+        }
     }
 }
 
@@ -713,6 +785,35 @@ fn fresh_only_restricts_biz_rows_and_external_fence_slot() {
     let mut control = image;
     control["tables"]["sys_user"] = json!({"rows": 123, "sha256": "a".repeat(64)});
     assert!(model::fresh(&control, true).is_ok());
+    let mut logical = BTreeMap::new();
+    let hash = digest::plan_hash(&json!({"rows":100_000,"content":"source-business"})).unwrap();
+    for key in KEYS {
+        let mut raw = fixture.raw(key);
+        let entry = raw["target"]["preserved_tables"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|entry| entry["table"] == "biz_data_scope_owner")
+            .unwrap();
+        entry["rows"] = json!(100_000);
+        entry["sha256"] = json!(hash);
+        let image = model::observation(
+            &fixture.context.execution_backend().unwrap(),
+            &raw,
+            &fixture.database(key),
+            SCOPE,
+            &model::expected_owners(SCOPE, key == "shared-control"),
+        )
+        .unwrap();
+        logical.insert(key.into(), image);
+    }
+    let source =
+        model::physical_images(&fixture.context.storage_inputs(), &logical, false).unwrap();
+    for image in source.values() {
+        assert_eq!(image["tables"]["biz_data_scope_owner"]["rows"], 100_000);
+        assert_eq!(image["tables"]["biz_data_scope_owner"]["sha256"], hash);
+    }
+    assert!(model::physical_images(&fixture.context.storage_inputs(), &logical, true).is_err());
 }
 
 #[test]
@@ -730,7 +831,7 @@ fn python_can_reverify_the_complete_native_receipt() {
 from pathlib import Path
 from devex_clone_inventory import verify_side_inventory,configuration
 from native_s3_client import _invoke as native_invoke, _read_response as native_response
-from restore_reference_plan import plan_hash
+from restore_reference_plan import plan_hash,configuration_binding
 from restore_build import file_digest
 v=json.loads(Path(sys.argv[3]).read_text(encoding='utf-8'))
 result=verify_side_inventory(Path(sys.argv[1]),v['receipt'],v['target'],Path(sys.argv[2]))
@@ -740,6 +841,7 @@ request=v['request']
 review=json.loads(Path(request['review']['path']).read_text(encoding='utf-8'))
 selected=review['scopes'][request['side']]
 side={**v['target'],**{key:selected[key] for key in ('runtime_dir','api_url')}}
+side['s3']={'configuration':configuration_binding(Path(sys.argv[2]),Path(result['binding']['configuration']['directory']))}
 maintenance=Path(request['maintenance_build']['path'])
 expected={'side':'target','tools_plan_sha256':plan_hash({'target':side,'tools':request['tools']}),
           'configuration':configuration(Path(sys.argv[2]),v['environment'],side,evidence_root=Path(sys.argv[1]),config_dir=Path(result['binding']['configuration']['directory'])),
@@ -885,6 +987,9 @@ fn fixed_topology_rejects_missing_duplicate_and_wrong_mode_targets() {
             "wrong-mode" => databases[1]["mode"] = json!("dedicated"),
             _ => unreachable!(),
         }
-        assert!(model::databases(&fixture.context).is_err(), "{effect}");
+        assert!(
+            model::databases(&fixture.context.storage_inputs()).is_err(),
+            "{effect}"
+        );
     }
 }

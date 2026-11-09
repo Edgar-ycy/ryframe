@@ -145,6 +145,13 @@ impl Ownership {
     }
 
     pub fn validate_cleanup(&self, observed: &Observation) -> Result<(), String> {
+        if !self.cleanup_quiescent(observed)? {
+            return Err("fixture 仍有活动连接，禁止 DROP".into());
+        }
+        Ok(())
+    }
+
+    pub fn cleanup_quiescent(&self, observed: &Observation) -> Result<bool, String> {
         if !matches!(self.phase, Phase::TestPassed | Phase::DropIntent)
             || self.plan.identity != observed.identity
             || observed.lock_owner != Some(self.plan.identity.connection_id)
@@ -154,11 +161,10 @@ impl Ownership {
             || !observed.business_closed
             || !observed.schema_exists
             || !observed.process_visibility
-            || observed.active_connections != 0
         {
             return Err("fixture 清理归属未获完整确认，禁止 DROP".into());
         }
-        Ok(())
+        Ok(observed.active_connections == 0)
     }
 
     pub fn drop_intent(&mut self, observed: &Observation) -> Result<(), String> {
@@ -402,12 +408,21 @@ impl AdminSession {
 
     pub async fn exists(&mut self, schema: &str) -> Result<bool, String> {
         let count = sqlx::query_scalar::<_, u64>(sqlx::AssertSqlSafe(
-            "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?",
+            "SELECT CAST(COUNT(*) AS UNSIGNED) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?",
         ))
         .bind(schema)
         .fetch_one(&mut *self.session)
         .await
-        .map_err(|_| "schema 存在性查询失败")?;
+        .map_err(|error| match error {
+            sqlx::Error::ColumnDecode { index, source } => {
+                format!("schema 存在性计数解码失败（列 {index}）：{source}；只读检查未通过，未执行建库")
+            }
+            sqlx::Error::Database(error) => format!(
+                "schema 存在性查询失败（数据库错误码 {}）；检查查询权限，未执行建库",
+                error.code().as_deref().unwrap_or("未提供")
+            ),
+            _ => "schema 存在性查询失败；检查连接与驱动状态，未执行建库".into(),
+        })?;
         Ok(count != 0)
     }
 
@@ -449,7 +464,7 @@ impl AdminSession {
             visible |= permits_processlist(&grant);
         }
         let active_connections = sqlx::query_scalar::<_, u64>(sqlx::AssertSqlSafe(
-            "SELECT COUNT(*) FROM information_schema.PROCESSLIST WHERE DB = ? AND ID <> CONNECTION_ID()"))
+            "SELECT CAST(COUNT(*) AS UNSIGNED) FROM information_schema.PROCESSLIST WHERE DB = ? AND ID <> CONNECTION_ID()"))
             .bind(schema).fetch_one(&mut *self.session).await.map_err(|_| "无法确认本 schema 活动连接")?;
         let schema_exists = self.exists(schema).await?;
         Ok(Observation {

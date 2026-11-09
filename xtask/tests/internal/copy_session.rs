@@ -1,8 +1,18 @@
-use std::io::Cursor;
+use std::{
+    fs,
+    io::Cursor,
+    path::{Path, PathBuf},
+};
 
 use serde_json::{Value, json};
 
-use crate::recovery::clone::native::session::{model, run};
+use crate::recovery::clone::native::{
+    digest, json as document,
+    lifecycle::{identity as process_identity, lock::RunLock, state},
+    resources::common,
+    session::{model, run},
+    target_verify::input::request_configuration::canonical_path,
+};
 
 fn identity() -> Value {
     json!({"subject_id":"100", "tenant_id":"system", "username":"operator",
@@ -39,37 +49,6 @@ fn schedule_actions_are_fixed_and_preserve_string_ids_and_version_zero() {
     ] {
         assert!(model::schedule(&invalid).is_err());
     }
-}
-
-#[test]
-fn registration_rejects_ungranted_attempt_and_artifact_directory_before_network() {
-    let root = tempfile::tempdir().unwrap();
-    let run = root.path().join(".local-tests/copy-session");
-    std::fs::create_dir_all(&run).unwrap();
-    let registration = model::Registration::parse(
-        root.path(),
-        &[
-            "--run-dir".into(),
-            run.to_str().unwrap().into(),
-            "--attempt".into(),
-            "1".into(),
-        ],
-    )
-    .unwrap();
-    let artifacts = run.join("post-copy").join("attempt-0001").join("pacing");
-    let mut request = json!({"id":1,"operation":"initialize",
-        "backend":root.path(),"frontend":root.path(),"run_dir":run,"attempt":1,
-        "artifacts":artifacts,"identity":identity(),
-        "config":{"contract":{"timeout_ms":1000,"pacing":{}},
-            "bindings":{"scope_id":"sample", "api_url":"http://127.0.0.1:1",
-                "frontend_url":"http://127.0.0.1:2", "pacing":{}}}});
-    std::fs::create_dir_all(run.join("post-copy/attempt-0001")).unwrap();
-    assert!(registration.initialize(&request).is_err());
-    request["attempt"] = json!(2);
-    assert!(registration.initialize(&request).is_err());
-    request["attempt"] = json!(1);
-    request["artifacts"] = json!(run.join("other"));
-    assert!(registration.initialize(&request).is_err());
 }
 
 #[test]
@@ -206,4 +185,296 @@ fn current_credentials_require_authoritative_password_change_completion() {
         model::authorization(&missing, &selected),
         Err("SessionPasswordChangeRequired")
     );
+}
+
+// 仅构造历史解析器消费的发布事实；不代表真实 amendment 生命周期验收。
+struct ActiveSessionFixture {
+    _temporary: tempfile::TempDir,
+    root: PathBuf,
+    run: PathBuf,
+    base: Value,
+    post: Value,
+    active: Value,
+    lock: Option<RunLock>,
+}
+
+impl ActiveSessionFixture {
+    fn new(amended: bool, failed_latest: bool) -> Self {
+        let parent = crate::workspace::root_dir().join(".local-tests");
+        fs::create_dir_all(&parent).unwrap();
+        let temporary = tempfile::Builder::new()
+            .prefix("active-session-")
+            .tempdir_in(parent)
+            .unwrap();
+        let root = canonical_path(temporary.path()).unwrap();
+        let run = root.join(".local-tests").join("run");
+        fs::create_dir_all(run.join("post-copy").join("amendments")).unwrap();
+        document::write_new(&run.join("manifest.json"), &json!({})).unwrap();
+        state::initialize(&run).unwrap();
+        let credentials = run.join("administrator.toml");
+        fs::write(&credentials, "[administrator]\ntenant_id = \"system\"\nusername = \"operator\"\npassword = \"PRIVATE_SESSION_PASSWORD_SENTINEL\"\n").unwrap();
+        let environment = run.join("environment.json");
+        document::write_new(&environment, &json!({"environment":{"APP_ENV":"test"}})).unwrap();
+        let fact = common::binding(&environment).unwrap();
+        let post = json!({"format_version":1,"kind":"devex-clone-post-copy",
+            "run_manifest":state::manifest_binding(&run).unwrap(),"copy_stage_receipt":fact,
+            "copy_result":fact,"ledger_head":fact,"api_environment":fact,"backend_build":fact,
+            "node":fact,"source_admin":identity(),"frontend_root":root,"pacing":{},
+            "reference_plan":fact,"dataset":fact,"administrator_credentials":common::binding(&credentials).unwrap()});
+        document::write_new(&run.join("post-copy.json"), &post).unwrap();
+        let base = common::binding(&run.join("post-copy.json")).unwrap();
+        let mut fixture = Self {
+            _temporary: temporary,
+            root,
+            run,
+            base: base.clone(),
+            post,
+            active: base,
+            lock: None,
+        };
+        fixture.publish(
+            "post-copy",
+            "register",
+            &json!({"status":"post_copy_registered","registration":fixture.base}),
+        );
+        if amended {
+            fixture.amend();
+        }
+        if failed_latest {
+            let (number, _) = state::begin(&fixture.run, "post-copy", "amend", &json!({})).unwrap();
+            state::finish(&fixture.run, number, None, Some("PostCopyRejected")).unwrap();
+        }
+        fixture
+    }
+
+    fn publish(&self, stage: &str, mode: &str, result: &Value) -> u64 {
+        let (number, _) = state::begin(&self.run, stage, mode, &json!({})).unwrap();
+        state::finish(&self.run, number, Some(result), None).unwrap();
+        number
+    }
+
+    fn amend(&mut self) {
+        let runtime = self.run.join("post-copy").join("runtime");
+        fs::create_dir_all(&runtime).unwrap();
+        let mut invalidated = json!({});
+        for (field, name) in [
+            ("handoff", "handoff.json"),
+            ("runtime", "runtime.json"),
+            ("binaries", "binaries.json"),
+            ("api_process", "api.json"),
+            ("producer_history", "producer-history.json"),
+        ] {
+            let path = runtime.join(name);
+            document::write_new(&path, &json!({"unit_published_fact":name})).unwrap();
+            invalidated[field] = common::binding(&path).unwrap();
+        }
+        let prepared = self.publish(
+            "post-copy",
+            "prepare",
+            &json!({"status":"post_copy_api_prepared"}),
+        );
+        invalidated["prepare"] = common::binding(&state::result_path(&self.run, prepared)).unwrap();
+        let lock = RunLock::claim(&self.run).unwrap();
+        let (failed, attempt) =
+            state::begin(&self.run, "runtime-target", "start", &json!({})).unwrap();
+        state::bind_controller(&self.run, failed, &lock.owner, &attempt).unwrap();
+        let failure = self.run.join(format!("failure-{failed:04}.json"));
+        document::write_new(&failure, &json!({"error_type":"UnitPublishedFailure"})).unwrap();
+        state::finish(&self.run, failed, None, Some("UnitPublishedFailure")).unwrap();
+        lock.release().unwrap();
+        let stopped = self.publish(
+            "runtime-target",
+            "stop",
+            &json!({"status":"runtime_stopped"}),
+        );
+        invalidated["failed_start"] = json!({"attempt":failed,
+            "controller":common::binding(&state::controller_path(&self.run, failed)).unwrap(),
+            "failure":common::binding(&failure).unwrap()});
+        invalidated["stopped"] = json!({"attempt":stopped,"result":common::binding(&state::result_path(&self.run, stopped)).unwrap()});
+        let environment = self.run.join("amended-environment.json");
+        document::write_new(&environment, &json!({"environment":{"APP_ENV":"test"}})).unwrap();
+        self.post["api_environment"] = common::binding(&environment).unwrap();
+        let path = self
+            .run
+            .join("post-copy")
+            .join("amendments")
+            .join("0001.json");
+        document::write_new(&path, &json!({"format_version":1,"kind":"devex-clone-post-copy-amendment",
+            "sequence":1,"run_manifest":state::manifest_binding(&self.run).unwrap(),"predecessor":self.base,
+            "request_sha256":digest::plan_hash(&self.post).unwrap(),"api_environment":self.post["api_environment"],
+            "invalidated_runtime":invalidated})).unwrap();
+        self.active = common::binding(&path).unwrap();
+        self.publish("post-copy", "amend", &json!({"status":"post_copy_amended","registration":self.active,
+            "sequence":1,"predecessor":self.base,"runtime_directory":self.run.join("post-copy").join("runtime-0001"),
+            "remote_writes":0,"worker_must_remain_stopped":true,"restore_qualified":false}));
+    }
+
+    fn initialize_request(&mut self) -> (model::Registration, Value) {
+        let source = self.root.join("xtask/src/recovery/clone/native/session.rs");
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        fs::copy(
+            crate::workspace::root_dir().join("xtask/src/recovery/clone/native/session.rs"),
+            &source,
+        )
+        .unwrap();
+        let lock = RunLock::claim(&self.run).unwrap();
+        let (number, attempt) =
+            state::begin(&self.run, "post-copy", "schedules", &json!({})).unwrap();
+        state::bind_controller(&self.run, number, &lock.owner, &attempt).unwrap();
+        let output = self
+            .run
+            .join("post-copy")
+            .join(format!("attempt-{number:04}"));
+        fs::create_dir_all(&output).unwrap();
+        let actual = process_identity::current().unwrap();
+        let executable = Path::new(actual["executable"].as_str().unwrap());
+        let tool = json!({"path":executable,"sha256":digest::file(executable).unwrap().sha256});
+        let arguments = [
+            "--run-dir".to_owned(),
+            self.run.to_string_lossy().into_owned(),
+            "--attempt".to_owned(),
+            number.to_string(),
+        ];
+        let mut command = vec![
+            tool["path"].as_str().unwrap().to_owned(),
+            "__copy-session".to_owned(),
+        ];
+        command.extend(arguments.iter().cloned());
+        document::write_new(&output.join("session-launch.json"), &json!({"format_version":1,
+            "kind":"devex-post-producer-launch","run_manifest":state::manifest_binding(&self.run).unwrap(),
+            "registration":self.active,"controller":common::binding(&state::controller_path(&self.run, number)).unwrap(),
+            "attempt":number,"producer_kind":"session","command":command,"tool":tool,
+            "source":common::binding(&source).unwrap()})).unwrap();
+        let owner = uuid::Uuid::new_v4().to_string();
+        let launch = common::binding(&output.join("session-launch.json")).unwrap();
+        document::write_new(
+            &output.join("session-process.json"),
+            &json!({"format_version":1,
+            "kind":"devex-post-producer","launch":launch,"identity":actual,"producer_owner":owner}),
+        )
+        .unwrap();
+        let request = json!({"id":1,"operation":"initialize","backend":self.root,"frontend":self.root,
+            "run_dir":self.run,"attempt":number,"producer_owner":owner,"launch":launch,
+            "process":common::binding(&output.join("session-process.json")).unwrap(),"artifacts":output.join("pacing"),
+            "identity":identity(),"config":{"contract":{"timeout_ms":1000,"pacing":{}},
+                "bindings":{"scope_id":"sample","api_url":"http://127.0.0.1:1","frontend_url":"http://127.0.0.1:2","pacing":{}}}});
+        self.lock = Some(lock);
+        (
+            model::Registration::parse(&self.root, &arguments).unwrap(),
+            request,
+        )
+    }
+
+    fn rebind_launch(&self, request: &mut Value, descriptor: &Value) {
+        let launch_path = PathBuf::from(request["launch"]["path"].as_str().unwrap());
+        let mut launch = document::read(&launch_path).unwrap();
+        launch["registration"] = descriptor.clone();
+        document::write_replace(&launch_path, &launch).unwrap();
+        request["launch"] = common::binding(&launch_path).unwrap();
+        let process_path = PathBuf::from(request["process"]["path"].as_str().unwrap());
+        let mut process = document::read(&process_path).unwrap();
+        process["launch"] = request["launch"].clone();
+        document::write_replace(&process_path, &process).unwrap();
+        request["process"] = common::binding(&process_path).unwrap();
+    }
+}
+
+impl Drop for ActiveSessionFixture {
+    fn drop(&mut self) {
+        if let Some(lock) = self.lock.take() {
+            lock.release().unwrap();
+        }
+    }
+}
+
+#[test]
+fn initialization_authorizes_only_the_active_whole_registration_and_bound_credentials() {
+    let producer_mismatch = Some("原生生产者 launch、进程身份或 owner 不符");
+    for (case, expected_error) in [
+        ("base", None),
+        ("amended", None),
+        ("base-after-amend", producer_mismatch),
+        ("ungranted", Some("InvalidSessionRequest")),
+        ("stale-attempt", Some("SessionRegistrationMismatch")),
+        ("artifacts-drift", Some("SessionArtifactsMismatch")),
+        ("latest-failed", Some("SessionRegistrationRejected")),
+        ("foreign", producer_mismatch),
+        ("unpublished", producer_mismatch),
+        ("registration-drift", Some("SessionRegistrationRejected")),
+        ("credentials-drift", Some("管理员凭据校验失败")),
+        ("identity-drift", Some("SessionIdentityMismatch")),
+    ] {
+        let mut fixture = ActiveSessionFixture::new(case != "base", case == "latest-failed");
+        let (registration, mut request) = fixture.initialize_request();
+        match case {
+            "base-after-amend" => fixture.rebind_launch(&mut request, &fixture.base),
+            "ungranted" => {
+                request.as_object_mut().unwrap().remove("producer_owner");
+            }
+            "stale-attempt" => request["attempt"] = json!(registration.attempt - 1),
+            "artifacts-drift" => request["artifacts"] = json!(fixture.run.join("other")),
+            "foreign" | "unpublished" => {
+                let destination = if case == "foreign" {
+                    fixture.run.join("foreign.json")
+                } else {
+                    fixture
+                        .run
+                        .join("post-copy")
+                        .join("amendments")
+                        .join("0002.json")
+                };
+                fs::copy(fixture.active["path"].as_str().unwrap(), &destination).unwrap();
+                fixture.rebind_launch(&mut request, &common::binding(&destination).unwrap());
+            }
+            "registration-drift" => fs::write(
+                fixture.active["path"].as_str().unwrap(),
+                b"PRIVATE_REGISTRATION_SENTINEL",
+            )
+            .unwrap(),
+            "credentials-drift" => fs::write(
+                fixture.post["administrator_credentials"]["path"]
+                    .as_str()
+                    .unwrap(),
+                b"PRIVATE_CREDENTIAL_DRIFT_SENTINEL",
+            )
+            .unwrap(),
+            "identity-drift" => request["identity"]["subject_id"] = json!("101"),
+            _ => {}
+        }
+        let state_before = fs::read(fixture.run.join("state.json")).unwrap();
+        let active_before = fs::read(fixture.active["path"].as_str().unwrap()).unwrap();
+        match registration.initialize(&request) {
+            Ok(initialized) => {
+                assert!(expected_error.is_none(), "{case}");
+                let mut expected = identity();
+                expected["password"] = json!("PRIVATE_SESSION_PASSWORD_SENTINEL");
+                assert_eq!(initialized.identity, expected, "{case}");
+                assert_eq!(
+                    initialized.artifacts,
+                    Path::new(request["artifacts"].as_str().unwrap())
+                );
+            }
+            Err(error) => {
+                let message = error.to_string();
+                assert!(!message.contains("SENTINEL"), "{case}: {message}");
+                let reason = expected_error.unwrap_or_else(|| panic!("{case}: {message}"));
+                assert!(message.contains(reason), "{case}: {message}");
+            }
+        }
+        assert_eq!(
+            fs::read(fixture.run.join("state.json")).unwrap(),
+            state_before,
+            "{case}"
+        );
+        assert_eq!(
+            fs::read(fixture.active["path"].as_str().unwrap()).unwrap(),
+            active_before,
+            "{case}"
+        );
+        assert!(
+            !Path::new(request["artifacts"].as_str().unwrap()).exists(),
+            "{case}"
+        );
+        fixture.lock.as_ref().unwrap().verify().unwrap();
+    }
 }

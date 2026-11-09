@@ -1,5 +1,5 @@
 use crate::{
-    cli::{CliError, FixtureReviewCommand, FixtureReviewOptions},
+    cli::{CliError, FixtureReconciledReview, FixtureReviewCommand, FixtureReviewOptions},
     local_test_path::LocalTestPathKind,
 };
 
@@ -7,7 +7,7 @@ use super::{ParsedOptions, new_directory, output_file, require_write};
 
 const OPTIONS: &[&str] = &[
     "--template",
-    "--fixture",
+    "--execution-source",
     "--future-root",
     "--id",
     "--api-port",
@@ -23,6 +23,29 @@ pub(super) fn parse(args: &[String]) -> Result<FixtureReviewCommand, CliError> {
     if matches!(args, [help] if matches!(help.as_str(), "--help" | "-h")) {
         return Ok(FixtureReviewCommand::Help);
     }
+    if let Some((first, rest)) = args.split_first()
+        && first == "after-reconcile"
+    {
+        let options = ParsedOptions::parse(
+            rest,
+            &[
+                "--workspace",
+                "--execution-source",
+                "--future-root",
+                "--output",
+            ],
+        )?;
+        require_write(&options, "review after-reconcile")?;
+        return Ok(FixtureReviewCommand::AfterReconcile(
+            FixtureReconciledReview {
+                workspace: options.path("--workspace", LocalTestPathKind::ExistingDirectory)?,
+                execution_source: options
+                    .path("--execution-source", LocalTestPathKind::ExistingFile)?,
+                future_root: new_directory(options.require("--future-root")?, "--future-root")?,
+                output: output_file(options.require("--output")?, "--output")?,
+            },
+        ));
+    }
     let options = ParsedOptions::parse(args, OPTIONS)?;
     require_write(&options, "review renew")?;
     let ports = [
@@ -36,7 +59,7 @@ pub(super) fn parse(args: &[String]) -> Result<FixtureReviewCommand, CliError> {
     validate_ports(&ports)?;
     Ok(FixtureReviewCommand::Renew(FixtureReviewOptions {
         template: options.path("--template", LocalTestPathKind::ExistingFile)?,
-        fixture: options.path("--fixture", LocalTestPathKind::ExistingFile)?,
+        execution_source: options.path("--execution-source", LocalTestPathKind::ExistingFile)?,
         future_root: new_directory(options.require("--future-root")?, "--future-root")?,
         id: review_id(options.require("--id")?)?,
         api_port: ports[0],

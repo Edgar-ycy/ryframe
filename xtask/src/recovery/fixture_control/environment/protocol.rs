@@ -116,4 +116,4 @@ fn dispatch(bytes: &[u8]) -> Result<Value> {
 
 #[cfg(test)]
 #[path = "../../../../tests/unit/recovery/fixture_control/environment/tests.rs"]
-mod tests;
+pub(crate) mod tests;

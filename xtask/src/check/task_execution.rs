@@ -13,7 +13,8 @@ use crate::{
 use super::super::{
     backend_sources::check_backend_sources,
     cargo_command::{
-        ci_test_jobs_from, default_test_jobs_from, workspace_clippy_args, workspace_test_args,
+        ci_test_jobs_from, default_test_jobs_from, worker_lib_test_args, workspace_clippy_args,
+        workspace_test_args,
     },
     context::VerifyExecutionContext,
     feature::{check_feature_registry, feature_matrix_with_jobs},
@@ -109,7 +110,8 @@ pub(crate) fn execute_registered_task(
         | TaskExecutor::SmartPolicyChecks
         | TaskExecutor::BackendSmartPolicyChecks
         | TaskExecutor::SmartFrontend => execute_smart_task(executor, mode, context, state),
-        TaskExecutor::CiFrontendSource
+        TaskExecutor::CiFullStackConfig
+        | TaskExecutor::CiFrontendSource
         | TaskExecutor::CiFrontendCandidateSource
         | TaskExecutor::CiFrontendCheckout
         | TaskExecutor::CiContractSource
@@ -315,6 +317,11 @@ fn run_backend_workspace(context: &VerifyExecutionContext, test_jobs: usize) -> 
         &context.root,
         "cargo",
         &workspace_test_args(context.targets.backend.as_str(), test_jobs),
+    )?;
+    run_owned(
+        &context.root,
+        "cargo",
+        &worker_lib_test_args(context.targets.backend.as_str(), test_jobs),
     )
 }
 

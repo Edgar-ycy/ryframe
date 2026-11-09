@@ -4,10 +4,23 @@ use sea_orm::{ConnectionTrait, DbBackend, DbErr, FromQueryResult, Statement};
 
 use crate::migration::normalize_check_clause;
 
+mod assertion;
+pub use assertion::{
+    SchemaAssertion, SchemaAssertions, SchemaRegistrationLocks, initial_table_absent,
+    schema_assertion_guard, schema_assertions, schema_preconditions, schema_registration_locks,
+};
+pub(crate) use assertion::{eq as sql_equal, framework_rows, literal as sql_literal};
+pub(crate) use normalization::{
+    ascii_lower as sql_ascii_lower, extra_expression as sql_column_extra,
+};
+mod canonical;
 mod difference;
+mod metadata;
+mod normalization;
 pub use difference::{describe_schema_difference, validate_canonical_schema};
+pub use normalization::{normalize_column_default, normalize_column_extra};
 
-#[derive(Debug, FromQueryResult)]
+#[derive(Clone, Debug, FromQueryResult)]
 pub struct ColumnMetadata {
     pub column_name: String,
     pub column_type: String,
@@ -20,7 +33,7 @@ pub struct ColumnMetadata {
     pub generation_expression: String,
 }
 
-#[derive(Debug, FromQueryResult)]
+#[derive(Clone, Debug, FromQueryResult)]
 pub struct IndexMetadata {
     pub index_name: String,
     pub column_name: String,
@@ -31,13 +44,13 @@ pub struct IndexMetadata {
     pub is_visible: String,
 }
 
-#[derive(Debug, FromQueryResult)]
+#[derive(Clone, Debug, FromQueryResult)]
 pub struct CheckMetadata {
     pub constraint_name: String,
     pub check_clause: String,
 }
 
-#[derive(Debug, FromQueryResult)]
+#[derive(Clone, Debug, FromQueryResult)]
 pub struct TableMetadata {
     pub table_name: String,
     pub engine: String,
@@ -45,14 +58,14 @@ pub struct TableMetadata {
     pub table_collation: String,
 }
 
-#[derive(Debug, FromQueryResult)]
+#[derive(Clone, Debug, FromQueryResult)]
 pub struct ConstraintMetadata {
     pub constraint_name: String,
     pub constraint_type: String,
     pub enforced: String,
 }
 
-#[derive(Debug, FromQueryResult)]
+#[derive(Clone, Debug, FromQueryResult)]
 struct ForeignKeySchemaRow {
     constraint_name: String,
     column_name: String,
@@ -85,14 +98,7 @@ pub async fn canonical_table_schema<C: ConnectionTrait>(
     }
     let table = TableMetadata::find_by_statement(Statement::from_sql_and_values(
         DbBackend::MySql,
-        "SELECT t.table_name AS `table_name`, t.engine AS `engine`, \
-                c.character_set_name AS `character_set_name`, \
-                t.table_collation AS `table_collation` \
-         FROM information_schema.tables t \
-         INNER JOIN information_schema.collation_character_set_applicability c \
-           ON c.collation_name = t.table_collation \
-         WHERE t.table_schema = DATABASE() AND t.table_type = 'BASE TABLE' \
-           AND t.table_name = ? LIMIT 1",
+        metadata::TABLE,
         [table_name.into()],
     ))
     .one(db)
@@ -101,74 +107,43 @@ pub async fn canonical_table_schema<C: ConnectionTrait>(
 
     let columns = ColumnMetadata::find_by_statement(Statement::from_sql_and_values(
         DbBackend::MySql,
-        "SELECT column_name AS `column_name`, column_type AS `column_type`, \
-                is_nullable AS `is_nullable`, character_set_name AS `character_set_name`, \
-                collation_name AS `collation_name`, column_key AS `column_key`, \
-                column_default AS `column_default`, extra AS `extra`, \
-                generation_expression AS `generation_expression` \
-         FROM information_schema.columns WHERE table_schema = DATABASE() \
-           AND table_name = ? ORDER BY ordinal_position",
+        metadata::COLUMNS,
         [table_name.into()],
     ))
     .all(db)
     .await?;
     let indexes = IndexMetadata::find_by_statement(Statement::from_sql_and_values(
         DbBackend::MySql,
-        "SELECT index_name AS `index_name`, column_name AS `column_name`, \
-         CAST(seq_in_index AS SIGNED) AS `seq_in_index`, \
-         CAST(non_unique AS SIGNED) AS `non_unique`, index_type AS `index_type`, \
-         CAST(sub_part AS SIGNED) AS `sub_part`, is_visible AS `is_visible` \
-         FROM information_schema.statistics WHERE table_schema = DATABASE() \
-           AND table_name = ? ORDER BY index_name, seq_in_index",
+        metadata::INDEXES,
         [table_name.into()],
     ))
     .all(db)
     .await?;
     let constraints = ConstraintMetadata::find_by_statement(Statement::from_sql_and_values(
         DbBackend::MySql,
-        "SELECT constraint_name AS `constraint_name`, constraint_type AS `constraint_type`, \
-                enforced AS `enforced` \
-         FROM information_schema.table_constraints WHERE table_schema = DATABASE() \
-           AND table_name = ? ORDER BY constraint_name",
+        metadata::CONSTRAINTS,
         [table_name.into()],
     ))
     .all(db)
     .await?;
-    let checks = CheckMetadata::find_by_statement(Statement::from_sql_and_values(
+    let mut checks = CheckMetadata::find_by_statement(Statement::from_sql_and_values(
         DbBackend::MySql,
-        "SELECT tc.constraint_name AS `constraint_name`, cc.check_clause AS `check_clause` \
-         FROM information_schema.table_constraints tc \
-         INNER JOIN information_schema.check_constraints cc \
-           ON cc.constraint_schema = tc.constraint_schema \
-          AND cc.constraint_name = tc.constraint_name \
-         WHERE tc.table_schema = DATABASE() AND tc.table_name = ? \
-           AND tc.constraint_type = 'CHECK' ORDER BY tc.constraint_name",
+        metadata::CHECKS,
         [table_name.into()],
     ))
     .all(db)
     .await?;
     let foreign_keys = ForeignKeySchemaRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::MySql,
-        "SELECT k.constraint_name AS `constraint_name`, k.column_name AS `column_name`, \
-                CAST(k.ordinal_position AS SIGNED) AS `ordinal_position`, \
-                k.referenced_table_schema AS `referenced_table_schema`, \
-                DATABASE() AS `current_schema`, \
-                k.referenced_table_name AS `referenced_table_name`, \
-                k.referenced_column_name AS `referenced_column_name`, \
-                r.update_rule AS `update_rule`, r.delete_rule AS `delete_rule` \
-         FROM information_schema.key_column_usage k \
-         INNER JOIN information_schema.referential_constraints r \
-           ON r.constraint_schema = k.constraint_schema \
-          AND r.table_name = k.table_name \
-          AND r.constraint_name = k.constraint_name \
-         WHERE k.table_schema = DATABASE() AND k.table_name = ? \
-           AND k.referenced_table_name IS NOT NULL \
-         ORDER BY k.constraint_name, k.ordinal_position",
+        metadata::FOREIGN_KEYS,
         [table_name.into()],
     ))
     .all(db)
     .await?;
     ensure_local_foreign_key_schemas(&foreign_keys)?;
+    for check in &mut checks {
+        check.check_clause = normalize_check_clause(&check.check_clause);
+    }
 
     Ok(render_table_schema(
         table,
@@ -267,8 +242,7 @@ fn render_table_schema(
         write!(
             canonical,
             "{:?}:{:?};",
-            check.constraint_name,
-            normalize_check_clause(&check.check_clause),
+            check.constraint_name, check.check_clause,
         )
         .expect("写入 String 不会失败");
     }
@@ -289,23 +263,4 @@ fn render_table_schema(
     }
     canonical.push(']');
     canonical
-}
-
-pub fn normalize_column_default(value: Option<&str>) -> Option<&str> {
-    value.map(|value| {
-        if value.eq_ignore_ascii_case("current_timestamp(6)") {
-            "current_timestamp(6)"
-        } else {
-            value
-        }
-    })
-}
-
-pub fn normalize_column_extra(value: &str) -> String {
-    value
-        .to_ascii_lowercase()
-        .split_whitespace()
-        .filter(|part| *part != "default_generated")
-        .collect::<Vec<_>>()
-        .join(" ")
 }

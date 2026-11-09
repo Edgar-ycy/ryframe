@@ -19,6 +19,14 @@ const ACCESS_CATALOG: &str = include_str!("../../../../catalog/access.toml");
 const GENERATED_ACCESS_CATALOG: &str = include_str!("../../../../catalog/access.generated.toml");
 const ACCESS_CATALOG_VERSION: u32 = 1;
 
+// 在线初始化与 SQL 快照共用分配规则；聚合派生表会物化，避免同表读写被合并。
+#[cfg(feature = "migration")]
+pub(super) const NEXT_PERMISSION_ID_SQL: &str =
+    "SELECT COALESCE(MAX(`id`), 9999) + 1 AS next_id FROM `sys_permission` WHERE `id` >= 10000";
+#[cfg(feature = "migration")]
+pub(super) const NEXT_MENU_ID_SQL: &str =
+    "SELECT COALESCE(MAX(`id`), 19999) + 1 AS next_id FROM `sys_menu` WHERE `id` >= 20000";
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AccessMenu {
     pub route_key: String,
@@ -152,11 +160,7 @@ async fn next_permission_id<C>(db: &C) -> Result<i64, DbErr>
 where
     C: ConnectionTrait + ?Sized,
 {
-    next_catalog_id(
-        db,
-        "SELECT COALESCE(MAX(`id`), 9999) + 1 FROM `sys_permission` WHERE `id` >= 10000",
-    )
-    .await
+    next_catalog_id(db, NEXT_PERMISSION_ID_SQL).await
 }
 
 #[cfg(feature = "migration")]
@@ -180,11 +184,7 @@ async fn next_menu_id<C>(db: &C) -> Result<i64, DbErr>
 where
     C: ConnectionTrait + ?Sized,
 {
-    next_catalog_id(
-        db,
-        "SELECT COALESCE(MAX(`id`), 19999) + 1 FROM `sys_menu` WHERE `id` >= 20000",
-    )
-    .await
+    next_catalog_id(db, NEXT_MENU_ID_SQL).await
 }
 
 #[cfg(feature = "migration")]

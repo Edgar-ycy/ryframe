@@ -23,10 +23,6 @@ START = "source-generation-start"
 STOP = "source-generation-stop"
 RECOVER = "source-generation-recover"
 STATUS = "source-generation-status"
-REQUEST_FIELDS = {"format_version", "kind", "id", "source_registration", "review_successor",
-                  "source_rebind", "current_storage", "execution_backend", "expected_backend_sha",
-                  "adapter_contract", "product_backend", "backend_build", "maintenance_build", "source_environment"}
-
 # 当前 reboot 与业务证明调用方仍消费这些字段集合；生成主编排的判定由 Rust 执行。
 RESULT_FIELDS = {"status", "request", "source_registration", "source_rebind", "review_successor",
                  "current_storage", "history_length", "history_sha256", "source_request",
@@ -36,6 +32,10 @@ RESULT_FIELDS.update({"start", "source_runtime", "running", "stop_before"})
 START_FIELDS = {"status", "request", "source_registration", "source_rebind", "review_successor", "current_storage",
                 "history_length", "history_sha256", "generation_id", "intent", "runtime_evidence", "before", "running",
                 "dataset_lineage", "coordinator_source", "remote_writes", "restore_qualified"}
+
+
+def validate_generation_request(value: dict) -> None:
+    _generation_model(Path(__file__).resolve().parents[2], "request-schema", {"request": value})
 
 
 def preflight(
@@ -361,7 +361,7 @@ def _generation_model(backend: Path, action: str, arguments: dict) -> dict:
         raise ValueError("生成阶段选择结果无效；禁止自动重放")
     field = {"preflight-plan": "needs_segment", "preflight-finish": "ready", "inputs": "prefix", "input-stage": "prefix",
              "running": "verified", "published": "verified", "generation-proof": "verified",
-             "equal-images": "equal"}.get(action)
+             "equal-images": "equal", "request-schema": "verified"}.get(action)
     if field is not None and (set(value) != {field}
             or (not isinstance(value[field], list) if field == "prefix" else type(value[field]) is not bool)
             or field in {"ready", "verified"} and value[field] is not True):

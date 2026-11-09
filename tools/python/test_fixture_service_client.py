@@ -89,14 +89,21 @@ class FixtureServiceClientTests(unittest.TestCase):
 
     def test_services_entry_installs_explicit_coordinator_binding_before_dispatch(self):
         import reference_fixture_services as services
-        arguments = ["status", "--backend-dir", str(client.ROOT), "--review", "review.json",
-                     "--environment", "bootstrap.json", "--native-tool", "bound-tool"]
-        with (patch("rate_limit_tool.install_verified_binding") as install,
-              patch("reference_fixture_service_context.status", return_value={"status": "service_status"}) as status,
-              patch("sys.stdout", io.StringIO())):
-            services.main(arguments)
-        install.assert_called_once_with("bound-tool")
-        status.assert_called_once()
+        for operation, status in (("rustfs", "rustfs_started"), ("buckets", "fixture_buckets_ready")):
+            arguments = [operation, "--backend-dir", str(client.ROOT), "--review", "review.json",
+                         "--environment", "bootstrap.json", "--write", "--native-tool", "bound-tool"]
+
+            def start(*_args, **_kwargs):
+                install.assert_called_once_with("bound-tool")
+                return {"status": status, "remote_writes": 0}
+
+            with (self.subTest(operation=operation),
+                  patch("rate_limit_tool.install_verified_binding") as install,
+                  patch.object(services, operation, side_effect=start) as dispatch,
+                  patch("sys.stdout", io.StringIO())):
+                services.main(arguments)
+            dispatch.assert_called_once_with(client.ROOT.resolve(), Path("review.json"),
+                                             Path("bootstrap.json"), write=True)
 
     def test_request_entry_installs_explicit_coordinator_binding_before_dispatch(self):
         import reference_fixture_request as request

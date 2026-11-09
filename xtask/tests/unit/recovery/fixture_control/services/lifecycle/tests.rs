@@ -17,6 +17,12 @@ mod support;
 #[path = "../../../../../../src/recovery/fixture_control/services/lifecycle/tests/wait.rs"]
 mod wait;
 use support::*;
+#[path = "close_recovery.rs"]
+mod close_recovery;
+#[path = "native_writes.rs"]
+mod native_writes;
+#[path = "partial_close.rs"]
+mod partial_close;
 
 #[test]
 fn write_and_owner_policy_reject_before_context_or_service_access() {
@@ -129,15 +135,4 @@ fn close_rejects_external_termination_without_inventing_normal_shutdown() {
             .iter()
             .any(|event| event == "tree-stop" || event == "cache-stop")
     );
-}
-
-#[test]
-fn context_guard_rejects_every_bound_document_or_private_environment_change() {
-    for key in ["review", "bootstrap", "manifest", "environment"] {
-        let runtime = FakeRuntime::new();
-        let context = Context::load(&runtime.fixture.backend, runtime.fixture.context()).unwrap();
-        let path = Path::new(text(&context.value["sources"][key], "path").unwrap());
-        fs::write(path, b"{}").unwrap();
-        assert!(context.guard(None).is_err());
-    }
 }

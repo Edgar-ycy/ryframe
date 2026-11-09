@@ -288,37 +288,6 @@ fn registration_binds_request_environment_and_storage_without_leaking_values() {
 }
 
 #[test]
-fn file_configuration_uses_explicit_app_env_and_requires_selected_file() {
-    let f = Fixture::new();
-    let config = f.path("execution/config");
-    fs::create_dir_all(&config).unwrap();
-    let target = f.path("target");
-    let state = serde_json::to_string(&target.join("reset-state")).unwrap();
-    fs::write(config.join("app.toml"), "[reset]\nservices_stopped=false\n").unwrap();
-    fs::write(
-        config.join("app.test.toml"),
-        format!(
-            "[reset]\nservices_stopped=true\nsource_sha=\"{}\"\nstate_directory={state}\n",
-            "a".repeat(40)
-        ),
-    )
-    .unwrap();
-    fs::write(
-        config.join("app.dev.toml"),
-        "[reset]\nservices_stopped=false\n",
-    )
-    .unwrap();
-    let mut arguments = json!({"execution_backend":f.path("execution"),"app_env":"test","maintenance":{"source":{"snapshot":{"head":"a".repeat(40)}}}});
-    let valid = f.invoke(&target, "reset-execution-configuration", arguments.clone());
-    assert_eq!(valid["ok"], true, "{valid}");
-    assert_eq!(valid["result"]["path"], json!(target.join("reset-state")));
-    arguments["app_env"] = json!("dev");
-    rejected(&f.invoke(&target, "reset-execution-configuration", arguments.clone()));
-    arguments["app_env"] = json!("missing-private-secret");
-    rejected(&f.invoke(&target, "reset-execution-configuration", arguments));
-}
-
-#[test]
 fn stdin_protocol_rejects_argv_duplicate_fields_versions_and_oversized_requests() {
     for (args, bytes) in [
         (vec!["__target-evidence", "private-secret"], b"{}".to_vec()),

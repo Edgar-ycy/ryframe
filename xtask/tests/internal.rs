@@ -76,6 +76,8 @@ mod build_source;
 #[path = "../src/data.rs"]
 mod data;
 
+#[path = "internal/arm_target.rs"]
+mod arm_target_tests;
 #[path = "internal/backend_sources.rs"]
 mod backend_sources_tests;
 #[path = "internal/build.rs"]
@@ -124,6 +126,8 @@ mod ci_security_tests;
 mod ci_tests;
 #[path = "internal/ci_tls.rs"]
 mod ci_tls_tests;
+#[path = "internal/ci_workflow.rs"]
+mod ci_workflow_tests;
 #[path = "internal/cli.rs"]
 mod cli_tests;
 #[path = "internal/clone_bridge.rs"]
@@ -274,6 +278,9 @@ mod runtime_selection_tests;
 mod runtime_source_tests;
 #[path = "internal/seed_source.rs"]
 mod seed_source_tests;
+#[cfg(windows)]
+#[path = "internal/source_registration_cim.rs"]
+mod source_registration_cim_tests;
 #[path = "internal/target_authority_native.rs"]
 mod target_authority_native;
 #[path = "internal/target_configuration_fixture.rs"]
@@ -282,8 +289,12 @@ mod target_configuration_fixture;
 mod target_database_native;
 #[path = "internal/target_evidence_aggregate.rs"]
 mod target_evidence_aggregate_tests;
+#[path = "internal/target_fresh_status.rs"]
+mod target_fresh_status_tests;
 #[path = "internal/target_guard_native.rs"]
 mod target_guard_native_tests;
+#[path = "internal/target_initialize_restart_fixture.rs"]
+mod target_initialize_restart_fixture;
 #[path = "internal/target_physical_file.rs"]
 mod target_physical_file;
 #[path = "internal/target_proof_native.rs"]
@@ -302,9 +313,23 @@ mod target_storage_model_tests;
 mod target_storage_redis;
 #[path = "internal/target_storage_redis_state.rs"]
 mod target_storage_redis_state;
+#[path = "internal/target_verify_fixture.rs"]
+mod target_verify_fixture;
 #[path = "internal/target_verify_native.rs"]
 mod target_verify_native_tests;
+#[path = "internal/target_verify_published.rs"]
+mod target_verify_published_tests;
 #[path = "internal/watch.rs"]
 mod watch_tests;
 #[path = "internal/workspace.rs"]
 mod workspace_tests;
+
+#[path = "unit/recovery/clone/native/target_verify/prepare_history.rs"]
+mod target_prepare_history_tests;
+#[path = "unit/recovery/clone/native/target_verify/fresh/ports.rs"]
+mod target_prepare_ports_tests;
+#[path = "unit/recovery/clone/native/target_verify/fresh/registration.rs"]
+mod target_prepare_registration_tests;
+
+#[path = "internal/target_initialize_native.rs"]
+mod target_initialize_native_tests;

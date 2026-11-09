@@ -145,6 +145,7 @@ impl Base {
         let cache = path(&selected_tools["corepack_home"])?;
         directory(&cache)?;
         let mut tools = json!({"python":bound(&path(&boot["python"])?)?,"mysql":mysql,"corepack":bound(&corepack)?,"corepack_home":cache});
+        tools["worker_origin"] = api.call("worker-origin", json!({}))?;
         if cfg!(windows) {
             tools["node"] = bound(&path(&selected_tools["node"])?)?;
             tools["corepack_entry"] = bound(
@@ -163,29 +164,7 @@ impl Base {
             )?;
         }
         output_set(runtime, run_id, &outputs, fresh)?;
-        let browser = json!([
-            "check",
-            "--stage",
-            "browser",
-            "--real",
-            "--fixture",
-            "business",
-            "--server",
-            server
-        ]);
-        let verify = json!([
-            "exec",
-            "node",
-            "scripts/restore-build.mjs",
-            "verify",
-            "--source-root",
-            frontend
-        ]);
-        let commands = if server == "dev" {
-            json!([browser])
-        } else {
-            json!([["build", "--real"], verify, browser, verify])
-        };
+        let commands = commands(frontend, server)?;
         let response_audit = if server == "preview" {
             json!({"path":outputs["response_audit"],"initial_state":"absent","first_writer":"frontend-preview-static-proxy"})
         } else {
@@ -231,10 +210,13 @@ impl Base {
             api_url: _,
             frontend_url: _,
         } = self;
-        let source_guards = vec![
+        let mut source_guards = vec![
             SourceGuard::capture(&execution, &binding["backend"]["source"])?,
             SourceGuard::capture(&frontend, &binding["frontend"]["source"]["generated"])?,
         ];
+        source_guards.push(super::worker_origin::source_guard(
+            &binding["tools"]["worker_origin"],
+        )?);
         let mut input_guards = input_guards(&binding)?;
         input_guards.push(snapshot(
             &path(&bootstrap["secret_files"]["reset-admin-password.txt"]["path"])?,
@@ -254,4 +236,31 @@ impl Base {
             private: boot["private"].clone(),
         })
     }
+}
+
+pub(super) fn commands(frontend: &std::path::Path, server: &str) -> Result<Value> {
+    check(matches!(server, "dev" | "preview"), "浏览器模式无效")?;
+    let browser = json!([
+        "check",
+        "--stage",
+        "browser",
+        "--real",
+        "--fixture",
+        "business",
+        "--server",
+        server
+    ]);
+    let verify = json!([
+        "exec",
+        "node",
+        "scripts/restore-build.mjs",
+        "verify",
+        "--source-root",
+        frontend
+    ]);
+    Ok(if server == "dev" {
+        json!([browser])
+    } else {
+        json!([["build", "--real"], verify, browser, verify])
+    })
 }

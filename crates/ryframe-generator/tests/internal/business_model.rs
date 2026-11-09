@@ -70,6 +70,7 @@ fn descriptor(
         menu_order: 100,
         primary_key,
         indexes: Vec::new(),
+        foreign_keys: Vec::new(),
         fields,
     }
 }

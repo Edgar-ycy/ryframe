@@ -129,6 +129,9 @@ fn run_hidden_handlers() -> bool {
     if let Some(code) = recovery::clone::native::session::run_hidden_if_requested() {
         std::process::exit(code);
     }
+    if let Some(code) = recovery::frontend_build::protocol::run_hidden_if_requested() {
+        std::process::exit(code);
+    }
     if let Some(code) = frontend_origin::run_hidden_if_requested() {
         std::process::exit(code);
     }
@@ -156,6 +159,17 @@ fn run_hidden_handlers() -> bool {
 }
 
 fn run_recovery_hidden_handlers() {
+    if let Some(code) =
+        recovery::runtime::dataset_authority::verify_existing::run_hidden_if_requested()
+    {
+        std::process::exit(code);
+    }
+    if let Some(code) = recovery::runtime::frontend_site::run_hidden_if_requested() {
+        std::process::exit(code);
+    }
+    if let Some(code) = recovery::runtime::start::actor::run_hidden_if_requested() {
+        std::process::exit(code);
+    }
     if let Some(code) = recovery::full_stack::worker::run_hidden_if_requested() {
         std::process::exit(code);
     }

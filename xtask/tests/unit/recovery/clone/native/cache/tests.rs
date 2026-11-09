@@ -1,13 +1,15 @@
+#[cfg(windows)]
 use super::{
     super::{digest, json as document, resources::common},
-    evidence, facts, model, process,
+    evidence,
 };
+use super::{facts, model, process};
 use serde_json::{Value, json};
 use std::io::Cursor;
 
 const BOOT: &str = "5a81dc04-9e9a-416b-8eab-1b059bddf489";
 
-fn request() -> Value {
+pub(super) fn request() -> Value {
     json!({"scope_id":"cache-test","wsl":{"path":"D:\\wsl.exe","sha256":"a".repeat(64)},
         "distribution":"Ubuntu-24.04","launcher":"/usr/bin/redis-server","executable":"/usr/bin/redis-check-rdb",
         "sha256":"a".repeat(64),"configuration":{"path":"D:\\data\\redis.conf","bytes":5,"sha256":"b".repeat(64)},
@@ -32,6 +34,29 @@ fn validates_exact_request_predecessor_and_direct_password() {
         json!("\0hidden-secret"),
     ] {
         let error = model::password(&invalid).unwrap_err();
+        assert!(!error.to_string().contains("hidden-secret"));
+    }
+    let private = json!({"APP_ENV":"test","TEMP":"D:/private/tmp","TMP":"D:/private/tmp"});
+    assert_eq!(
+        super::request::run(
+            "environment-select",
+            &json!({"private":{"environment":private}})
+        )
+        .unwrap(),
+        private
+    );
+    for environment in [
+        json!({"APP_ENV":"test","APP_REDIS_PASSWORD":"hidden-secret"}),
+        json!({"APP_ENV":"test","PATH":"unbound-path"}),
+        json!({"APP_ENV":"prod"}),
+        json!({"APP_ENV":"test","TEMP":123}),
+        json!({"APP_ENV":"test","TEMP":"one","temp":"two"}),
+    ] {
+        let error = super::request::run(
+            "environment-select",
+            &json!({"private":{"environment":environment}}),
+        )
+        .unwrap_err();
         assert!(!error.to_string().contains("hidden-secret"));
     }
     let mut wrong = request.clone();
@@ -191,6 +216,11 @@ struct Fixture {
 
 #[cfg(windows)]
 impl Fixture {
+    fn native() -> Self {
+        let mut fixture = Self::new();
+        fixture.request = super::native_lifecycle_tests::native_request(fixture.request);
+        fixture
+    }
     fn new() -> Self {
         let base = crate::workspace::root_dir().join(".local-tests");
         std::fs::create_dir_all(&base).unwrap();
@@ -219,6 +249,18 @@ impl Fixture {
         document::write_new(&self.output.join(name), &value).unwrap();
     }
     fn intent(&self) {
+        if self.request["format_version"] == 2 {
+            self.write("launch-request.json", json!({"format_version":2,"request":self.request,
+                "request_sha256":digest::plan_hash(&self.request).unwrap(),"windows_output":self.output,
+                "linux_output":model::linux_path(self.output.to_str().unwrap()).unwrap(),"native_tool":self.request["native_tool"]}));
+            self.write(
+                "intent.json",
+                json!({"request_sha256":digest::plan_hash(&self.request).unwrap(),
+                "arguments":evidence::historical_arguments(&self.request,&self.output).unwrap(),
+                "launch":common::binding(&self.output.join("launch-request.json")).unwrap()}),
+            );
+            return;
+        }
         let helpers = self.output.join("helpers");
         std::fs::create_dir(&helpers).unwrap();
         let mut sources = json!({});
@@ -230,7 +272,7 @@ impl Fixture {
             sources[key] = binding;
         }
         self.write("launch-request.json",json!({"format_version":1,"request":self.request,"request_sha256":digest::plan_hash(&self.request).unwrap(),"windows_output":self.output,"helpers":sources}));
-        self.write("intent.json",json!({"request_sha256":digest::plan_hash(&self.request).unwrap(),"arguments":evidence::command(&self.request,&self.output,"serve").unwrap(),"launch":common::binding(&self.output.join("launch-request.json")).unwrap()}));
+        self.write("intent.json",json!({"request_sha256":digest::plan_hash(&self.request).unwrap(),"arguments":evidence::historical_arguments(&self.request,&self.output).unwrap(),"launch":common::binding(&self.output.join("launch-request.json")).unwrap()}));
     }
     fn recorded(&self) -> Value {
         self.intent();
@@ -270,44 +312,109 @@ fn frozen_receipts_bind_generation_tools_directory_and_fail_unknown_launches() {
     let unknown = Fixture::new();
     unknown.intent();
     assert!(evidence::inspect(&unknown.request, &unknown.output).is_err());
+    let before = std::fs::read_dir(&unknown.output).unwrap().count();
+    assert!(
+        super::readonly::status(
+            &crate::workspace::root_dir(),
+            &unknown.request,
+            &json!({"output":unknown.output}),
+            None
+        )
+        .is_err()
+    );
+    assert_eq!(std::fs::read_dir(&unknown.output).unwrap().count(), before);
+
+    let partial = Fixture::new();
+    partial.intent();
+    partial.write(
+        "partial.json",
+        json!({"state":"not_started",
+        "request_sha256":digest::plan_hash(&partial.request).unwrap(),
+        "intent":common::binding(&partial.output.join("intent.json")).unwrap(),
+        "launcher_pid":std::process::id(),"launcher_returncode":1,
+        "authorization_sent":false,"linux_cleanup":null}),
+    );
+    let receipt = evidence::inspect(&partial.request, &partial.output).unwrap();
+    let before = std::fs::read(partial.output.join("partial.json")).unwrap();
+    let error = super::readonly::status(
+        &crate::workspace::root_dir(),
+        &partial.request,
+        &receipt,
+        None,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("历史 WSL Redis 代次仅供证据核验"));
+    assert_eq!(
+        std::fs::read(partial.output.join("partial.json")).unwrap(),
+        before
+    );
 }
 
 #[cfg(windows)]
 #[test]
-fn control_rechecks_frozen_receipts_before_single_call_and_never_retries() {
-    use std::os::windows::process::ExitStatusExt;
-    let fixture = Fixture::new();
+fn historical_cache_receipts_remain_readable_but_all_live_operations_refuse_them() {
+    let backend = crate::workspace::root_dir();
+    let fixture = Fixture::native();
     let runtime = fixture.recorded();
-    let mut calls = 0;
-    let failure = process::call_with(&fixture.request, &runtime, "stop", |args, input| {
-        calls += 1;
-        assert!(args.iter().all(|arg| !arg.contains("bound-private-value")));
-        assert_eq!(
-            serde_json::from_slice::<Value>(input).unwrap(),
-            runtime["linux_identity"]
-        );
-        Ok(std::process::Output {
-            status: std::process::ExitStatus::from_raw(17),
-            stdout: vec![],
-            stderr: b"private password".to_vec(),
-        })
-    })
-    .unwrap_err();
-    assert_eq!(calls, 1);
-    assert!(!failure.to_string().contains("private password"));
-    let mut wrong = runtime.clone();
-    wrong["linux_identity"]["started"] = json!("999");
-    assert!(
-        process::call_with(&fixture.request, &wrong, "stop", |_, _| panic!(
-            "错误代次不得调用"
-        ))
-        .is_err()
+    let frozen = evidence::inspect(&fixture.request, &fixture.output).unwrap();
+    let supplied = fixture.output.join("supplied-cache-request.json");
+    std::fs::write(
+        &supplied,
+        serde_json::to_vec(&json!({"process":fixture.request})).unwrap(),
+    )
+    .unwrap();
+    let before = std::fs::read_dir(&fixture.output).unwrap().count();
+    let start = super::host_start::start(
+        &backend,
+        &fixture.request,
+        &Value::Null,
+        &fixture.output,
+        || panic!("旧代次不得调用启动守卫"),
     );
-    assert!(
-        process::call_with(&fixture.request, &runtime, "serve", |_, _| panic!(
-            "不得隐式创建进程"
-        ))
-        .is_err()
+    let stop = super::host_control::stop_guarded(
+        &backend,
+        &fixture.request,
+        &runtime,
+        &fixture.output,
+        || panic!("旧代次不得调用停止守卫"),
+    );
+    let call = |operation, arguments| {
+        let payload = json!({"format_version": 1, "kind": "ryframe-cache-process",
+            "operation": operation, "arguments": arguments});
+        super::execute(&backend, &serde_json::to_vec(&payload).unwrap())
+    };
+    for result in [
+        start,
+        stop,
+        super::stage::require_live_request(&backend, &fixture.output, Some(&supplied))
+            .map(|()| Value::Null),
+        super::host_control::observe(&backend, &fixture.request, &runtime),
+        super::readonly::port(
+            &backend,
+            "predecessor",
+            &json!({
+                "request": fixture.request, "runtime": runtime, "effective": fixture.request,
+            }),
+        ),
+        call("facts", json!({"request": fixture.request})),
+        call(
+            "call",
+            json!({"request": fixture.request, "runtime": runtime, "action": "stop"}),
+        ),
+    ] {
+        let error = result.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("历史 WSL Redis 代次仅供证据核验")
+        );
+        assert!(!error.to_string().contains("bound-private-value"));
+    }
+    assert_eq!(std::fs::read_dir(&fixture.output).unwrap().count(), before);
+    assert_eq!(
+        evidence::inspect(&fixture.request, &fixture.output).unwrap(),
+        frozen
     );
 }
 
@@ -386,3 +493,7 @@ fn loopback_resp_authentication_uses_direct_request_password_and_redacts_errors(
     facts::check(&request, &json!({"pid":300}), &observed, &Value::Null).unwrap();
     assert!(!observed.to_string().contains("bound-private-value"));
 }
+
+#[cfg(windows)]
+#[path = "failed_cleanup.rs"]
+mod failed_cleanup_tests;

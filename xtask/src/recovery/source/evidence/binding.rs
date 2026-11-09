@@ -13,14 +13,16 @@ use super::documents;
 use crate::{
     Result,
     local_test_path::{LocalTestPathKind, validate_absolute_path, validate_local_test_path},
-    recovery::clone::native::{digest, target_verify::input::request_physical},
+    recovery::clone::native::{
+        digest, s3::app_configuration, target_verify::input::request_physical,
+    },
 };
 
 #[cfg(test)]
 #[path = "../../../../tests/unit/recovery/source/evidence/binding/tests.rs"]
 mod tests;
 
-pub(super) fn physical(args: &Value) -> Result<Value> {
+pub(crate) fn physical(args: &Value) -> Result<Value> {
     documents::exact(
         args,
         &[
@@ -41,7 +43,16 @@ pub(super) fn physical(args: &Value) -> Result<Value> {
     let table = crate::rate_limit::load_app_table(&backend, Some(&directory), "test")
         .map_err(|_| "来源配置不完整或无法安全解析；检查选定配置目录和app.test.toml")?;
     let table = serde_json::to_value(table).map_err(|_| "来源配置无法安全解析")?;
-    let value = physical_table(&evidence, &args["source"], &table)?;
+    documents::exact(
+        &args["source"]["s3"],
+        &["configuration"],
+        "来源对象文件绑定",
+    )?;
+    let binding = &args["source"]["s3"]["configuration"];
+    let mut source = args["source"].clone();
+    source["s3"] = app_configuration::private_configuration(&evidence, binding)?;
+    let value = physical_table(&evidence, &source, &table)?;
+    app_configuration::private_configuration(&evidence, binding)?;
     if configuration_files(&backend, &args["config_dir"])? != (directory, files) {
         return Err("来源配置在读取期间发生变化".into());
     }
@@ -134,7 +145,7 @@ fn physical_table(backend: &Path, source: &Value, table: &Value) -> Result<Value
     Ok(value)
 }
 
-pub(super) fn path(value: &Value) -> Result<PathBuf> {
+pub(in crate::recovery) fn path(value: &Value) -> Result<PathBuf> {
     let text = value
         .as_str()
         .filter(|value| {
@@ -148,7 +159,7 @@ pub(super) fn path(value: &Value) -> Result<PathBuf> {
     Ok(path)
 }
 
-pub(super) fn summary(args: &Value) -> Result<Value> {
+pub(in crate::recovery) fn summary(args: &Value) -> Result<Value> {
     documents::exact(args, &["backend", "database"], "数据库公开连接参数")?;
     let mut value =
         request_physical::defaults_connection(&path(&args["backend"])?, &args["database"])?;
@@ -225,7 +236,7 @@ pub(super) fn redact(args: &Value) -> Result<Value> {
     Ok(json!(text))
 }
 
-pub(super) fn configuration(args: &Value) -> Result<Value> {
+pub(in crate::recovery) fn configuration(args: &Value) -> Result<Value> {
     documents::exact(
         args,
         &["backend", "database", "output", "text"],

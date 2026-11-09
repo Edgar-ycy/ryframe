@@ -134,10 +134,10 @@ pub(super) fn cache_plan(args: &Value) -> Result<Value> {
         if !identities.insert((tenant, user)) {
             return Err("来源登录主体重复".into());
         }
-        let prefix = format!("{namespace}ryframe:authorization:{{{tenant}}}");
+        let prefix = format!("{namespace}authorization:{{{tenant}}}");
         let tenant_epoch = format!("{prefix}:epoch");
         let version = format!("{prefix}:user:{user}:version");
-        let snapshot = format!("{prefix}:user:{user}:snapshots");
+        let snapshot = format!("{prefix}:user:{user}:snapshots:v4");
         keys.extend([tenant_epoch.clone(), version.clone(), snapshot.clone()]);
         rows.push(json!({"tenant_id":tenant,"user_id":user,
             "user_authorization_version":subject["user_authorization_version"],

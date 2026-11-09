@@ -95,6 +95,8 @@ impl S3ObjectStorage {
         let endpoint = normalize_endpoint(&config.endpoint, config.use_ssl)?;
         let request_timeout = Duration::from_secs(config.request_timeout_secs);
         let mut client = reqwest::Client::builder()
+            // 端点由文件配置决定，不消费宿主 HTTP_PROXY 等隐式代理配置。
+            .no_proxy()
             .timeout(request_timeout)
             .redirect(reqwest::redirect::Policy::none());
         if let Some(root_ca_pem) = config.root_ca_pem {

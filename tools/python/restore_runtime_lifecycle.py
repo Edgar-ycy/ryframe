@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 import time
 from pathlib import Path
 
@@ -30,7 +31,7 @@ from restore_runtime_state import (
     validate_state,
     write_launch,
 )
-from restore_runtime_launch import ROLES, launch_environment, prepare_request
+from restore_runtime_launch import ROLES, frontend_tool, launch_environment, prepare_request
 from restore_runtime_registration import (
     REGISTRATION_LOCK,
     registration_binding,
@@ -116,17 +117,6 @@ def _observe_role(generation: dict, role: str) -> dict:
 
 def _observe_generation(generation: dict) -> dict:
     return {role: _observe_role(generation, role) for role in ROLES}
-
-
-def _derived_status(generation: dict, observed: dict) -> str:
-    states = {item["state"] for item in observed.values()}
-    if states == {"running"}:
-        return "running"
-    if "running" in states:
-        return "degraded"
-    if generation["status"] in FINAL_STATES:
-        return generation["status"]
-    return "exited" if states == {"stopped"} else "interrupted"
 
 
 def _stop_roles(generation: dict, observed: dict) -> list[str]:
@@ -224,7 +214,8 @@ def start(args, coordinator: Path, probe_api, probe_worker, probe_frontend) -> d
         try:
             for role in ROLES:
                 item = generation["roles"][role]
-                with Path(item["log"]).open("xb") as log:
+                tool = frontend_tool(request["tools"]["frontend_server"]) if role == "frontend" else nullcontext()
+                with tool, Path(item["log"]).open("xb") as log:
                     process = launch_supervised_process(
                         generation_path,
                         role,
@@ -239,7 +230,7 @@ def start(args, coordinator: Path, probe_api, probe_worker, probe_frontend) -> d
                         log,
                         operation_id=item["operation_id"],
                     )
-                started[role] = process
+                    started[role] = process
                 item["tree"], item["state"] = process.tree, "running"
                 document = save_state(root, state, binding, document)
                 _wait_ready(
@@ -328,49 +319,6 @@ def _verify_interrupted_creation(root: Path, binding: dict, facts: dict):
     return creation, request["request"]
 
 
-def status(args, coordinator: Path) -> dict:
-    root, binding, _registration, _facts, _documents = _binding(
-        coordinator, args.runtime_registration, args.target_plan
-    )
-    control = runtime_control_directory(coordinator)
-    with controller_lock(control, _operation("status", binding), REGISTRATION_LOCK):
-        root, binding, facts, documents, document, state = _load_locked(args, coordinator)
-        if state is None:
-            if creation_path(root).exists():
-                _creation, _request = _verify_interrupted_creation(root, binding, facts)
-                return {
-                    "format_version": 1,
-                    "kind": "restore-runtime-lifecycle-result",
-                    "operation": "status",
-                    "status": "interrupted_before_first_generation",
-                    "generation": 1,
-                    "registration": binding,
-                }
-            verify_registration(coordinator, args.runtime_registration, binding["target_plan"])
-            return {
-                "format_version": 1,
-                "kind": "restore-runtime-lifecycle-result",
-                "operation": "status",
-                "status": "registered_not_started",
-                "registration": binding,
-            }
-        generation = state["generations"][-1]
-        observed = _observe_generation(generation)
-        for item in (*documents, document):
-            item.assert_unchanged()
-        return {
-            "format_version": 1,
-            "kind": "restore-runtime-lifecycle-result",
-            "operation": "status",
-            "status": _derived_status(generation, observed),
-            "persisted_status": generation["status"],
-            "generation": generation["number"],
-            "runtime_directory": generation["directory"],
-            "processes": observed,
-            "launch": generation["launch"],
-        }
-
-
 def _stop_locked(args, coordinator: Path) -> dict:
     root, binding, _facts, documents, document, state = _load_locked(args, coordinator)
     if state is None:
@@ -419,15 +367,6 @@ def _stop_locked(args, coordinator: Path) -> dict:
         "runtime_directory": generation["directory"],
         "processes": _observe_generation(generation),
     }
-
-
-def stop(args, coordinator: Path) -> dict:
-    _root, binding, _registration, _facts, _documents = _binding(
-        coordinator, args.runtime_registration, args.target_plan
-    )
-    control = runtime_control_directory(coordinator)
-    with controller_lock(control, _operation("stop", binding), REGISTRATION_LOCK):
-        return _stop_locked(args, coordinator)
 
 
 def recover(args, coordinator: Path) -> dict:
@@ -479,10 +418,6 @@ def recover(args, coordinator: Path) -> dict:
 def dispatch(args, coordinator: Path, probe_api, probe_worker, probe_frontend) -> dict:
     if args.command == "start":
         return start(args, coordinator, probe_api, probe_worker, probe_frontend)
-    if args.command == "status":
-        return status(args, coordinator)
-    if args.command == "stop":
-        return stop(args, coordinator)
     if args.command == "recover":
         return recover(args, coordinator)
     raise ValueError("未知恢复运行生命周期操作")

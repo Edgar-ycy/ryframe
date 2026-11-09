@@ -5,6 +5,8 @@ pub(crate) fn port(resource: &ResourceIr, header: &str) -> String {
     let scope_parameter = super::super::owner_scope_parameter(resource);
     let id_type = super::super::id_type(resource);
     let pascal = &resource.pascal_name;
+    let insert_type = super::super::insert_type(resource);
+    let insert_import = super::super::insert_import(resource);
     let filter_lifetime = super::super::filter_lifetime(resource, "'_");
     let detail_type = if resource.relations.is_empty() {
         format!("{pascal}Record")
@@ -47,6 +49,6 @@ pub(crate) fn port(resource: &ResourceIr, header: &str) -> String {
         ""
     };
     format!(
-        "{header}use async_trait::async_trait;\nuse ryframe_kernel::{{AppResult, PageResult}};\n\nuse crate::PersistenceTransaction;\n\nuse super::model::{{{pascal}Filter, {pascal}Record{detail_import}}};\n\n#[async_trait]\npub trait {pascal}Transaction: PersistenceTransaction + Sync {{\n{control_methods}{data_scope_lock}    async fn find_by_id_for_update(\n        &self,\n        tenant_id: &str,\n        id: {id_type},\n{scope_parameter}    ) -> AppResult<Option<{pascal}Record>>;\n\n    async fn insert(&self, record: {pascal}Record) -> AppResult<{pascal}Record>;\n\n    async fn update(&self, record: {pascal}Record) -> AppResult<{pascal}Record>;\n\n    async fn delete(&self, tenant_id: &str, id: {id_type}) -> AppResult<()>;\n}}\n\n#[async_trait]\npub trait {pascal}PersistencePort: Send + Sync {{\n    async fn find_by_id(\n        &self,\n        tenant_id: &str,\n        id: {id_type},\n{scope_parameter}    ) -> AppResult<Option<{detail_type}>>;\n\n    async fn find_by_page(\n        &self,\n        tenant_id: &str,\n        page: ryframe_kernel::ValidatedPageQuery,\n        filter: {pascal}Filter{filter_lifetime},\n    ) -> AppResult<PageResult<{pascal}Record>>;\n\n    async fn begin(&self, tenant_id: &str) -> AppResult<Box<dyn {pascal}Transaction>>;\n}}\n"
+        "{header}use async_trait::async_trait;\nuse ryframe_kernel::{{AppResult, PageResult}};\n\nuse crate::PersistenceTransaction;\n\nuse super::model::{{{pascal}Filter, {pascal}Record{detail_import}{insert_import}}};\n\n#[async_trait]\npub trait {pascal}Transaction: PersistenceTransaction + Sync {{\n{control_methods}{data_scope_lock}    async fn find_by_id_for_update(\n        &self,\n        tenant_id: &str,\n        id: {id_type},\n{scope_parameter}    ) -> AppResult<Option<{pascal}Record>>;\n\n    async fn insert(&self, record: {insert_type}) -> AppResult<{pascal}Record>;\n\n    async fn update(&self, record: {pascal}Record) -> AppResult<{pascal}Record>;\n\n    async fn delete(&self, tenant_id: &str, id: {id_type}) -> AppResult<()>;\n}}\n\n#[async_trait]\npub trait {pascal}PersistencePort: Send + Sync {{\n    async fn find_by_id(\n        &self,\n        tenant_id: &str,\n        id: {id_type},\n{scope_parameter}    ) -> AppResult<Option<{detail_type}>>;\n\n    async fn find_by_page(\n        &self,\n        tenant_id: &str,\n        page: ryframe_kernel::ValidatedPageQuery,\n        filter: {pascal}Filter{filter_lifetime},\n    ) -> AppResult<PageResult<{pascal}Record>>;\n\n    async fn begin(&self, tenant_id: &str) -> AppResult<Box<dyn {pascal}Transaction>>;\n}}\n"
     )
 }

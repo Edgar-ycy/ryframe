@@ -3,17 +3,52 @@ use std::path::PathBuf;
 use serde_json::Value;
 
 use super::super::{
+    cache::handoff::locks::Storage,
     export::transport::{CommandOutput, CommandSpec, Transport},
     lifecycle::stage::StageRequest,
     source,
 };
 use super::{
-    authority, guard,
+    authority, fail, guard,
     input::{self, TargetContext},
     storage::StorageObserver,
-    tree,
+    tree, verify_and_publish,
 };
 use crate::Result;
+
+pub(crate) fn execute_context<T: Transport>(
+    context: &TargetContext,
+    request: &StageRequest<'_>,
+    transport: &T,
+    storage_observer: &impl StorageObserver,
+    authority_observer: &impl authority::Observer,
+) -> Result<Value> {
+    if context.manifest["copy_stage"] != "seed_to_arm" {
+        return verify_and_publish(
+            context,
+            request,
+            transport,
+            storage_observer,
+            authority_observer,
+            None,
+        );
+    }
+    // 复制阶段已持外层运行锁。与交接保持同序，先持有外部存储，再进入目标 Generation。
+    let storage = Storage::acquire(&context.backend, request.run_dir, &context.manifest)?;
+    let result = verify_and_publish(
+        context,
+        request,
+        transport,
+        storage_observer,
+        authority_observer,
+        Some(&storage),
+    );
+    let published = result.is_ok();
+    match storage.finish(result) {
+        Err(error) if published => fail(context, error),
+        result => result,
+    }
+}
 
 pub(super) struct Frame<'a> {
     context: &'a TargetContext,
@@ -54,6 +89,12 @@ impl<'a> Frame<'a> {
             .check()?;
         self.check_inputs(true, true)?;
         input::validate_inputs(&self.context.backend, &stage(self.context))
+    }
+
+    pub(super) fn owner(&self) -> Result<&guard::Generation> {
+        self.generation
+            .as_ref()
+            .ok_or_else(|| "目标执行锁已经释放".into())
     }
 
     pub(super) fn checkpoint(&self) -> Result<()> {
@@ -150,7 +191,11 @@ impl<O: StorageObserver> StorageObserver for CheckedObserver<'_, O> {
         combine(self.inner.process_identity(pid), self.frame.checkpoint())
     }
 
-    fn arguments(&self, context: &TargetContext, identity: &Value) -> Result<Vec<String>> {
+    fn arguments(
+        &self,
+        context: &super::storage::StorageInputs<'_>,
+        identity: &Value,
+    ) -> Result<Vec<String>> {
         self.frame.checkpoint()?;
         combine(
             self.inner.arguments(context, identity),
@@ -158,7 +203,12 @@ impl<O: StorageObserver> StorageObserver for CheckedObserver<'_, O> {
         )
     }
 
-    fn listener(&self, context: &TargetContext, identity: &Value, url: &str) -> Result<()> {
+    fn listener(
+        &self,
+        context: &super::storage::StorageInputs<'_>,
+        identity: &Value,
+        url: &str,
+    ) -> Result<()> {
         self.frame.checkpoint()?;
         combine(
             self.inner.listener(context, identity, url),
@@ -166,7 +216,13 @@ impl<O: StorageObserver> StorageObserver for CheckedObserver<'_, O> {
         )
     }
 
-    fn wsl(&self, context: &TargetContext, redis: &Value, args: &[String]) -> Result<String> {
+    #[cfg(test)]
+    fn wsl(
+        &self,
+        context: &super::storage::StorageInputs<'_>,
+        redis: &Value,
+        args: &[String],
+    ) -> Result<String> {
         self.frame.checkpoint()?;
         combine(
             self.inner.wsl(context, redis, args),
@@ -174,11 +230,32 @@ impl<O: StorageObserver> StorageObserver for CheckedObserver<'_, O> {
         )
     }
 
-    fn redis(&self, context: &TargetContext, redis: &Value, parts: &[&str]) -> Result<Value> {
+    fn redis(
+        &self,
+        context: &super::storage::StorageInputs<'_>,
+        redis: &Value,
+        parts: &[&str],
+    ) -> Result<Value> {
         self.frame.checkpoint()?;
         combine(
             self.inner.redis(context, redis, parts),
             self.frame.checkpoint(),
         )
+    }
+
+    fn redis_window<T>(
+        &self,
+        context: &super::storage::StorageInputs<'_>,
+        redis: &Value,
+        read: impl FnOnce(&mut dyn FnMut(&[&str]) -> Result<Value>) -> Result<T>,
+    ) -> Result<T> {
+        self.frame.checkpoint()?;
+        let result = self.inner.redis_window(context, redis, |send| {
+            read(&mut |parts| {
+                self.frame.checkpoint()?;
+                combine(send(parts), self.frame.checkpoint())
+            })
+        });
+        combine(result, self.frame.checkpoint())
     }
 }

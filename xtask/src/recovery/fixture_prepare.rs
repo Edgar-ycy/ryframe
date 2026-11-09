@@ -81,6 +81,15 @@ fn prepare(
     frontend: &Path,
     port: &mut impl Port,
 ) -> Result<()> {
+    let settings =
+        ryframe_config::ToolSettings::load(root).map_err(|error| error.message().to_owned())?;
+    let target = settings
+        .generator_target_dir(root)
+        .map_err(|error| error.message().to_owned())?;
+    validate_absolute_path(&target, LocalTestPathKind::StateDirectory)?;
+    let cache = settings
+        .pnpm_cache_dir(root)
+        .map_err(|error| error.message().to_owned())?;
     let sources = [snapshot::capture(root)?, snapshot::capture(frontend)?];
     if let Some(expected) = &options.expected_sources {
         snapshot::formal(&sources[0], &expected.backend_sha)?;
@@ -100,11 +109,22 @@ fn prepare(
     snapshot::copy(frontend, &generated_frontend, &sources[1], port)?;
     fs::create_dir_all(backend.join(".local-tests"))?;
     fs::create_dir(backend.join(".local-tests/reference-fixture"))?;
+    fs::write(
+        backend.join(".local-tests/tools.toml"),
+        format!(
+            "[workspace]\nfrontend_dir = {}\n[generator]\ntarget_dir = {}\n{}",
+            json!(generated_frontend),
+            json!(target),
+            cache
+                .map(|path| format!("[verification]\npnpm_cache_dir = {}\n", json!(path)))
+                .unwrap_or_default()
+        ),
+    )?;
     let log = options.output_dir.join("prepare.log");
-    for (cwd, args) in commands(&backend, &generated_frontend) {
+    for (cwd, args) in commands(&backend, &generated_frontend, &target) {
         let program = &args[0];
         if args.get(1).map(String::as_str) == Some("__install-model") {
-            install_model(root, &backend, &generated_frontend, &path, &mut receipt)?;
+            install_model(root, &backend, &path, &mut receipt)?;
         } else {
             port.command_at(&cwd, program, &args[1..], Some(&log))?;
         }
@@ -119,13 +139,7 @@ fn prepare(
     )
 }
 
-fn install_model(
-    root: &Path,
-    backend: &Path,
-    frontend: &Path,
-    path: &Path,
-    receipt: &mut Value,
-) -> Result<()> {
+fn install_model(root: &Path, backend: &Path, path: &Path, receipt: &mut Value) -> Result<()> {
     let target = backend.join("crates/order-business/src/resources/mod.rs");
     fs::copy(
         root.join("tools/python/fixtures/order-business/src/resources/mod.rs"),
@@ -135,10 +149,6 @@ fn install_model(
         target
     )?));
     documents::write_replace(path, receipt)?;
-    fs::write(
-        backend.join(".local-tests/tools.toml"),
-        format!("[workspace]\nfrontend_dir = {}\n", json!(frontend)),
-    )?;
     Ok(())
 }
 
@@ -150,29 +160,42 @@ fn finish(
     path: &Path,
     receipt: &mut Value,
 ) -> Result<()> {
+    let settings =
+        ryframe_config::ToolSettings::load(backend).map_err(|error| error.message().to_owned())?;
+    let target = settings
+        .generator_target_dir(backend)
+        .map_err(|error| error.message().to_owned())?;
     let before = json!({"backend":snapshot::capture(backend)?.receipt,"frontend":snapshot::capture(generated_frontend)?.receipt});
     port.command_at(
         backend,
         "cargo",
-        &strings(&[
-            "run",
-            "--locked",
-            "-p",
-            "ryframe-generator",
-            "--bin",
-            "ryframe-generate",
-            "--",
-            "resource",
-            "--package",
-            "order-business",
-        ]),
+        &cargo_arguments(
+            &strings(&[
+                "run",
+                "--locked",
+                "-p",
+                "ryframe-generator",
+                "--bin",
+                "ryframe-generate",
+                "--",
+                "resource",
+                "--package",
+                "order-business",
+            ]),
+            &target,
+        ),
         Some(log),
     )?;
     let after = json!({"backend":snapshot::capture(backend)?.receipt,"frontend":snapshot::capture(generated_frontend)?.receipt});
     if before != after {
         return Err("资源只读检查修改了工作树；保留未完成夹具".into());
     }
-    port.command_at(backend, "cargo", &strings(&["xtask", "--help"]), Some(log))?;
+    port.command_at(
+        backend,
+        "cargo",
+        &cargo_arguments(&strings(&["xtask", "--help"]), &target),
+        Some(log),
+    )?;
     receipt["status"] = json!("ready");
     receipt["generated"] = before;
     documents::write_replace(path, receipt)?;
@@ -180,7 +203,11 @@ fn finish(
     Ok(())
 }
 
-pub(super) fn commands(backend: &Path, frontend: &Path) -> Vec<(std::path::PathBuf, Vec<String>)> {
+pub(super) fn commands(
+    backend: &Path,
+    frontend: &Path,
+    target: &Path,
+) -> Vec<(std::path::PathBuf, Vec<String>)> {
     vec![
         (
             backend.into(),
@@ -194,10 +221,6 @@ pub(super) fn commands(backend: &Path, frontend: &Path) -> Vec<(std::path::PathB
             ]),
         ),
         (backend.into(), strings(&["internal", "__install-model"])),
-        (
-            backend.into(),
-            strings(&["cargo", "generate-lockfile", "--offline"]),
-        ),
         (backend.into(), generator(&["--write"])),
         (
             frontend.into(),
@@ -227,6 +250,49 @@ pub(super) fn commands(backend: &Path, frontend: &Path) -> Vec<(std::path::PathB
             ],
         ),
     ]
+    .into_iter()
+    .map(|(cwd, args)| {
+        if args[0] == "cargo" {
+            let mut command = vec!["cargo".into()];
+            command.extend(cargo_arguments(&args[1..], target));
+            (cwd, command)
+        } else {
+            (cwd, args)
+        }
+    })
+    .collect()
+}
+
+fn cargo_arguments(args: &[String], target: &Path) -> Vec<String> {
+    let mut args = match args[0].as_str() {
+        "generate" => {
+            let mut command = strings(&[
+                "run",
+                "--locked",
+                "-p",
+                "ryframe-generator",
+                "--bin",
+                "ryframe-generate",
+                "--",
+            ]);
+            // 固定命令由 commands 构造：仅移除 alias 紧随其后的分隔符。
+            assert_eq!(args[1], "--");
+            command.extend_from_slice(&args[2..]);
+            command
+        }
+        "xtask" => {
+            let mut command = strings(&["run", "--locked", "-p", "xtask", "--"]);
+            command.extend_from_slice(&args[1..]);
+            command
+        }
+        "run" => args.to_vec(),
+        _ => unreachable!("业务夹具只构造固定的 generate、xtask 与 run 命令"),
+    };
+    args.splice(
+        1..1,
+        ["--target-dir".into(), target.to_string_lossy().into_owned()],
+    );
+    args
 }
 
 fn generator(extra: &[&str]) -> Vec<String> {

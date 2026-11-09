@@ -10,6 +10,7 @@ use super::super::super::model::CliError;
 #[derive(Clone, Copy)]
 pub(super) enum DataPathRole {
     ControlledInputFile,
+    ExternalInputFile,
     ExternalDirectory,
     ControlledNewOutput,
 }
@@ -38,7 +39,7 @@ pub(super) fn validate_data_path(
             }
             Some(boundary)
         }
-        DataPathRole::ExternalDirectory => None,
+        DataPathRole::ExternalDirectory | DataPathRole::ExternalInputFile => None,
     };
     if let Some(boundary) = boundary {
         reject_linked_components(&path, &boundary, option)?;
@@ -87,10 +88,12 @@ fn inspect_component(path: &Path, option: &str) -> Result<(), CliError> {
 
 fn validate_role(path: &Path, option: &str, role: DataPathRole) -> Result<(), CliError> {
     match role {
-        DataPathRole::ControlledInputFile => match fs::symlink_metadata(path) {
-            Ok(metadata) if metadata.is_file() => Ok(()),
-            _ => Err(CliError::new(format!("{option} 必须是已存在的真实文件"))),
-        },
+        DataPathRole::ControlledInputFile | DataPathRole::ExternalInputFile => {
+            match fs::symlink_metadata(path) {
+                Ok(metadata) if metadata.is_file() => Ok(()),
+                _ => Err(CliError::new(format!("{option} 必须是已存在的真实文件"))),
+            }
+        }
         DataPathRole::ExternalDirectory => match fs::symlink_metadata(path) {
             Ok(metadata) if metadata.is_dir() => Ok(()),
             _ => Err(CliError::new(format!("{option} 必须是已存在的真实目录"))),

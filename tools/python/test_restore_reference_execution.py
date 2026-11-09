@@ -82,9 +82,10 @@ class RestoreExecutionTests(unittest.TestCase):
 
     def test_execution_rechecks_sources_and_publishes_side_and_input_bindings(self):
         tools = Mock()
-        with patch.object(target, "verify_comparison_sources", side_effect=lambda _root, value, **_kw: value) as sources:
+        with patch.object(target, "_native", side_effect=lambda _operation, args, **_kw: args["value"]) as sources:
             result = reference.execute(self.args, self.plan, self.backend, tools, self.work)
-        self.assertEqual([call.kwargs["read_only"] for call in sources.call_args_list], [True, False, True])
+        self.assertEqual([call.args[1]["read_only"] for call in sources.call_args_list], [True, False, True])
+        self.assertEqual([call.kwargs["write"] for call in sources.call_args_list], [False, True, False])
         self.assertEqual(tools.restore_database.call_count, 4)
         receipt = reference.read_json(self.work / "restore-base.json")
         self.assertEqual(receipt["status"], "completed")

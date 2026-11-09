@@ -1,0 +1,271 @@
+//! 正式参考恢复沿用已登记的运行与存储锁，保留每次写入和完整资源像。
+use std::{path::Path, sync::Mutex};
+
+use serde_json::{Map, Value, json};
+
+use super::{files, local::Lock, model, native, path, receipts, text};
+use crate::{
+    Result,
+    recovery::{
+        inputs::{document, inventory},
+        runtime::restore_guard::registered_stopped_runtime,
+    },
+};
+use native::{
+    bridge::scope::Scope,
+    cache::handoff::locks::Storage,
+    copy_transfer::{ReferenceTarget, mysql},
+    export::transport::SystemTransport,
+};
+
+#[path = "restore/database_images.rs"]
+mod database_images;
+#[path = "restore/expected_images.rs"]
+mod expected_images;
+#[path = "restore/images.rs"]
+mod images;
+#[path = "restore/inputs.rs"]
+mod inputs;
+#[path = "restore/object_images.rs"]
+mod object_images;
+#[path = "restore/object_write.rs"]
+mod object_write;
+
+use inputs::Snapshot;
+
+pub(super) fn run(backend: &Path, request: &Value) -> Result<Value> {
+    let before = Snapshot::read(backend, request, true)?;
+    let output = before.output(backend)?;
+    let plan = &before.chain.reference.value;
+    let work = files::work(&json!({"plan":plan}), true)?;
+    let work = path(&work)?;
+    let lock = Lock::claim(work)?;
+    if before.output(backend)? != output {
+        return Err("取得参考阶段锁前恢复输出位置变化".into());
+    }
+    before.assert_unchanged()?;
+    let bindings = before.bindings();
+    let started = receipts::start(&json!({
+        "plan":plan,"command":"restore","copy_id":null,"root":before.root,
+        "receipt":output,"bindings":bindings,
+    }))?;
+    let stage = Stage {
+        backend,
+        work,
+        lock: &lock,
+        started: &started,
+    };
+    let mut evidence = Map::new();
+    let result = registered_stopped_runtime(
+        backend,
+        &before.registration.path,
+        &document::binding(&before.target),
+        |checkpoint| stage.execute(request, &before, checkpoint, &mut evidence),
+    );
+    lock.check()?;
+    finish(&started, result, evidence)
+}
+
+fn finish(started: &Value, result: Result<Value>, evidence: Map<String, Value>) -> Result<Value> {
+    match result {
+        Ok(value) => {
+            receipts::finish(&json!({
+                "receipt":started,"result":value,"failure":null,"resource_images":null,
+            }))?;
+            Ok(value)
+        }
+        Err(error) => {
+            let images = if evidence.is_empty() {
+                Value::Null
+            } else {
+                Value::Object(evidence)
+            };
+            let recorded = receipts::finish(&json!({
+                "receipt":started,"result":null,"resource_images":images,
+                "failure":{"error_type":"ReferenceRestoreFailure",
+                    "message":"参考恢复未完成；保留原输入、写入诊断和资源像，禁止覆盖或自动重放"},
+            }));
+            if recorded.is_err() {
+                return Err("参考恢复与失败收据发布均未确认；保留运行收据和原现场".into());
+            }
+            Err(error)
+        }
+    }
+}
+
+struct Stage<'a> {
+    backend: &'a Path,
+    work: &'a Path,
+    lock: &'a Lock,
+    started: &'a Value,
+}
+
+impl Stage<'_> {
+    fn check(&self) -> Result<()> {
+        self.lock.check()?;
+        receipts::check_started(self.started)?;
+        Ok(())
+    }
+
+    fn execute(
+        &self,
+        request: &Value,
+        before: &Snapshot,
+        checkpoint: &dyn Fn() -> Result<Value>,
+        evidence: &mut Map<String, Value>,
+    ) -> Result<Value> {
+        let runtime = checkpoint()?;
+        before.check_runtime(&runtime)?;
+        self.check()?;
+        let snapshot = Snapshot::read(self.backend, request, false)?;
+        if snapshot.bindings() != before.bindings() {
+            return Err("恢复执行前目标计划或运行记录发生变化".into());
+        }
+        let plan = &snapshot.chain.reference.value;
+        let tasks = model::resources(&json!({
+            "plan":plan,"root":snapshot.root,"manifest":snapshot.manifest.value,
+        }))?;
+        let arm = &snapshot.chain.arm;
+        let manifest = &arm.manifest.value;
+        let bridges =
+            native::json::array(&arm.request.value["build_bridges"], "参考恢复原构建桥接")?;
+        let scope = Scope::load(self.backend, bridges, &[])?;
+        let storage = Storage::acquire(self.backend, self.work, manifest)?;
+        let result = (|| {
+            let target =
+                ReferenceTarget::open(self.backend, manifest, &storage, self.work, &scope)?;
+            let window = Execution {
+                stage: self,
+                snapshot: &snapshot,
+                target: &target,
+                scope: &scope,
+            };
+            window.run(&tasks, request, checkpoint, evidence)?;
+            model::restore_result(&json!({
+                "record":snapshot.record.value,"bindings":snapshot.bindings(),
+                "runtime":runtime,"images":evidence,
+            }))
+        })();
+        storage.finish(combine(result, scope.assert_unchanged()))
+    }
+}
+
+struct Execution<'a> {
+    stage: &'a Stage<'a>,
+    snapshot: &'a Snapshot,
+    target: &'a ReferenceTarget<'a>,
+    scope: &'a Scope,
+}
+
+impl Execution<'_> {
+    fn check(&self) -> Result<()> {
+        self.stage.check()?;
+        self.snapshot.assert_unchanged()?;
+        self.target.checkpoint()
+    }
+
+    fn run(
+        &self,
+        tasks: &Value,
+        request: &Value,
+        checkpoint: &dyn Fn() -> Result<Value>,
+        evidence: &mut Map<String, Value>,
+    ) -> Result<()> {
+        let (before, after) = expected_images::expected_images(
+            &self.snapshot.chain.reference.value,
+            &self.snapshot.manifest.value,
+            self.target.initialized(),
+        )?;
+        let runtime = || self.snapshot.check_runtime(&checkpoint()?);
+        self.capture("before", &before, &runtime, evidence)?;
+        let result = (|| {
+            self.write(tasks, &runtime)?;
+            inventory::verify_artifacts(&self.snapshot.root, &self.snapshot.manifest.value)?;
+            self.capture("after", &after, &runtime, evidence)
+        })();
+        if let Err(error) = result {
+            let checked = if evidence.contains_key("after") {
+                Ok(())
+            } else {
+                self.capture("failure-after", &after, &runtime, evidence)
+            };
+            return combine(Err(error), checked);
+        }
+        runtime()?;
+        let final_input = Snapshot::read(self.stage.backend, request, true)?;
+        if final_input.bindings() != self.snapshot.bindings() {
+            return Err("恢复完成复核时来源或输入绑定发生变化".into());
+        }
+        self.check()
+    }
+
+    fn capture(
+        &self,
+        phase: &str,
+        expected: &Value,
+        runtime: &dyn Fn() -> Result<()>,
+        evidence: &mut Map<String, Value>,
+    ) -> Result<()> {
+        runtime()?;
+        self.target.check()?;
+        let serial = Mutex::new(());
+        let observe = || {
+            let _guard = serial.lock().map_err(|_| "参考恢复观察检查点中断")?;
+            self.check()
+        };
+        images::capture(self, phase, expected, &observe, evidence)?;
+        self.target.check()?;
+        runtime()
+    }
+
+    fn write(&self, tasks: &Value, runtime: &dyn Fn() -> Result<()>) -> Result<()> {
+        for task in native::json::array(tasks, "参考恢复授权任务")? {
+            let checkpoint = || {
+                runtime()?;
+                self.check()
+            };
+            checkpoint()?;
+            let artifact = model::bound_artifact(&json!({
+                "root":self.snapshot.root,"manifest":self.snapshot.manifest.value,
+                "relative":task["relative"],
+            }))?;
+            let plan = &self.snapshot.chain.reference.value;
+            if task["kind"] == "database" {
+                mysql::reference::write(
+                    &self.target.inputs(),
+                    &mysql::reference::Write {
+                        backup_root: &self.snapshot.root,
+                        work: self.stage.work,
+                        task,
+                        artifact: &artifact,
+                        mysql: &plan["tools"]["mysql"],
+                    },
+                    &SystemTransport,
+                    &checkpoint,
+                )?;
+            } else {
+                object_write::create(
+                    &object_write::Create {
+                        backend: self.stage.backend,
+                        work: self.stage.work,
+                        artifact_root: &self.snapshot.root,
+                        task,
+                        artifact: &artifact,
+                        target_s3: &plan["target"]["s3"],
+                        scope: text(&plan["target"]["scope_id"])?,
+                    },
+                    &checkpoint,
+                )?;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn combine<T>(result: Result<T>, checked: Result<()>) -> Result<T> {
+    match (result, checked) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+        (Err(error), Err(_)) => Err(format!("{error}；参考恢复后验也失败，保留现场").into()),
+    }
+}

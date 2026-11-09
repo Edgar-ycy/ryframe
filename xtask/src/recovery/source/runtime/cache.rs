@@ -125,6 +125,17 @@ fn timestamp(value: &Value) -> Result<()> {
     Ok(())
 }
 
+fn binding(value: &Value) -> Result<()> {
+    crate::recovery::clone::native::lifecycle::manifest::validate_binding_shape(
+        value,
+        "缓存尝试文件绑定",
+    )?;
+    if !std::path::Path::new(documents::text(&value["path"], "缓存尝试路径")?).is_absolute() {
+        return Err("缓存尝试绑定必须使用绝对路径".into());
+    }
+    Ok(())
+}
+
 pub(super) fn receipt(args: &Value) -> Result<Value> {
     documents::exact(args, &["value", "subjects"], "授权缓存清理收据参数")?;
     let value = &args["value"];
@@ -141,9 +152,19 @@ pub(super) fn receipt(args: &Value) -> Result<Value> {
             "after",
             "execution",
             "cleaned_at",
+            "attempt",
+            "execution_record",
+            "attempt_phase",
         ],
         "授权缓存清理收据",
     )?;
+    binding(&value["attempt"])?;
+    if !value["execution_record"].is_null() {
+        binding(&value["execution_record"])?;
+    }
+    if !matches!(value["attempt_phase"].as_str(), Some("normal" | "recovery")) {
+        return Err("缓存清理原尝试阶段无效".into());
+    }
     let plan =
         model::cache_plan(&json!({"namespace":value["namespace"],"subjects":args["subjects"]}))?;
     let expected_keys = keys(&plan)?;
@@ -163,10 +184,10 @@ pub(super) fn receipt(args: &Value) -> Result<Value> {
     let before = documents::array(&value["before"], "授权缓存前像")?;
     let after = documents::array(&value["after"], "授权缓存后像")?;
     let valid_result = match value["execution"].as_str() {
-        Some("confirmed_lua_result") => value["deleted"]
+        Some("confirmed_watch_exec") => value["deleted"]
             .as_u64()
             .is_some_and(|n| (22..=33).contains(&n) && n + expired.len() as u64 == 33),
-        Some("reconciled_unknown_lua_result") => value["deleted"].is_null(),
+        Some("reconciled_unknown_exec_result") => value["deleted"].is_null(),
         _ => false,
     };
     if value["format_version"].as_u64() != Some(2)
@@ -193,11 +214,10 @@ pub(super) fn receipt(args: &Value) -> Result<Value> {
 pub(super) fn resume(args: &Value) -> Result<Value> {
     documents::exact(
         args,
-        &["frozen", "types", "observed"],
+        &["frozen", "types", "observed", "attempt"],
         "授权缓存未知结果恢复参数",
     )?;
     let frozen = &args["frozen"];
-    // 所有键已消失也必须先复核冻结计划和前像，不能绕过待续作intent校验。
     validate_observation(frozen, &frozen["subjects"])?;
     let types = documents::array(&args["types"], "授权缓存当前类型")?;
     if types.len() != keys(&frozen["plan"])?.len()
@@ -207,11 +227,21 @@ pub(super) fn resume(args: &Value) -> Result<Value> {
     {
         return Err("来源授权缓存当前类型集合不完整".into());
     }
-    if types.iter().all(|value| value == "none") {
-        return Ok(json!({"action":"reconcile","expired":expired(&frozen["before"])?}));
+    let absent = types.iter().all(|value| value == "none");
+    let attempt = &args["attempt"];
+    match attempt["status"].as_str() {
+        Some("not_attempted") if !absent && args["observed"] == *frozen => {
+            Ok(json!({"action":"execute"}))
+        }
+        Some("not_attempted") => {
+            Err("没有原 attempt，不能把外部删除当未知清理；核对完整前像".into())
+        }
+        Some("pre_exec_failed" | "watch_conflict") => {
+            Err("原尝试已明确未执行 UNLINK；当前变化需人工核对，禁止重试或未知和解".into())
+        }
+        Some("confirmed" | "unknown_exec") if attempt["observation"] == *frozen && absent => {
+            Ok(json!({"action":"publish"}))
+        }
+        _ => Err("已有尝试的前像或当前完整后像不符；同值、混合及漂移均禁止重放".into()),
     }
-    if args["observed"] != *frozen {
-        return Err("来源验收恢复 intent 后授权缓存出现混合状态或漂移".into());
-    }
-    Ok(json!({"action":"execute"}))
 }

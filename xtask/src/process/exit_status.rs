@@ -67,3 +67,35 @@ pub(crate) fn failure_exit_code(error: &(dyn Error + 'static)) -> Option<i32> {
         None
     }
 }
+
+/// 只发布已知静态类别；子进程原文可能含凭据或 URL userinfo。
+pub(crate) fn command_output_diagnostic(stdout: &[u8], stderr: &[u8]) -> &'static str {
+    let codes = [stdout, stderr].map(String::from_utf8_lossy);
+    let has_code = |expected| {
+        codes.iter().any(|text| {
+            text.split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                .any(|code| code == expected)
+        })
+    };
+    match (
+        has_code("ERR_PNPM_NO_OFFLINE_META"),
+        has_code("ERR_PNPM_META_FETCH_FAIL"),
+    ) {
+        (true, true) => {
+            "；ERR_PNPM_NO_OFFLINE_META / ERR_PNPM_META_FETCH_FAIL：核对 verification.pnpm_cache_dir；在独立目录使用同一 registry 联网准备所需缓存/元数据和冻结依赖并通过策略检查，保留失败现场后使用新输出目录；不得关闭供应链校验或直接重放"
+        }
+        (true, false) => {
+            "；ERR_PNPM_NO_OFFLINE_META：核对 verification.pnpm_cache_dir；在独立目录使用同一 registry 联网准备所需缓存/元数据和冻结依赖并通过策略检查，保留失败现场后使用新输出目录；不得关闭供应链校验或直接重放"
+        }
+        (false, true) => {
+            "；ERR_PNPM_META_FETCH_FAIL：核对 verification.pnpm_cache_dir 及同一 registry 的所需缓存/元数据、冻结依赖及策略检查；保留失败现场，不自动重试，不关闭供应链校验"
+        }
+        _ if codes.iter().any(|text| {
+            text.contains("fatal error C1083") && text.contains("Invalid argument")
+        }) =>
+        {
+            "；已确认 MSVC C1083 报告无效输出路径；检查路径长度和访问权限，在工具文件中为 generator.target_dir 配置较短的固定目录，修复后先预览；未回显子进程原文"
+        }
+        _ => "",
+    }
+}

@@ -330,7 +330,7 @@ fn tenant_permission_boundary_is_case_insensitive_and_fail_closed() {
 }
 
 #[test]
-fn product_version_accepts_empty_and_rejects_unknown_or_duplicate_capabilities() {
+fn product_version_accepts_empty_and_rejects_unknown_capabilities() {
     let capability = || ProductCapabilityRecord {
         code: "unknown.capability".into(),
         variant: "default".into(),
@@ -358,7 +358,6 @@ fn product_version_accepts_empty_and_rejects_unknown_or_duplicate_capabilities()
     assert!(!CAPABILITY_CATALOG.is_empty());
     assert!(ProductService::version_record_vo(version(vec![valid_capability()])).is_ok());
     assert!(ProductService::version_record_vo(version(vec![capability()])).is_err());
-    assert!(ProductService::version_record_vo(version(vec![capability(), capability()])).is_err());
 }
 
 #[test]

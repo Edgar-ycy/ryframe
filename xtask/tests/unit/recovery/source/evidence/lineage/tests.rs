@@ -338,7 +338,7 @@ fn formal_dataset_requires_counts_sums_pacing_current_fields_and_unique_objects(
     assert!(
         dataset::load(
             &mut Context {
-                root: f.root.clone(),
+                root: f.root,
                 snapshots: Vec::new()
             },
             &request
@@ -452,7 +452,7 @@ fn revalidation_reconstructs_exact_lineage_and_late_ancestor_changes_fail_closed
     let mut overflow = value.clone();
     overflow["tenants"][0]["records"] = json!(u64::MAX);
     assert!(validate_lineage(&overflow).is_err());
-    let mut changed = value.clone();
+    let mut changed = value;
     changed["scale"]["records"] = json!(33);
     args["lineage_descriptor"] = write(&f.root, "lineage-changed.json", &changed);
     assert!(verify_with(&args, &|_, _, _| Ok(())).is_err());
@@ -514,13 +514,38 @@ fn same_database_names_on_different_servers_are_distinct_and_aliases_cannot_dupl
     assert!(
         dataset::load(
             &mut Context {
-                root: f.root.clone(),
+                root: f.root,
                 snapshots: Vec::new()
             },
             &request
         )
         .is_err()
     );
+}
+
+#[test]
+fn full_business_inventory_can_have_no_probe_without_changing_the_business_mapping() {
+    let f = Fixture::new();
+    let mut copy = f.args["copy_plan"].clone();
+    let mut image = f.args["verified_image"].clone();
+    let historical = projection::objects(&f.dataset, &copy, &image).unwrap();
+    let probe = copy["objects"].as_array_mut().unwrap().pop().unwrap();
+    let key = probe["target_key"].as_str().unwrap();
+    assert_eq!(historical["verified_objects"], 257);
+    assert_eq!(historical["probe"]["target_key"], key);
+    assert_eq!(historical["probe"]["sha256"], probe["artifact"]["sha256"]);
+    assert!(projection::objects(&f.dataset, &copy, &image).is_err());
+    image["image"]["objects"]["uploads"]
+        .as_object_mut()
+        .unwrap()
+        .remove(key)
+        .unwrap();
+    let current = projection::objects(&f.dataset, &copy, &image).unwrap();
+    assert_eq!(current["verified_objects"], 256);
+    assert_eq!(current["probe"], Value::Null);
+    for field in ["business_objects", "business_bytes", "mapping_sha256"] {
+        assert_eq!(current[field], historical[field]);
+    }
 }
 
 #[test]

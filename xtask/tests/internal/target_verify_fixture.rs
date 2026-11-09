@@ -25,6 +25,8 @@ use crate::{
 pub(super) mod database;
 #[path = "target_verify_fixture_history.rs"]
 mod history;
+#[path = "target_verify_fixture_observations.rs"]
+pub(super) mod observations;
 #[path = "target_verify_fixture_storage.rs"]
 mod storage;
 
@@ -40,10 +42,61 @@ pub(super) struct Fixture {
     pub(super) run: PathBuf,
     pub(super) request: Value,
     pub(super) environment: BTreeMap<String, String>,
+    pub(super) legacy_reset: bool,
 }
 
 impl Fixture {
     pub(super) fn new() -> Self {
+        Self::build(false, false, "fixture", false, "seed", false)
+    }
+
+    pub(super) fn for_status() -> Self {
+        let fixture = Self::build(true, false, "fixture", false, "seed", false);
+        crate::recovery::clone::native::target_verify::published::unlocked_history(
+            &fixture.backend,
+            &fixture.target.join("initialized.json"),
+        )
+        .expect("status 夹具必须先满足完整 initialized/prepared 历史；错误仅报告模型前置原因");
+        fixture
+    }
+
+    pub(super) fn for_initialization() -> Self {
+        Self::build(true, true, "fixture", false, "seed", false)
+    }
+
+    #[cfg(windows)]
+    pub(super) fn for_registration() -> Self {
+        // 此处测试登记执行窗口，prepare 的历史观察继续由原夹具覆盖。
+        Self::build(false, false, "fixture", false, "seed", true)
+    }
+
+    pub(super) fn for_legacy_status() -> Self {
+        Self::build(true, false, "fixture", true, "seed", false)
+    }
+
+    pub(super) fn for_recovery() -> Self {
+        Self::build(
+            true,
+            true,
+            &format!("fixture-恢复窗口-中文 空格-{}", "e".repeat(120)),
+            false,
+            "seed",
+            false,
+        )
+    }
+
+    pub(super) fn for_arm_authority() -> Self {
+        Self::build(true, false, "fixture", false, "base", false)
+    }
+
+    fn build(
+        status_registration: bool,
+        decoy: bool,
+        workspace_name: &str,
+        legacy_reset: bool,
+        side: &str,
+        windows_redis: bool,
+    ) -> Self {
         let source = crate::workspace::root_dir();
         let parent = source.join(".local-tests");
         fs::create_dir_all(&parent).unwrap();
@@ -52,7 +105,7 @@ impl Fixture {
             .tempdir_in(parent)
             .unwrap();
         let backend = directory.path().join("backend");
-        let local = backend.join(".local-tests").join("fixture");
+        let local = backend.join(".local-tests").join(workspace_name);
         fs::create_dir_all(&local).unwrap();
         source_repository(&source, &backend);
         fs::create_dir(local.join("target")).unwrap();
@@ -65,17 +118,31 @@ impl Fixture {
             local,
             request: Value::Null,
             environment: environment(),
+            legacy_reset,
         };
-        fixture.write_request();
-        history::maintenance(&fixture);
+        fixture.write_request(side, windows_redis);
+        if decoy {
+            fs::create_dir(fixture.backend.join("config")).unwrap();
+            fs::write(
+                fixture.backend.join("config/app.toml"),
+                "[invalid-default\n",
+            )
+            .unwrap();
+            fs::write(
+                fixture.backend.join("config/app.test.toml"),
+                "# 明确诱饵，禁止默认目录回退\n",
+            )
+            .unwrap();
+        }
+        history::maintenance(&fixture.backend, &fixture.local);
         fixture.request["maintenance_build"] = bound(&fixture.local.join("maintenance/build.json"));
         fixture.seal_configuration();
-        history::publish(&fixture);
+        history::publish(&fixture, status_registration);
         fixture
     }
 
-    fn write_request(&mut self) {
-        for name in ["mysql", "rustfs", "wsl"] {
+    fn write_request(&mut self, side: &str, windows_redis: bool) {
+        for name in ["mysql", "rustfs"] {
             fs::write(self.local.join(name), format!("explicit-mock-{name}")).unwrap();
         }
         let defaults = self.local.join("mysql.cnf");
@@ -83,15 +150,20 @@ impl Fixture {
         let databases = request::KEYS.map(|(key, kind, mode)| json!({"key":key,"kind":kind,"mode":mode,"server_uuid":UUID,
             "database":database_name("seed",key),"defaults_file":defaults,"defaults_sha256":digest::file(&defaults).unwrap().sha256}));
         let tools = json!({"mysql": tool(&self.local.join("mysql"))});
-        self.request = json!({"format_version":1,"kind":"devex-clone-fresh-target","id":"target-verify-fixture","side":"seed",
+        self.request = json!({"format_version":1,"kind":"devex-clone-fresh-target","id":"target-verify-fixture","side":side,
             "review":null,"maintenance_build":null,"configuration_sha256":"0".repeat(64),"tools":tools,
             "target":{"scope_id":SCOPE,"databases":databases,"s3":{"endpoint":"http://127.0.0.1:29000","region":"test-region",
                 "access_key":"fixture-access","secret_key":"fixture-secret"}},
             "reset":{"legacy_ownership":{"mysql_exclusive":true,"redis_exclusive":true,"object_storage_exclusive":true},
                 "credential_version":"fixture-v1","sentinel_key":format!("ryframe:devex-fresh:{SCOPE}:sentinel"),"sentinel_value":"devex-fresh:target-verify-fixture"},"storage":null});
         self.request["config_dir"] = json!(self.local.join("config"));
-        let services = storage::files(self);
-        let review = review(self, &services);
+        let services = storage::files(self, windows_redis);
+        let mut review = review(self, &services);
+        if side != "seed" {
+            let original = review["scopes"]["seed"].clone();
+            review["scopes"]["seed"] = review["scopes"][side].clone();
+            review["scopes"][side] = original;
+        }
         write(&self.local.join("review.json"), &review);
         self.request["review"] = bound(&self.local.join("review.json"));
         self.request["review"]["canonical_sha256"] = json!(digest::plan_hash(&review).unwrap());
@@ -112,6 +184,17 @@ impl Fixture {
             "object_storage":{"backend":"rustfs","endpoint":"http://127.0.0.1:29000","region":"test-region","access_key":"fixture-access","secret_key":"fixture-secret","use_ssl":false},
             "reset":{"legacy_mysql_exclusive":true,"legacy_redis_exclusive":true,"legacy_object_storage_exclusive":true,"credential_version":"fixture-v1",
                 "redis_outside_sentinel_key":self.request["reset"]["sentinel_key"]}});
+        let mut table = table;
+        if self.legacy_reset {
+            table["reset"]["source_sha"] = crate::recovery::clone::native::source::binding_value(
+                &crate::recovery::clone::native::source::capture(&self.backend)
+                    .unwrap()
+                    .source,
+            )["snapshot"]["head"]
+                .clone();
+            table["reset"]["services_stopped"] = json!(true);
+            table["reset"]["state_directory"] = json!(self.target.join("reset-state"));
+        }
         fs::write(
             self.local.join("config/app.toml"),
             crate::target_configuration_fixture::toml_text(&table),
@@ -150,6 +233,29 @@ impl Fixture {
     }
 }
 
+pub(super) struct MaintenanceFixture {
+    _directory: tempfile::TempDir,
+    pub(super) backend: PathBuf,
+    pub(super) local: PathBuf,
+}
+
+impl MaintenanceFixture {
+    pub(super) fn new_in(parent: &Path) -> Self {
+        fs::create_dir_all(parent).unwrap();
+        let directory = tempfile::tempdir_in(parent).unwrap();
+        let backend = directory.path().join("backend");
+        let local = backend.join(".local-tests").join("maintenance-fixture");
+        fs::create_dir_all(&local).unwrap();
+        source_repository(&crate::workspace::root_dir(), &backend);
+        history::maintenance(&backend, &local);
+        Self {
+            _directory: directory,
+            backend,
+            local,
+        }
+    }
+}
+
 pub(super) struct Authority {
     pub(super) calls: Cell<usize>,
 }
@@ -180,25 +286,7 @@ impl authority::Observer for Authority {
 }
 
 fn environment() -> BTreeMap<String, String> {
-    [
-        ("APP_ENV", "test"),
-        ("APP_SCOPE_ID", SCOPE),
-        ("APP_JOBS_MODE", "external"),
-        ("APP_JOBS_HEALTH_HOST", "127.0.0.1"),
-        ("APP_JOBS_HEALTH_PORT", "28081"),
-        ("APP_REDIS_HOST", "127.0.0.1"),
-        ("APP_REDIS_PORT", "26379"),
-        ("APP_REDIS_DATABASE", "0"),
-        ("APP_REDIS_TLS", "false"),
-        ("APP_REDIS_PASSWORD", "fixture-redis"),
-        ("APP_TENANT_PASSWORD", "fixture-secret"),
-        ("APP_OBJECT_STORAGE_ACCESS_KEY", "fixture-access"),
-        ("APP_OBJECT_STORAGE_SECRET_KEY", "fixture-secret"),
-        ("RYFRAME_RESET_ADMIN_PASSWORD", "Fixture!Admin123"),
-    ]
-    .into_iter()
-    .map(|(key, value)| (key.into(), value.into()))
-    .collect()
+    BTreeMap::from([("APP_ENV".into(), "test".into())])
 }
 
 fn review(fixture: &Fixture, services: &Value) -> Value {
@@ -215,7 +303,13 @@ fn review(fixture: &Fixture, services: &Value) -> Value {
     let mut tools = fixture.request["tools"].clone();
     tools["mysqldump"] = tools["mysql"].clone();
     tools["rustfs"] = tool(&fixture.local.join("rustfs"));
-    tools["redis_server"] = json!({"distribution":"fixture","resolved_path":"/usr/bin/redis-server","sha256":"9".repeat(64)});
+    let redis = &fixture.request["storage"]["redis"];
+    if redis["platform"] == "windows" {
+        tools["redis_server"] = redis["tool"].clone();
+    } else {
+        tools["wsl"] = redis["wsl"].clone();
+        tools["redis_server"] = json!({"distribution":redis["distribution"],"resolved_path":redis["executable"],"sha256":redis["sha256"]});
+    }
     json!({"kind":"review-only-perf-resource-plan-with-readonly-preflight","ready_for_execution":true,"scopes":scopes,"tools":tools,"services":services,
         "reference":{"source":{"databases":[{"server_uuid":UUID,"database":"protected_source"}]},"protected_target":{"databases":[{"server_uuid":UUID,"database":"protected_target"}]}}})
 }
@@ -281,6 +375,8 @@ fn source_repository(source: &Path, backend: &Path) {
     let generated = "crates/ryframe-tenant-db/src/generated";
     copy_catalog_sources(&source.join(generated), &backend.join(generated));
     git(backend, &["init", "--quiet"]);
+    #[cfg(windows)]
+    git(backend, &["config", "--local", "core.longpaths", "true"]);
     git(
         backend,
         &["add", "--", "Cargo.toml", ".gitignore", "sql", "crates"],

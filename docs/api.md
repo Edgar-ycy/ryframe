@@ -4,6 +4,8 @@
 
 登录、刷新及 `/auth/context` 使用同一 `SessionContext`，必须包含布尔型 `password_change_required`。该值为真时，超级管理员标志为假，角色、权限、菜单和能力集合为空；受限令牌只能读取会话上下文、修改自己的密码和退出，不能签发消息票据。成功改密清除标志、更新授权版本并撤销该用户的登录会话，客户端重新登录。
 
+受限会话按 HTTP 方法及原始完整路径核对：仅允许 `GET /api/v1/auth/context`、`PUT /api/v1/auth/profile/password` 和 `POST /api/v1/auth/logout`，嵌套路由不改变此限制；其他业务接口及消息票据仍被拒绝。
+
 授权诊断区分缓存 `current`、`behind`、`ahead`、`missing`、`disabled` 与 `unavailable`。镜像落后于新令牌时，从主库验证身份后原子重建；镜像版本更高时旧令牌仍被拒绝，不向后覆盖缓存。缓存关闭是正常配置状态，不作为缓存故障警告。
 
 ## 异常账号恢复
@@ -43,7 +45,7 @@ JSON 业务响应使用统一包络，下面展示中文本地化响应样例；
 
 `auth.access_token_expire` 与 `auth.refresh_token_expire` 支持小写 `h`、`m`、`s` 或纯数字秒，例如 `"1h"`、`"30m"`、`"45s"`、`"3600"`；忽略首尾及数字与单位之间的空白，不接受 `"7d"` 或大写单位。非法格式、数值或换算溢出，以及有效期与当前时间相加超出平台可表示范围，都会使认证设置构造返回配置错误，指出对应字段与修复方法。请修正所选环境文件中的字段或减小有效期；签发时仍会复核时间相加，CSRF 的 `ttl_seconds` 参数过大也返回可定位错误，不回显密码或 JWT 秘密。
 
-服务端通过唯一项目环境入口 `APP_ENV` 选择 `dev`、`test` 或 `prod`；`config/app.toml` 是公共默认值，所选 `config/app.<environment>.toml` 必须存在。JWT 密钥直接填写 `auth.jwt_secret`，指标凭据直接填写 `monitor.metrics_bearer_token`；明文配置不能进入日志或公开收据。应用通过 `--config-dir <directory>` 选择目录，默认 `config`，相对路径以当前工作目录解析。客户端不取得这些服务端凭据。本地化目录由 TOML 的 `app.locales_dir` 显式指定，默认 `locales`，普通应用相对进程当前工作目录解析，不读取 `APP_LOCALES_DIR`；资源缺失或加载失败时生产严格拒绝启动，开发环境可内嵌回退。配置与本地化的局部验证不代表 API 整体门禁通过。
+服务端通过唯一项目环境入口 `APP_ENV` 选择 `dev`、`test` 或 `prod`；`config/app.toml` 是公共默认值，所选 `config/app.<environment>.toml` 必须存在。JWT 密钥直接填写 `auth.jwt_secret`，指标凭据直接填写 `monitor.metrics_bearer_token`；认证、数据库连接（含主库、副本与命名数据源）及监控配置的 `Debug` 会隐藏 JWT 密钥、数据库密码、TLS 客户端私钥与指标令牌；原始配置和连接 URL 仍不得进入日志或公开收据。应用通过 `--config-dir <directory>` 选择目录，默认 `config`，相对路径以当前工作目录解析。客户端不取得这些服务端凭据。本地化目录由 TOML 的 `app.locales_dir` 显式指定，默认 `locales`，普通应用相对进程当前工作目录解析，不读取 `APP_LOCALES_DIR`；资源缺失或加载失败时生产严格拒绝启动，开发环境可内嵌回退。配置与本地化的局部验证不代表 API 整体门禁通过。
 
 先请求 `/api/v1/auth/csrf` 获取 CSRF token，登录、刷新和退出等会话写操作在 `X-CSRF-Token` 请求头中携带它。登录和刷新响应都包含短期 access token 及同构的 `SessionContext`，`GET /api/v1/auth/context` 也返回同一会话快照；长期 refresh token 由 HttpOnly Cookie 保存。受保护接口使用：
 
@@ -83,6 +85,8 @@ Authorization: Bearer <access_token>
 - 409：资源状态冲突。
 - 413：导出匹配行数或请求体超过限制。
 - 501/503：部署能力不可用或依赖暂时不可用。
+
+租户业务读写的数据范围投影缺失、尚未就绪或版本与控制库权威版本不匹配时，拒绝读写并返回 HTTP 503、`error_key=tenant_data_target_unavailable` 和 `Retry-After: 5`。这表示业务数据暂不可用，应等待投影同步后重试；刷新登录会话不能修复投影落后。该情况不使用表示产品运行代次变化的 `stale_runtime_epoch`。
 
 ## 筛选导出
 

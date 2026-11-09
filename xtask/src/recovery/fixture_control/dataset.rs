@@ -10,7 +10,16 @@ use crate::{
 
 use super::{insert_path, output_value, path_value};
 
-pub(super) fn fields(command: &FixtureDatasetCommand, root: &Path) -> Result<Map<String, Value>> {
+pub(super) fn run(command: &FixtureDatasetCommand, root: &Path) -> Result<()> {
+    let fields = fields(command, root)?;
+    super::print_json(&crate::recovery::fixture_runtime::dataset(
+        root,
+        command.operation(),
+        &Value::Object(fields),
+    )?)
+}
+
+pub(crate) fn fields(command: &FixtureDatasetCommand, root: &Path) -> Result<Map<String, Value>> {
     let mut fields = Map::new();
     match command {
         FixtureDatasetCommand::Help => return Err("dataset 帮助没有私有请求".into()),

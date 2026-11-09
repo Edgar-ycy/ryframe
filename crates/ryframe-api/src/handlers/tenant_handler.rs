@@ -186,10 +186,10 @@ async fn create(
     Json(dto): Json<CreateTenantDto>,
 ) -> HttpResult<Json<ApiResponse<TenantVo>>> {
     dto.validate()?;
-    let plan_version_id = dto
-        .plan_version_id
-        .parse::<i64>()
-        .map_err(|_| AppError::Validation("plan_version_id 必须是正整数十进制字符串".into()))?;
+    let plan_version_id = crate::handler_utils::parse_id(
+        &dto.plan_version_id,
+        "plan_version_id 必须是正整数十进制字符串",
+    )?;
     if plan_version_id < 1 {
         return Err(AppError::Validation("plan_version_id 必须大于 0".into()).into());
     }

@@ -84,27 +84,7 @@ pub(crate) fn validate_archive_evidence(
     let build = receipts
         .get(BUILD_EVIDENCE)
         .ok_or_else(|| "全栈归档缺少构建证据".to_string())?;
-    exact_object(
-        build,
-        &[
-            "format_version",
-            "kind",
-            "backend_root",
-            "source",
-            "artifacts",
-        ],
-        "归档全栈构建证据",
-    )?;
-    if build.get("format_version").and_then(Value::as_u64) != Some(1)
-        || build.get("kind").and_then(Value::as_str) != Some("full-stack-build")
-    {
-        return Err("归档全栈构建证据格式无效".into());
-    }
-    let backend_root = build
-        .get("backend_root")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "归档构建后端根目录缺失".to_string())?;
-    validate_absolute_posix(backend_root, "归档构建后端根目录")?;
+    let backend_root = build_header(build)?;
     let artifacts = build
         .get("artifacts")
         .ok_or_else(|| "归档全栈构建产物缺失".to_string())?;
@@ -200,6 +180,36 @@ pub(crate) fn validate_archive_evidence(
             .unwrap_or(Value::Null);
     }
     Ok(result)
+}
+
+fn build_header(build: &Value) -> Result<&str> {
+    exact_object(
+        build,
+        &[
+            "format_version",
+            "kind",
+            "backend_root",
+            "source",
+            "artifacts",
+            "build_jobs",
+        ],
+        "归档全栈构建证据",
+    )?;
+    if build.get("format_version").and_then(Value::as_u64) != Some(1)
+        || build.get("kind").and_then(Value::as_str) != Some("full-stack-build")
+        || build
+            .get("build_jobs")
+            .and_then(Value::as_u64)
+            .is_none_or(|jobs| !(1..=64).contains(&jobs))
+    {
+        return Err("归档全栈构建证据格式无效".into());
+    }
+    let backend = build
+        .get("backend_root")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "归档构建后端根目录缺失".to_string())?;
+    validate_absolute_posix(backend, "归档构建后端根目录")?;
+    Ok(backend)
 }
 
 fn validate_archive_pair(

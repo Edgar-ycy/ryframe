@@ -10,13 +10,9 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import reference_fixture_environment as fixture_environment
-import reference_fixture_dataset as fixture_dataset
 import reference_fixture_request as fixture_request
-import reference_fixture_review as fixture_review
 import reference_fixture_services as fixture_services
 import reference_fixture_source_pair as fixture_source_pair
-import reference_fixture_successor as fixture_successor
 from reference_fixture_control_protocol import (
     FixtureControlProtocolError,
     private_arguments,
@@ -34,34 +30,25 @@ class FixtureControlProtocolTests(unittest.TestCase):
 
     def test_domain_failure_reports_validation_reason_without_credentials(self):
         raw = self.protocol(
-            "review", "renew", True,
-            template=self.root + "/.local-tests/template.json",
-            fixture=self.root + "/.local-tests/fixture.json",
-            future_root=self.root + "/.local-tests/future",
-            id="review-test",
-            api_port=18000,
-            worker_port=18003,
-            frontend_port=18006,
-            rustfs_api_port=19000,
-            rustfs_console_port=19001,
-            redis_port=16000,
-            output=self.root + "/.local-tests/output.json",
+            "services", "rustfs", True,
+            review=self.root + "/.local-tests/review.json",
+            environment=self.root + "/.local-tests/environment.json",
         )
         output = io.StringIO()
 
         def fail(_args):
-            raise ValueError("计划来源错误：secret-for-test")
+            raise ValueError("审阅来源错误：secret-for-test")
         with (
             mock.patch.dict(os.environ, {"APP_PASSWORD": "secret-for-test"}),
-            mock.patch.object(sys, "argv", ["review.py"]),
+            mock.patch.object(sys, "argv", ["services.py"]),
             mock.patch.object(sys, "stderr", output),
         ):
             result = run_private(
-                "review", fixture_review.PROTOCOL_SCHEMAS, fail,
-                positional_operation=False, raw=raw,
+                "services", fixture_services.PROTOCOL_SCHEMAS, fail,
+                positional_operation=True, raw=raw,
             )
         self.assertEqual(result, 1)
-        self.assertIn("计划来源错误", output.getvalue())
+        self.assertIn("审阅来源错误", output.getvalue())
         self.assertIn("[REDACTED]", output.getvalue())
         self.assertNotIn("secret-for-test", output.getvalue())
 
@@ -69,7 +56,7 @@ class FixtureControlProtocolTests(unittest.TestCase):
         self.root = str(Path(__file__).resolve().parents[2])
 
     def protocol(self, domain, operation, write, **fields):
-        if domain in {"dataset", "environment", "request", "services", "successor"}:
+        if domain in {"request", "services", "successor"}:
             fields.setdefault("native_tool", json.dumps(tool_binding()))
         return json.dumps({
             "backend_dir": self.root,
@@ -93,7 +80,7 @@ class FixtureControlProtocolTests(unittest.TestCase):
     def test_stdin_protocol_is_bounded_and_strict_utf8(self):
         path = str(Path(self.root) / ".local-tests" / "input.json")
         raw = self.protocol(
-            "services", "status", False, review=path, environment=path
+            "services", "rustfs", True, review=path, environment=path
         )
         with mock.patch.object(sys, "stdin", self.BinaryInput(raw.encode("utf-8"))):
             arguments = private_arguments(
@@ -102,7 +89,7 @@ class FixtureControlProtocolTests(unittest.TestCase):
                 positional_operation=True,
                 argv=[],
             )
-        self.assertEqual(arguments[0], "status")
+        self.assertEqual(arguments[0], "rustfs")
         for payload, reason in [
             (b"", "缺失"),
             (b"\xff", "UTF-8"),
@@ -120,42 +107,9 @@ class FixtureControlProtocolTests(unittest.TestCase):
                     argv=[],
                 )
 
-    def test_generation_preview_preserves_explicit_source_roots(self):
-        receipt = str(Path(self.root) / ".local-tests" / "input.json")
-        raw = self.protocol(
-            "successor", "generation-request", False, successor=receipt,
-            source_backend=self.root, expected_head="a" * 40, backend_build=receipt,
-            maintenance_build=receipt, source_environment=receipt, id="source-current",
-            adapter_contract="legacy-stable-readiness-b0-v1", product_backend=self.root,
-        )
-        arguments = self.arguments("successor", fixture_successor.PROTOCOL_SCHEMAS, raw, positional=True)
-        self.assertEqual(arguments[arguments.index("--source-backend") + 1], self.root)
-        self.assertEqual(arguments[arguments.index("--product-backend") + 1], self.root)
-        self.assertNotIn("--write", arguments)
-        self.assertNotIn("--output", arguments)
-
     def test_reconstructs_exact_operations_for_control_domains(self):
         input_path = str(Path(self.root) / ".local-tests" / "input.json")
         directory = str(Path(self.root) / ".local-tests" / "run")
-        environment = self.protocol(
-            "environment", "plan", False,
-            review=input_path, fixture=input_path, maintenance_build=input_path, side="seed",
-        )
-        self.assertEqual(
-            self.arguments("environment", fixture_environment.PROTOCOL_SCHEMAS, environment, positional=True)[0],
-            "plan",
-        )
-        review = self.protocol(
-            "review", "renew", True,
-            template=input_path, fixture=input_path, future_root=directory, id="r24-current",
-            api_port=18230, worker_port=19230, frontend_port=4200, rustfs_api_port=29210,
-            rustfs_console_port=29211, redis_port=16391, output=input_path,
-        )
-        review_args = self.arguments(
-            "review", fixture_review.PROTOCOL_SCHEMAS, review, positional=False
-        )
-        self.assertEqual(review_args[:2], ["--backend-dir", self.root])
-        self.assertNotIn("renew", review_args)
         request = self.protocol(
             "request", "publish", True,
             environment=input_path, service_run=directory, id="fresh-base", side="base", output=input_path,
@@ -177,88 +131,43 @@ class FixtureControlProtocolTests(unittest.TestCase):
             ["--backend-dir", self.root, "--output", input_path, "--write"],
         )
         services = self.protocol(
-            "services", "status", False, review=input_path, environment=input_path
+            "services", "buckets", True, review=input_path, environment=input_path
         )
         self.assertEqual(
             self.arguments("services", fixture_services.PROTOCOL_SCHEMAS, services, positional=True)[0],
-            "status",
-        )
-        dataset_plan = self.protocol(
-            "dataset", "plan", True,
-            environment=input_path, runtime=directory,
-            work_dir=str(Path(directory) / "dataset work"), output=input_path,
-            side="base",
-        )
-        dataset_plan_args = self.arguments(
-            "dataset", fixture_dataset.PROTOCOL_SCHEMAS, dataset_plan,
-            positional=True,
-        )
-        self.assertEqual(dataset_plan_args[0], "plan")
-        self.assertIn("--work-dir", dataset_plan_args)
-        self.assertIn("--output", dataset_plan_args)
-        self.assertIn("--write", dataset_plan_args)
-        dataset_prepare = self.protocol(
-            "dataset", "prepare", True,
-            environment=input_path, runtime=directory, plan=input_path,
-            side="candidate",
-        )
-        dataset_prepare_args = self.arguments(
-            "dataset", fixture_dataset.PROTOCOL_SCHEMAS, dataset_prepare,
-            positional=True,
-        )
-        self.assertEqual(dataset_prepare_args[0], "prepare")
-        self.assertIn("--plan", dataset_prepare_args)
-        self.assertNotIn("--work-dir", dataset_prepare_args)
-        self.assertIn("--write", dataset_prepare_args)
-        successor = self.protocol(
-            "successor", "arm-request", False,
-            successor=input_path, source_export_result=input_path, workspace=directory,
-            id="arm-base", side="base", copy_directory=directory,
-        )
-        self.assertEqual(
-            self.arguments("successor", fixture_successor.PROTOCOL_SCHEMAS, successor, positional=True)[0],
-            "arm-request",
+            "buckets",
         )
 
     def test_rejects_duplicate_unknown_wrong_domain_and_ambiguous_write(self):
         path = str(Path(self.root) / ".local-tests" / "input.json")
         valid = self.protocol(
-            "services", "status", False, review=path, environment=path
+            "services", "rustfs", True, review=path, environment=path
         )
         cases = [
             valid[:-1] + ',"review":"' + path.replace("\\", "\\\\") + '"}',
-            self.protocol("services", "status", False, review=path, environment=path, unknown="x"),
-            self.protocol("request", "status", False, review=path, environment=path),
-            self.protocol("services", "status", True, review=path, environment=path),
+            self.protocol("services", "rustfs", True, review=path, environment=path, unknown="x"),
+            self.protocol("request", "rustfs", True, review=path, environment=path),
+            self.protocol("services", "rustfs", False, review=path, environment=path),
             valid.replace('"format_version":1', '"format_version":true'),
         ]
+        cases.extend(self.protocol("services", operation, operation != "status", review=path, environment=path)
+                     for operation in ("redis", "status", "close", "reconcile", "recover", "restart"))
         non_text_operation = json.loads(valid)
         non_text_operation["operation"] = []
         cases.append(json.dumps(non_text_operation, separators=(",", ":")))
         for raw in cases:
             with self.subTest(raw=raw), self.assertRaises(FixtureControlProtocolError):
                 self.arguments("services", fixture_services.PROTOCOL_SCHEMAS, raw, positional=True)
-        missing_output = self.protocol(
-            "successor", "generation-request", True,
-            successor=path, source_backend=str(Path(self.root) / ".local-tests"),
-            expected_head="a" * 40, backend_build=path, maintenance_build=path,
-            source_environment=path, id="source-r24",
-        )
-        with self.assertRaisesRegex(FixtureControlProtocolError, "写入授权"):
-            self.arguments(
-                "successor", fixture_successor.PROTOCOL_SCHEMAS,
-                missing_output, positional=True,
-            )
 
     def test_rejects_public_argv_related_environment_and_non_absolute_paths(self):
         path = str(Path(self.root) / ".local-tests" / "input.json")
         raw = self.protocol(
-            "services", "status", False, review=path, environment=path
+            "services", "rustfs", True, review=path, environment=path
         )
         with self.assertRaisesRegex(FixtureControlProtocolError, "不接受命令行参数"):
             private_arguments(
                 "services", fixture_services.PROTOCOL_SCHEMAS,
-                positional_operation=True, argv=["status"],
+                positional_operation=True, argv=["rustfs"],
             )
         with self.assertRaisesRegex(FixtureControlProtocolError, "不接受命令行参数"):
             private_arguments(
@@ -266,74 +175,15 @@ class FixtureControlProtocolTests(unittest.TestCase):
                 argv=["unexpected", raw],
             )
         relative = self.protocol(
-            "services", "status", False, review="relative.json", environment=path
+            "services", "rustfs", True, review="relative.json", environment=path
         )
         with self.assertRaisesRegex(FixtureControlProtocolError, "绝对路径"):
             self.arguments("services", fixture_services.PROTOCOL_SCHEMAS, relative, positional=True)
 
 
-    def test_dataset_protocol_requires_exact_paths_fields_and_write_policy(self):
-        path = str(Path(self.root) / ".local-tests" / "input.json")
-        directory = str(Path(self.root) / ".local-tests" / "run")
-        plan = dict(
-            environment=path,
-            runtime=directory,
-            work_dir=str(Path(directory) / "dataset"),
-            output=str(Path(directory) / "dataset-plan.json"),
-            side="base",
-        )
-        prepare = dict(
-            environment=path,
-            runtime=directory,
-            plan=str(Path(directory) / "dataset-plan.json"),
-            side="candidate",
-        )
-        for operation, values in (("plan", plan), ("prepare", prepare)):
-            raw = self.protocol("dataset", operation, False, **values)
-            with self.subTest(operation=operation), self.assertRaisesRegex(
-                FixtureControlProtocolError, "写入授权"
-            ):
-                self.arguments(
-                    "dataset", fixture_dataset.PROTOCOL_SCHEMAS, raw,
-                    positional=True,
-                )
-        unexpected_plan = self.protocol(
-            "dataset", "plan", True, **{**plan, "plan": path}
-        )
-        with self.assertRaisesRegex(FixtureControlProtocolError, "未知字段"):
-            self.arguments(
-                "dataset", fixture_dataset.PROTOCOL_SCHEMAS, unexpected_plan,
-                positional=True,
-            )
-        missing_plan = self.protocol(
-            "dataset", "prepare", True,
-            **{name: value for name, value in prepare.items() if name != "plan"},
-        )
-        with self.assertRaisesRegex(FixtureControlProtocolError, "字段不完整"):
-            self.arguments(
-                "dataset", fixture_dataset.PROTOCOL_SCHEMAS, missing_plan,
-                positional=True,
-            )
-        for field in ("environment", "runtime", "work_dir", "output"):
-            relative = self.protocol(
-                "dataset", "plan", True, **{**plan, field: "relative/path"}
-            )
-            with self.subTest(field=field), self.assertRaisesRegex(
-                FixtureControlProtocolError, "绝对路径"
-            ):
-                self.arguments(
-                    "dataset", fixture_dataset.PROTOCOL_SCHEMAS, relative,
-                    positional=True,
-                )
-
     def test_all_direct_python_programs_reject_argv_before_business_logic(self):
         scripts = [
-            "full_stack_ci_support.py",
-            "reference_fixture_dataset.py",
-            "reference_fixture_environment.py",
-            "reference_fixture_review.py",
             "reference_fixture_request.py",
-            "reference_fixture_successor.py",
             "reference_fixture_services.py",
             "reference_fixture_source_pair.py",
         ]

@@ -11,12 +11,19 @@ use super::super::model::{
 
 #[path = "ci/frontend_source.rs"]
 mod frontend_source;
+#[path = "ci/full_stack_config.rs"]
+mod full_stack_config;
 use frontend_source::parse_frontend_source;
+#[path = "ci/required.rs"]
+mod required;
 #[path = "ci/resource_gate.rs"]
 mod resource_gate;
 
 pub(super) fn parse_ci(args: &[String]) -> Result<CiCommand, CliError> {
     match args {
+        [command, rest @ ..] if command == "full-stack-config" => {
+            full_stack_config::parse(rest).map(CiCommand::FullStackConfig)
+        }
         [command, rest @ ..] if command == "plan" => parse_base_sha(rest).map(CiCommand::Plan),
         [command, rest @ ..] if command == "preflight" => {
             parse_base_sha(rest).map(CiCommand::Preflight)
@@ -360,12 +367,20 @@ fn valid_image_reference(value: &str) -> bool {
 #[serde(deny_unknown_fields)]
 struct RequiredNeedDocument {
     result: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "required::unique_map")]
     outputs: BTreeMap<String, String>,
 }
 
 fn parse_required(args: &[String]) -> Result<RequiredOptions, CliError> {
     let values = required_named_options(args)?;
+    if let Some(input) = values.get("--input") {
+        if values.len() != 1 {
+            return Err(CliError::new(
+                "--input 不能与 --event/--action/--needs-json 混用",
+            ));
+        }
+        return required::read(input);
+    }
     let event = RequiredEvent::parse(required_value(&values, "--event")?)?;
     let action = RequiredAction::parse(event, values.get("--action").map(String::as_str))?;
     let needs = parse_required_needs(required_value(&values, "--needs-json")?)?;
@@ -377,7 +392,7 @@ fn parse_required(args: &[String]) -> Result<RequiredOptions, CliError> {
 }
 
 fn required_named_options(args: &[String]) -> Result<BTreeMap<String, String>, CliError> {
-    let allowed = ["--event", "--action", "--needs-json"];
+    let allowed = ["--input", "--event", "--action", "--needs-json"];
     let mut values = BTreeMap::new();
     let mut index = 0;
     while index < args.len() {
@@ -409,8 +424,13 @@ fn required_value<'a>(
 }
 
 fn parse_required_needs(value: &str) -> Result<BTreeMap<String, RequiredNeed>, CliError> {
-    let document = serde_json::from_str::<BTreeMap<String, RequiredNeedDocument>>(value)
-        .map_err(|error| CliError::new(format!("--needs-json 无效：{error}")))?;
+    let document = required::needs(value)?;
+    validated_needs(document)
+}
+
+fn validated_needs(
+    document: BTreeMap<String, RequiredNeedDocument>,
+) -> Result<BTreeMap<String, RequiredNeed>, CliError> {
     let mut needs = BTreeMap::new();
     for (name, need) in document {
         validate_need(&name, &need)?;

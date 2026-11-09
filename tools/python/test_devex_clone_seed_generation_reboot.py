@@ -8,19 +8,6 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import devex_clone_seed_generation_reboot as reboot
-import host_boot
-import restore_source_runtime as runtime
-
-OBSERVED = 130_000_000_000_000_000
-BOOT = OBSERVED - 3_600 * host_boot.TICKS_PER_SECOND
-
-
-def proof():
-    return host_boot.host_boot_proof(margin_seconds=300, observed=OBSERVED, uptime=3600.0)
-
-
-def identity(started, pid=4242):
-    return {"pid": pid, "started": str(started), "executable": "C:/bin/ryframe.exe"}
 
 
 class RebootObservationTests(unittest.TestCase):
@@ -30,67 +17,44 @@ class RebootObservationTests(unittest.TestCase):
         self.root = Path(parent / f"reboot-observation-{id(self)}")
         self.root.mkdir()
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
-        self.verification = self.root / "verification"
-        for name in ("before", "audit", "source-tools"):
-            (self.verification / name).mkdir(parents=True, exist_ok=True)
-        for name in (runtime.INTENT, runtime.PROCESS, runtime.READY, runtime.STDOUT,
-                     runtime.STDERR, runtime.COMPLETION, runtime.CONFIGURATION):
-            (self.verification / name).write_text("{}", encoding="utf-8")
-        (self.verification / "failed.json").write_text(
-            '{"status": "failed", "error": "ValueError"}', encoding="utf-8")
-        (self.verification / "audit/login-audit.json").write_text("{}", encoding="utf-8")
-        (self.verification / "before/image.json").write_text("{}", encoding="utf-8")
 
-    def test_failed_prefix_accepts_only_the_exact_interrupted_shape(self):
-        value = reboot.failed_prefix(self.verification)
-        self.assertEqual(value["manifest"], runtime._runtime_policy("failed-entries"))
-        self.assertEqual(value["producer"]["intent"]["bytes"], 2)
-        configuration = self.verification / runtime.CONFIGURATION
-        configuration.unlink()
-        with self.assertRaises(ValueError):
-            reboot.failed_prefix(self.verification)
-        configuration.write_text("{}", encoding="utf-8")
-        (self.verification / "after").mkdir()
-        with self.assertRaises(ValueError):
-            reboot.failed_prefix(self.verification)
-        shutil.rmtree(self.verification / "after")
-        (self.verification / "failed.json").write_text(
-            '{"status": "failed", "error": "CalledProcessError"}', encoding="utf-8")
-        with self.assertRaises(ValueError):
-            reboot.failed_prefix(self.verification)
+    def test_native_role_facts_survive_build_drift_and_keep_reboot_blockers_separate(self):
+        start = {"number": 70, "result": {"sha256": "original-start"}}
+        native = {"start": start, "later": [], "facts": {"output": str(self.root / "g0070")},
+                  "prefix": {"producer": "original"}, "proof": {"source": "GetTickCount64"},
+                  "roles": {"api": {"all_exited": True}, "worker": {"all_exited": True}},
+                  "storage": {"exited": True}, "blockers": []}
+        response = {"ok": True, "result": {"value": native}}
+        process = reboot.subprocess.CompletedProcess([], 0)
+        with patch.object(reboot, "native_invoke", return_value=(process, response)) as invoke, \
+                patch.object(reboot, "build_context_state", return_value={"backend": {"matches": False}}), \
+                patch.object(reboot, "plan_hash", return_value="frozen-history-hash"), \
+                patch.object(reboot, "load_state", return_value={"attempts": [start]}):
+            value = reboot._observation(self.root, self.root, live_cache=False)
+        self.assertTrue(value["reboot_verified"])
+        self.assertFalse(value["value"]["closure_ready"])
+        self.assertEqual(value["value"]["roles"], native["roles"])
+        self.assertEqual(value["proof"], native["proof"])
+        self.assertEqual(value["value"]["storage"], native["storage"])
+        self.assertEqual(value["reboot_blockers"], [])
+        self.assertEqual(invoke.call_count, 1)
+        self.assertEqual(invoke.call_args.args[:2], (
+            "__source-evidence", {"operation": "source-generation-reboot-observation", "write": False,
+                "arguments": {"backend": str(self.root.resolve()), "directory": str(self.root.resolve())}}))
+        self.assertEqual(invoke.call_args.kwargs, {"may_write": False})
 
-    def test_role_evidence_requires_every_member_before_boot(self):
-        margin = 300 * host_boot.TICKS_PER_SECOND
-        tree = {"operation_id": "0" * 32,
-                "process": identity(BOOT - margin - 1, pid=11),
-                "supervisor": identity(BOOT - margin - 1, pid=12),
-                "monitor": identity(BOOT - margin - 1, pid=13)}
-        self.assertTrue(reboot.role_evidence(tree, proof())["all_exited"])
-        tree["monitor"] = identity(BOOT + margin + 1, pid=13)
-        self.assertFalse(reboot.role_evidence(tree, proof())["all_exited"])
-
-    def test_port_evidence_only_reports_explicit_closures(self):
-        def closed(url):
-            if url.endswith("9999"):
-                raise ValueError("端口仍在监听")
-
-        with patch.object(reboot, "require_closed_port", closed):
-            rows = reboot.port_evidence(["http://127.0.0.1:18210", "http://127.0.0.1:9999"])
-        self.assertEqual(rows[0], {"url": "http://127.0.0.1:18210", "closed": True})
-        self.assertEqual(rows[1], {"url": "http://127.0.0.1:9999", "closed": False,
-                                   "error_type": "ValueError"})
-
-    def test_storage_generation_reports_exit_and_ports(self):
-        created = BOOT - 300 * host_boot.TICKS_PER_SECOND - 1
-        facts = {"request": {"current_storage": {
-            "attempt": 65, "api_url": "http://127.0.0.1:29200", "console_url": "http://127.0.0.1:29201",
-            "identity": identity(created, pid=7388),
-            "storage": {"identity": identity(created, pid=7388)},
-            "request": {"path": "request.json", "bytes": 1, "sha256": "0" * 64}}}}
-        with patch.object(reboot, "require_closed_port", lambda url: None):
-            value, blockers = reboot.storage_generation(facts, proof())
-        self.assertTrue(value["exited"])
-        self.assertEqual(blockers, [])
+    def test_native_observation_failure_and_cancellation_propagate_without_replay(self):
+        for error in (ValueError("原身份缺失"), TimeoutError("观察未知"), KeyboardInterrupt()):
+            with self.subTest(error=type(error).__name__), \
+                    patch.object(reboot, "native_invoke", side_effect=error) as invoke, \
+                    patch.object(reboot, "cache_generations") as cache, \
+                    patch.object(reboot, "build_context_state") as build:
+                with self.assertRaises(type(error)) as caught:
+                    reboot.observe(self.root, self.root)
+                self.assertIs(caught.exception, error)
+                self.assertEqual(invoke.call_count, 1)
+                cache.assert_not_called()
+                build.assert_not_called()
 
     def test_cache_generations_require_stopped_linux_identity(self):
         status = {"status": "cache_status", "request": {"path": "cache.json"},
@@ -108,13 +72,6 @@ class RebootObservationTests(unittest.TestCase):
         self.assertEqual([row["attempt"] for row in value["generations"]], [66, 67])
         self.assertTrue(value["generations"][0]["boot_id_changed"])
         self.assertEqual(blockers, ["缓存代次 67 没有明确退出证据"])
-
-    def test_start_record_rejects_running_stage(self):
-        with patch.object(reboot, "load_state",
-                          return_value={"attempts": [{"status": "running", "number": 71,
-                                                      "stage": "storage-target", "mode": "restart"}]}):
-            with self.assertRaises(ValueError):
-                reboot.start_record(Path("."), self.root)
 
     def test_closure_preflight_requires_verified_reboot_and_same_request(self):
         request = self.root / "generation-request.json"

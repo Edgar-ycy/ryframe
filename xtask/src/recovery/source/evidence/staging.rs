@@ -105,7 +105,7 @@ fn inputs(args: &Value, existing: bool) -> Result<Inputs> {
     })
 }
 
-fn validate_source(value: &Value) -> Result<()> {
+pub(super) fn validate_source(value: &Value) -> Result<()> {
     documents::exact(
         value,
         &["snapshot", "worktree_fingerprint", "fingerprints"],
@@ -152,7 +152,7 @@ fn tool(value: &Value) -> Result<Value> {
     Ok(actual)
 }
 
-fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
+pub(super) fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
     let mut command = Command::new("git");
     command.arg("-C").arg(root).args(args);
     for (key, _) in std::env::vars_os() {

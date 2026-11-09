@@ -15,6 +15,9 @@ pub(crate) mod credentials;
 #[path = "session/model.rs"]
 pub(crate) mod model;
 
+#[path = "session/pacing_binding.rs"]
+pub(crate) mod pacing_binding;
+
 use model::Registration;
 
 pub(crate) fn run_hidden_if_requested() -> Option<i32> {

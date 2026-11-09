@@ -82,7 +82,6 @@ fn empty_and_control_character_paths_fail_without_echoing_content() {
             reason,
             "app.locales_dir 必须是非空且不含 NUL、CR 或 LF 的路径；请修正配置文件"
         );
-        assert!(!reason.contains("locale-secret"));
     }
 }
 

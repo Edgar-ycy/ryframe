@@ -4,7 +4,8 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use serde_json::Value;
+#[path = "../unit/recovery/fixture_control/secret_files.rs"]
+mod secret_files;
 
 use super::{
     cli::{
@@ -13,7 +14,6 @@ use super::{
         FixtureRetentionCommand, FixtureReviewCommand, FixtureServicesCommand,
         FixtureSourcePairCommand, FixtureSuccessorCommand, RecoveryCommand, parse,
     },
-    recovery::fixture_control::private_invocation_at,
     workspace::root_dir,
 };
 
@@ -56,7 +56,7 @@ impl Fixture {
         vec![
             "--review".to_owned(),
             text(&self.input),
-            "--fixture".to_owned(),
+            "--execution-source".to_owned(),
             text(&self.input_two),
             "--maintenance-build".to_owned(),
             text(&self.input),
@@ -90,6 +90,8 @@ impl Fixture {
             text(&self.input),
             "--id".to_owned(),
             "source-r24".to_owned(),
+            "--config-dir".to_owned(),
+            text(&root_dir().join("config")),
         ]
     }
 }
@@ -149,7 +151,6 @@ fn parses_artifact_operations_and_serializes_job_id_as_text() {
         snapshot,
         FixtureControlCommand::Artifact(FixtureArtifactCommand::Snapshot(_))
     ));
-    assert!(private_invocation_at(&snapshot, &root_dir()).is_err());
     let FixtureControlCommand::Artifact(FixtureArtifactCommand::Snapshot(options)) = &snapshot
     else {
         panic!("应为原生快照");
@@ -172,7 +173,6 @@ fn parses_artifact_operations_and_serializes_job_id_as_text() {
         ],
     ))
     .unwrap();
-    assert!(private_invocation_at(&verify, &root_dir()).is_err());
     assert!(matches!(
         verify,
         FixtureControlCommand::Artifact(FixtureArtifactCommand::VerifyDeleted(_))
@@ -227,7 +227,7 @@ fn rejects_invalid_artifact_identifiers_writes_and_path_contracts() {
 }
 
 #[test]
-fn parses_retention_operations_without_python_dispatch() {
+fn parses_retention_operations_and_write_authorization() {
     let fixture = Fixture::new();
     for (operation, expected_write) in [
         ("inspect", false),
@@ -249,7 +249,6 @@ fn parses_retention_operations_without_python_dispatch() {
                 | FixtureControlCommand::Retention(FixtureRetentionCommand::VerifyCleaned(_))
                 | FixtureControlCommand::Retention(FixtureRetentionCommand::ExportBackup(_))
         ));
-        assert!(private_invocation_at(&command, &root_dir()).is_err());
         assert_eq!(command.operation(), operation);
         assert_eq!(command.writes(), expected_write);
     }
@@ -266,7 +265,6 @@ fn parses_retention_operations_without_python_dispatch() {
         command,
         FixtureControlCommand::Retention(FixtureRetentionCommand::HistoricalExpired { .. })
     ));
-    assert!(private_invocation_at(&command, &root_dir()).is_err());
     let FixtureControlCommand::Retention(FixtureRetentionCommand::HistoricalExpired {
         options,
         plan_sha256,
@@ -357,6 +355,10 @@ fn parses_every_environment_operation_into_typed_requests() {
         plan,
         FixtureControlCommand::Environment(FixtureEnvironmentCommand::Plan(_))
     ));
+    assert!(!plan.writes());
+    let mut retired = fixture.input_options();
+    retired[2] = "--fixture".to_owned();
+    assert!(parse_control(command("environment", Some("plan"), retired)).is_err());
 
     let mut prepare = fixture.input_options();
     prepare.extend([
@@ -366,8 +368,9 @@ fn parses_every_environment_operation_into_typed_requests() {
         text(&fixture.controlled_dir),
         "--write".to_owned(),
     ]);
+    let prepare = parse_control(command("environment", Some("prepare"), prepare)).unwrap();
     assert!(matches!(
-        parse_control(command("environment", Some("prepare"), prepare)).unwrap(),
+        prepare,
         FixtureControlCommand::Environment(FixtureEnvironmentCommand::Prepare { .. })
     ));
 
@@ -406,20 +409,18 @@ fn parses_every_environment_operation_into_typed_requests() {
         ),
     ];
     for (operation, values) in cases {
-        assert!(matches!(
-            parse_control(command("environment", Some(operation), values)).unwrap(),
-            FixtureControlCommand::Environment(_)
-        ));
+        let parsed = parse_control(command("environment", Some(operation), values)).unwrap();
+        assert!(matches!(parsed, FixtureControlCommand::Environment(_)));
     }
 }
 
 #[test]
-fn parses_review_request_and_all_service_operations() {
+fn parses_review_and_fixture_request_operations() {
     let fixture = Fixture::new();
     let review = vec![
         "--template".to_owned(),
         text(&fixture.input),
-        "--fixture".to_owned(),
+        "--execution-source".to_owned(),
         text(&fixture.input_two),
         "--future-root".to_owned(),
         text(&fixture.path("future root")),
@@ -446,6 +447,31 @@ fn parses_review_request_and_all_service_operations() {
         FixtureControlCommand::Review(FixtureReviewCommand::Renew(_))
     ));
 
+    let reconciled = vec![
+        "--workspace".to_owned(),
+        text(&fixture.controlled_dir),
+        "--execution-source".to_owned(),
+        text(&fixture.input_two),
+        "--future-root".to_owned(),
+        text(&fixture.path("successor runtime")),
+        "--output".to_owned(),
+        text(&fixture.path("successor review.json")),
+    ];
+    assert!(
+        parse_control(command(
+            "review",
+            Some("after-reconcile"),
+            reconciled.clone()
+        ))
+        .is_err()
+    );
+    let mut write = reconciled;
+    write.push("--write".to_owned());
+    assert!(matches!(
+        parse_control(command("review", Some("after-reconcile"), write)).unwrap(),
+        FixtureControlCommand::Review(FixtureReviewCommand::AfterReconcile(_))
+    ));
+
     let request = vec![
         "--environment".to_owned(),
         text(&fixture.input),
@@ -459,11 +485,16 @@ fn parses_review_request_and_all_service_operations() {
         text(&fixture.path("request.json")),
         "--write".to_owned(),
     ];
+    let parsed = parse_control(command("request", None, request)).unwrap();
     assert!(matches!(
-        parse_control(command("request", None, request)).unwrap(),
+        parsed,
         FixtureControlCommand::Request(FixtureRequestCommand::Publish(_))
     ));
+}
 
+#[test]
+fn parses_all_service_operations() {
+    let fixture = Fixture::new();
     for operation in [
         "rustfs",
         "redis",
@@ -491,9 +522,6 @@ fn parses_review_request_and_all_service_operations() {
             parsed,
             FixtureControlCommand::Services(FixtureServicesCommand::Run(_))
         ));
-        if matches!(operation, "close" | "reconcile" | "recover" | "restart") {
-            assert!(private_invocation_at(&parsed, &root_dir()).is_err());
-        }
     }
 }
 
@@ -524,8 +552,17 @@ fn parses_successor_relationship() {
         text(&fixture.path("relationship.json")),
         "--write".to_owned(),
     ]);
+    assert!(
+        parse_control(command(
+            "successor",
+            Some("relationship"),
+            relationship[..relationship.len() - 1].to_vec()
+        ))
+        .is_err()
+    );
+    let parsed = parse_control(command("successor", Some("relationship"), relationship)).unwrap();
     assert!(matches!(
-        parse_control(command("successor", Some("relationship"), relationship)).unwrap(),
+        parsed,
         FixtureControlCommand::Successor(FixtureSuccessorCommand::Relationship(_))
     ));
 }
@@ -545,10 +582,31 @@ fn parses_successor_generation_preview_and_write_pairs() {
         FixtureControlCommand::Successor(FixtureSuccessorCommand::GenerationRequest(ref value))
             if value.output.is_none()
     ));
-    let invocation = private_invocation_at(&planned, &root_dir()).unwrap();
-    let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
-    assert_eq!(protocol["source_backend"], text(&root_dir()));
-    assert_eq!(protocol["write"], false);
+    let FixtureControlCommand::Successor(FixtureSuccessorCommand::GenerationRequest(options)) =
+        &planned
+    else {
+        unreachable!()
+    };
+    assert_eq!(options.config_dir, root_dir().join("config"));
+    assert!(options.execution_source.is_none());
+    let mut collision = options.clone();
+    collision.output = Some(fixture.input.clone());
+    let before = fs::read(&fixture.input).unwrap();
+    assert!(
+        crate::recovery::source::evidence::generation_request::run(&root_dir(), &collision)
+            .is_err()
+    );
+    assert_eq!(fs::read(&fixture.input).unwrap(), before);
+    let mut missing_configuration = generation.clone();
+    missing_configuration.truncate(missing_configuration.len() - 2);
+    assert!(
+        parse_control(command(
+            "successor",
+            Some("generation-request"),
+            missing_configuration
+        ))
+        .is_err()
+    );
     let mut adapter = generation.clone();
     adapter.extend(words(&[
         "--adapter-contract",
@@ -557,9 +615,9 @@ fn parses_successor_generation_preview_and_write_pairs() {
     ]));
     adapter.push(text(&root_dir()));
     let adapter = parse_control(command("successor", Some("generation-request"), adapter)).unwrap();
-    let invocation = private_invocation_at(&adapter, &root_dir()).unwrap();
-    let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
-    assert_eq!(protocol["product_backend"], text(&root_dir()));
+    assert!(
+        matches!(adapter, FixtureControlCommand::Successor(FixtureSuccessorCommand::GenerationRequest(ref value)) if value.product_backend.as_deref() == Some(root_dir().as_path()))
+    );
     let mut invalid_name = generation.clone();
     *invalid_name
         .iter_mut()
@@ -625,7 +683,10 @@ fn successor_generation_keeps_source_and_evidence_path_boundaries() {
         valid.clone(),
     ))
     .unwrap();
-    assert!(private_invocation_at(&parsed, &root_dir()).is_ok());
+    assert!(matches!(
+        parsed,
+        FixtureControlCommand::Successor(FixtureSuccessorCommand::GenerationRequest(_))
+    ));
     for invalid in [
         PathBuf::from("relative"),
         fixture.input.clone(),
@@ -637,22 +698,6 @@ fn successor_generation_keeps_source_and_evidence_path_boundaries() {
         assert!(
             parse_control(command("successor", Some("generation-request"), arguments)).is_err()
         );
-        for product in [false, true] {
-            let mut request = parsed.clone();
-            let FixtureControlCommand::Successor(FixtureSuccessorCommand::GenerationRequest(
-                options,
-            )) = &mut request
-            else {
-                unreachable!();
-            };
-            if product {
-                options.product_backend = Some(invalid.clone());
-                options.adapter_contract = Some("legacy-stable-readiness-b0-v1".to_owned());
-            } else {
-                options.source_backend = invalid.clone();
-            }
-            assert!(private_invocation_at(&request, &root_dir()).is_err());
-        }
     }
     #[cfg(unix)]
     fs::remove_file(&link).unwrap();
@@ -699,27 +744,62 @@ fn parses_successor_arm_request() {
         "--copy-directory".to_owned(),
         text(&fixture.path("copy base")),
     ];
+    let preview = parse_control(command("successor", Some("arm-request"), arm.clone())).unwrap();
     assert!(matches!(
-        parse_control(command("successor", Some("arm-request"), arm)).unwrap(),
-        FixtureControlCommand::Successor(FixtureSuccessorCommand::ArmRequest(_))
+        preview,
+        FixtureControlCommand::Successor(FixtureSuccessorCommand::ArmRequest(ref options))
+            if options.output.is_none()
     ));
+    let output = fixture.path("native-arm-request.json");
+    let mut write = arm.clone();
+    write.push("--write".to_owned());
+    assert!(parse_control(command("successor", Some("arm-request"), write)).is_err());
+    let mut publish = arm;
+    publish.extend(["--output".into(), text(&output)]);
+    assert!(parse_control(command("successor", Some("arm-request"), publish.clone())).is_err());
+    publish.push("--write".into());
+    let parsed = parse_control(command("successor", Some("arm-request"), publish)).unwrap();
+    for command in [preview, parsed] {
+        let error = crate::recovery::run(
+            &RecoveryCommand::FixtureControl(Box::new(command)),
+            &root_dir(),
+        )
+        .unwrap_err();
+        assert_eq!(error.to_string(), "arm 选择的审阅关系不同于共享导出登记");
+        assert!(!output.exists());
+    }
 }
 
 #[test]
 fn source_pair_publish_is_typed_and_native() {
     let fixture = Fixture::new();
     let output = fixture.path("source-pair.json");
-    let command = parse_control(command(
+    let parsed = parse_control(command(
         "source-pair",
         None,
         vec!["--output".to_owned(), text(&output), "--write".to_owned()],
     ))
     .unwrap();
     assert!(matches!(
-        command,
+        parsed,
         FixtureControlCommand::SourcePair(FixtureSourcePairCommand::Publish(_))
     ));
-    assert!(private_invocation_at(&command, &root_dir()).is_err());
+    let mut args = command(
+        "source-pair",
+        Some("publish-execution"),
+        vec![
+            "--output-dir".to_owned(),
+            text(&fixture.path("execution-output")),
+            "--write".to_owned(),
+        ],
+    );
+    let parsed = parse_control(args.clone()).unwrap();
+    assert!(matches!(
+        parsed,
+        FixtureControlCommand::SourcePair(FixtureSourcePairCommand::PublishExecution { .. })
+    ));
+    args.pop();
+    assert!(parse_control(args).is_err());
 }
 
 #[test]
@@ -766,42 +846,7 @@ fn rejects_ambiguous_write_options_and_invalid_paths_before_dispatch() {
 }
 
 #[test]
-fn private_protocol_selects_fixed_script_and_never_contains_argv_fields() {
-    let fixture = Fixture::new();
-    let command = parse_control(command(
-        "services",
-        Some("status"),
-        vec![
-            "--review".to_owned(),
-            text(&fixture.input),
-            "--environment".to_owned(),
-            text(&fixture.input_two),
-        ],
-    ))
-    .unwrap();
-    let invocation = private_invocation_at(&command, &root_dir()).unwrap();
-    assert_eq!(
-        invocation.script,
-        "tools/python/reference_fixture_services.py"
-    );
-    assert!(!invocation.protocol.contains(['\n', '\r', '\0']));
-    let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
-    assert_eq!(protocol["format_version"], 1);
-    assert_eq!(protocol["kind"], "ryframe-reference-fixture-control");
-    assert_eq!(protocol["domain"], "services");
-    assert_eq!(protocol["operation"], "status");
-    assert_eq!(protocol["write"], false);
-    assert_eq!(protocol["review"], text(&fixture.input));
-    assert_eq!(protocol["environment"], text(&fixture.input_two));
-    assert!(protocol.get("arguments").is_none());
-    let native_tool: Value =
-        serde_json::from_str(protocol["native_tool"].as_str().unwrap()).unwrap();
-    assert_eq!(native_tool["kind"], "ryframe-native-rate-limit-tool");
-    assert!(native_tool["bytes"].as_u64().unwrap() > 0);
-}
-
-#[test]
-fn rejects_linked_components_before_private_protocol_creation() {
+fn rejects_linked_components_before_dispatch() {
     let fixture = Fixture::new();
     let target = fixture.controlled_dir.join("linked input.json");
     fs::write(&target, b"{}\n").unwrap();

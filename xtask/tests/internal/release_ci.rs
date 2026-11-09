@@ -7,7 +7,7 @@ use std::{
 use serde_json::{Value, json};
 
 use super::release::{
-    evidence::{BUSINESS_BACKEND_OUTPUTS, EMPTY_SHA256, Requirement, validate_run},
+    evidence::{BUSINESS_BACKEND_OUTPUTS, EMPTY_SHA256, Requirement},
     github::{Api, redact_diagnostic},
     release_ci::{
         artifacts::{ARTIFACT_ARCHIVE_MAX_BYTES, select_artifacts},
@@ -404,10 +404,31 @@ fn pair_fixture(evidence: &Value) -> Value {
     json!({"core": pair, "business": business})
 }
 
+fn coordination_run(requirement: &Requirement) -> Value {
+    let (run_id, attempt) = match requirement.workflow.as_str() {
+        "ci.yml" => (11, 1),
+        "extended-ci.yml" => (22, 3),
+        _ => (33, 4),
+    };
+    json!({
+        "repository": requirement.repository,
+        "workflow": requirement.workflow,
+        "sha": requirement.sha,
+        "run_id": run_id,
+        "attempt": attempt,
+    })
+}
+
 #[test]
 fn coordination_rechecks_ci_after_reading_pair_artifacts() {
-    let evidence = json!({"run_id": 123, "attempt": 2});
-    let receipts = pair_fixture(&evidence);
+    let required = [
+        requirement(),
+        Requirement {
+            workflow: "extended-ci.yml".to_owned(),
+            ..requirement()
+        },
+    ];
+    let receipts = pair_fixture(&coordination_run(&required[1]));
     let fixture_sha = receipts["business"]["fixture"]["fixture_sha256"]
         .as_str()
         .unwrap()
@@ -416,14 +437,14 @@ fn coordination_rechecks_ci_after_reading_pair_artifacts() {
     let events = RefCell::new(Vec::new());
     let result = coordinated_evidence_with(
         base + Duration::from_secs(3),
-        &[requirement(), requirement()],
+        &required,
         &"b".repeat(40),
         &fixture_sha,
         None,
         None,
-        |_| {
+        |requirement| {
             events.borrow_mut().push("ci");
-            Ok(Some(evidence.clone()))
+            Ok(Some(coordination_run(requirement)))
         },
         |_, _, _, _| {
             events.borrow_mut().push("pairs");
@@ -446,8 +467,14 @@ fn coordination_rechecks_ci_after_reading_pair_artifacts() {
 
 #[test]
 fn recheck_after_pair_artifacts_cannot_hide_a_new_failure() {
-    let evidence = json!({"run_id": 123, "attempt": 2});
-    let receipts = pair_fixture(&evidence);
+    let required = [
+        requirement(),
+        Requirement {
+            workflow: "extended-ci.yml".to_owned(),
+            ..requirement()
+        },
+    ];
+    let receipts = pair_fixture(&coordination_run(&required[1]));
     let fixture_sha = receipts["business"]["fixture"]["fixture_sha256"]
         .as_str()
         .unwrap()
@@ -455,16 +482,16 @@ fn recheck_after_pair_artifacts_cannot_hide_a_new_failure() {
     let calls = RefCell::new(0_u32);
     let error = coordinated_evidence_with(
         Instant::now() + Duration::from_secs(3),
-        &[requirement(), requirement()],
+        &required,
         &"b".repeat(40),
         &fixture_sha,
         None,
         None,
-        |_| {
+        |requirement| {
             let mut calls = calls.borrow_mut();
             *calls += 1;
             if *calls <= 2 {
-                Ok(Some(evidence.clone()))
+                Ok(Some(coordination_run(requirement)))
             } else {
                 Err("最新重跑失败".into())
             }
@@ -481,41 +508,93 @@ fn recheck_after_pair_artifacts_cannot_hide_a_new_failure() {
 #[test]
 fn full_stack_receipts_are_read_from_the_extended_run() {
     let mut core = requirement();
-    core.workflow = "ci.yml".to_owned();
+    core.sha = "c".repeat(40);
     let mut extended = requirement();
     extended.workflow = "extended-ci.yml".to_owned();
-    let ci = json!({"run_id": 11, "attempt": 1});
-    let extended_run = json!({"run_id": 22, "attempt": 3});
+    let extra = Requirement {
+        workflow: "audit.yml".to_owned(),
+        sha: "d".repeat(40),
+        ..requirement()
+    };
+    let extended_run = coordination_run(&extended);
     let receipts = pair_fixture(&extended_run);
     let fixture_sha = receipts["business"]["fixture"]["fixture_sha256"]
         .as_str()
         .unwrap()
         .to_owned();
-    let observed = RefCell::new(Vec::new());
-    coordinated_evidence_with(
-        Instant::now() + Duration::from_secs(3),
-        &[core, extended],
-        &"b".repeat(40),
-        &fixture_sha,
-        None,
-        None,
-        |requirement| {
-            Ok(Some(if requirement.workflow == "ci.yml" {
-                ci.clone()
-            } else {
-                extended_run.clone()
-            }))
-        },
-        |evidence, _, _, _| {
-            observed.borrow_mut().push(evidence["run_id"].clone());
-            Ok(receipts.clone())
-        },
-        Instant::now,
-        |_| {},
-        |_, _| Ok(Value::Null),
-    )
-    .unwrap();
-    assert_eq!(observed.borrow().as_slice(), [json!(22)]);
+    for required in [
+        vec![core.clone(), extended.clone()],
+        vec![extended.clone(), core.clone()],
+        vec![extra.clone(), core.clone(), extended.clone()],
+        vec![core.clone(), extended.clone(), extra.clone()],
+        vec![extended.clone(), extra, core],
+    ] {
+        let observed = RefCell::new(Vec::new());
+        let result = coordinated_evidence_with(
+            Instant::now() + Duration::from_secs(3),
+            &required,
+            &"b".repeat(40),
+            &fixture_sha,
+            None,
+            None,
+            |requirement| Ok(Some(coordination_run(requirement))),
+            |evidence, backend_sha, _, _| {
+                observed
+                    .borrow_mut()
+                    .push((evidence.clone(), backend_sha.to_owned()));
+                Ok(receipts.clone())
+            },
+            Instant::now,
+            |_| {},
+            |_, _| Ok(Value::Null),
+        )
+        .unwrap();
+        assert_eq!(
+            *observed.borrow(),
+            [(extended_run.clone(), extended.sha.clone())]
+        );
+        assert_eq!(
+            result["runs"],
+            json!(required.iter().map(coordination_run).collect::<Vec<_>>())
+        );
+        assert_eq!(result["source_pairs"], receipts);
+    }
+}
+
+#[test]
+fn missing_or_duplicate_extended_workflow_fails_before_reading_artifacts() {
+    let extended = Requirement {
+        workflow: "extended-ci.yml".to_owned(),
+        ..requirement()
+    };
+    for (required, reason) in [
+        (vec![requirement(), requirement()], "缺少 extended-ci.yml"),
+        (
+            vec![requirement(), extended.clone(), extended],
+            "重复的 extended-ci.yml",
+        ),
+    ] {
+        let read_pairs = RefCell::new(false);
+        let error = coordinated_evidence_with(
+            Instant::now() + Duration::from_secs(3),
+            &required,
+            &"b".repeat(40),
+            &sha256(b"business fixture"),
+            None,
+            None,
+            |requirement| Ok(Some(coordination_run(requirement))),
+            |_, _, _, _| {
+                *read_pairs.borrow_mut() = true;
+                Ok(Value::Null)
+            },
+            Instant::now,
+            |_| {},
+            |_, _| Ok(Value::Null),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains(reason), "{error}");
+        assert!(!*read_pairs.borrow());
+    }
 }
 
 #[test]
@@ -647,15 +726,6 @@ fn source_pair_receipt_requires_clean_distinct_git_roots() {
     std::fs::write(backend.join("dirty.txt"), "dirty\n").unwrap();
     assert!(super::release::archive::source_pair_receipt(&backend, &frontend, 12, 3).is_err());
     let _ = std::fs::remove_dir_all(root);
-}
-
-#[test]
-fn validated_run_receipt_is_the_source_for_coordination_identity() {
-    let evidence = validate_run(&run(), &[job()], &requirement(), 2)
-        .unwrap()
-        .unwrap();
-    assert_eq!(evidence["repository"], "owner/backend");
-    assert_eq!(evidence["jobs"][0]["id"], 42);
 }
 
 #[test]

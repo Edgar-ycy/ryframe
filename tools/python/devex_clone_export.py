@@ -1,6 +1,8 @@
 """按当前编译目录只读导出完整源表和对象，保留逻辑摘要与文件摘要的区别。"""
 from __future__ import annotations
 
+from native_s3_client import configuration as object_configuration
+
 import datetime as dt
 import os
 from pathlib import Path
@@ -48,6 +50,7 @@ def schema_snapshot(tools: ExternalTools, models: tuple, phase: str) -> list[dic
 
 
 def run_cli(tools: ExternalTools, stage: str, command: list[str], backend: Path) -> None:
+    command = [command[0], "--config-dir", str(backend / "config"), *command[1:]]
     path = tools.work / f"{stage}.command.json"
     write_json(path, {"command": command, "cwd": str(backend), "remote_operations": "read_only"})
     stdout, stderr, returncode, error_type = b"", b"", None, None
@@ -202,8 +205,8 @@ def validate_dump_state(tools: ExternalTools, models: tuple, dumps: list, object
     source, observed = tools.plan["source"], state()
     control, tenant, _, _ = models
     indexed = {db["key"]: db for db in source["databases"]}
-    logical_tenants = declared_tenants({"source": source, "databases": dumps}, tools.work, indexed, control)
-    forbidden = (source["scope_id"], source["s3"]["endpoint"], *[db["database"] for db in source["databases"]])
+    logical_tenants = declared_tenants({"source": source, "databases": dumps}, tools.work, indexed, control | tenant)
+    forbidden = (source["scope_id"], object_configuration(source["s3"]["configuration"])["endpoint"], *[db["database"] for db in source["databases"]])
     schedules = []
     for dump in dumps:
         exact(dump, {"key", "tables", "artifact"})

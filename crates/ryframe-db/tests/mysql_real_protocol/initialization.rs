@@ -2,6 +2,9 @@ use super::{bootstrap_hashes, db_error, execute, require_count, run_mysql_test};
 use ryframe_db::migration;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
+#[path = "initialization_data.rs"]
+mod data;
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sql_import_and_migrations_produce_equivalent_control_databases() {
     run_mysql_test("sql-init", |imported| async move {
@@ -38,6 +41,7 @@ async fn sql_import_and_migrations_produce_equivalent_control_databases() {
                 .map_err(db_error)?;
             migration::verify(&migrated).await.map_err(db_error)?;
             assert_eq!(inventory(&imported).await?, inventory(&migrated).await?);
+            data::compare(&imported, &migrated).await?;
             Ok(())
         })
         .await;

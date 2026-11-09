@@ -51,6 +51,10 @@ pub(in crate::resource) fn normalize(
     super::super::sql_type::normalize_fields(&mut spec.fields, &resource, &source_path)?;
     super::super::decimal::normalize_fields(&mut spec.fields, &resource, &source_path)?;
     super::super::sql_defaults::normalize_fields(&mut spec.fields, &resource, &source_path)?;
+    super::super::foreign_key::local(&spec.database.foreign_keys)?;
+    spec.database
+        .foreign_keys
+        .sort_by_key(|key| key.name.to_ascii_lowercase());
     let schema_hash = normalize_schema(&spec, &resource, &source_path)?;
 
     if spec.fields.is_empty() {
@@ -111,6 +115,7 @@ pub(in crate::resource) fn normalize(
         bootstrap_migration: spec.database.bootstrap_migration,
         schema_hash,
         schema_revision: spec.database.schema_revision,
+        foreign_keys: spec.database.foreign_keys,
         indexes,
         soft_delete: spec.database.soft_delete.map(|value| SoftDeleteIr {
             field: value.field,

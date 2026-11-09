@@ -6,13 +6,51 @@ use std::{
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use super::super::{digest, resources::common};
+use super::{
+    super::{digest, resources::common},
+    guard::Generation,
+};
 use crate::{
     Result,
     local_test_path::{LocalTestPathKind, validate_local_test_path},
 };
 
 pub(crate) fn snapshot(backend: &Path, target: &Path, locked: bool) -> Result<Value> {
+    let lock = if locked {
+        Lock::Initialization
+    } else {
+        Lock::Unheld
+    };
+    scan(backend, target, lock)
+}
+
+pub(in crate::recovery::clone::native) fn protected_snapshot(
+    backend: &Path,
+    target: &Path,
+    owner: Option<&Generation>,
+) -> Result<Value> {
+    let Some(owner) = owner else {
+        return snapshot(backend, target, false);
+    };
+    owner.protects(target)?;
+    let lock = if owner.carries_copy_owner() {
+        Lock::Copy
+    } else {
+        Lock::Initialization
+    };
+    let value = scan(backend, target, lock)?;
+    owner.protects(target)?;
+    Ok(value)
+}
+
+#[derive(PartialEq, Eq)]
+enum Lock {
+    Unheld,
+    Initialization,
+    Copy,
+}
+
+fn scan(backend: &Path, target: &Path, lock: Lock) -> Result<Value> {
     validate_local_test_path(target, backend, LocalTestPathKind::ExistingDirectory)?;
     let mut pending = vec![target.to_path_buf()];
     let mut entries = Vec::new();
@@ -24,8 +62,10 @@ pub(crate) fn snapshot(backend: &Path, target: &Path, locked: bool) -> Result<Va
             if digest::linked(&metadata) {
                 return Err("fresh 目标阶段文件经过链接或 junction".into());
             }
-            if locked && name == "initialize.lock" {
-                if !metadata.is_dir() || fs::read_dir(&path)?.next().is_some() {
+            if lock != Lock::Unheld && name == "initialize.lock" {
+                if !metadata.is_dir()
+                    || (lock == Lock::Initialization && fs::read_dir(&path)?.next().is_some())
+                {
                     return Err("目标初始化目录锁包含未知写入或类型变化".into());
                 }
                 continue;
@@ -37,7 +77,7 @@ pub(crate) fn snapshot(backend: &Path, target: &Path, locked: bool) -> Result<Va
                 if common::link_count_for(&path, &metadata)? != 1 {
                     return Err("fresh 目标阶段文件存在额外硬链接".into());
                 }
-                let actual = if locked && name == "copy-target.guard" {
+                let actual = if lock != Lock::Unheld && name == "copy-target.guard" {
                     if metadata.len() != 1 {
                         return Err("目标已持有的控制互斥文件长度无效".into());
                     }

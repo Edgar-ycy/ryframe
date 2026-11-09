@@ -11,7 +11,7 @@ use super::{
 };
 use crate::Result;
 
-pub(super) fn validate(backend: &Path, value: &Value, predecessor: &Value) -> Result<Value> {
+pub(crate) fn validate(backend: &Path, value: &Value, predecessor: &Value) -> Result<Value> {
     json_io::exact(value, &request::fields(value), "新目标请求")?;
     request::config_directory(backend, value)?;
     check(
@@ -25,23 +25,21 @@ pub(super) fn validate(backend: &Path, value: &Value, predecessor: &Value) -> Re
         &["path", "bytes", "sha256", "canonical_sha256"],
         "审阅计划绑定",
     )?;
+    if !predecessor.is_null() {
+        check(
+            descriptor == predecessor,
+            "历史 seed 请求未绑定指定 predecessor",
+        )?;
+    }
     let file = json!({"path":descriptor["path"],"bytes":descriptor["bytes"],"sha256":descriptor["sha256"]});
     let path = bound(backend, &file)?;
     let review = read(backend, &path)?;
-    if predecessor.is_null() {
-        request_review::validate(&review)?;
-    } else {
-        check(
-            *descriptor == *predecessor,
-            "历史 seed 请求未绑定指定 pending predecessor",
-        )?;
-        check(
-            review["ready_for_execution"].as_bool() == Some(false),
-            "历史 seed predecessor 必须保持 pending",
-        )?;
+    if !predecessor.is_null() && review["ready_for_execution"].as_bool() == Some(false) {
         let mut structural = review.clone();
         structural["ready_for_execution"] = json!(true);
         request_review::validate(&structural)?;
+    } else {
+        request_review::validate(&review)?;
     }
     check(
         digest::plan_hash(&review)? == input::digest_shape(&descriptor["canonical_sha256"])?,
@@ -88,10 +86,25 @@ pub(super) fn binaries(backend: &Path, value: &Value) -> Result<Value> {
     let storage = json!({"path":rustfs["identity"]["executable"],"sha256":rustfs["sha256"]});
     let review = &binding["review"];
     check(
-        storage == review["tools"]["rustfs"] && redis["wsl"] == review["tools"]["wsl"],
+        storage == review["tools"]["rustfs"],
         "fresh 目标存储二进制不属于审阅版本",
     )?;
-    binaries.extend([storage, redis["wsl"].clone()]);
+    binaries.push(storage);
+    if redis["platform"] == "windows" {
+        check(
+            redis["tool"] == review["tools"]["redis_server"],
+            "fresh 目标 Windows Redis 工具不属于审阅版本",
+        )?;
+        binaries.extend(super::super::cache::windows_tool::package_bindings(
+            &redis["tool"],
+        )?);
+    } else {
+        check(
+            redis["wsl"] == review["tools"]["wsl"],
+            "fresh 目标存储二进制不属于审阅版本",
+        )?;
+        binaries.push(redis["wsl"].clone());
+    }
     bound(backend, &value["maintenance_build"])?;
     Ok(json!({"bindings":binaries}))
 }
@@ -138,11 +151,8 @@ pub(super) fn diagnostic(reason: &str) -> Option<&'static str> {
         "数据库物理身份或凭据路径不是精确审阅目标" => {
             "数据库物理身份或凭据路径不是精确审阅目标；请核对数据库、UUID 和凭据文件"
         }
-        "历史 seed 请求未绑定指定 pending predecessor" => {
-            "历史 seed 请求未绑定指定 pending predecessor；请保留原请求和前驱收据，不授予执行权限"
-        }
-        "历史 seed predecessor 必须保持 pending" => {
-            "历史 seed predecessor 必须保持 pending；请使用指定历史前驱且勿改写就绪状态"
+        "历史 seed 请求未绑定指定 predecessor" => {
+            "历史 seed 请求未绑定指定 predecessor；请核对原请求与前驱文件的完整绑定"
         }
         "目标对象凭据必须在绑定文件中直接提供且不能为空" => {
             "目标对象凭据必须在绑定文件中直接提供且不能为空；请修正 target.s3 凭据字段"

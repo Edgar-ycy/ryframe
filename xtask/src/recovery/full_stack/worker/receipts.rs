@@ -1,4 +1,4 @@
-use super::{documents as doc, reject};
+use super::{documents as doc, reject, role::Role};
 use crate::{Result, recovery::clone::native::json as strict};
 use serde_json::Value;
 
@@ -56,40 +56,44 @@ fn operation(
     source: &Value,
     runtime_sha: &Value,
 ) -> Result<()> {
-    doc::common(owner, "full-stack-worker-control-owner", directory, source)?;
-    doc::common(
-        request,
-        "full-stack-worker-control-request",
-        directory,
-        source,
-    )?;
+    let role = Role::owner(owner)?;
+    doc::common(owner, &role.kind("owner"), directory, source)?;
+    doc::common(request, &role.kind("request"), directory, source)?;
     doc::fields(
         owner,
         &["identity", "created_at_ns"],
         "Worker owner 字段无效",
     )?;
     doc::identity(&owner["identity"])?;
-    doc::fields(
-        request,
-        &[
-            "operation",
-            "backend_root",
-            "scope_id",
-            "controller_identity",
-            "owner_sha256",
-            "runtime_receipt_sha256",
-            "worker_artifact",
-            "worker_ready_url",
-            "timeout_seconds",
-            "log",
-            "requested_at_ns",
-        ],
-        "Worker 控制请求字段无效",
-    )?;
+    let mut fields = vec![
+        "operation",
+        "backend_root",
+        "scope_id",
+        "controller_identity",
+        "owner_sha256",
+        "runtime_receipt_sha256",
+        role.artifact(),
+        role.ready(),
+        "timeout_seconds",
+        "log",
+        "requested_at_ns",
+    ];
+    if role == Role::Frontend {
+        fields.push("request_binding");
+    }
+    if let Some(binding) = request.get("environment_binding") {
+        if role == Role::Frontend || request["operation"] != "start" {
+            return reject("冻结启动环境只能绑定API或Worker的start操作");
+        }
+        super::environment::Environment::shape(binding)?;
+        fields.push("environment_binding");
+    }
+    doc::fields(request, &fields, "角色控制请求字段无效")?;
     let operation = request["operation"].as_str().unwrap_or_default();
     let expected_log = if operation == "start" {
         Value::String(format!(
-            "worker-{}.log",
+            "{}-{}.log",
+            role.name(),
             owner["operation_id"].as_str().unwrap_or_default()
         ))
     } else {
@@ -99,7 +103,7 @@ fn operation(
         || !doc::positive(&request["requested_at_ns"])
         || !matches!(
             operation,
-            "start" | "stop" | "crash" | "status" | "reconcile"
+            "start" | "stop" | "crash" | "status" | "reconcile" | "run"
         )
         || request["operation_id"] != owner["operation_id"]
         || request["owner_sha256"] != doc::hash(owner)?
@@ -110,18 +114,28 @@ fn operation(
     {
         return reject("Worker 控制请求没有绑定原子 owner 或当前 runtime 收据");
     }
+    if (operation == "run") != (role == Role::Frontend) {
+        return reject("有限前端命令与长期服务控制操作不能混用");
+    }
     Ok(())
 }
 
 fn runtime(request: &Value, backend: &Value, runtime: &Value) -> Result<()> {
+    let role = Role::request(request)?;
     if request["backend_root"] != *backend
         || request["scope_id"] != runtime["scope_id"]
-        || request["worker_artifact"] != runtime["artifacts"]["worker"]
-        || request["worker_ready_url"] != runtime["worker_ready_url"]
+        || request[role.artifact()] != runtime["artifacts"][role.name()]
+        || request[role.ready()] != runtime[role.ready()]
         || !request["scope_id"].as_str().is_some_and(|s| !s.is_empty())
-        || !request["timeout_seconds"]
-            .as_f64()
-            .is_some_and(|n| n.is_finite() && n > 0.0 && n <= 180.0)
+        || !request["timeout_seconds"].as_f64().is_some_and(|n| {
+            n.is_finite()
+                && n > 0.0
+                && n <= if role == Role::Frontend {
+                    7200.0
+                } else {
+                    180.0
+                }
+        })
     {
         return reject("Worker 控制请求与当前后端、scope、产物或端点不匹配");
     }
@@ -144,9 +158,10 @@ fn child(
     request: &Value,
     candidate: Option<&Value>,
 ) -> Result<Value> {
+    let role = Role::owner(owner)?;
     let (kind, extras, timestamp) = if candidate.is_some() {
         (
-            "full-stack-worker-control-supervisor",
+            role.kind("supervisor"),
             &[
                 "identity",
                 "owner_sha256",
@@ -158,7 +173,7 @@ fn child(
         )
     } else {
         (
-            "full-stack-worker-control-candidate",
+            role.kind("candidate"),
             &[
                 "identity",
                 "owner_sha256",
@@ -168,7 +183,7 @@ fn child(
             "created_at_ns",
         )
     };
-    receipt_common(value, kind, owner, request)?;
+    receipt_common(value, &kind, owner, request)?;
     doc::fields(value, extras, "Worker 启动监督收据字段无效")?;
     doc::identity(&value["identity"])?;
     if !doc::positive(&value[timestamp]) {
@@ -192,7 +207,7 @@ fn progress(
     candidate: &Value,
     supervisor: &Value,
 ) -> Result<Value> {
-    receipt_common(value, "full-stack-worker-control-progress", owner, request)?;
+    receipt_common(value, &Role::owner(owner)?.kind("progress"), owner, request)?;
     doc::fields(
         value,
         &[
@@ -207,7 +222,7 @@ fn progress(
     )?;
     child(supervisor, owner, request, Some(candidate))?;
     let phase = value["phase"].as_str().unwrap_or_default();
-    if !matches!(phase, "launching" | "started" | "ready")
+    if !matches!(phase, "launching" | "started" | "ready" | "completed")
         || (phase == "launching" && !value["identity"].is_null())
         || value["supervisor_sha256"] != doc::hash(supervisor)?
         || !doc::positive(&value["updated_at_ns"])
@@ -221,7 +236,7 @@ fn progress(
 }
 
 fn result(value: &Value, owner: &Value, request: &Value) -> Result<Value> {
-    receipt_common(value, "full-stack-worker-control-result", owner, request)?;
+    receipt_common(value, &Role::owner(owner)?.kind("result"), owner, request)?;
     doc::fields(
         value,
         &[
@@ -262,7 +277,10 @@ fn result(value: &Value, owner: &Value, request: &Value) -> Result<Value> {
             return reject("成功的 Worker 控制结果包含错误或未知状态");
         }
         if matches!(request["operation"].as_str(), Some("start")) && state != "running"
-            || matches!(request["operation"].as_str(), Some("stop" | "crash")) && state != "stopped"
+            || matches!(
+                request["operation"].as_str(),
+                Some("stop" | "crash" | "run")
+            ) && state != "stopped"
         {
             return reject("Worker 控制结果没有达到请求的目标状态");
         }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::recovery::clone::native::target_verify::input::request_configuration::python_configuration_hash;
 use std::{cell::RefCell, collections::BTreeMap, fs};
 
 struct Database {
@@ -177,9 +178,9 @@ fn artifact_s3_remote_endpoint_is_rejected_before_request() {
 }
 
 #[test]
-fn artifact_python_json_digest_preserves_unicode_and_spacing() {
+fn artifact_python_json_digest_sorts_keys_and_preserves_unicode_and_spacing() {
     assert_eq!(
-        runtime::hash(&json!({"a":["中文", "😀"],"b":1})).unwrap(),
+        python_configuration_hash(&json!({"b":1,"a":["中文", "😀"]})).unwrap(),
         "ae21fbaca5c9727af78ce6399a82f784d2558d3f4f4b7cc5987ebe340d4289d7"
     );
 }
@@ -237,7 +238,7 @@ fn runtime_fixture(root: &Path) -> (std::path::PathBuf, Value) {
     .unwrap();
     let api_digest = runtime::configuration_digest(&api).unwrap();
     let worker_digest = runtime::configuration_digest(&worker).unwrap();
-    let receipt = json!({"format_version":1,"backend_root":root,"scope_id":"artifact-test","api_config_dir":api,"worker_config_dir":worker,"api_configuration_sha256":api_digest,"worker_configuration_sha256":worker_digest,"configuration_sha256":runtime::hash(&json!([api_digest,worker_digest])).unwrap(),"worker_ready_url":"http://127.0.0.1:18081/readyz","artifacts":artifacts});
+    let receipt = json!({"format_version":1,"backend_root":root,"scope_id":"artifact-test","api_config_dir":api,"worker_config_dir":worker,"api_configuration_sha256":api_digest,"worker_configuration_sha256":worker_digest,"configuration_sha256":python_configuration_hash(&json!([api_digest,worker_digest])).unwrap(),"worker_ready_url":"http://127.0.0.1:18081/readyz","artifacts":artifacts});
     fs::write(
         directory.join("runtime.json"),
         serde_json::to_vec(&receipt).unwrap(),
@@ -250,8 +251,11 @@ fn runtime_fixture(root: &Path) -> (std::path::PathBuf, Value) {
 fn artifact_runtime_binds_files_scope_instances_and_all_binaries() {
     let root = tempfile::tempdir().unwrap();
     let (directory, receipt) = runtime_fixture(root.path());
+    let equivalent_root = root.path().to_string_lossy().replace('\\', "/");
     assert_eq!(
-        runtime::verify(root.path(), &directory).unwrap().receipt,
+        runtime::verify(Path::new(&equivalent_root), &directory)
+            .unwrap()
+            .receipt,
         receipt
     );
     let config = root.path().join("config/app.test.toml");
@@ -267,9 +271,16 @@ fn artifact_runtime_binds_files_scope_instances_and_all_binaries() {
     fs::write(&config, original).unwrap();
     fs::write(directory.join("ryframe.exe"), b"changed").unwrap();
     assert!(runtime::verify(root.path(), &directory).is_err());
+    assert_eq!(
+        runtime::verify_configuration(root.path(), &directory)
+            .unwrap()
+            .receipt,
+        receipt
+    );
     fs::write(directory.join("ryframe.exe"), b"ryframe").unwrap();
     fs::remove_file(directory.join("ryframe-reset.exe")).unwrap();
     assert!(runtime::verify(root.path(), &directory).is_err());
+    assert!(runtime::verify_configuration(root.path(), &directory).is_ok());
 }
 
 #[test]
@@ -292,6 +303,76 @@ fn artifact_runtime_rejects_duplicate_json_and_unexpected_evidence() {
     )
     .unwrap();
     assert!(runtime::verify(root.path(), &directory).is_err());
+}
+
+#[test]
+fn configuration_only_contract_keeps_both_directories_worker_drift_and_artifact_shape_strict() {
+    let root = tempfile::tempdir().unwrap();
+    let (directory, original) = runtime_fixture(root.path());
+    let alternate = root.path().join("isolated");
+    fs::create_dir(&alternate).unwrap();
+    for name in ["config", "worker-config"] {
+        fs::rename(root.path().join(name), alternate.join(name)).unwrap();
+    }
+    let mut receipt = original;
+    receipt["api_config_dir"] = json!(alternate.join("config"));
+    receipt["worker_config_dir"] = json!(alternate.join("worker-config"));
+    let path = directory.join("runtime.json");
+    fs::write(&path, serde_json::to_vec(&receipt).unwrap()).unwrap();
+    assert!(runtime::verify_configuration(root.path(), &directory).is_err());
+    let api_digest = runtime::configuration_digest(&alternate.join("config")).unwrap();
+    let worker_digest = runtime::configuration_digest(&alternate.join("worker-config")).unwrap();
+    receipt["api_configuration_sha256"] = json!(api_digest);
+    receipt["worker_configuration_sha256"] = json!(worker_digest);
+    receipt["configuration_sha256"] =
+        json!(python_configuration_hash(&json!([api_digest, worker_digest])).unwrap());
+    fs::write(&path, serde_json::to_vec(&receipt).unwrap()).unwrap();
+    runtime::verify_configuration(root.path(), &directory).unwrap();
+    let worker = alternate.join("worker-config/app.test.toml");
+    let bytes = fs::read(&worker).unwrap();
+    fs::write(&worker, b"scope_id='changed'").unwrap();
+    assert!(runtime::verify_configuration(root.path(), &directory).is_err());
+    fs::write(&worker, &bytes).unwrap();
+    for (pointer, value) in [
+        (
+            "/worker_config_dir",
+            json!(root.path().join("worker-config")),
+        ),
+        ("/worker_ready_url", json!("http://127.0.0.1:18082/readyz")),
+        ("/artifacts/api/sha256", json!("unknown")),
+        ("/artifacts/worker/path", json!("relative.exe")),
+        (
+            "/artifacts/api",
+            json!({"path":directory.join("ryframe.exe"),"sha256":"a".repeat(64),"extra":true}),
+        ),
+    ] {
+        let mut changed = receipt.clone();
+        *changed.pointer_mut(pointer).unwrap() = value;
+        fs::write(&path, serde_json::to_vec(&changed).unwrap()).unwrap();
+        assert!(
+            runtime::verify_configuration(root.path(), &directory).is_err(),
+            "{pointer}"
+        );
+    }
+    // 文件摘要同步变化仍不能掩盖 Worker 与 API 的合并值或实例编号冲突。
+    for content in [
+        String::from_utf8(bytes.clone())
+            .unwrap()
+            .replace("snowflake_worker_id=2", "snowflake_worker_id=3"),
+        String::from_utf8(bytes)
+            .unwrap()
+            .replace("health_port=18081", "health_port=18082"),
+    ] {
+        fs::write(&worker, content).unwrap();
+        let api = runtime::configuration_digest(&alternate.join("config")).unwrap();
+        let worker = runtime::configuration_digest(&alternate.join("worker-config")).unwrap();
+        receipt["api_configuration_sha256"] = json!(api);
+        receipt["worker_configuration_sha256"] = json!(worker);
+        receipt["configuration_sha256"] =
+            json!(python_configuration_hash(&json!([api, worker])).unwrap());
+        fs::write(&path, serde_json::to_vec(&receipt).unwrap()).unwrap();
+        assert!(runtime::verify_configuration(root.path(), &directory).is_err());
+    }
 }
 
 fn source_fixture_root() -> tempfile::TempDir {
@@ -320,7 +401,7 @@ fn source_fixture(root: &Path) -> std::path::PathBuf {
     };
     fs::write(
         root.join(".gitignore"),
-        "runtime/\nconfig/\nworker-config/\n",
+        "runtime/\nconfig/\nworker-config/\n/.local-tests/\n",
     )
     .unwrap();
     fs::write(root.join("source.txt"), b"source").unwrap();
@@ -342,7 +423,15 @@ fn source_fixture(root: &Path) -> std::path::PathBuf {
         .snapshot;
     let source = json!({"head":snapshot.head,"patch_sha256":snapshot.patch_sha256,"files":[]});
     let pair_path = directory.join("source-pair.json");
-    let mut pair = json!({"format_version":1,"backend_sha":source["head"],"frontend_sha":source["head"],"run_id":1,"attempt":1,"sources":{"backend":source,"frontend":source}});
+    let ci_number = |name| {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(1)
+    };
+    let mut pair = json!({"format_version":1,"backend_sha":source["head"],"frontend_sha":source["head"],
+        "run_id":ci_number("GITHUB_RUN_ID"),"attempt":ci_number("GITHUB_RUN_ATTEMPT"),
+        "sources":{"backend":source,"frontend":source}});
     fs::write(&pair_path, serde_json::to_vec(&pair).unwrap()).unwrap();
     pair["receipt"] = super::super::file_binding(&pair_path, "pair").unwrap();
     let source = json!({"format_version":1,"fixture":"core","backend_root":root,"source_pair":pair,"original":{"backend":source}});
@@ -360,7 +449,7 @@ fn source_fixture(root: &Path) -> std::path::PathBuf {
         })
         .collect::<serde_json::Map<_, _>>();
     let build_path = directory.join("build-evidence.json");
-    let build = json!({"format_version":1,"kind":"full-stack-build","backend_root":root,"source":source,"artifacts":artifacts});
+    let build = json!({"format_version":1,"kind":"full-stack-build","backend_root":root,"source":source,"artifacts":artifacts,"build_jobs":4});
     fs::write(&build_path, serde_json::to_vec(&build).unwrap()).unwrap();
     let runtime_evidence = json!({"format_version":1,"kind":"full-stack-runtime","source":source,"build_evidence":super::super::file_binding(&build_path,"build").unwrap(),"runtime":super::super::file_binding(&directory.join("runtime.json"),"runtime").unwrap()});
     fs::write(
@@ -371,6 +460,111 @@ fn source_fixture(root: &Path) -> std::path::PathBuf {
     directory
 }
 
+fn registration_fixture(root: &Path) -> std::path::PathBuf {
+    let directory = source_fixture(root);
+    for name in ["runtime.json", "runtime-evidence.json"] {
+        fs::remove_file(directory.join(name)).unwrap();
+    }
+    directory
+}
+
+fn register_fixture(root: &Path, directory: &Path) -> Result<Value> {
+    runtime::register(
+        root,
+        directory,
+        &root.join("config"),
+        &root.join("worker-config"),
+    )
+}
+
+fn assert_registration_absent(directory: &Path) {
+    for name in ["runtime.json", "runtime-evidence.json"] {
+        assert_eq!(
+            fs::symlink_metadata(directory.join(name))
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::NotFound,
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn runtime_register_checks_all_frozen_artifacts_and_current_jobs_before_writing() {
+    let root = source_fixture_root();
+    let directory = registration_fixture(root.path());
+    for role in [
+        "ryframe",
+        "ryframe-worker",
+        "ryframe-reset",
+        "ryframe-migrate",
+    ] {
+        let binary = directory.join(format!("{role}.exe"));
+        let original = fs::read(&binary).unwrap();
+        fs::write(&binary, vec![b'x'; original.len()]).unwrap();
+        assert_registration_absent(&directory);
+        let error = register_fixture(root.path(), &directory).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("构建证据与二进制清单或产物不匹配"),
+            "{role}: {error}"
+        );
+        assert_registration_absent(&directory);
+        fs::write(binary, original).unwrap();
+    }
+    fs::create_dir(root.path().join(".local-tests")).unwrap();
+    fs::write(
+        root.path().join(".local-tests/tools.toml"),
+        "[verification]\nbuild_jobs=1\n",
+    )
+    .unwrap();
+    let error = register_fixture(root.path(), &directory).unwrap_err();
+    assert!(
+        error.to_string().contains("verification.build_jobs"),
+        "{error}"
+    );
+    assert_registration_absent(&directory);
+}
+
+#[test]
+fn runtime_register_rejects_manifest_extras_and_missing_source_before_writing() {
+    let root = source_fixture_root();
+    let directory = registration_fixture(root.path());
+    let manifest = directory.join("binaries.json");
+    let bytes = fs::read(&manifest).unwrap();
+    let mut binaries: Value = serde_json::from_slice(&bytes).unwrap();
+    binaries["unexpected"] = binaries["ryframe"].clone();
+    fs::write(&manifest, serde_json::to_vec(&binaries).unwrap()).unwrap();
+    let error = register_fixture(root.path(), &directory).unwrap_err();
+    assert!(error.to_string().contains("全栈二进制清单"), "{error}");
+    assert_registration_absent(&directory);
+    fs::write(manifest, bytes).unwrap();
+    fs::remove_file(directory.join("source-pair.json")).unwrap();
+    let error = register_fixture(root.path(), &directory).unwrap_err();
+    assert!(error.to_string().contains("运行登记来源"), "{error}");
+    assert_registration_absent(&directory);
+}
+
+#[test]
+fn runtime_register_publishes_verified_core_source_only_once() {
+    let root = source_fixture_root();
+    let directory = registration_fixture(root.path());
+    assert_registration_absent(&directory);
+    let receipt = register_fixture(root.path(), &directory).unwrap();
+    assert_eq!(
+        runtime::verify(root.path(), &directory).unwrap().receipt,
+        receipt
+    );
+    let outputs = ["runtime.json", "runtime-evidence.json"].map(|name| directory.join(name));
+    let before = outputs.each_ref().map(|path| fs::read(path).unwrap());
+    assert!(register_fixture(root.path(), &directory).is_err());
+    assert_eq!(
+        outputs.each_ref().map(|path| fs::read(path).unwrap()),
+        before
+    );
+}
+
 #[test]
 fn artifact_source_rejects_source_and_receipt_drift() {
     let root = source_fixture_root();
@@ -378,6 +572,7 @@ fn artifact_source_rejects_source_and_receipt_drift() {
     runtime::verify(root.path(), &directory).unwrap();
     fs::write(root.path().join("source.txt"), b"drift").unwrap();
     assert!(runtime::verify(root.path(), &directory).is_err());
+    assert!(runtime::verify_configuration(root.path(), &directory).is_ok());
     fs::write(root.path().join("source.txt"), b"source").unwrap();
     fs::write(directory.join("runtime-evidence.json"), b"{}").unwrap();
     assert!(runtime::verify(root.path(), &directory).is_err());

@@ -1,12 +1,11 @@
 """开发复制源的显式配置、构建、进程代次与停止状态证明。"""
 from __future__ import annotations
 
-from native_s3_client import _invoke as native_invoke, _read_response as native_response
+from native_s3_client import _invoke as native_invoke, _read_response as native_response, configuration as object_configuration
 
 from contextlib import nullcontext
 import copy
 import errno
-import json
 import os
 from pathlib import Path
 import re
@@ -18,8 +17,9 @@ from devex_clone import read_json
 from devex_clone_model import digest, exact, linked, local_path, name
 from devex_clone_tools import verify as verify_tools
 from devex_provenance import verify_source
-from full_stack_process import process_identity, read_process
+from full_stack_process import read_process
 from full_stack_runtime import verify_runtime
+from process_environment import configured
 from rate_limit_client import load_app_table
 from process_sockets import endpoint, verify_windows_port_idle
 from restore_build import file_digest, verify_build_artifacts
@@ -27,12 +27,33 @@ from restore_reference_plan import identifier, plan_hash
 
 REQUEST_FIELDS = {"format_version", "kind", "id", "source", "tools", "backend_build", "maintenance_build",
                   "worktree_fingerprint", "runtime", "processes", "producers_registry", "max_object_bytes"}
+GENERATION_FIELDS = {"source", "worktree_fingerprint", "runtime", "processes", "operator_declared_producers",
+                     "physical_binding", "maintenance", "request_sha256", "external_writers_discovered",
+                     "clone_verified", "restore_qualified"}
 
 
-def public_request(request: dict) -> dict:
+def copy_source_generation(backend: Path, run_dir: Path, run) -> dict:
+    """只让原生权威从本次正式运行清单重读来源，诊断仅保留摘要。"""
+    def source_runner(command, **kwargs):
+        return run(command, **{**kwargs, "env": configured({}), "digest_output": True})
+
+    result, _ = native_response(*native_invoke(
+        "__source-evidence", {"operation": "copy-source-generation", "write": False,
+            "arguments": {"backend": str(backend), "run_dir": str(run_dir)}},
+        source_runner, may_write=False,
+    ))
+    exact(result, {"value"})
+    value = result["value"]
+    exact(value, GENERATION_FIELDS)
+    if any(value[field] is not False for field in ("external_writers_discovered", "clone_verified", "restore_qualified")):
+        raise ValueError("复制来源代次的核验资格字段无效")
+    return value
+
+
+def public_request(backend: Path, request: dict) -> dict:
     """公开请求投影只保存对象连接身份，凭据保留在已绑定的私有原文件。"""
     proof = copy.deepcopy(request)
-    s3 = request["source"]["s3"]
+    s3 = object_configuration(request["source"]["s3"]["configuration"], backend)
     proof["source"]["s3"] = {field: s3[field] for field in ("endpoint", "region")}
     return proof
 
@@ -51,12 +72,13 @@ def validate_source(backend: Path, source: dict) -> None:
     name(source["scope_id"])
     local_path(backend, source["runtime_dir"])
     endpoint(source["api_url"])
-    exact(source["s3"], {"endpoint", "region", "access_key", "secret_key"})
-    endpoint(source["s3"]["endpoint"])
-    if not re.fullmatch(r"[a-z0-9-]+", source["s3"]["region"]):
+    exact(source["s3"], {"configuration"})
+    objects = object_configuration(source["s3"]["configuration"], backend)
+    endpoint(objects["endpoint"])
+    if not re.fullmatch(r"[a-z0-9-]+", objects["region"]):
         raise ValueError("源对象 region 无效")
     for field in ("access_key", "secret_key"):
-        if not isinstance(source["s3"][field], str) or not source["s3"][field]:
+        if not isinstance(objects[field], str) or not objects[field]:
             raise ValueError("源对象认证必须使用明确的配置文件字段")
     keys, physical = set(), set()
     if not isinstance(source["databases"], list) or not source["databases"]:
@@ -138,112 +160,15 @@ def verify_api_address(backend: Path, url: str, *, config_dir: Path | None = Non
     verify_api_address_environment(backend, url, {"APP_ENV": os.environ.get("APP_ENV")}, config_dir=config_dir)
 
 
-def _cim_creation_time(pid: int, run) -> int:
-    executable = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
-    if not executable.is_absolute() or not executable.is_file():
-        raise ValueError("历史 producer 查询必须使用本机系统 PowerShell")
-    script = (
-        "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); "
-        f"$items=@(Get-CimInstance -Namespace root/cimv2 -ClassName Win32_Process -Filter 'ProcessId = {pid}' "
-        "-Property ProcessId,CreationDate -ErrorAction Stop); "
-        "if($items.Count -ne 1){throw 'producer creation record is not unique'}; "
-        "$created=$items[0].CreationDate; "
-        "if($created -isnot [datetime] -or $created.Kind -notin @([DateTimeKind]::Local,[DateTimeKind]::Utc))"
-        "{throw 'producer creation timezone is unknown'}; "
-        "[ordered]@{count=$items.Count;pid=[long]$items[0].ProcessId;kind=$created.Kind.ToString();"
-        "started=$created.ToUniversalTime().ToFileTimeUtc().ToString([Globalization.CultureInfo]::InvariantCulture);"
-        "precision_ticks=10}|ConvertTo-Json -Compress"
-    )
-    result = run([str(executable), "-NoProfile", "-NonInteractive", "-Command", script],
-                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                 check=True, timeout=15,
-                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0)
-    if result.returncode != 0:
-        raise ValueError("历史 producer 创建时间查询失败")
-    value = json.loads(result.stdout.decode("utf-8-sig"))
-    exact(value, {"count", "pid", "kind", "started", "precision_ticks"})
-    if (type(value["count"]) is not int or value["count"] != 1 or type(value["pid"]) is not int
-            or value["pid"] != pid or value["kind"] not in {"Local", "Utc"}
-            or type(value["precision_ticks"]) is not int or value["precision_ticks"] != 10
-            or not isinstance(value["started"], str) or not re.fullmatch(r"[1-9][0-9]{0,17}", value["started"])
-            or int(value["started"]) % 10 != 0):
-        raise ValueError("历史 producer 创建时间、PID 或精度不明确")
-    return int(value["started"])
-
-
-def _counter_creation_time(pid: int, run) -> int:
-    executable = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
-    if not executable.is_absolute() or not executable.is_file():
-        raise ValueError("历史 producer 查询必须使用本机系统 PowerShell")
-    script = (
-        "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); "
-        "$samples=@((Get-Counter '\\Process(*)\\ID Process','\\Process(*)\\Elapsed Time' "
-        "-SampleInterval 1 -MaxSamples 1 -ErrorAction SilentlyContinue).CounterSamples); "
-        f"$ids=@($samples|Where-Object{{$_.Status -eq 0 -and $_.CounterType -eq 65536 -and "
-        f"[long]$_.RawValue -eq {pid} -and $_.Path.EndsWith('\\id process',"
-        "[StringComparison]::OrdinalIgnoreCase)}); "
-        "if($ids.Count -ne 1){throw 'producer counter identity is not unique'}; "
-        "$elapsedPath=$ids[0].Path.Substring(0,$ids[0].Path.Length-'id process'.Length)+'elapsed time'; "
-        "$elapsed=@($samples|Where-Object{$_.Status -eq 0 -and $_.CounterType -eq 807666944 -and "
-        "[string]::Equals($_.Path,$elapsedPath,[StringComparison]::OrdinalIgnoreCase)}); "
-        "if($elapsed.Count -ne 1){throw 'producer elapsed counter is not unique'}; "
-        "$started=[long]$elapsed[0].RawValue; $seconds=[double]$elapsed[0].CookedValue; "
-        "$now=[DateTime]::UtcNow.ToFileTimeUtc(); "
-        "if($started -le 0 -or $started -gt $now -or $seconds -lt 0 -or "
-        "[Math]::Abs((($now-$started)/10000000.0)-$seconds) -gt 5)"
-        "{throw 'producer elapsed counter timebase is invalid'}; "
-        f"[ordered]@{{count=$ids.Count;elapsed_count=$elapsed.Count;pid=[long]{pid};"
-        "started=$started.ToString([Globalization.CultureInfo]::InvariantCulture);precision_ticks=1}"
-        "|ConvertTo-Json -Compress"
-    )
-    result = run([str(executable), "-NoProfile", "-NonInteractive", "-Command", script],
-                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                 check=True, timeout=15,
-                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0)
-    if result.returncode != 0:
-        raise ValueError("历史 producer 性能计数器查询失败")
-    value = json.loads(result.stdout.decode("utf-8-sig"))
-    exact(value, {"count", "elapsed_count", "pid", "started", "precision_ticks"})
-    if (value["count"] != 1 or type(value["count"]) is not int
-            or value["elapsed_count"] != 1 or type(value["elapsed_count"]) is not int
-            or value["pid"] != pid or type(value["pid"]) is not int
-            or not isinstance(value["started"], str) or not re.fullmatch(r"[1-9][0-9]{0,17}", value["started"])
-            or value["precision_ticks"] != 1 or type(value["precision_ticks"]) is not int):
-        raise ValueError("历史 producer 性能计数器创建时间无效")
-    return int(value["started"])
-
-
-def require_recorded_producer_stopped(expected: dict, *, run=None, counter_run=None) -> None:
-    """只证明登记的旧创建代次结束；不授权向当前占用 PID 的进程发送信号。"""
-    exact(expected, {"pid", "started", "executable"})
-    if (type(expected["pid"]) is not int or expected["pid"] <= 1
-            or not isinstance(expected["started"], str) or not re.fullmatch(r"[1-9][0-9]{0,17}", expected["started"])
-            or not isinstance(expected["executable"], str) or not Path(expected["executable"]).is_absolute()):
-        raise ValueError("历史 producer 创建身份无效")
-    original = int(expected["started"])
-    try:
-        current = process_identity(expected["pid"])
-    except PermissionError as error:
-        if os.name != "nt" or getattr(error, "winerror", None) != 5 or run is None:
-            raise
-        # CIM 只有微秒精度；性能计数器也保留各自精度边界，邻接代次不能当作停止证明。
-        try:
-            created, precision = _cim_creation_time(expected["pid"], run), 10
-        except subprocess.CalledProcessError:
-            if counter_run is None:
-                raise
-            created, precision = _counter_creation_time(expected["pid"], counter_run), 1
-        if created <= original + precision:
-            raise ValueError("历史 producer 查询的创建时间不能证明为后续代次") from error
-        return
-    if current is None:
-        return
-    exact(current, {"pid", "started", "executable"})
-    if (type(current["pid"]) is not int or current["pid"] != expected["pid"]
-            or not isinstance(current["started"], str) or not re.fullmatch(r"[1-9][0-9]{0,17}", current["started"])
-            or not isinstance(current["executable"], str) or not Path(current["executable"]).is_absolute()
-            or int(current["started"]) <= original):
-        raise ValueError("登记 producer 尚未停止或当前创建代次不明确")
+def require_recorded_producer_stopped(expected: dict) -> None:
+    """只读核验登记代次停止；身份与原生 CIM 失败均由原生权威拒绝。"""
+    result = native_response(*native_invoke(
+        "__source-evidence", {"operation": "recorded-process-stopped", "write": False,
+            "arguments": {"identity": expected}}, subprocess.run, may_write=False,
+    ))[0]["value"]
+    exact(result, {"stopped", "signals_sent"})
+    if result["stopped"] is not True or type(result["signals_sent"]) is not int or result["signals_sent"] != 0:
+        raise ValueError("原生历史 producer 停止证明结果无效")
 
 
 def producer_identities(request: dict, registry: dict, processes: dict, *, run) -> list[dict]:
@@ -265,7 +190,7 @@ def producer_identities(request: dict, registry: dict, processes: dict, *, run) 
             raise ValueError("producer 内核创建身份无效或重复")
         if role in processes and identity != processes[role]:
             raise ValueError("producer 清单中的 API/Worker 代次与真实运行收据不同")
-        require_recorded_producer_stopped(identity, run=run)
+        require_recorded_producer_stopped(identity)
         names.add(role)
         identities.add(identity_key)
     if not {"api", "worker"}.issubset(names):
@@ -273,8 +198,26 @@ def producer_identities(request: dict, registry: dict, processes: dict, *, run) 
     return sorted(registry["processes"], key=lambda item: item["name"])
 
 
+def registered_runtime(backend: Path, request: dict) -> dict:
+    """复核原 descriptor 对应的完整 runtime；不从默认配置推导后继来源。"""
+    directory = Path(request["source"]["runtime_dir"])
+    descriptor = copy.deepcopy(request["runtime"])
+    path = bound_file(backend, descriptor)
+    if path != directory / "runtime.json":
+        raise ValueError("运行收据不属于源明确运行目录")
+    runtime = verify_runtime(execution_backend(backend, request), directory)
+    if (request["runtime"] != descriptor or runtime != read_json(bound_file(backend, descriptor))
+            or runtime["scope_id"] != request["source"]["scope_id"]):
+        raise ValueError("源运行配置或 runtime 代次已变化")
+    if (Path(runtime["api_config_dir"]).resolve(strict=True)
+            != Path(request["source"]["s3"]["configuration"]["directory"]).resolve(strict=True)):
+        raise ValueError("源对象配置目录不属于已登记的 API runtime 配置")
+    return runtime
+
+
 def verify_generation(backend: Path, request: dict, run, *, control_environment=None) -> dict:
     validate_request(backend, request)
+    runtime_descriptor = copy.deepcopy(request["runtime"])
     execution = execution_backend(backend, request)
     build = read_json(bound_file(backend, request["backend_build"]))
     with control_environment() if control_environment is not None else nullcontext():
@@ -285,9 +228,8 @@ def verify_generation(backend: Path, request: dict, run, *, control_environment=
             or maintenance["source"]["worktree_fingerprint"] != request["worktree_fingerprint"]):
         raise ValueError("维护工具与源实际后端构建不属于同一完整源码")
     source, directory = request["source"], Path(request["source"]["runtime_dir"])
-    runtime = verify_runtime(execution, directory)
-    if runtime != read_json(bound_file(backend, request["runtime"])) or runtime["scope_id"] != source["scope_id"]:
-        raise ValueError("源运行配置或 runtime 代次已变化")
+    runtime = registered_runtime(backend, request)
+    config_dir = Path(runtime["api_config_dir"])
     app_env = os.environ.get("APP_ENV")
     file_environment = {"APP_ENV": app_env} if isinstance(app_env, str) else {}
     physical = native_response(*native_invoke(
@@ -297,11 +239,11 @@ def verify_generation(backend: Path, request: dict, run, *, control_environment=
                 'evidence_root': str(backend),
                 'source': source,
                 'app_env': (file_environment).get("APP_ENV"),
-                'config_dir': None,
+                'config_dir': str(config_dir),
             },
         }, subprocess.run, may_write=False,
     ))[0]["value"]
-    if load_app_table(execution, file_environment)["jobs"]["mode"] != "external":
+    if load_app_table(execution, file_environment, config_dir=config_dir)["jobs"]["mode"] != "external":
         raise ValueError("源必须明确使用 external Worker，scheduler/consumer 由 Worker 承载")
     processes = {}
     for role in ("api", "worker"):
@@ -312,9 +254,11 @@ def verify_generation(backend: Path, request: dict, run, *, control_environment=
             raise ValueError("源登记进程实际二进制与本侧构建不一致")
         processes[role] = identity
     producers = producer_identities(request, read_json(bound_file(backend, request["producers_registry"])), processes, run=run)
-    verify_api_address_environment(execution, source["api_url"], file_environment)
+    verify_api_address_environment(execution, source["api_url"], file_environment, config_dir=config_dir)
     require_closed_port(source["api_url"])
     require_closed_port(runtime["worker_ready_url"])
+    if request["runtime"] != runtime_descriptor or registered_runtime(backend, request) != runtime:
+        raise ValueError("源 runtime 或绑定配置在 generation 复核期间变化")
     return {"source": snapshot, "worktree_fingerprint": request["worktree_fingerprint"], "runtime": runtime,
             "processes": processes, "operator_declared_producers": producers, "physical_binding": physical,
             "maintenance": maintenance, "request_sha256": plan_hash(request),

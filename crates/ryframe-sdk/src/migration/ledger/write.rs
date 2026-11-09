@@ -58,20 +58,56 @@ pub(in crate::migration) async fn record_executed(
     migration: &dyn BusinessMigration,
 ) -> AppResult<()> {
     let transaction = begin_write(database).await?;
+    register_record(&transaction, migration).await?;
+    transaction.commit().await.map_err(database_error)
+}
+
+/// 会话由组合根保留，DDL 后重新开始元数据登记事务，不嵌套租用连接。
+pub(in crate::migration) async fn record_in_session(
+    database: &mut DatabaseTransaction,
+    migration: &dyn BusinessMigration,
+) -> AppResult<()> {
+    if database.is_open() {
+        return Err(AppError::Config("业务登记不能结束调用方的活跃事务".into()));
+    }
+    database
+        .begin_mysql_root(
+            Some(IsolationLevel::Serializable),
+            Some(AccessMode::ReadWrite),
+        )
+        .await
+        .map_err(database_error)?;
+    let result = async {
+        database.query_all_raw(Statement::from_string(DbBackend::MySql,
+            format!("SELECT scope,module_name,migration_id FROM {} ORDER BY scope,module_name,migration_id FOR UPDATE",super::NAME))).await.map_err(database_error)?;
+        register_record(database,migration).await?;
+        Ok::<(),AppError>(())
+    }.await;
+    if let Err(error) = result {
+        let rollback = database.finish_mysql_root(false).await;
+        return Err(AppError::Database(format!(
+            "{error}；回滚结果={rollback:?}；先核对完整前后像，不自动重放"
+        )));
+    }
+    database.finish_mysql_root(true).await.map_err(|error| {
+        AppError::Database(format!(
+            "业务账本提交结果未知：{error}；先核对完整前后像，不自动重放"
+        ))
+    })
+}
+async fn register_record<C: ConnectionTrait>(
+    database: &C,
+    migration: &dyn BusinessMigration,
+) -> AppResult<()> {
     let tables = super::table_names(migration);
-    lock_business_tables(&transaction, tables.iter().map(String::as_str)).await?;
-    super::verify_ownership(&transaction, migration).await?;
-    migration.schema().verify_after(&transaction).await?;
-    if let Some(state) = super::state(&transaction, migration).await? {
+    lock_business_tables(database, tables.iter().map(String::as_str)).await?;
+    super::verify_ownership(database, migration).await?;
+    migration.schema().verify_after(database).await?;
+    if let Some(state) = super::state(database, migration).await? {
         state.verify(migration)?;
     } else {
-        super::insert(
-            &transaction,
-            migration,
-            BusinessMigrationOrigin::Executed,
-            None,
-        )
-        .await?;
+        super::insert(database, migration, BusinessMigrationOrigin::Executed, None).await?;
     }
-    transaction.commit().await.map_err(database_error)
+
+    Ok(())
 }

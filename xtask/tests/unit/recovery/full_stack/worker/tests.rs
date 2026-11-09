@@ -7,9 +7,156 @@ use std::{
     time::Instant,
 };
 
+#[test]
+fn bound_start_environment_keeps_file_identity_and_never_uses_host_values() {
+    let root = crate::workspace::root_dir().join(".local-tests");
+    std::fs::create_dir_all(&root).unwrap();
+    let temporary = tempfile::tempdir_in(root).unwrap();
+    let path = temporary.path().join("environment.json");
+    let original =
+        json!({"environment":{"APP_ENV":"test","TEMP":"private-temp","TMP":"private-tmp"}});
+    operation::write_new(&path, &original).unwrap();
+    let mut file = operation::file(&path).unwrap();
+    file["path"] = json!(path);
+    let environment = environment::Environment::capture(&file).unwrap();
+    let binding = environment.binding().clone();
+    let mut command = std::process::Command::new("unused-test-command");
+    command
+        .env("TEMP", "host-sentinel")
+        .env("TMP", "host-sentinel");
+    environment.apply(&mut command).unwrap();
+    let values = command
+        .get_envs()
+        .map(|(k, v)| {
+            (
+                k.to_string_lossy().into_owned(),
+                v.map(|v| v.to_string_lossy().into_owned()),
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(values["APP_ENV"].as_deref(), Some("test"));
+    assert_eq!(values["TEMP"].as_deref(), Some("private-temp"));
+    assert_eq!(values["TMP"].as_deref(), Some("private-tmp"));
+    assert!(
+        !serde_json::to_string(&binding)
+            .unwrap()
+            .contains("private-temp")
+    );
+    let changed = std::fs::write(
+        &path,
+        serde_json::to_vec(&json!({"environment":{"APP_ENV":"test"}})).unwrap(),
+    );
+    if changed.is_ok() {
+        assert!(environment.check().is_err());
+    }
+    drop(environment);
+    // 即使恢复相同字节，替换文件也不能冒充最初的文件身份。
+    let replacement = temporary.path().join("replacement.json");
+    operation::write_new(&replacement, &original).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    std::fs::rename(&replacement, &path).unwrap();
+    assert_eq!(operation::file(&path).unwrap()["sha256"], file["sha256"]);
+    assert!(environment::Environment::recorded(&binding).is_err());
+    std::fs::write(&path, b"{\"environment\":{\"APP_ENV\":\"test\"}}").unwrap();
+    let mut absent = operation::file(&path).unwrap();
+    absent["path"] = json!(path);
+    let environment = environment::Environment::capture(&absent).unwrap();
+    environment.apply(&mut command).unwrap();
+    let values = command
+        .get_envs()
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(values[std::ffi::OsStr::new("TEMP")], None);
+    assert_eq!(values[std::ffi::OsStr::new("TMP")], None);
+}
+
+#[test]
+fn start_environment_rejects_invalid_private_inputs_and_wrong_operation() {
+    let root = crate::workspace::root_dir().join(".local-tests");
+    std::fs::create_dir_all(&root).unwrap();
+    let temporary = tempfile::tempdir_in(root).unwrap();
+    let path = temporary.path().join("environment.json");
+    for bytes in [
+        r#"{"environment":{"APP_ENV":"prod"}}"#,
+        r#"{"environment":{"APP_ENV":"test","PASSWORD":"synthetic-secret"}}"#,
+        r#"{"environment":{"APP_ENV":"test","TEMP":""}}"#,
+        r#"{"environment":{"APP_ENV":"test","TMP":4}}"#,
+        r#"{"environment":{"APP_ENV":"test","APP_ENV":"test"}}"#,
+        r#"{"environment":{"APP_ENV":"test"},"extra":true}"#,
+    ] {
+        std::fs::write(&path, bytes).unwrap();
+        let mut file = operation::file(&path).unwrap();
+        file["path"] = json!(path);
+        assert!(environment::Environment::capture(&file).is_err());
+    }
+    let binding =
+        json!({"file":{"path":path,"bytes":10,"sha256":"d".repeat(64)},"identity":[u64::MAX,2]});
+    let mut args = fixture();
+    args["request"]["environment_binding"] = binding.clone();
+    assert!(receipts::execute(&args).is_ok());
+    args["request"]["environment_binding"]["identity"] = json!([1]);
+    assert!(receipts::execute(&args).is_err());
+    args["request"]["environment_binding"] = binding;
+    args["request"]["operation"] = json!("status");
+    args["request"]["log"] = Value::Null;
+    assert!(receipts::execute(&args).is_err());
+    assert!(
+        start::reserve(
+            role::Role::Frontend,
+            temporary.path(),
+            temporary.path(),
+            &Value::Null
+        )
+        .is_err()
+    );
+    assert!(!temporary.path().join("worker-control.lock").exists());
+    assert!(!temporary.path().join("api-control.lock").exists());
+}
+
 fn common(kind: &str) -> Value {
     json!({"format_version":1,"kind":kind,"operation_id":"a".repeat(32),
         "runtime_directory":std::env::current_dir().unwrap(),"source_sha256":"b".repeat(64)})
+}
+
+#[test]
+fn process_tree_cannot_cross_role_scope_or_product_identity() {
+    let root = crate::workspace::root_dir().join(".local-tests");
+    std::fs::create_dir_all(&root).unwrap();
+    let temporary = tempfile::tempdir_in(root).unwrap();
+    let directory = operation::canonical(temporary.path()).unwrap();
+    let runtime = json!({"scope_id":"role-isolation"});
+    let identity =
+        json!({"pid":42,"started":"12345","executable":std::env::current_exe().unwrap()});
+    let mut monitor = identity.clone();
+    monitor["pid"] = json!(43);
+    for name in ["api", "worker", "frontend"] {
+        let role = role::Role::parse(&json!(name)).unwrap();
+        let tree_path = directory.join(format!("{name}-tree.json"));
+        let product_path = directory.join(format!("{name}.json"));
+        let original = json!({"format_version":2,"kind":"full-stack-process-tree",
+            "runtime_directory":directory,"role":name,"scope_id":"role-isolation",
+            "operation_id":"a".repeat(32),"supervisor":identity,"process":identity,
+            "monitor":monitor,"group_id":42});
+        operation::write_new(&tree_path, &original).unwrap();
+        operation::write_new(&product_path, &json!({"identity":identity})).unwrap();
+        assert_eq!(
+            tree::read(&directory, &runtime, role, true).unwrap(),
+            Some(original.clone())
+        );
+        for (field, invalid) in [
+            ("role", json!("other")),
+            ("scope_id", json!("other")),
+            ("process", monitor.clone()),
+        ] {
+            let mut changed = original.clone();
+            changed[field] = invalid;
+            crate::recovery::clone::native::json::write_replace(&tree_path, &changed).unwrap();
+            assert!(tree::read(&directory, &runtime, role, true).is_err());
+        }
+        crate::recovery::clone::native::json::write_replace(&tree_path, &original).unwrap();
+    }
+    for invalid in [Value::Null, json!("../api"), json!("Api"), json!("runtime")] {
+        assert!(role::Role::parse(&invalid).is_err());
+    }
 }
 
 fn fixture() -> Value {
@@ -68,6 +215,60 @@ fn successful(args: &Value) -> Value {
         value[key] = value2.clone();
     }
     value
+}
+
+#[test]
+fn role_contracts_reject_cross_role_artifacts_and_running_finite_results() {
+    for role in [role::Role::Api, role::Role::Frontend] {
+        let mut args = fixture();
+        args["owner"]["kind"] = json!(role.kind("owner"));
+        args["request"]["kind"] = json!(role.kind("request"));
+        args["request"]["owner_sha256"] = json!(documents::hash(&args["owner"]).unwrap());
+        let artifact = args["request"]
+            .as_object_mut()
+            .unwrap()
+            .remove("worker_artifact")
+            .unwrap();
+        let ready = args["request"]
+            .as_object_mut()
+            .unwrap()
+            .remove("worker_ready_url")
+            .unwrap();
+        args["request"][role.artifact()] = artifact.clone();
+        args["request"][role.ready()] = ready.clone();
+        args["runtime"]["artifacts"] = json!({(role.name()):artifact});
+        args["runtime"]
+            .as_object_mut()
+            .unwrap()
+            .remove("worker_ready_url");
+        args["runtime"][role.ready()] = ready;
+        args["request"]["log"] = json!(format!("{}-{}.log", role.name(), "a".repeat(32)));
+        if role == role::Role::Frontend {
+            args["request"]["operation"] = json!("run");
+            args["request"]["log"] = Value::Null;
+            args["request"][role.ready()] = json!("exit-and-members");
+            args["runtime"][role.ready()] = json!("exit-and-members");
+            args["request"]["request_binding"] = json!({"descriptor":{},"state":{}});
+            args["request"]["timeout_seconds"] = json!(1800);
+        }
+        args["mode"] = json!("request");
+        receipts::execute(&args).unwrap();
+        let mut changed = args.clone();
+        changed["runtime"]["artifacts"][role.name()]["path"] = json!("different.exe");
+        assert!(receipts::execute(&changed).is_err());
+        changed = args.clone();
+        changed["owner"]["kind"] = json!("full-stack-worker-control-owner");
+        assert!(receipts::execute(&changed).is_err());
+        if role == role::Role::Frontend {
+            args["mode"] = json!("result");
+            args["value"] = successful(&args);
+            args["value"]["kind"] = json!(role.kind("result"));
+            assert!(receipts::execute(&args).is_err());
+            args["value"]["state"] = json!("stopped");
+            args["value"]["identity"] = Value::Null;
+            receipts::execute(&args).unwrap();
+        }
+    }
 }
 
 #[test]
@@ -308,4 +509,94 @@ fn readiness_accepts_200_and_never_follows_redirect_or_waits_forever() {
     );
     assert!(started.elapsed().as_secs_f64() < 2.0);
     server.join().unwrap();
+}
+
+#[test]
+fn role_atomic_receipts_support_long_unicode_paths_and_preserve_noclobber() {
+    let local = crate::workspace::root_dir().join(".local-tests");
+    std::fs::create_dir_all(&local).unwrap();
+    let temporary = tempfile::tempdir_in(local).unwrap();
+    let mut directory = operation::canonical(temporary.path()).unwrap();
+    while directory.to_string_lossy().encode_utf16().count() < 230 {
+        directory.push("中文 空间-1234567890");
+    }
+    std::fs::create_dir_all(&directory).unwrap();
+    for role in [role::Role::Api, role::Role::Worker, role::Role::Frontend] {
+        let path = directory.join(format!(
+            "{}-members-{}-ready.json",
+            role.name(),
+            "a".repeat(32)
+        ));
+        assert!(path.to_string_lossy().encode_utf16().count() > 260);
+        let original = json!({"role":role.name(),"path":path,"status":"原字节"});
+        operation::write_new(&path, &original).unwrap();
+        assert_eq!(operation::read(&path).unwrap(), original);
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(operation::write_new(&path, &json!({"status":"不得覆盖"})).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    }
+    assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 3);
+}
+
+#[test]
+fn atomic_receipt_duplicate_retains_io_error_without_changing_original() {
+    let local = crate::workspace::root_dir().join(".local-tests");
+    std::fs::create_dir_all(&local).unwrap();
+    let temporary = tempfile::tempdir_in(local).unwrap();
+    let directory = operation::canonical(temporary.path()).unwrap();
+    let path = directory.join("receipt.json");
+    operation::write_new(&path, &json!({"original":true})).unwrap();
+    let original = std::fs::read(&path).unwrap();
+    let error = operation::write_new(&path, &json!({"original":false})).unwrap_err();
+    let io = error
+        .downcast_ref::<std::io::Error>()
+        .expect("必须保留PersistError.error的IO类型");
+    assert_eq!(io.kind(), std::io::ErrorKind::AlreadyExists);
+    assert!(io.raw_os_error().is_some());
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1);
+}
+
+#[test]
+fn operation_atomic_replacement_keeps_control_target_and_staging_boundary() {
+    let local = crate::workspace::root_dir().join(".local-tests");
+    std::fs::create_dir_all(&local).unwrap();
+    let temporary = tempfile::tempdir_in(local).unwrap();
+    let directory = operation::canonical(temporary.path()).unwrap();
+    let runtime = json!({"scope_id":"atomic-receipt","worker_ready_url":"http://127.0.0.1:19210/readyz",
+        "artifacts":{"worker":{"path":std::env::current_exe().unwrap(),"sha256":"d".repeat(64)}}});
+    operation::write_new(&directory.join("runtime.json"), &runtime).unwrap();
+    let op = operation::Operation::claim(
+        role::Role::Worker,
+        "start",
+        &directory,
+        &directory,
+        &runtime,
+        60.0,
+    )
+    .unwrap();
+    op.publish("progress.json", &json!({"stage":"original"}), false)
+        .unwrap();
+    op.publish("progress.json", &json!({"stage":"replacement"}), true)
+        .unwrap();
+    assert_eq!(
+        operation::read(&op.path.join("progress.json")).unwrap()["stage"],
+        "replacement"
+    );
+    assert!(!directory.join("progress.json").exists());
+    std::fs::remove_file(op.path.join("progress.json")).unwrap();
+    std::fs::create_dir(op.path.join("progress.json")).unwrap();
+    let error = op
+        .publish("progress.json", &json!({"stage":"must-fail"}), true)
+        .unwrap_err();
+    assert!(
+        error
+            .downcast_ref::<std::io::Error>()
+            .unwrap()
+            .raw_os_error()
+            .is_some()
+    );
+    assert!(op.path.join("progress.json").is_dir());
+    assert_eq!(std::fs::read_dir(&op.path).unwrap().count(), 3);
+    assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 2);
 }

@@ -32,7 +32,7 @@ fn configuration_and_builder_share_resolved_tasks_without_executing_them() {
 fn explicit_empty_selection_and_disabled_sync_override_configuration() {
     let root = tempfile::tempdir().unwrap();
     fs::create_dir(root.path().join("config")).unwrap();
-    fs::write(root.path().join("config/tools.toml"), "[generator]\npackage='order-business'\ntables=['biz_order']\nmodels=['Old']\nsync_frontend=true\n").unwrap();
+    fs::write(root.path().join("config/tools.toml"), "[generator]\npackage='order-business'\nsource='sources.legacy'\nstorage='control'\ntables=['biz_order']\nmodels=['Old']\nsync_frontend=true\n").unwrap();
     let plan = GenerationBuilder::new(root.path())
         .include_tables(Vec::<String>::new())
         .include_models(["Order", "OrderItem"])
@@ -44,6 +44,65 @@ fn explicit_empty_selection_and_disabled_sync_override_configuration() {
     assert_eq!(plan.models, ["Order", "OrderItem"]);
     assert!(!plan.sync_frontend);
     assert_eq!(plan.tasks().last(), Some(&"事务写入文件"));
+    let description = plan.describe();
+    assert!(description.contains("持久化目标=资源模型声明"));
+    assert!(!description.contains("只读结构来源"));
+    assert!(!description.contains("模型目标=control"));
+    for operation in [GenerationOperation::Resource, GenerationOperation::Import] {
+        for sync in [false, true] {
+            let tables = if operation == GenerationOperation::Import {
+                vec!["biz_order"]
+            } else {
+                vec![]
+            };
+            let plan = GenerationBuilder::new(root.path())
+                .operation(operation.clone())
+                .include_tables(tables)
+                .include_models(Vec::<String>::new())
+                .sync_frontend(sync)
+                .write(true)
+                .plan()
+                .unwrap();
+            let expected = if sync {
+                vec![
+                    "导出本次候选 OpenAPI",
+                    "同步前端契约与派生文件",
+                    "生成业务列表表单与路由",
+                    "校验候选前端类型",
+                    "预检所有目标文件",
+                    "事务写入文件",
+                ]
+            } else {
+                vec![
+                    "编译候选组合根（bin-api）",
+                    "校验全部已注册业务模块、权限与路由",
+                    "预检所有目标文件",
+                    "事务写入文件",
+                ]
+            };
+            let tasks = plan.tasks();
+            assert_eq!(&tasks[tasks.len() - expected.len()..], expected);
+            assert_eq!(
+                tasks
+                    .iter()
+                    .filter(|task| **task == "导出本次候选 OpenAPI")
+                    .count(),
+                usize::from(sync)
+            );
+            assert_eq!(
+                tasks
+                    .iter()
+                    .filter(|task| **task == "编译候选组合根（bin-api）")
+                    .count(),
+                usize::from(!sync)
+            );
+            assert!(plan.describe().contains(&expected.join(" → ")));
+        }
+    }
+    assert!(!root.path().join(".local-tests").exists());
+    assert!(!root.path().join("target").exists());
+    assert!(!root.path().join("Cargo.lock").exists());
+    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
 }
 
 #[test]
@@ -125,12 +184,8 @@ fn import_uses_all_tables_and_validates_before_any_side_effect() {
     assert!(plan.models.is_empty());
     assert_eq!(plan.tables, ["table1", "table2"]);
     let tasks = plan.tasks();
-    let validation = tasks
-        .iter()
-        .position(|task| *task == "校验候选前端类型")
-        .unwrap();
+    assert!(tasks.contains(&"校验候选前端类型"));
     assert_eq!(tasks.last(), Some(&"事务写入文件"));
-    assert!(validation < tasks.len() - 1);
     assert!(
         GenerationBuilder::new(root.path())
             .include_models(["Old"])

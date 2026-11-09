@@ -9,6 +9,7 @@ import subprocess
 from rate_limit_client import ROOT, _child_environment
 from rate_limit_tool import tool_binding, verified_tool
 from devex_clone_capture import unique_object
+from devex_clone_model import digest
 
 
 def evidence(operation: str, backend: Path, target: Path, **fields) -> dict:
@@ -56,4 +57,14 @@ def evidence(operation: str, backend: Path, target: Path, **fields) -> dict:
             or set(response) != {"ok", "result"} or response["ok"] is not True
             or not isinstance(response["result"], dict)):
         raise ValueError("原生目标证据核验失败；核对计划、账本及直接前像，不自动重放或清理")
-    return response["result"]
+    value = response["result"]
+    if operation in {"process-argv", "storage-layout", "storage-generation", "fixture-storage-layout"}:
+        if type(value.get("remote_writes")) is not int or value["remote_writes"] != 0:
+            raise ValueError("原生存储观察响应无效；保留现场，不重放")
+        if operation == "process-argv":
+            if set(value) != {"actual_arguments_sha256", "remote_writes"}:
+                raise ValueError("原生参数观察只允许安全摘要；保留现场，不重放")
+            digest(value["actual_arguments_sha256"])
+        elif value != {"status": operation.replace("-", "_") + "_verified", "remote_writes": 0}:
+            raise ValueError("原生存储观察响应无效；保留现场，不重放")
+    return value

@@ -95,6 +95,12 @@ fn database_schema_hash(spec: &ResourceSpec) -> String {
         },
         "table": spec.database.table,
     });
+    if !spec.database.foreign_keys.is_empty() {
+        contract.as_object_mut().expect("schema 是对象").insert(
+            "foreign_keys".into(),
+            serde_json::json!(spec.database.foreign_keys),
+        );
+    }
     if spec.database.id_generation != IdGeneration::Snowflake {
         contract.as_object_mut().expect("schema 是对象").insert(
             "id_generation".into(),

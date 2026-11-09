@@ -1,6 +1,6 @@
 mod check;
 
-pub use check::normalize_check_clause;
+pub use check::{normalize_check_clause, normalize_check_clause_sql};
 
 pub fn extract_column_type(value: &str) -> &str {
     let value = value.trim_start();

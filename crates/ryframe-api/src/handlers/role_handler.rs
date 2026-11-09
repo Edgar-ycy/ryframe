@@ -143,8 +143,9 @@ async fn list(
 async fn detail(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
 ) -> HttpResult<Json<ApiResponse<RoleVo>>> {
+    let id = crate::handler_utils::parse_id(&id, "id 必须是 i64 字符串")?;
     detail_body!(state, current_user, id, identity.role, RoleVo, "角色")
 }
 
@@ -184,9 +185,10 @@ async fn create(
 async fn update(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
     Json(dto): Json<UpdateRoleDto>,
 ) -> HttpResult<Json<ApiResponse<RoleVo>>> {
+    let id = crate::handler_utils::parse_id(&id, "id 必须是 i64 字符串")?;
     dto.validate()?;
     ensure_can_operate_role(&state, &current_user, id).await?;
     let result = state
@@ -213,8 +215,9 @@ async fn update(
 async fn remove(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
+    let id = crate::handler_utils::parse_id(&id, "id 必须是 i64 字符串")?;
     ensure_can_operate_role(&state, &current_user, id).await?;
     state
         .services
@@ -290,9 +293,10 @@ async fn request_role_export(
 async fn replace_permissions(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
     Json(dto): Json<ReplaceRolePermissionsDto>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
+    let id = crate::handler_utils::parse_id(&id, "id 必须是 i64 字符串")?;
     dto.validate()?;
     ensure_can_operate_role(&state, &current_user, id).await?;
     let perm_ids = parse_i64_strings(&dto.perm_ids)?;
@@ -315,8 +319,9 @@ async fn replace_permissions(
 async fn get_role_perms(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
 ) -> HttpResult<Json<ApiResponse<Vec<String>>>> {
+    let id = crate::handler_utils::parse_id(&id, "id 必须是 i64 字符串")?;
     let perm_ids = state
         .services
         .identity
@@ -337,9 +342,10 @@ async fn get_role_perms(
 async fn replace_data_scope(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
     Json(dto): Json<ReplaceRoleDataScopeDto>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
+    let id = crate::handler_utils::parse_id(&id, "id 必须是 i64 字符串")?;
     dto.validate()?;
     ensure_can_operate_role(&state, &current_user, id).await?;
     let dept_ids = parse_i64_strings(&dto.dept_ids)?;

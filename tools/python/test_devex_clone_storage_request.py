@@ -25,7 +25,7 @@ class RequestTests(unittest.TestCase):
         old["lifecycle"] = "running"
         process = self.json("target-process.json", old)
         launch = self.json("target-launch.json", {"format_version": 1, "scope_id": request["scope_id"], "identity": self.old,
-            "arguments": model.arguments(request), "environment": model.configuration(request), "credential_files": self.credentials})
+            "arguments": model.arguments(request), "credential_files": self.credentials})
         previous.update(process_receipt=process, ready_receipt=process, launch_receipt=launch)
         review = {"services": {"rustfs": {"scope_id": request["scope_id"], "data_dir": str(self.data),
                    "api": request["api_url"], "console": request["console_url"]}}}
@@ -87,11 +87,11 @@ class RequestTests(unittest.TestCase):
 
     def test_all_declared_source_producers_and_both_target_ports_are_checked(self):
         producers, selected = self.producers()
-        with patch("devex_clone_factory_context.initialization_history", return_value=({}, {"target": {"scope_id": "target-scope"}})), patch("devex_clone_target_binding.request_binding", return_value=({}, selected)), patch("devex_clone_source_proof.process_identity", return_value=None) as observe, patch.object(model, "require_closed_port") as port:
+        with patch("devex_clone_factory_context.initialization_history", return_value=({}, {"target": {"scope_id": "target-scope"}})), patch("devex_clone_target_binding.request_binding", return_value=({}, selected)), patch("devex_clone_source_proof.require_recorded_producer_stopped") as observe, patch.object(model, "require_closed_port") as port:
             model.producers_stopped(self.backend, self.directory, self.value)
             self.assertEqual(observe.call_count, 3)
             self.assertEqual(port.call_count, 4)
-        with patch("devex_clone_source_proof.process_identity", return_value=producers[-1]["identity"]):
+        with patch("devex_clone_source_proof.require_recorded_producer_stopped", side_effect=ValueError("原生停止证明拒绝")):
             with self.assertRaises(ValueError):
                 model.producers_stopped(self.backend, self.directory, self.value)
 

@@ -1,7 +1,7 @@
 //! 续作收据转换统一由 Rust 建模；只返回候选值，由持锁控制器发布。
 use super::*;
 
-pub(super) fn execute(
+pub(in super::super) fn execute(
     backend: &Path,
     target: &Path,
     transition: &str,
@@ -104,10 +104,10 @@ fn operation_intent(backend: &Path, target: &Path, args: &Value) -> Result<Value
         "目标续作收据状态与固定前像不同",
     )?;
     let operation = &args["operation"];
-    let operations = super::super::resume_prefix::operations(json_io::text(
-        &operation["command"][0],
-        "迁移程序",
-    )?)?;
+    let operations = super::super::resume_prefix::operations(
+        json_io::text(&operation["command"][0], "迁移程序")?,
+        &read(backend, &target.join("request.json"))?,
+    )?;
     check(
         operations["operations"].get(index as usize) == Some(operation),
         "目标续作收据状态与固定前像不同",
@@ -144,10 +144,10 @@ fn operation_confirmed(backend: &Path, target: &Path, args: &Value) -> Result<Va
         "目标续作收据状态与固定前像不同",
     )?;
     let receipt_path = bound(backend, &args["receipt"])?;
-    let operations = super::super::resume_prefix::operations(json_io::text(
-        &intent["operation"]["command"][0],
-        "迁移程序",
-    )?)?;
+    let operations = super::super::resume_prefix::operations(
+        json_io::text(&intent["operation"]["command"][0], "迁移程序")?,
+        &read(backend, &target.join("request.json"))?,
+    )?;
     let operation = operations["operations"]
         .get(index as usize)
         .ok_or("目标续作状态请求无效")?;

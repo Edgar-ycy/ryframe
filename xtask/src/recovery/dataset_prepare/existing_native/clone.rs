@@ -53,9 +53,7 @@ pub(super) fn run(args: &[OsString]) -> Result<()> {
     model::specification(&plan)?;
     model::validate_dataset(&plan, &dataset)?;
     validate_target(&plan, &target)?;
-    let contract_path = root.join("openapi/openapi.json");
-    let (contract_snapshot, contract) =
-        common::Snapshot::read(&root, &contract_path, 16 * 1024 * 1024, "OpenAPI契约")?;
+    let (contract_snapshot, contract) = common::Snapshot::openapi(&root)?;
     let catalog = common::catalog(&contract)?;
     let mut snapshots = vec![
         plan_snapshot,

@@ -91,12 +91,10 @@ fn rejects_duplicate_missing_empty_control_characters_and_equals_syntax_without_
         assert!(!message.contains('\0'));
         assert!(!message.contains('\r'));
         assert!(!message.contains('\n'));
+        if values.as_slice() == ["--config-dir=private-equals"] {
+            assert!(message.contains("--config-dir <目录>"));
+        }
     }
-    let error = ConfigurationArgs::parse(arguments(&["--config-dir=private-equals"])).unwrap_err();
-    let AppError::Config(message) = error else {
-        panic!("应返回配置参数错误")
-    };
-    assert!(message.contains("--config-dir <目录>"));
 }
 
 #[test]

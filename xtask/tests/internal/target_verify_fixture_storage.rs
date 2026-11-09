@@ -12,14 +12,11 @@ use crate::{
     Result,
     recovery::clone::native::{
         digest, json as json_io,
-        target_verify::{
-            input::TargetContext,
-            storage::{StorageObserver, redis_layout, rustfs},
-        },
+        target_verify::storage::{StorageObserver, redis_layout, rustfs},
     },
 };
 
-pub(super) fn files(fixture: &mut Fixture) -> Value {
+pub(super) fn files(fixture: &mut Fixture, windows_redis: bool) -> Value {
     let storage = fixture.local.join("storage");
     fs::create_dir(&storage).unwrap();
     let data = storage.join("objects");
@@ -37,8 +34,8 @@ pub(super) fn files(fixture: &mut Fixture) -> Value {
     }
     write(
         &storage.join("launch.json"),
-        &json!({"format_version":1,"scope_id":SCOPE,"identity":identity,"arguments":rustfs::arguments(&expected,&identity,&data).unwrap(),
-        "environment":{"RUSTFS_CONSOLE_ENABLE":"true","RUSTFS_ACCESS_KEY_FILE":credentials["access_key"]["path"],"RUSTFS_SECRET_KEY_FILE":credentials["secret_key"]["path"]},"credential_files":credentials}),
+        &json!({"format_version":1,"scope_id":SCOPE,"identity":identity,"arguments":rustfs::arguments(&expected,&identity,&data,&credentials).unwrap(),
+        "credential_files":credentials}),
     );
     write(
         &storage.join("process.json"),
@@ -47,13 +44,30 @@ pub(super) fn files(fixture: &mut Fixture) -> Value {
     );
     let redis = fixture.local.join("redis");
     fs::create_dir(&redis).unwrap();
-    let linux = redis_layout::wsl_path(&redis).unwrap();
-    fs::write(redis.join("redis.conf"),format!("bind 127.0.0.1\nport 26379\ndir \"{linux}\"\ndatabases 1\nprotected-mode yes\nsave \"\"\nappendonly no\ndaemonize no\n")).unwrap();
+    let projection = if windows_redis {
+        crate::target_initialize_restart_fixture::windows_redis_files(fixture, &redis)
+    } else {
+        historical_redis_files(fixture, &redis)
+    };
     fixture.request["storage"] = json!({"rustfs":{"identity":identity,"sha256":tool(&fixture.local.join("rustfs"))["sha256"],
         "process_receipt":bound(&storage.join("process.json")),"launch_receipt":bound(&storage.join("launch.json"))},
-        "redis":{"port":26379,"wsl":tool(&fixture.local.join("wsl")),"distribution":"fixture","pid":200,"started":"67890","executable":"/usr/bin/redis-server",
-            "sha256":"9".repeat(64),"run_id":"3".repeat(40),"configuration":bound(&redis.join("redis.conf"))}});
-    json!({"rustfs":expected,"redis":{"directory":redis}})
+        "redis":projection});
+    let mut services = json!({"rustfs":expected,"redis":{"directory":redis}});
+    if windows_redis {
+        services["redis"]["endpoint"] = json!("redis://127.0.0.1:26379/0");
+    }
+    services
+}
+
+fn historical_redis_files(fixture: &Fixture, redis: &Path) -> Value {
+    let wsl = fixture.local.join("wsl");
+    fs::write(&wsl, "explicit-mock-wsl").unwrap();
+    let linux = redis_layout::wsl_path(redis).unwrap();
+    let configuration = redis.join("redis.conf");
+    fs::write(&configuration,format!("bind 127.0.0.1\nport 26379\ndir \"{linux}\"\ndatabases 1\nprotected-mode yes\nsave \"\"\nappendonly no\ndaemonize no\n")).unwrap();
+    json!({"port":26379,"wsl":tool(&wsl),"distribution":"fixture","pid":200,"started":"67890",
+        "executable":"/usr/bin/redis-server","sha256":"9".repeat(64),"run_id":"3".repeat(40),
+        "configuration":bound(&configuration)})
 }
 
 pub(in super::super) struct ExternalFacts {
@@ -128,20 +142,34 @@ impl StorageObserver for ExternalFacts {
         }
     }
 
-    fn arguments(&self, _context: &TargetContext, identity: &Value) -> Result<Vec<String>> {
+    fn arguments(
+        &self,
+        _context: &crate::recovery::clone::native::target_verify::storage::StorageInputs<'_>,
+        identity: &Value,
+    ) -> Result<Vec<String>> {
         assert_eq!(identity, &self.identity);
         self.arg_reads.set(self.arg_reads.get() + 1);
         Ok(self.arguments.clone())
     }
 
-    fn listener(&self, _context: &TargetContext, identity: &Value, url: &str) -> Result<()> {
+    fn listener(
+        &self,
+        _context: &crate::recovery::clone::native::target_verify::storage::StorageInputs<'_>,
+        identity: &Value,
+        url: &str,
+    ) -> Result<()> {
         assert_eq!(identity, &self.identity);
         assert!(self.endpoints.contains(url));
         self.listeners.borrow_mut().insert(url.into());
         Ok(())
     }
 
-    fn wsl(&self, _context: &TargetContext, redis: &Value, args: &[String]) -> Result<String> {
+    fn wsl(
+        &self,
+        _context: &crate::recovery::clone::native::target_verify::storage::StorageInputs<'_>,
+        redis: &Value,
+        args: &[String],
+    ) -> Result<String> {
         self.kernel_reads.set(self.kernel_reads.get() + 1);
         let path = args.last().ok_or("fixture WSL path")?;
         match args.first().map(String::as_str) {
@@ -165,7 +193,12 @@ impl StorageObserver for ExternalFacts {
         }
     }
 
-    fn redis(&self, context: &TargetContext, _redis: &Value, parts: &[&str]) -> Result<Value> {
+    fn redis(
+        &self,
+        context: &crate::recovery::clone::native::target_verify::storage::StorageInputs<'_>,
+        _redis: &Value,
+        parts: &[&str],
+    ) -> Result<Value> {
         match parts {
             ["INFO", "server"] => Ok(json!(format!(
                 "process_id:200\r\nrun_id:{}\r\nconfig_file:{}\r\n",

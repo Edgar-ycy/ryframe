@@ -22,6 +22,19 @@ pub(super) fn prepare(backend: &Path) {
                 unique: false,
             });
         }
+        if !auto {
+            for field in spec
+                .fields
+                .iter_mut()
+                .filter(|field| matches!(field.name.as_str(), "created_at" | "updated_at"))
+            {
+                field.sql_type = Some("DATETIME(3)".into());
+                field.sql_default = Some("CURRENT_TIMESTAMP(3)".into());
+                if field.name == "updated_at" {
+                    field.sql_on_update = Some("CURRENT_TIMESTAMP(3)".into());
+                }
+            }
+        }
         let resource = normalize_resource(spec, "order.toml", "unsigned-fake").unwrap();
         let generated = render_resources(&[resource]).unwrap();
         let root = tests.join(module);

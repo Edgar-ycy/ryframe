@@ -206,14 +206,6 @@ class SeedTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 seed.verified_identity_stage(self.backend, self.directory, self.request)
 
-    def test_old_api_must_really_stop_and_pid_reuse_rejected(self):
-        context = SimpleNamespace(backend=self.backend, runtime=self.old, target_config={"scope_id": self.scope})
-        for observed in (self.identity, {**self.identity, "started": "333"}):
-            with patch.object(runtime, "process_identity", return_value=observed), self.assertRaises(ValueError):
-                runtime.old_api_stopped(context, self.request)
-        with patch.object(runtime, "process_identity", return_value=None):
-            runtime.old_api_stopped(context, self.request)
-
     def test_current_schedules_unknown_or_enabled_rejected_before_control(self):
         context = SimpleNamespace(backend=self.backend, directory_root=self.directory, target={}, output=self.directory,
             selected={}, review={}, run=Mock(), target_config={"databases": [{"key": "shared-control"}]},
@@ -226,7 +218,7 @@ class SeedTests(unittest.TestCase):
                 with self.subTest(raw=raw), self.assertRaises(ValueError):
                     runtime.schedules_guard(context)
 
-    def test_stop_uses_new_runtime_after_later_failure_and_tool_changes(self):
+    def test_bound_runtime_inputs_survive_later_failure_and_tool_changes(self):
         self.register()
         root = self.directory / "seed-runtime/runtime"
         root.mkdir(parents=True)
@@ -238,10 +230,9 @@ class SeedTests(unittest.TestCase):
         self.stage("seed-runtime", "prepare", {"status": "seed_runtime_prepared", "handoff": binding(root / "handoff.json")})
         self.stage("seed-runtime", "start", error=ValueError("outer failed after start"))
         self.file("identity-plan", {"later_tool_unavailable": True})
-        with patch("devex_clone_runtime.control", return_value={"stopped": True}) as control, patch.object(runtime, "require_quiet", side_effect=AssertionError("cleanup must not depend on Node or source")):
-            result = runtime.execute_seed(self.backend, self.directory, None, "stop", 8)
-            self.assertEqual(result["status"], "seed_runtime_stop")
-            self.assertEqual(control.call_args.args[1:4], (root, "stop", ("api", "worker")))
+        selected, observed, _ = runtime.runtime_inputs(self.backend, self.directory)
+        self.assertEqual(selected, root)
+        self.assertEqual(observed, handoff)
         self.assertEqual(binding(self.old / "api.json"), self.request["api_process"])
 
     def test_failed_start_cannot_be_masked_by_successful_stop(self):

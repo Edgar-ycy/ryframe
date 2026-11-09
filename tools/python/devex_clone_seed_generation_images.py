@@ -30,10 +30,12 @@ def capture_image(backend: Path, execution: Path, selected: dict, request: dict,
     review = read_json(bound_file(backend, {key: value for key, value in target["review"].items() if key != "canonical_sha256"}))
     seed = review["scopes"]["seed"]
     redis_configuration(execution, target, seed, environment=environment)
+    initialized = bound_file(backend, source["manifest"]["initialized"])
+    descriptor = read_json(initialized.parent / "prepare.json")["request"]
     resources = Resources(backend, target, output, seed, review, run, execution_backend=execution,
-                          storage_run=source["directory"])
+                          storage_run=source["directory"], request_descriptor=descriptor)
     storage = resources.storage_identity()
-    redis = resources.redis_state(initialized=True, sentinel=True)
+    redis = resources.redis_state()
     tools = ExternalTools({"source": selected, "tools": predecessor["tools"]}, output, run)
     maintenance_path = bound_file(execution, request["maintenance_build"])
     with control_environment() if control_environment else nullcontext():
@@ -46,7 +48,7 @@ def capture_image(backend: Path, execution: Path, selected: dict, request: dict,
     verify_migrations(tools, execution, maintenance, "migrations")
     schema = schema_snapshot(tools, models, "before")
     captured = capture_side_inventory(execution, "source", tools, maintenance_path, output / "databases",
-                                      environment=environment, evidence_root=backend, control_environment=control_environment)
+                                      environment=environment, evidence_root=backend)
     inventories = {key: read_json(output / f"databases/after-target-{key}.json") for key in KEYS}
     owners = CaptureReader(tools, "source", output).owners("owners-before")
     inventory = capture_inventory(tools, execution, export_request, generation, models, "before", observed_at, observed=True)
@@ -65,7 +67,7 @@ def capture_image(backend: Path, execution: Path, selected: dict, request: dict,
     repeated = CaptureReader(tools, "source", output).owners("owners-after")
     owner_image = lambda rows: [{key: item[key] for key in ("bucket", "key", "bytes", "sha256")} for item in rows]
     if (logical_inventory(after) != logical_inventory(inventory) or owner_image(owners) != owner_image(repeated)
-            or resources.storage_identity() != storage or resources.redis_state(initialized=True, sentinel=True) != redis
+            or resources.storage_identity() != storage or resources.redis_state() != redis
             or schema_snapshot(tools, models, "after") != schema):
         raise ValueError("source-generation 采集期间完整库存、schema 或对象 ownership 变化")
     value = {"format_version": 1, "kind": "seed-source-generation-image",

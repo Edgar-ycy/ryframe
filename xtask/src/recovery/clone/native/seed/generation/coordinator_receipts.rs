@@ -3,7 +3,7 @@ use super::{RECOVER, STOP, attempts, matches_source, prefix_matches, reject, req
 use crate::{Result, recovery::clone::native::json as document};
 use serde_json::{Value, json};
 
-const START_FIELDS: &[&str] = &[
+pub(crate) const START_FIELDS: &[&str] = &[
     "status",
     "request",
     "source_registration",
@@ -22,7 +22,7 @@ const START_FIELDS: &[&str] = &[
     "remote_writes",
     "restore_qualified",
 ];
-const RESULT_FIELDS: &[&str] = &[
+pub(crate) const RESULT_FIELDS: &[&str] = &[
     "status",
     "request",
     "source_registration",
@@ -71,6 +71,9 @@ pub(super) fn source_request(args: &Value) -> Result<Value> {
     }
     document::object(&value["source"], "来源物理目标")?;
     value["source"]["runtime_dir"] = args["runtime_dir"].clone();
+    if args["request"]["format_version"].as_u64() == Some(2) {
+        value["source"]["s3"]["configuration"] = args["request"]["configuration"].clone();
+    }
     Ok(value)
 }
 

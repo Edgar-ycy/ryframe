@@ -139,29 +139,224 @@ fn external_recovery_rejects_live_or_changing_services_before_publication() {
 
 #[test]
 fn controller_recovery_requires_dead_exact_owner_and_publishes_one_receipt() {
+    for variant in 0..3 {
+        recover_legacy_ledger(variant);
+    }
+}
+
+fn recover_legacy_ledger(variant: usize) {
     let mut runtime = FakeRuntime::new();
-    let run = &runtime.fixture.run;
-    fs::create_dir(run.join("run.lock")).unwrap();
-    json_io::write_new(
-        &run.join("run.lock").join("owner.json"),
-        &json!({"owner":"old"}),
+    let prefix = legacy_close(&mut runtime, variant);
+    let context = Context::load(&runtime.fixture.backend, runtime.fixture.context()).unwrap();
+    let history = context.history(true).unwrap();
+    context.require_current_owner(&runtime.owner()).unwrap();
+    assert_eq!(history["closed"], true);
+    assert!(!history["restart_predecessor"].is_null());
+    assert!(history["unsettled"].as_array().unwrap().is_empty());
+    context.no_unknown().unwrap();
+    assert!(controller(&mut runtime, &context).unwrap().is_null());
+    let previous = registered(&mut runtime, &context, true).unwrap();
+    check_observation(
+        &mut runtime,
+        &previous,
+        &expected_stopped(),
+        "重启前服务未停止",
     )
     .unwrap();
-    let owner = binding(&run.join("run.lock").join("owner.json")).unwrap();
-    let selected = run.parent().unwrap().join("owner-binding.json");
-    json_io::write_new(&selected, &owner).unwrap();
-    runtime.controller = json!({"owner":owner,"process_missing":true,"process_matches":false});
-    let value = runtime.execute("recover", Some(selected)).unwrap();
-    assert_eq!(value["status"], "controller_recovered");
-    assert_eq!(value["next_operation"], "status");
-    assert!(!runtime.fixture.run.join("run.lock").exists());
-    assert!(runtime.fixture.history()["external_recovery"].is_null());
+    let run = runtime.fixture.run.clone();
+    let guard = ProcessGuard::acquire(&run).unwrap();
+    let lock = RunLock::claim(&run).unwrap();
+    context.guard(None).unwrap();
+    check_observation(
+        &mut runtime,
+        &previous,
+        &expected_stopped(),
+        "持锁后服务状态变化",
+    )
+    .unwrap();
+    let mut sources = context.sources();
+    sources["restart_predecessor"] = history["restart_predecessor"].clone();
+    let mut dead = lock.owner;
+    dead["identity"]["pid"] = json!(2147481000u32);
     assert!(
-        !runtime
+        crate::recovery::clone::native::lifecycle::identity::process(2147481000)
+            .unwrap()
+            .is_none()
+    );
+    json_io::write_replace(&run.join("run.lock/owner.json"), &dead).unwrap();
+    // 对应正式 restart 的 stage 已绑定控制器、尚未进入 body 的中断窗口。
+    let (number, attempt) = ledger::begin(&run, "restart", &sources).unwrap();
+    state::bind_controller(&run, number, &dead, &attempt).unwrap();
+    let descriptor = binding(&state::controller_path(&run, number)).unwrap();
+    let before = binding(&run.join("state.json")).unwrap();
+    assert!(!run.join(format!("lifecycle-{number:04}")).exists());
+    drop(guard);
+    history::validate(&run, &runtime.fixture.state(), true, false).unwrap();
+    let selected = run.parent().unwrap().join("owner-binding.json");
+    json_io::write_new(&selected, &descriptor).unwrap();
+    runtime.controller = json!({"owner":descriptor,"process_missing":true,"process_matches":false});
+    runtime.events.clear();
+    let value = runtime.execute("recover", Some(selected.clone())).unwrap();
+    assert_eq!(value["status"], "controller_recovered");
+    assert_eq!(value["next_operation"], "reconcile-evidence");
+    assert!(!runtime.fixture.run.join("run.lock").exists());
+    assert_recovery_publication(&runtime, &value, &descriptor, &before, &dead);
+    let run = &runtime.fixture.run;
+    assert_eq!(
+        runtime.fixture.state()["attempts"][3]["sources"]["state_before"],
+        prefix
+    );
+    let history = history::validate(run, &runtime.fixture.state(), true, false)
+        .unwrap_or_else(|error| panic!("恢复后历史重读 variant={variant}: {error}"));
+    assert_eq!(history["unsettled"], json!([5]));
+    assert!(history["external_recovery"].is_null());
+    let context = Context::load(&runtime.fixture.backend, runtime.fixture.context()).unwrap();
+    assert!(context.unknown().unwrap().is_empty());
+    let snapshot = fs::read(run.join("state.json")).unwrap();
+    assert!(controller_recovery::run(&runtime.fixture.backend, run, &descriptor).is_err());
+    assert!(runtime.execute("recover", Some(selected)).is_err());
+    assert_eq!(
+        fs::read(runtime.fixture.run.join("state.json")).unwrap(),
+        snapshot
+    );
+    assert_eq!(
+        runtime
             .events
             .iter()
-            .any(|event| event == "cache-stop" || event == "tree-stop")
+            .filter(|event| *event == "recover-controller")
+            .count(),
+        1
     );
+    assert!(!runtime.events.iter().any(|event| {
+        ["cache-stop", "tree-stop", "cache-start", "storage-start"].contains(&event.as_str())
+    }));
+}
+
+fn assert_recovery_publication(
+    runtime: &FakeRuntime,
+    value: &Value,
+    descriptor: &Value,
+    before: &Value,
+    dead: &Value,
+) {
+    let run = &runtime.fixture.run;
+    let recovered = read(Path::new(text(&value["recovery"], "path").unwrap())).unwrap();
+    json_io::exact(
+        &recovered,
+        &[
+            "status",
+            "owner",
+            "remote_writes",
+            "copy_requires_reconciliation",
+            "state_sha256",
+        ],
+        "恢复结果",
+    )
+    .unwrap();
+    assert_eq!(recovered["owner"], *dead);
+    assert_eq!(recovered["remote_writes"], 0);
+    assert_eq!(recovered["copy_requires_reconciliation"], true);
+    let filename = Path::new(text(&value["recovery"], "path").unwrap())
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap();
+    let id = filename
+        .strip_prefix("recovered-")
+        .unwrap()
+        .strip_suffix(".json")
+        .unwrap();
+    let intent = read(&run.join(format!("recovery-{id}.intent.json"))).unwrap();
+    json_io::exact(
+        &intent,
+        &["status", "owner", "state_before", "state_after_sha256"],
+        "恢复意图",
+    )
+    .unwrap();
+    assert_eq!(intent["status"], "controller_recovery_started");
+    assert_eq!(intent["owner"], *descriptor);
+    assert_eq!(intent["state_before"], *before);
+    assert_eq!(intent["state_after_sha256"], recovered["state_sha256"]);
+    let saved = runtime.fixture.state();
+    assert!(
+        saved["attempts"].as_array().unwrap()[..4]
+            .iter()
+            .all(|item| item["status"] == "passed")
+    );
+    assert_eq!(saved["attempts"][4]["status"], "failed");
+    assert_eq!(saved["attempts"][4]["error_type"], "ControllerInterrupted");
+    let mut interrupted = saved;
+    interrupted["attempts"].as_array_mut().unwrap().truncate(5);
+    assert_eq!(
+        crate::recovery::clone::native::digest::plan_hash(&interrupted).unwrap(),
+        recovered["state_sha256"]
+    );
+    assert_eq!(
+        fs::read_dir(run)
+            .unwrap()
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("recovered-")
+            })
+            .count(),
+        1
+    );
+}
+
+fn legacy_close(runtime: &mut FakeRuntime, variant: usize) -> Value {
+    let run = &runtime.fixture.run;
+    let mut saved = runtime.fixture.state();
+    saved["attempts"][0]["sources"] = json!({"说明":"旧账本中文🌏"});
+    let attempts = saved["attempts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| {
+            let fields = [
+                "number",
+                "stage",
+                "mode",
+                "started_at",
+                "finished_at",
+                "status",
+                "sources",
+                "result",
+                "error_type",
+            ];
+            format!(
+                "{{{}}}",
+                fields
+                    .iter()
+                    .map(|key| format!("\"{key}\":{}", item[*key]))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let ordered = format!(
+        "{{\"format_version\":1,\"manifest\":{},\"attempts\":[{attempts}]}}",
+        saved["manifest"]
+    );
+    let bytes = state::prefix::serializations(&ordered).remove(variant);
+    assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), saved);
+    fs::write(run.join("state.json"), bytes).unwrap();
+    let prefix = binding(&run.join("state.json")).unwrap();
+    runtime.execute("close", None).unwrap();
+    assert!(runtime.fixture.history()["closed"].as_bool().unwrap());
+    let current = fs::read(runtime.fixture.run.join("state.json")).unwrap();
+    let historical = state::historical(&runtime.fixture.run, &prefix, true)
+        .expect("通用fresh历史必须消费原初代写入器到原生close的精确前像");
+    assert_eq!(historical["historical_attempts"], 3);
+    assert_eq!(
+        fs::read(runtime.fixture.run.join("state.json")).unwrap(),
+        current
+    );
+    prefix
 }
 
 #[test]
@@ -256,4 +451,43 @@ fn external_recovery_proof_tampering_and_additional_failed_close_are_not_reconci
     let before = runtime.fixture.state();
     assert!(runtime.execute("reconcile", Some(runtime.owner())).is_err());
     assert_eq!(runtime.fixture.state(), before);
+}
+
+#[test]
+fn windows_external_recovery_binds_restart_to_the_observed_predecessor() {
+    let mut runtime = FakeRuntime::new();
+    let redis_directory = runtime.fixture.run.join("redis");
+    let request = json!({"format_version":3,"port":16390});
+    let executable = std::env::current_exe().unwrap();
+    let registered = json!({"format_version":3,"output":redis_directory,
+        "request_sha256":crate::recovery::clone::native::digest::plan_hash(&request).unwrap(),
+        "supervisor":{"pid":2147481020u32,"started":"1","executable":executable},
+        "process":{"pid":2147481021u32,"started":"1","executable":executable},
+        "redis":{"platform":"windows","port":16390,"run_id":"1".repeat(40)}});
+    json_io::write_replace(&redis_directory.join("request.json"), &request).unwrap();
+    json_io::write_replace(&redis_directory.join("runtime.json"), &registered).unwrap();
+    runtime.fixture.services["requests"]["redis"] = request;
+    runtime.fixture.services["runtime"] = registered.clone();
+    runtime.external();
+    let evidence = &mut runtime.observation["termination"]["evidence"];
+    evidence["redis_external"] = json!({
+        "kind":"windows-redis-external-termination","runtime":evidence["redis_runtime"],
+        "supervisor":registered["supervisor"],"process":registered["process"],"port":16390,
+        "normal_job_exit_proof":null});
+    let recovered = runtime.execute("recover", Some(runtime.owner())).unwrap();
+    let proof_path = Path::new(text(&recovered["evidence"], "path").unwrap());
+    let proof = read(proof_path).unwrap();
+    assert_eq!(proof["format_version"], 2);
+    assert_eq!(proof["observation"], runtime.observation["termination"]);
+    assert!(!redis_directory.join("exited.json").exists());
+    assert_eq!(
+        runtime.fixture.history()["external_recovery"],
+        runtime.fixture.history()["restart_predecessor"]
+    );
+
+    runtime.observation["termination"]["evidence"]["redis_external"]["port"] = json!(16391);
+    let before = runtime.fixture.state();
+    assert!(runtime.execute("restart", Some(runtime.owner())).is_err());
+    assert_eq!(runtime.fixture.state(), before);
+    assert!(!runtime.events.iter().any(|event| event.ends_with("-start")));
 }

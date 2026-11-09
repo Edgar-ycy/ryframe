@@ -58,7 +58,7 @@ pub(super) fn finish(
     write(run, &previous, &value)
 }
 
-fn write(run: &Path, previous: &Value, next: &Value) -> Result<()> {
+pub(super) fn write(run: &Path, previous: &Value, next: &Value) -> Result<()> {
     let path = run.join("state.json");
     let before = binding(&path)?;
     let mut raw = Vec::new();
@@ -73,7 +73,7 @@ fn write(run: &Path, previous: &Value, next: &Value) -> Result<()> {
         serde_json::from_slice::<Value>(&raw)? == *previous && binding(&path)? == before,
         "生命周期账本写入前像变化，保留现场",
     )?;
-    let bytes = history::prefix::updated_serialization(&raw, next)?;
+    let bytes = state::prefix::updated_serialization(&raw, next)?;
     let mut temporary = tempfile::NamedTempFile::new_in(run)?;
     temporary.write_all(&bytes)?;
     temporary.as_file().sync_all()?;

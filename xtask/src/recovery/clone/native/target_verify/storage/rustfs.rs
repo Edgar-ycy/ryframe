@@ -5,16 +5,27 @@ use std::{
 
 use serde_json::{Value, json};
 
-use super::{StorageObserver, TargetContext, common, json_io, kernel};
+use super::{StorageInputs, StorageObserver, common, json_io, kernel};
 use crate::Result;
 
 pub(crate) fn verify<O: StorageObserver>(
-    context: &TargetContext,
+    context: &StorageInputs<'_>,
     review: &Value,
     rustfs: &Value,
     runtime: Option<&Value>,
     observer: &O,
 ) -> Result<()> {
+    let evidence = inspect(context, review, rustfs, runtime, observer)?;
+    publish(context, &evidence)
+}
+
+pub(crate) fn inspect<O: StorageObserver>(
+    context: &StorageInputs<'_>,
+    review: &Value,
+    rustfs: &Value,
+    runtime: Option<&Value>,
+    observer: &O,
+) -> Result<Value> {
     json_io::exact(
         rustfs,
         &["identity", "sha256", "process_receipt", "launch_receipt"],
@@ -38,14 +49,14 @@ pub(crate) fn verify<O: StorageObserver>(
     }
     kernel::require_observed_identity(&identity, observer)?;
     let directory = common::local_directory(
-        &context.backend,
+        context.backend,
         Path::new(json_io::text(&expected["data_dir"], "RustFS 数据目录")?),
         "RustFS 数据目录",
     )?;
-    validate_directory(&context.backend, expected, rustfs, runtime, &directory)?;
+    validate_directory(context.backend, expected, rustfs, runtime, &directory)?;
     let receipt = receipt(context, expected, rustfs, runtime)?;
     let launch_path =
-        common::bound_file(&context.backend, &rustfs["launch_receipt"], "RustFS launch")?;
+        common::bound_file(context.backend, &rustfs["launch_receipt"], "RustFS launch")?;
     if launch_path
         != receipt
             .parent()
@@ -55,7 +66,7 @@ pub(crate) fn verify<O: StorageObserver>(
         return Err("RustFS launch 必须属于同一存储目录".into());
     }
     let launch = json_io::read(&launch_path)?;
-    let arguments = arguments(expected, &identity, &directory)?;
+    let arguments = arguments(expected, &identity, &directory, &launch["credential_files"])?;
     validate_launch(context, expected, &identity, &launch, &arguments)?;
     kernel::require_observed_identity(&identity, observer)?;
     let actual_arguments = observer.arguments(context, &identity)?;
@@ -71,6 +82,38 @@ pub(crate) fn verify<O: StorageObserver>(
         )?;
     }
     kernel::require_observed_identity(&identity, observer)?;
+    evidence(context.backend, review, rustfs, runtime)
+}
+
+pub(crate) fn publish(context: &StorageInputs<'_>, evidence: &Value) -> Result<()> {
+    json_io::write_new(
+        &context.observation_dir.join(format!(
+            "storage-layout-{}.json",
+            uuid::Uuid::new_v4().simple()
+        )),
+        evidence,
+    )
+}
+
+pub(crate) fn evidence(
+    backend: &Path,
+    review: &Value,
+    rustfs: &Value,
+    runtime: Option<&Value>,
+) -> Result<Value> {
+    let expected = &review["services"]["rustfs"];
+    let directory = common::local_directory(
+        backend,
+        Path::new(json_io::text(&expected["data_dir"], "RustFS 数据目录")?),
+        "RustFS 数据目录",
+    )?;
+    let launch = common::read_bound(backend, &rustfs["launch_receipt"], "RustFS launch")?;
+    let arguments = arguments(
+        expected,
+        &rustfs["identity"],
+        &directory,
+        &launch["credential_files"],
+    )?;
     let mut evidence = json!({
         "process_receipt": rustfs["process_receipt"], "launch_receipt": rustfs["launch_receipt"],
         "actual_arguments_sha256": super::super::super::digest::plan_hash(&json!(arguments))?,
@@ -80,23 +123,17 @@ pub(crate) fn verify<O: StorageObserver>(
     if let Some(runtime) = runtime {
         evidence["runtime_transition"] = runtime.clone();
     }
-    json_io::write_new(
-        &context.observation_dir.join(format!(
-            "storage-layout-{}.json",
-            uuid::Uuid::new_v4().simple()
-        )),
-        &evidence,
-    )
+    Ok(evidence)
 }
 
 fn receipt(
-    context: &TargetContext,
+    context: &StorageInputs<'_>,
     expected: &Value,
     rustfs: &Value,
     runtime: Option<&Value>,
 ) -> Result<PathBuf> {
     let path = common::bound_file(
-        &context.backend,
+        context.backend,
         &rustfs["process_receipt"],
         "RustFS 进程收据",
     )?;
@@ -149,23 +186,18 @@ pub(crate) fn arguments(
     expected: &Value,
     identity: &Value,
     directory: &Path,
+    credentials: &Value,
 ) -> Result<Vec<String>> {
-    let (_, api) = common::endpoint(json_io::text(&expected["api"], "RustFS API 地址")?)?;
-    let (_, console) =
-        common::endpoint(json_io::text(&expected["console"], "RustFS console 地址")?)?;
-    Ok(vec![
-        json_io::text(&identity["executable"], "RustFS executable")?.into(),
-        "server".into(),
-        "--address".into(),
-        api,
-        "--console-address".into(),
-        console,
-        common::path_text(directory, "RustFS 数据目录")?,
-    ])
+    super::super::super::resources::storage::model::arguments(&json!({
+        "executable": {"path": identity["executable"]},
+        "api_url": expected["api"], "console_url": expected["console"],
+        "data_directory": {"path": common::path_text(directory, "RustFS 数据目录")?},
+        "credential_files": credentials,
+    }))
 }
 
 pub(crate) fn validate_launch(
-    context: &TargetContext,
+    context: &StorageInputs<'_>,
     expected: &Value,
     identity: &Value,
     launch: &Value,
@@ -178,7 +210,6 @@ pub(crate) fn validate_launch(
             "scope_id",
             "identity",
             "arguments",
-            "environment",
             "credential_files",
         ],
         "RustFS launch",
@@ -188,9 +219,8 @@ pub(crate) fn validate_launch(
         &["access_key", "secret_key"],
         "RustFS 凭据文件",
     )?;
-    let mut environment = json!({"RUSTFS_CONSOLE_ENABLE": "true"});
     for (field, binding) in credentials {
-        let credential = common::bound_file(&context.backend, binding, "RustFS 凭据文件")?;
+        let credential = common::bound_file(context.backend, binding, "RustFS 凭据文件")?;
         let expected_credential = context
             .request
             .pointer(&format!("/target/s3/{field}"))
@@ -201,15 +231,13 @@ pub(crate) fn validate_launch(
         if expected_credential != actual.trim() {
             return Err("RustFS 启动凭据文件与本次认证不同".into());
         }
-        environment[format!("RUSTFS_{}_FILE", field.to_uppercase())] = binding["path"].clone();
     }
     if launch["format_version"].as_u64() != Some(1)
         || launch.get("scope_id") != expected.get("scope_id")
         || launch.get("identity") != Some(identity)
         || launch["arguments"] != json!(arguments)
-        || launch["environment"] != environment
     {
-        return Err("RustFS 受控启动参数或环境声明不同".into());
+        return Err("RustFS 受控启动参数声明不同".into());
     }
     Ok(())
 }

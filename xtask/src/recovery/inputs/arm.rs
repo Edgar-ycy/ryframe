@@ -8,7 +8,7 @@ use super::{
     fresh, source,
     target::{self, TargetRequest, clone_name},
 };
-use crate::Result;
+use crate::{Result, recovery::clone::native::lifecycle::manifest};
 
 pub(crate) use fresh::Fresh;
 
@@ -140,16 +140,17 @@ pub(crate) fn load(
         "共享源导出请求",
     )?;
     source::validate(backend, &source_request.value)?;
+    let effective_storage = result_object.get("target_storage_run").unwrap();
     let registration = read_target_lifecycle(
         backend,
         request_object.get("target_registration").unwrap(),
         request_object.get("initialized").unwrap(),
         request_object.get("target_initialized_files").unwrap(),
         request_object.get("target_environment").unwrap(),
-        result_object.get("target_storage_run").unwrap(),
+        effective_storage,
     )?;
     let manifest_object = object(&manifest.value, "arm 输入清单")?;
-    if manifest_object.get("target_storage_run") != Some(&registration.storage_run) {
+    if manifest_object.get("target_storage_run") != Some(effective_storage) {
         return Err("successor arm-input 清单的 target_storage_run 不一致".into());
     }
     if manifest_object.get("copy_directory") != request_object.get("copy_directory") {
@@ -235,7 +236,6 @@ fn validate_result_status(result: &Document, side: &str) -> Result<()> {
 struct Registration {
     request: Option<Value>,
     initialized: Value,
-    storage_run: Value,
 }
 
 fn read_target_lifecycle(
@@ -297,18 +297,10 @@ fn read_target_lifecycle(
     if registration.get("environment") != Some(environment_binding) {
         return Err("arm 目标环境不属于 fresh-target registration".into());
     }
-    exact(
-        registration.get("storage_run").unwrap(),
-        &["path", "manifest", "storage", "cache"],
-        "fresh target storage run",
-    )?;
-    if registration.get("storage_run") != Some(storage_run) {
-        return Err("seed_to_arm target_storage_run 不属于 fresh 初始化使用的固定代次".into());
-    }
+    manifest::validate_target_storage(backend, registration_binding, storage_run)?;
     Ok(Registration {
         request: registration.get("request").cloned(),
         initialized: initialized.value,
-        storage_run: registration.get("storage_run").unwrap().clone(),
     })
 }
 

@@ -36,8 +36,14 @@ impl Controller {
         )
         .to_path_buf();
         let mut context: Box<dyn Context> = Box::new(NativeContext::new_at(&plan, artifacts)?);
-        context.inspect("verify").await?;
-        if registration.family == "quota" {
+        let quota = registration.family == "quota";
+        let phase = if quota {
+            super::inspection::QUOTA_PHASE
+        } else {
+            "verify"
+        };
+        context.inspect(phase).await?;
+        if quota {
             let (value, receipt) =
                 quota::Controller::new(registration.mode.clone(), plan, context, request).await?;
             Ok((Self::Quota(value), receipt))

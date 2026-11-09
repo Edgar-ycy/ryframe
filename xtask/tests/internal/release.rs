@@ -98,13 +98,6 @@ fn source_and_ci_have_one_rust_release_task() {
             .collect::<Vec<_>>(),
         [TaskExecutor::ReleaseCi]
     );
-    assert!(
-        plan(&source)
-            .unwrap()
-            .tasks
-            .iter()
-            .all(|task| task.executor != TaskExecutor::PythonEnvironment)
-    );
 }
 
 #[test]

@@ -74,7 +74,7 @@ class RestoreRuntimeSourceTests(unittest.TestCase):
             )
         )
         self.enterContext(patch.object(restore_runtime_source, "verify_build"))
-        self.enterContext(
+        return self.enterContext(
             patch.object(
                 restore_runtime_source,
                 "validate_registered_frontend",
@@ -83,7 +83,13 @@ class RestoreRuntimeSourceTests(unittest.TestCase):
         )
 
     def test_b0_keeps_product_and_adapter_execution_identity_separate(self):
-        self.patches()
+        product_head = "815c5eafb09d4b493319d255fb7ab88ddd02c8b6"
+        execution_head = "c05114bcdf5c369cd74087db6317ce3c8f89bee8"
+        frontend_head = "0087ea2ecf62530d042b9e52f5c950fb34c66d78"
+        self.product_inventory = inventory(product_head)
+        self.execution_inventory = inventory(execution_head)
+        self.frontend_inventory = inventory(frontend_head)
+        frontend_verifier = self.patches()
         backend = self.backend_document()
         with patch.object(
             restore_runtime_source,
@@ -100,43 +106,47 @@ class RestoreRuntimeSourceTests(unittest.TestCase):
                 self.frontend,
                 backend,
                 self.frontend_document,
-                "3" * 40,
+                frontend_head,
                 adapter_contract="legacy-stable-readiness-b0-v1",
                 product_backend=self.product,
             )
         self.assertEqual(
             result["source"],
             {
-                "backend_product_sha": "1" * 40,
-                "backend_execution_sha": "2" * 40,
+                "backend_product_sha": product_head,
+                "backend_execution_sha": execution_head,
                 "backend_adapter_contract": "legacy-stable-readiness-b0-v1",
-                "frontend_sha": "3" * 40,
+                "frontend_sha": frontend_head,
             },
         )
         self.assertEqual(result["roots"]["backend_product"], str(self.product))
         registered.assert_called_once_with(
             self.coordinator,
             self.execution,
-            "2" * 40,
+            execution_head,
             adapter_contract="legacy-stable-readiness-b0-v1",
             product_backend=self.product,
         )
+        frontend_verifier.assert_called_once_with(self.frontend, frontend_head, b0=True)
 
     def test_b1_requires_execution_and_product_to_be_the_same_source(self):
         self.product = self.execution
         self.product_inventory = self.execution_inventory
-        self.patches()
+        frontend_head = "0087ea2ecf62530d042b9e52f5c950fb34c66d78"
+        self.frontend_inventory = inventory(frontend_head)
+        frontend_verifier = self.patches()
         result = restore_runtime_source.resolve_runtime_sources(
             self.coordinator,
             self.execution,
             self.frontend,
             self.backend_document(self.execution_inventory, self.execution_inventory),
             self.frontend_document,
-            "3" * 40,
+            frontend_head,
         )
         self.assertEqual(result["source"]["backend_product_sha"], "2" * 40)
         self.assertEqual(result["source"]["backend_execution_sha"], "2" * 40)
         self.assertIsNone(result["source"]["backend_adapter_contract"])
+        frontend_verifier.assert_called_once_with(self.frontend, frontend_head)
 
     def test_b1_rejects_a_separate_product_argument_before_runtime_use(self):
         self.patches()

@@ -55,10 +55,10 @@ def generation_directory(output: Path) -> None:
             raise ValueError("source-generation 目录存在未知、链接或类型不符的项")
 
 
-def registered_inputs(backend: Path, request: dict, *, reconstruct: bool) -> tuple[Path, dict]:
+def registered_inputs(backend: Path, request: dict) -> tuple[Path, dict]:
     product = request["product_backend"]
     execution, inventory, _ = registered_source(backend, Path(request["execution_backend"]), request["expected_backend_sha"],
-        adapter_contract=request["adapter_contract"], product_backend=None if product is None else Path(product), reconstruct=reconstruct)
+        adapter_contract=request["adapter_contract"], product_backend=None if product is None else Path(product))
     build = read_json(bound_file(backend, request["backend_build"]))
     if build["sources"]["full"] != inventory:
         raise ValueError("后继源 v2 构建与完整注册来源不同")
@@ -75,7 +75,7 @@ def verify_running_evidence(backend: Path, output: Path, request: dict, selected
     from devex_clone_runtime import _ready
 
     generation_directory(output)
-    execution, build = registered_inputs(backend, request, reconstruct=False)
+    execution, build = registered_inputs(backend, request)
     evidence = read_json(output / "running-evidence.json")
     exact(evidence, {"format_version", "kind", "intent", "runtime", "roles", "physical_binding"})
     intent = read_json(bound_file(backend, evidence["intent"]))
@@ -103,7 +103,7 @@ def verify_running_evidence(backend: Path, output: Path, request: dict, selected
                             'evidence_root': str(backend),
                             'source': selected,
                             'app_env': os.environ.get("APP_ENV"),
-                            'config_dir': str(execution / "config"),
+                            'config_dir': str(configuration_directory(backend, request)),
                         },
                     }, subprocess.run, may_write=False,
                 ))[0]["value"] != physical):
@@ -128,9 +128,15 @@ def verify_running_evidence(backend: Path, output: Path, request: dict, selected
     return contract
 
 
+def configuration_directory(backend: Path, request: dict) -> Path:
+    from restore_reference_plan import _native
+    value = _native("generation-request-configuration", {"backend": str(backend), "request": request})
+    return Path(value["directory"])
+
+
 def verify_runtime_evidence(backend: Path, output: Path, request: dict, effective: dict, *, live: bool) -> dict:
     generation_directory(output)
-    execution, build = registered_inputs(backend, request, reconstruct=False)
+    execution, build = registered_inputs(backend, request)
     value = read_json(output / "runtime-evidence.json")
     exact(value, {"format_version", "kind", "intent", "runtime", "roles", "physical_binding", "ports_idle", "observed_stopped_at"})
     observed = datetime.fromisoformat(timestamp(value["observed_stopped_at"], "源停止观察").replace("Z", "+00:00"))
@@ -189,8 +195,8 @@ class GenerationRuntime:
         return self.environments.use("target")
 
     def preflight(self):
-        registered_inputs(self.backend, self.request, reconstruct=True)
-        verify_build(self.execution, self.build, self.request["expected_backend_sha"], self.run)
+        registered_inputs(self.backend, self.request)
+        verify_build(self.execution, self.build, self.request["expected_backend_sha"])
         if self.output.exists():
             raise ValueError("源后继运行目录已存在，不能覆盖或重放")
         with self.environment():
@@ -202,7 +208,7 @@ class GenerationRuntime:
                         'evidence_root': str(self.backend),
                         'source': self.selected,
                         'app_env': os.environ.get("APP_ENV"),
-                        'config_dir': str(self.execution / "config"),
+                        'config_dir': str(configuration_directory(self.backend, self.request)),
                     },
                 }, subprocess.run, may_write=False,
             ))[0]["value"] != self.source["generation"]["physical_binding"]:
@@ -234,12 +240,12 @@ class GenerationRuntime:
                                 'evidence_root': str(self.backend),
                                 'source': self.selected,
                                 'app_env': os.environ.get("APP_ENV"),
-                                'config_dir': str(self.execution / "config"),
+                                'config_dir': str(configuration_directory(self.backend, self.request)),
                             },
                         }, subprocess.run, may_write=False,
                     ))[0]["value"] != self.source["generation"]["physical_binding"]):
                 raise ValueError("源后继运行期间存储代次或物理配置发生变化")
-            verify_api_address(self.execution, self.selected["api_url"], config_dir=self.execution / "config")
+            verify_api_address(self.execution, self.selected["api_url"], config_dir=configuration_directory(self.backend, self.request))
             if self.contract is not None:
                 generation_directory(self.output)
                 if verify_runtime(self.execution, self.runtime) != self.contract:
@@ -256,7 +262,7 @@ class GenerationRuntime:
                     "ryframe-worker": self.build["artifacts"]["worker"]["executable"],
                     **{"ryframe-" + role: maintenance["artifacts"][role]["executable"] for role in ("reset", "migrate")}}
         write_json(self.runtime / "binaries.json", binaries)
-        self.contract = register_runtime(self.execution, self.runtime, source_config_dir=self.execution / "config")
+        self.contract = register_runtime(self.execution, self.runtime, source_config_dir=configuration_directory(self.backend, self.request))
         self.urls = {"api": self.selected["api_url"].rstrip("/") + "/readyz", "worker": self.contract["worker_ready_url"]}
         for url in self.urls.values():
             require_closed_port(url)

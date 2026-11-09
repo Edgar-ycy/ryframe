@@ -23,7 +23,7 @@ use super::check::{
     parse_change_surface_policy, policy_tasks, resolve_frontend_dir, resolve_target_dir,
     resource_test_executable_from_messages, resource_workspace_control, reverse_dependency_closure,
     select_check_mode, validate_feature_combination, verify_job_budget_from,
-    verify_target_policy_from, workspace_clippy_args, workspace_test_args,
+    verify_target_policy_from, worker_lib_test_args, workspace_clippy_args, workspace_test_args,
 };
 use super::cli::CheckScope;
 
@@ -70,6 +70,23 @@ fn feature_combination_rejects_duplicates_and_unknowns() {
 
 #[test]
 fn feature_matrix_compiles_and_tests_required_feature_targets() {
+    assert_eq!(
+        worker_lib_test_args("target/worker", 3),
+        [
+            "test",
+            "--locked",
+            "--target-dir",
+            "target/worker",
+            "-p",
+            "ryframe",
+            "--no-default-features",
+            "--features",
+            "bin-worker",
+            "--lib",
+            "--jobs",
+            "3",
+        ]
+    );
     let features = vec!["bin-reset".to_owned(), "bin-migrate".to_owned()];
     let check = feature_operation_args("check", "ryframe", &features, "target", 8);
     let clippy = feature_operation_args("clippy", "ryframe", &features, "target", 8);
@@ -353,18 +370,8 @@ fn verify_job_budget_reserves_capacity_for_both_cargo_branches() {
     assert!(verify_job_budget_from(Some("invalid"), 22).is_err());
 }
 
-#[test]
-fn resource_test_executable_is_read_from_cargo_json_messages() {
-    let output = concat!(
-        "{\"reason\":\"compiler-artifact\",\"target\":{\"name\":\"other\"},\"executable\":null}\n",
-        "{\"reason\":\"compiler-artifact\",\"target\":{\"name\":\"resource_workspace_compilation\"},",
-        "\"executable\":\"D:\\\\target\\\\resource-test.exe\"}\n"
-    );
-    assert_eq!(
-        resource_test_executable_from_messages(output).unwrap(),
-        Path::new("D:\\target\\resource-test.exe")
-    );
-}
+#[path = "check/resource.rs"]
+mod resource;
 
 #[test]
 fn resource_workspace_control_binds_selected_paths_and_profile() {

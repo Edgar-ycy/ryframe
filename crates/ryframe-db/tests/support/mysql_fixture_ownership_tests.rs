@@ -56,7 +56,7 @@ fn creation_intent_without_create_confirmation_never_authorizes_cleanup() {
 }
 
 #[test]
-fn create_response_unknown_or_created_journal_failure_cannot_be_replayed() {
+fn retained_create_intent_or_created_state_cannot_resume_creation_or_cleanup() {
     for confirmed in [false, true] {
         let mut owner = Ownership::new(plan()).unwrap();
         owner.create_intent().unwrap();
@@ -66,18 +66,6 @@ fn create_response_unknown_or_created_journal_failure_cannot_be_replayed() {
         owner.retain();
         assert!(owner.create_intent().is_err());
         assert!(owner.created().is_err());
-        assert!(owner.test_passed().is_err());
-        assert!(owner.drop_intent(&observation()).is_err());
-    }
-}
-
-#[test]
-fn failed_test_or_panic_retains_created_schema_without_drop() {
-    for _outcome in ["error", "panic"] {
-        let mut owner = Ownership::new(plan()).unwrap();
-        owner.create_intent().unwrap();
-        owner.created().unwrap();
-        owner.retain();
         assert!(owner.test_passed().is_err());
         assert!(owner.drop_intent(&observation()).is_err());
     }
@@ -102,6 +90,7 @@ fn server_uuid_or_connection_change_cannot_be_repaired_by_a_later_retry() {
         } else {
             changed.identity.connection_id += 1;
         }
+        assert!(owner.cleanup_quiescent(&changed).is_err());
         assert!(owner.drop_intent(&changed).is_err());
         assert_eq!(owner.phase, Phase::Retained);
         assert!(owner.drop_intent(&observation()).is_err());
@@ -114,6 +103,7 @@ fn unowned_missing_or_ambiguous_session_lock_never_allows_drop() {
         let mut owner = ready();
         let mut changed = observation();
         changed.lock_owner = holder;
+        assert!(owner.cleanup_quiescent(&changed).is_err());
         assert!(owner.drop_intent(&changed).is_err());
         assert!(owner.drop_intent(&observation()).is_err());
     }
@@ -126,6 +116,11 @@ fn active_schema_connections_or_partial_process_visibility_block_drop() {
         let mut changed = observation();
         changed.active_connections = active;
         changed.process_visibility = visible;
+        if visible {
+            assert!(!owner.cleanup_quiescent(&changed).unwrap());
+        } else {
+            assert!(owner.cleanup_quiescent(&changed).is_err());
+        }
         assert!(owner.drop_intent(&changed).is_err());
         assert!(owner.drop_intent(&observation()).is_err());
     }
@@ -141,6 +136,7 @@ fn plan_identity_plan_content_or_journal_change_latches_retention() {
             1 => changed.plan_content_matches = false,
             _ => changed.journal_matches = false,
         }
+        assert!(owner.cleanup_quiescent(&changed).is_err());
         assert!(owner.drop_intent(&changed).is_err());
         assert_eq!(owner.phase, Phase::Retained);
         assert!(owner.drop_intent(&observation()).is_err());
@@ -154,15 +150,36 @@ fn open_business_pool_or_missing_schema_forbids_drop() {
         let mut changed = observation();
         changed.business_closed = closed;
         changed.schema_exists = !closed;
+        assert!(owner.cleanup_quiescent(&changed).is_err());
         assert!(owner.drop_intent(&changed).is_err());
     }
 }
 
 #[test]
-fn persisted_drop_intent_and_unknown_response_never_authorize_another_drop() {
+fn retiring_connections_leave_drop_unissued_until_a_complete_quiescent_observation() {
+    let mut owner = ready();
+    let mut observed = observation();
+    observed.active_connections = 1;
+    assert!(!owner.cleanup_quiescent(&observed).unwrap());
+    assert_eq!(owner.phase, Phase::TestPassed);
+    observed.active_connections = 0;
+    assert!(owner.cleanup_quiescent(&observed).unwrap());
+    assert_eq!(owner.phase, Phase::TestPassed);
+    owner.drop_intent(&observed).unwrap();
+    observed.active_connections = 1;
+    assert!(owner.validate_cleanup(&observed).is_err());
+    owner.retain();
+    observed.active_connections = 0;
+    assert!(owner.cleanup_quiescent(&observed).is_err());
+    assert!(owner.drop_intent(&observed).is_err());
+}
+
+#[test]
+fn retained_drop_intent_state_cannot_validate_cleanup_complete_or_replay() {
     let mut owner = ready();
     owner.drop_intent(&observation()).unwrap();
     owner.retain();
+    assert!(owner.validate_cleanup(&observation()).is_err());
     assert!(owner.drop_intent(&observation()).is_err());
     assert!(owner.dropped(true).is_err());
     assert!(owner.create_intent().is_err());
@@ -174,23 +191,6 @@ fn duplicate_drop_intent_is_rejected_even_before_a_response_arrives() {
     owner.drop_intent(&observation()).unwrap();
     assert!(owner.drop_intent(&observation()).is_err());
     assert_eq!(owner.phase, Phase::Retained);
-}
-
-#[test]
-fn test_passed_journal_failure_blocks_the_drop_entry() {
-    let mut owner = ready();
-    owner.retain();
-    assert!(owner.drop_intent(&observation()).is_err());
-    assert_eq!(owner.phase, Phase::Retained);
-}
-
-#[test]
-fn drop_intent_journal_failure_does_not_authorize_execution_or_replay() {
-    let mut owner = ready();
-    owner.drop_intent(&observation()).unwrap();
-    owner.retain();
-    assert!(owner.validate_cleanup(&observation()).is_err());
-    assert!(owner.drop_intent(&observation()).is_err());
 }
 
 #[test]
@@ -211,16 +211,6 @@ fn post_intent_revalidation_still_requires_all_ownership_evidence() {
     assert!(owner.validate_cleanup(&changed).is_err());
     owner.retain();
     assert!(owner.drop_intent(&observation()).is_err());
-}
-
-#[test]
-fn database_prefix_cannot_replace_server_session_or_durable_evidence() {
-    let mut owner = ready();
-    assert!(owner.plan.schema.starts_with("ryframe_it_"));
-    let mut changed = observation();
-    changed.identity.connection_id = 99;
-    changed.lock_owner = Some(99);
-    assert!(owner.drop_intent(&changed).is_err());
 }
 
 #[test]
@@ -384,14 +374,6 @@ fn evidence_file_io_records_verifies_and_remains_complete_after_handles_close() 
     }
     assert_eq!(records[3]["active_connections"], 0);
     assert_eq!(records[3]["business_closed"], true);
-    for path in [plan_path, journal_path] {
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path)
-            .unwrap();
-        file.try_lock().unwrap();
-    }
 }
 
 #[test]
@@ -670,45 +652,29 @@ fn evidence_parent_path_replacement_is_blocked_or_detected_before_further_creati
 }
 
 #[test]
-fn business_connection_matching_server_uuid_and_schema_is_accepted() {
+fn business_connection_requires_matching_server_uuid_and_selected_schema() {
     let expected = plan();
-    assert!(business_identity_matches(
-        &expected.identity.server_uuid,
-        &expected.schema,
-        &expected.identity.server_uuid,
-        Some(&expected.schema),
-    ));
-}
-
-#[test]
-fn business_connection_different_server_uuid_is_rejected_with_the_same_schema() {
-    let expected = plan();
-    assert!(!business_identity_matches(
-        &expected.identity.server_uuid,
-        &expected.schema,
-        "20000000-0000-4000-8000-000000000002",
-        Some(&expected.schema),
-    ));
-}
-
-#[test]
-fn business_connection_different_schema_is_rejected_on_the_same_server() {
-    let expected = plan();
-    assert!(!business_identity_matches(
-        &expected.identity.server_uuid,
-        &expected.schema,
-        &expected.identity.server_uuid,
-        Some("ryframe_it_another_schema"),
-    ));
-}
-
-#[test]
-fn business_connection_null_database_is_rejected_on_the_same_server() {
-    let expected = plan();
-    assert!(!business_identity_matches(
-        &expected.identity.server_uuid,
-        &expected.schema,
-        &expected.identity.server_uuid,
-        None,
-    ));
+    let expected_uuid = expected.identity.server_uuid.as_str();
+    let expected_schema = expected.schema.as_str();
+    for (observed_uuid, observed_schema, accepted) in [
+        (expected_uuid, Some(expected_schema), true),
+        (
+            "20000000-0000-4000-8000-000000000002",
+            Some(expected_schema),
+            false,
+        ),
+        (expected_uuid, Some("ryframe_it_another_schema"), false),
+        (expected_uuid, None, false),
+    ] {
+        assert_eq!(
+            business_identity_matches(
+                expected_uuid,
+                expected_schema,
+                observed_uuid,
+                observed_schema,
+            ),
+            accepted,
+            "观察UUID={observed_uuid}，数据库={observed_schema:?}"
+        );
+    }
 }

@@ -10,11 +10,138 @@ use std::{
     path::Path,
 };
 
+pub(super) const MANIFEST_VERSION_ERROR: &str = "reset 清单 manifest_version 必须为 5；维护构建与协调工具的协议版本不匹配。请核对二者来源及版本，保留现存证据并先检查 status，不自动重放初始化";
+
 pub(crate) fn aggregate(
     backend: &Path,
     target: &Path,
     request: &Value,
     original: &Value,
+) -> Result<Value> {
+    let configuration = super::fresh::initialize::reset_configuration::Snapshot::open(
+        backend,
+        target,
+        request,
+        &original["maintenance"],
+    )?;
+    let reset_request = configuration.request(request)?;
+    let result = assemble(
+        backend,
+        target,
+        request,
+        original,
+        &reset_request,
+        Some(configuration.binding()?),
+    );
+    configuration.check()?;
+    result
+}
+
+// 仅已完成终态的历史读取可识别旧合同；初始化、写入及续作始终调用严格 aggregate。
+pub(crate) fn history(
+    backend: &Path,
+    target: &Path,
+    request: &Value,
+    original: &Value,
+    owner: Option<&super::guard::Generation>,
+) -> Result<Value> {
+    let terminal = read(backend, &target.join("initialized.json"))?;
+    let legacy = terminal["status"] == "fresh_target_initialized"
+        && terminal["reset"]
+            .as_object()
+            .is_some_and(|value| !value.contains_key("configuration"))
+        && terminal["history"]
+            .as_object()
+            .is_some_and(|value| !value.contains_key("reset-configuration.json"));
+    if !legacy {
+        return aggregate(backend, target, request, original);
+    }
+    json_io::exact(
+        &terminal,
+        super::resume_model::INITIALIZED,
+        "旧 reset 完整终态",
+    )?;
+    let tree = super::published::tree::initialized(backend, target, owner)?;
+    check(
+        !target.join("reset-configuration.json").try_exists()?
+            && terminal["generation"] == *original
+            && terminal["id"] == request["id"]
+            && terminal["scope_id"] == request["target"]["scope_id"]
+            && terminal["history"] == super::proof::history(backend, target)?
+            && read(backend, &target.join("initialized-candidate.json"))? == terminal,
+        "旧 reset 合同只接受完整已完成终态；混合或删除新快照绑定均拒绝",
+    )?;
+    let environment = BTreeMap::from([("APP_ENV".into(), "test".into())]);
+    let inputs = super::storage::StorageInputs {
+        backend,
+        request,
+        environment: &environment,
+        observation_dir: target,
+    };
+    let root = inputs.execution_backend()?;
+    let (directory, files) =
+        super::input::request_configuration::fresh_files(&root, &environment, request)?;
+    let protected = super::guard::Inputs::open(files.keys().map(|name| directory.join(name)))?;
+    check(
+        super::input::request_configuration::configuration_identity(&directory, &files)?
+            == json_io::text(&request["configuration_sha256"], "原 E 配置摘要")?
+            && original["configuration_sha256"] == request["configuration_sha256"],
+        "旧 reset 原 E 绑定变化",
+    )?;
+    let table = crate::rate_limit::load_app_table(&root, Some(&directory), "test")
+        .map_err(|_| "旧 reset 原 E 不能安全读取")?;
+    super::creation_plan::reset_configuration(
+        target,
+        &serde_json::to_value(table)?,
+        &original["maintenance"],
+    )?;
+    let result = assemble(backend, target, request, original, request, None)?;
+    check(
+        result["completed"] == terminal["reset"],
+        "旧 reset 完成聚合与终态不同",
+    )?;
+    check(
+        super::input::request_configuration::fresh_files(&root, &environment, request)?
+            == (directory, files),
+        "旧 reset 配置集合在读取期间变化",
+    )?;
+    protected.check()?;
+    check(
+        super::published::tree::initialized(backend, target, owner)? == tree,
+        "旧 reset 完整历史树在读取期间变化",
+    )?;
+    Ok(result)
+}
+
+pub(crate) fn history_request(
+    backend: &Path,
+    target: &Path,
+    request: &Value,
+    original: &Value,
+    owner: Option<&super::guard::Generation>,
+) -> Result<Value> {
+    if history(backend, target, request, original, owner)?
+        .get("configuration")
+        .is_none()
+    {
+        return Ok(request.clone());
+    }
+    super::fresh::initialize::reset_configuration::Snapshot::open(
+        backend,
+        target,
+        request,
+        &original["maintenance"],
+    )?
+    .request(request)
+}
+
+fn assemble(
+    backend: &Path,
+    target: &Path,
+    request: &Value,
+    original: &Value,
+    reset_request: &Value,
+    configuration: Option<Value>,
 ) -> Result<Value> {
     let mut actual = names(target, r"^reset-plan.*\.json$")?;
     actual.retain(|name| !name.ends_with(".command.json"));
@@ -38,12 +165,15 @@ pub(crate) fn aggregate(
     }
     check(first == second, "原 reset 两次固定计划证据不一致")?;
     validate_manifest(backend, &first["manifest"], request, original)?;
-    let completed = reset::completed(
+    let mut completed = reset::completed(
         backend,
         target,
         &first["manifest"],
         json_io::text(&first["plan_hash"], "reset hash")?,
     )?;
+    if let Some(binding) = &configuration {
+        completed["configuration"] = binding.clone();
+    }
     let intent = stage_record(
         backend,
         target,
@@ -59,12 +189,15 @@ pub(crate) fn aggregate(
         &first,
         &second,
         &completed,
+        reset_request,
     )?;
-    Ok(
-        json!({"plan":binding(backend,&target.join("reset-plan.json"))?,
+    let mut result = json!({"plan":binding(backend,&target.join("reset-plan.json"))?,
         "plan_confirm":binding(backend,&target.join("reset-plan-confirm.json"))?,
-        "intent":intent,"confirmed":confirmed,"commands":commands,"completed":completed}),
-    )
+        "intent":intent,"confirmed":confirmed,"commands":commands,"completed":completed});
+    if let Some(binding) = configuration {
+        result["configuration"] = binding;
+    }
+    Ok(result)
 }
 
 fn commands(
@@ -74,6 +207,7 @@ fn commands(
     first: &Value,
     second: &Value,
     completed: &Value,
+    request: &Value,
 ) -> Result<Value> {
     let all = names(target, r"^reset-.*\.command\.json$")?;
     let executable = executable(maintenance, "reset")?;
@@ -101,6 +235,7 @@ fn commands(
                 &path,
                 executable,
                 if stage == "reset-plan" { first } else { second },
+                request,
             )?
         } else {
             let value = read(backend, &path)?;
@@ -115,14 +250,17 @@ fn commands(
                 json_io::text(&completed["completed_at"], "reset 完成时间")?,
                 report.display()
             );
-            let wanted = json!([
+            let wanted = json!(super::resume_prefix::configured_command(
                 executable,
-                "execute",
-                "--plan-hash",
-                first["plan_hash"],
-                "--confirm-reset",
-                first["manifest"]["confirmation_phrase"]
-            ]);
+                request,
+                vec![
+                    "execute".into(),
+                    "--plan-hash".into(),
+                    json_io::text(&first["plan_hash"], "reset hash")?.into(),
+                    "--confirm-reset".into(),
+                    json_io::text(&first["manifest"]["confirmation_phrase"], "reset确认")?.into()
+                ]
+            )?);
             check(
                 value["returncode"].as_i64() == Some(0)
                     && value["error_type"].is_null()
@@ -168,9 +306,9 @@ pub(crate) fn validate_manifest(
     )?;
     let target = &request["target"];
     let scope = json_io::text(&target["scope_id"], "reset scope")?;
+    check(manifest["manifest_version"] == 5, MANIFEST_VERSION_ERROR)?;
     check(
-        manifest["manifest_version"] == 4
-            && manifest["environment"] == "test"
+        manifest["environment"] == "test"
             && manifest["scope_id"] == target["scope_id"]
             && manifest["code_sha"] == original["maintenance"]["source"]["snapshot"]["head"]
             && manifest["credential_version"] == request["reset"]["credential_version"]
@@ -181,7 +319,29 @@ pub(crate) fn validate_manifest(
     digest_shape(&manifest["config_sha"])?;
     databases(backend, manifest, request, original, scope)?;
     objects(manifest, &original["physical"]["s3"], scope)?;
+    redis(manifest, request, original)
+}
+
+fn redis(manifest: &Value, request: &Value, original: &Value) -> Result<()> {
     let redis = &manifest["redis"];
+    json_io::exact(
+        redis,
+        &[
+            "host",
+            "port",
+            "database",
+            "namespace",
+            "ownership_marker_key",
+            "ownership_marker",
+            "outside_sentinel_key_sha256",
+            "password_config_key",
+            "tls",
+            "tls_ca_sha256",
+            "tls_client_cert_sha256",
+            "tls_client_key_ref_sha256",
+        ],
+        "reset Redis",
+    )?;
     let selected = &original["selected"]["redis"];
     let sentinel = json_io::text(&request["reset"]["sentinel_key"], "reset sentinel")?;
     check(
@@ -189,6 +349,14 @@ pub(crate) fn validate_manifest(
             && redis["port"] == request["storage"]["redis"]["port"]
             && redis["database"] == 0
             && redis["tls"] == false
+            && redis["password_config_key"] == "redis.password"
+            && [
+                "tls_ca_sha256",
+                "tls_client_cert_sha256",
+                "tls_client_key_ref_sha256",
+            ]
+            .iter()
+            .all(|field| redis[*field].is_null())
             && redis["namespace"] == selected["namespace"]
             && redis["ownership_marker_key"] == selected["ownership_key"]
             && redis["ownership_marker"] == selected["ownership_value"]
@@ -213,6 +381,20 @@ fn databases(
     check(items.len() == 4, "reset plan 包含额外或缺失数据库")?;
     let mut seen = BTreeSet::new();
     for item in items {
+        json_io::exact(
+            item,
+            &[
+                "host",
+                "port",
+                "database",
+                "connection",
+                "target_keys",
+                "control_baseline",
+                "tenant_baseline",
+                "ownership_markers",
+            ],
+            "reset 数据库",
+        )?;
         let keys = json_io::array(&item["target_keys"], "reset 目标键")?;
         check(keys.len() == 1, "reset plan 数据库合并或重复")?;
         let key = json_io::text(&keys[0], "reset 目标 key")?;
@@ -229,6 +411,7 @@ fn databases(
             .find(|db| db["key"] == key)
             .ok_or("reset 请求目标缺失")?;
         let connection = request_physical::defaults_connection(backend, source)?;
+        database_connection(&item["connection"], expected, &connection, key)?;
         let mut owners = Map::new();
         for kind in if key == "shared-control" {
             &["control", "tenant-data"][..]
@@ -246,24 +429,66 @@ fn databases(
                 .all(|field| item[*field] == expected[*field])
                 && item["control_baseline"] == json!(key == "shared-control")
                 && item["tenant_baseline"] == true
-                && item["ownership_markers"] == Value::Object(owners)
-                && item["connection"]["tls_mode"] == expected["tls_mode"]
-                && item["connection"]["username"] == connection["username"]
-                && [
-                    "tls_ca_sha256",
-                    "tls_client_cert_sha256",
-                    "tls_client_key_ref_sha256",
-                ]
-                .iter()
-                .all(|field| item["connection"][*field].is_null()),
+                && item["ownership_markers"] == Value::Object(owners),
             "reset plan 数据库实际目标、baseline 或 owner 不符",
         )?;
     }
     Ok(())
 }
 
+fn database_connection(
+    actual: &Value,
+    expected: &Value,
+    connection: &Value,
+    key: &str,
+) -> Result<()> {
+    json_io::exact(
+        actual,
+        &[
+            "username",
+            "password_config_key",
+            "tls_mode",
+            "tls_ca_sha256",
+            "tls_client_cert_sha256",
+            "tls_client_key_ref_sha256",
+        ],
+        "reset 数据库连接",
+    )?;
+    let password_reference = if key == "shared-control" {
+        "database.primary.password".to_owned()
+    } else {
+        format!("tenant_data.targets.{key}.password")
+    };
+    check(
+        actual["tls_mode"] == expected["tls_mode"]
+            && actual["username"] == connection["username"]
+            && actual["password_config_key"] == password_reference
+            && [
+                "tls_ca_sha256",
+                "tls_client_cert_sha256",
+                "tls_client_key_ref_sha256",
+            ]
+            .iter()
+            .all(|field| actual[*field].is_null()),
+        "reset plan 数据库连接、凭据字段引用或 TLS 不符",
+    )
+}
+
 fn objects(manifest: &Value, expected: &Value, scope: &str) -> Result<()> {
     let storage = &manifest["object_storage"];
+    json_io::exact(
+        storage,
+        &[
+            "backend",
+            "endpoint",
+            "use_ssl",
+            "region",
+            "access_key_config_key",
+            "secret_key_config_key",
+            "prefixes",
+        ],
+        "reset 对象存储",
+    )?;
     let prefixes = json_io::array(&storage["prefixes"], "reset 对象前缀")?;
     let buckets = prefixes
         .iter()
@@ -273,6 +498,8 @@ fn objects(manifest: &Value, expected: &Value, scope: &str) -> Result<()> {
         ["backend", "endpoint", "region"]
             .iter()
             .all(|field| storage[*field] == expected[*field])
+            && storage["access_key_config_key"] == "object_storage.access_key"
+            && storage["secret_key_config_key"] == "object_storage.secret_key"
             && storage["use_ssl"]
                 == json!(json_io::text(&expected["endpoint"], "对象端点")?.starts_with("https://"))
             && prefixes.len() == 5

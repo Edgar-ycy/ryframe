@@ -8,7 +8,7 @@ use std::{collections::BTreeSet, path::Path};
 const INTENT: &str = "source-verification-recovery-intent.json";
 const RECEIPT: &str = "source-verification-recovery.json";
 const AUDIT: &str = "recovery-audit";
-const INTENT_FIELDS: &[&str] = &[
+pub(super) const INTENT_FIELDS: &[&str] = &[
     "format_version",
     "kind",
     "status",
@@ -84,14 +84,7 @@ pub(super) fn pending(args: &Value) -> Result<Value> {
     if value["successor"] != args["successor"] {
         return Err("待续作来源验收恢复 intent 与失败前缀或当前 successor 不同".into());
     }
-    let current = inventory::manifest(&directory)?
-        .into_iter()
-        .filter(|row| {
-            row["path"]
-                .as_str()
-                .is_some_and(|path| path != INTENT && !path.starts_with(&format!("{AUDIT}/")))
-        })
-        .collect::<Vec<_>>();
+    let current = original_manifest(&backend, &directory, &value["pre_recovery_manifest"], false)?;
     if json!(current) != value["pre_recovery_manifest"] {
         return Err("待续作来源验收恢复 intent 绑定的原完整 manifest 已变化".into());
     }
@@ -127,11 +120,7 @@ pub(super) fn chain(args: &Value) -> Result<Value> {
         "login_audit":receipt["login_audit"],"before":receipt["before"]}),
         &directory,
     )?;
-    if documents::read(&directory.join("failed.json"))?
-        != json!({"status":"failed","error":"ValueError"})
-    {
-        return Err("来源验收恢复没有保留原 ValueError 失败记录".into());
-    }
+    super::recovery_create::failure(&directory)?;
     if intent["successor"]["snapshot"]["clean"] != true {
         return Err("来源验收恢复工具不是已提交的干净 successor".into());
     }
@@ -144,18 +133,7 @@ pub(super) fn chain(args: &Value) -> Result<Value> {
     }
     let pre_manifest =
         documents::array(&intent["pre_recovery_manifest"], "来源恢复前完整 manifest")?;
-    let current = inventory::manifest(&directory)?;
-    let post_paths = [INTENT, RECEIPT, "cache-cleanup.json", "source-runtime.json"];
-    let original = current
-        .into_iter()
-        .filter(|row| {
-            row["path"].as_str().is_some_and(|path| {
-                !post_paths.contains(&path)
-                    && !path.starts_with("after/")
-                    && !path.starts_with(&format!("{AUDIT}/"))
-            })
-        })
-        .collect::<Vec<_>>();
+    let original = original_manifest(&backend, &directory, &intent["pre_recovery_manifest"], true)?;
     let top_level = pre_manifest
         .iter()
         .map(|row| {
@@ -168,20 +146,25 @@ pub(super) fn chain(args: &Value) -> Result<Value> {
         failed.remove(name);
     }
     failed.insert("failed.json");
+    for name in [
+        super::cache_attempt::ATTEMPT,
+        super::cache_attempt::EXECUTION,
+    ] {
+        if top_level.contains(name) {
+            failed.insert(name);
+        }
+    }
     if pre_manifest != original || top_level != failed {
         return Err("来源验收恢复前完整 manifest 或原文件发生变化".into());
     }
-    let confirmed = if cleanup["execution"] == "confirmed_lua_result" {
-        "recovery_lua_cas_unlink"
-    } else {
-        "reconciled_unknown_lua_result_all_keys_absent"
-    };
+    super::cache_attempt::validate_cleanup(&backend, &directory, cleanup)?;
+    let confirmed = super::cache_attempt::confirmed(cleanup)?;
     if recovery["format_version"].as_u64() != Some(1)
         || recovery["kind"] != "restore-source-verification-recovery"
         || recovery["status"] != "recovered"
         || recovery["cache_cleanup"] != receipt["cache_cleanup"]
         || recovery["after"] != receipt["after"]
-        || recovery["historical_cleanup"] != "unknown"
+        || recovery["historical_cleanup"] != super::cache_attempt::historical(cleanup)?
         || recovery["confirmed_cleanup"] != confirmed
     {
         return Err("来源验收恢复收据没有绑定确认的恢复清理".into());
@@ -201,21 +184,38 @@ pub(super) fn cache_publication(args: &Value) -> Result<Value> {
     documents::exact(
         args,
         &[
+            "backend",
+            "directory",
+            "output",
             "observation",
-            "deleted",
-            "expired",
-            "execution",
             "after",
             "cleaned_at",
         ],
         "来源缓存结果参数",
     )?;
+    let state = super::cache_attempt::Frame::open(args)?.state()?;
     let observation = &args["observation"];
-    cache::observation(&json!({"value":observation,"subjects":observation["subjects"]}))?;
+    if state["observation"] != *observation {
+        return Err("缓存清理发布没有绑定唯一 attempt 的原前像".into());
+    }
+    let execution = match state["status"].as_str() {
+        Some("confirmed") => "confirmed_watch_exec",
+        Some("unknown_exec") => "reconciled_unknown_exec_result",
+        _ => return Err("没有执行或明确未执行 UNLINK，不能发布清理成功；保留现场人工核对".into()),
+    };
+    let expired = documents::array(&observation["before"], "缓存完整前像")?
+        .iter()
+        .filter(|row| row["snapshot"]["type"] == "none")
+        .map(|row| row["snapshot"]["key"].clone())
+        .collect::<Vec<_>>();
     let value = json!({"format_version":2,"kind":"restore-source-authorization-cache-cleanup","status":"cleaned",
-        "namespace":observation["namespace"],"before":observation["before"],"deleted":args["deleted"],
-        "expired_snapshot_keys":args["expired"],"after":args["after"],"execution":args["execution"],"cleaned_at":args["cleaned_at"]});
-    cache::receipt(&json!({"value":value,"subjects":observation["subjects"]}))
+        "namespace":observation["namespace"],"before":observation["before"],"deleted":state["result"]["deleted"],
+        "expired_snapshot_keys":expired,"after":args["after"],"execution":execution,"cleaned_at":args["cleaned_at"],
+        "attempt":state["attempt"],"execution_record":state["execution"],"attempt_phase":state["attempt_phase"]});
+    let receipt = cache::receipt(&json!({"value":value,"subjects":observation["subjects"]}))?;
+    let (backend, directory) = receipts::directory(args)?;
+    super::cache_attempt::validate_cleanup(&backend, &directory, &receipt)?;
+    Ok(receipt)
 }
 
 pub(super) fn facts(args: &Value) -> Result<Value> {
@@ -251,4 +251,45 @@ pub(super) fn facts(args: &Value) -> Result<Value> {
         return Err("来源运行恢复事实没有绑定同代 intent".into());
     }
     Ok(json!({"recovered":true,"successor":intent["successor"]}))
+}
+
+/// 已存在的 attempt/result 是前像的一部分；仅真正首次恢复可新增这一对。
+fn original_manifest(
+    backend: &Path,
+    directory: &Path,
+    baseline: &Value,
+    completed: bool,
+) -> Result<Vec<Value>> {
+    let before = documents::array(baseline, "恢复前完整清单")?;
+    let has_attempt = before
+        .iter()
+        .any(|row| row["path"] == super::cache_attempt::ATTEMPT);
+    let has_execution = before
+        .iter()
+        .any(|row| row["path"] == super::cache_attempt::EXECUTION);
+    if has_execution && !has_attempt {
+        return Err("恢复前像中 execution 缺少原 attempt".into());
+    }
+    super::cache_attempt::entries(backend, directory)?;
+    let mut result = Vec::new();
+    for row in inventory::manifest(directory)? {
+        let path = documents::text(&row["path"], "恢复清单路径")?;
+        let cache = matches!(
+            path,
+            super::cache_attempt::ATTEMPT | super::cache_attempt::EXECUTION
+        );
+        if path == INTENT
+            || path.starts_with(&format!("{AUDIT}/"))
+            || completed
+                && (path == RECEIPT
+                    || path == "cache-cleanup.json"
+                    || path == "source-runtime.json"
+                    || path.starts_with("after/"))
+            || !has_attempt && cache
+        {
+            continue;
+        }
+        result.push(row);
+    }
+    Ok(result)
 }

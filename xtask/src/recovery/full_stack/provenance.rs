@@ -17,9 +17,17 @@ use std::{
 const MODEL: &str = "tools/python/fixtures/order-business/src/resources/mod.rs";
 const SIDES: &[&str] = &["backend", "frontend"];
 
-pub(super) fn current(root: &Path, directory: &Path) -> Result<Value> {
+pub(in crate::recovery) fn current(root: &Path, directory: &Path) -> Result<Value> {
     if !directory.join("source-pair.json").is_file() {
         return Ok(Value::Null);
+    }
+    let source_pair = read_json(
+        &directory.join("source-pair.json"),
+        "全栈源码组合",
+        4 * 1024 * 1024,
+    )?;
+    if source_pair["kind"] == crate::recovery::fixture_control::source_pair::execution::PAIR_KIND {
+        return published(root, directory, &source_pair, |current| Ok(current.clone()));
     }
     let root = portable_path(&fs::canonicalize(root)?);
     let fixture = root.parent().ok_or("后端缺少父目录")?.join("fixture.json");
@@ -35,6 +43,80 @@ pub(super) fn current(root: &Path, directory: &Path) -> Result<Value> {
         json!({"format_version":1,"fixture":"core","backend_root":root,
         "source_pair":pair,"original":{"backend":observed}}),
     )
+}
+
+pub(in crate::recovery) fn published<T>(
+    root: &Path,
+    directory: &Path,
+    pair: &Value,
+    observe: impl FnOnce(&Value) -> Result<T>,
+) -> Result<T> {
+    use crate::recovery::fixture_control::source_pair::execution;
+    let root = portable_path(&fs::canonicalize(root)?);
+    execution::verify_pair(&root, pair, |publication| {
+        published_evidence(&root, directory, pair, publication, observe)
+    })
+}
+
+fn published_evidence<T>(
+    root: &Path,
+    directory: &Path,
+    pair: &Value,
+    publication: &Value,
+    observe: impl FnOnce(&Value) -> Result<T>,
+) -> Result<T> {
+    let fixture_binding = &publication["original"]["fixture_receipt"];
+    let fixture_path = Path::new(text_field(fixture_binding, "path", "原始 fixture")?);
+    let fixture = read_json(fixture_path, "原始 fixture", 4 * 1024 * 1024)?;
+    let model_path = root.join(MODEL);
+    let model = file_binding(&model_path, "发布业务模型")?;
+    if file_binding(fixture_path, "原始 fixture")? != *fixture_binding
+        || model["sha256"] != fixture["fixture_sha256"]
+    {
+        return Err("发布业务模型与原始 fixture 摘要不匹配".into());
+    }
+    let mut roots = serde_json::Map::new();
+    let mut generated = serde_json::Map::new();
+    for side in SIDES {
+        let value = &publication["published"][side];
+        roots.insert((*side).into(), value["path"].clone());
+        let mut snapshot = value["inventory"]["source"]["snapshot"].clone();
+        snapshot
+            .as_object_mut()
+            .ok_or("发布来源快照无效")?
+            .remove("clean");
+        validate_snapshot(&snapshot, false)?;
+        generated.insert((*side).into(), snapshot);
+    }
+    let pair_path = portable_path(&fs::canonicalize(directory)?).join("source-pair.json");
+    let pair_binding = file_binding(&pair_path, "执行来源组合")?;
+    if read_json(&pair_path, "执行来源组合", 4 * 1024 * 1024)? != *pair {
+        return Err("发布业务来源在核验期间变化".into());
+    }
+    let mut bound = pair.clone();
+    bound["receipt"] = pair_binding.clone();
+    let result = observe(
+        &json!({"format_version":1,"fixture":"business","fixture_receipt":fixture_binding,
+        "fixture_definition":{"model":model},"roots":roots,"source_pair":bound,
+        "original":publication["original"]["source_pair"]["sources"],"generated":generated}),
+    );
+    let after: Result<()> = (|| {
+        if read_json(&pair_path, "执行来源组合", 4 * 1024 * 1024)? != *pair
+            || file_binding(&pair_path, "执行来源组合")? != pair_binding
+            || file_binding(fixture_path, "原始 fixture")? != *fixture_binding
+            || file_binding(&model_path, "发布业务模型")? != model
+        {
+            return Err("发布业务来源在核验期间变化".into());
+        }
+        Ok(())
+    })();
+    match (result, after) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), Err(after)) => {
+            Err(format!("{error}；发布业务来源绑定后验同时失败：{after}").into())
+        }
+        (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+    }
 }
 
 fn business(root: &Path, directory: &Path, path: &Path) -> Result<Value> {
@@ -149,24 +231,9 @@ fn pair(
                 return Err("全栈源码组合提交与实际工作树不匹配".into());
             }
         }
-        for (environment, field) in [
-            ("GITHUB_RUN_ID", "run_id"),
-            ("GITHUB_RUN_ATTEMPT", "attempt"),
-        ] {
-            let recorded = value[field]
-                .as_u64()
-                .filter(|v| *v > 0)
-                .ok_or("源码组合运行身份无效")?;
-            if let Some(actual) = std::env::var_os(environment)
-                && actual
-                    .to_str()
-                    .filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()))
-                    .and_then(|v| v.parse::<u64>().ok())
-                    != Some(recorded)
-            {
-                return Err("全栈源码组合不属于当前 CI attempt".into());
-            }
-        }
+        let run_id = std::env::var_os("GITHUB_RUN_ID");
+        let attempt = std::env::var_os("GITHUB_RUN_ATTEMPT");
+        validate_ci_identity(&value, [run_id.as_deref(), attempt.as_deref()])?;
     }
     if value["format_version"].as_u64() != Some(1) {
         return Err("全栈源码组合版本无效".into());
@@ -188,6 +255,28 @@ fn pair(
     }
     value["receipt"] = file_binding(&path, "源码组合")?;
     Ok(value)
+}
+
+pub(in crate::recovery) fn validate_ci_identity(
+    pair: &Value,
+    expected: [Option<&std::ffi::OsStr>; 2],
+) -> Result<()> {
+    for (field, actual) in ["run_id", "attempt"].into_iter().zip(expected) {
+        let recorded = pair[field]
+            .as_u64()
+            .filter(|value| *value > 0)
+            .ok_or("源码组合运行身份无效")?;
+        if let Some(actual) = actual
+            && actual
+                .to_str()
+                .filter(|value| !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()))
+                .and_then(|value| value.parse::<u64>().ok())
+                != Some(recorded)
+        {
+            return Err("全栈源码组合不属于当前 CI attempt".into());
+        }
+    }
+    Ok(())
 }
 
 fn validate_snapshot(value: &Value, clean: bool) -> Result<()> {
@@ -241,6 +330,7 @@ pub(super) fn build(
     directory: &Path,
     binaries: &Value,
     expected: &Value,
+    jobs: u8,
 ) -> Result<Value> {
     let roles = [
         "ryframe",
@@ -262,5 +352,6 @@ pub(super) fn build(
         return Err("采集构建产物期间源码或 fixture 来源发生变化".into());
     }
     Ok(json!({"format_version":1,"kind":"full-stack-build",
-        "backend_root":portable_path(&fs::canonicalize(root)?),"source":source,"artifacts":artifacts}))
+        "backend_root":portable_path(&fs::canonicalize(root)?),"source":source,"artifacts":artifacts,
+        "build_jobs":jobs}))
 }

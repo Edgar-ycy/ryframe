@@ -294,15 +294,16 @@ fn validate_managed_fields(
         }
         if !field.nullable
             && !field.usage.create
-            && !service_managed.contains(&field.name)
+            && (!service_managed.contains(&field.name) || field.database_clock())
             && field.default.is_none()
+            && !field.database_default()
         {
             return Err(field_error(
                 resource,
                 &field.name,
                 source_path,
                 "非空字段既不从 create 输入，也没有稳定默认值",
-                "启用 usage.create、声明类型正确的 default，或移入强类型 Service 扩展",
+                "启用 usage.create、声明类型正确的 default 或受支持的 sql_default，或移入强类型 Service 扩展",
             ));
         }
     }

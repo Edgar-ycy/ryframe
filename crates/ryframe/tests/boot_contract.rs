@@ -370,19 +370,34 @@ mod tenant_config_archive {
 
     #[test]
     fn archive_with_unexpected_entry_is_rejected() {
-        let cursor = Cursor::new(Vec::new());
-        let mut archive = ZipWriter::new(cursor);
-        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
-        archive.start_file("manifest.json", options).unwrap();
-        archive.write_all(b"{}").unwrap();
-        archive.start_file("unexpected.json", options).unwrap();
-        archive.write_all(b"{}").unwrap();
-        let data = archive.finish().unwrap().into_inner();
+        for (entries, expected_reason) in [
+            (
+                &["manifest.json", "resources.json", "unexpected.json"][..],
+                "配置包只能包含 manifest.json 和 resources.json",
+            ),
+            (
+                &["manifest.json", "unexpected.json"][..],
+                "配置包包含未允许的文件或非法文件名",
+            ),
+        ] {
+            let cursor = Cursor::new(Vec::new());
+            let mut archive = ZipWriter::new(cursor);
+            let options =
+                SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+            for entry in entries {
+                archive.start_file(*entry, options).unwrap();
+                archive.write_all(b"{}").unwrap();
+            }
+            let data = archive.finish().unwrap().into_inner();
 
-        let error = codec()
-            .parse(&data, "manifest.json", "resources.json", 4096, 100)
-            .expect_err("额外文件必须被拒绝");
-        assert!(matches!(error, AppError::Validation(_)));
+            let error = codec()
+                .parse(&data, "manifest.json", "resources.json", 4096, 100)
+                .expect_err("额外文件必须被拒绝");
+            match error {
+                AppError::Validation(reason) => assert_eq!(reason, expected_reason),
+                other => panic!("归档约束必须返回校验错误：{other}"),
+            }
+        }
     }
 }
 
@@ -451,13 +466,5 @@ mod service_domains {
                 "login_info",
             ]
         );
-    }
-
-    #[test]
-    fn refresh_session_port_is_built_once_at_composition_root() {
-        let source = include_str!("../src/boot/services.rs");
-        assert_eq!(source.matches("refresh_sessions::store(").count(), 1);
-        assert!(source.contains("Arc::clone(&refresh_sessions)"));
-        assert!(source.contains("refresh_sessions,\n        &background"));
     }
 }

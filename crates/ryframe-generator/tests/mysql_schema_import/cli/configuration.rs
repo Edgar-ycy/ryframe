@@ -8,11 +8,12 @@ use std::{
 // 捕获内容包含真实配置，不派生 Debug，也不把解析器原文或字段值加入诊断。
 pub(super) struct CapturedConfiguration {
     source: PathBuf,
-    base: CapturedFile,
+    base: Option<CapturedFile>,
     selected: CapturedFile,
     table: toml::Table,
 }
 
+#[derive(PartialEq)]
 struct CapturedFile {
     bytes: Vec<u8>,
     stamp: Stamp,
@@ -28,31 +29,25 @@ struct Stamp {
 pub(super) struct PreparedConfiguration {
     captured: CapturedConfiguration,
     directory: PathBuf,
-    base: Vec<u8>,
+    base: Option<CapturedFile>,
     selected: Vec<u8>,
 }
 
 impl CapturedConfiguration {
     pub(super) fn capture(source: &Path) -> Result<Self, String> {
         check_directory(source, "捕获共享源/检查目录")?;
-        let base = capture_file(&source.join("app.toml"), "捕获共享源/app.toml")?;
+        let base = capture_optional_file(&source.join("app.toml"), "捕获共享源/app.toml")?;
         let selected = capture_file(&source.join("app.test.toml"), "捕获共享源/app.test.toml")?;
-        parse_table(&base.bytes, &source.join("app.toml"))?;
+        if let Some(base) = &base {
+            parse_table(&base.bytes, &source.join("app.toml"))?;
+        }
         let table = parse_table(&selected.bytes, &source.join("app.test.toml"))?;
-        // 两个文件读取结束后复核同一轮元数据，拒绝捕获期间的变化。
-        for (name, expected) in [("app.toml", &base), ("app.test.toml", &selected)] {
-            let path = source.join(name);
-            let metadata = fs::symlink_metadata(&path).map_err(|error| {
-                io_error(
-                    "捕获共享源/结束复核",
-                    &path,
-                    &error,
-                    "核对源文件是否被删除或替换，检查读取权限；不要在本次导入中切换来源",
-                )
-            })?;
-            if !ordinary(&metadata) || !metadata.is_file() || stamp(&metadata) != expected.stamp {
-                return Err(changed_error("捕获共享源/结束复核", &path));
-            }
+        // 读取结束后复核完整前像；公共文件的缺失同样属于本轮绑定。
+        for (name, expected) in [
+            ("app.toml", base.as_ref()),
+            ("app.test.toml", Some(&selected)),
+        ] {
+            verify_captured_file(&source.join(name), expected, "捕获共享源/结束复核")?;
         }
         check_directory(source, "捕获共享源/结束检查目录")?;
         Ok(Self {
@@ -65,12 +60,11 @@ impl CapturedConfiguration {
 
     fn verify(&self) -> Result<(), String> {
         check_directory(&self.source, "复核共享源/检查目录")?;
-        for (name, expected) in [("app.toml", &self.base), ("app.test.toml", &self.selected)] {
-            let path = self.source.join(name);
-            let actual = capture_file(&path, "复核共享源文件")?;
-            if actual.bytes != expected.bytes || actual.stamp != expected.stamp {
-                return Err(changed_error("复核共享源文件", &path));
-            }
+        for (name, expected) in [
+            ("app.toml", self.base.as_ref()),
+            ("app.test.toml", Some(&self.selected)),
+        ] {
+            verify_captured_file(&self.source.join(name), expected, "复核共享源文件")?;
         }
         Ok(())
     }
@@ -111,8 +105,20 @@ impl CapturedConfiguration {
         let selected = self
             .selected_for_schema(schema)
             .map_err(|error| retained_target(error, &directory))?;
-        let base = self.base.bytes.clone();
-        publish_new(&directory.join("app.toml"), &base)?;
+        let base = if let Some(base) = &self.base {
+            let path = directory.join("app.toml");
+            publish_new(&path, &base.bytes)?;
+            let published = capture_file(&path, "发布私有配置/复核公共文件")?;
+            if published.bytes != base.bytes {
+                return Err(retained_target(
+                    changed_error("发布私有配置/复核公共文件", &path),
+                    &directory,
+                ));
+            }
+            Some(published)
+        } else {
+            None
+        };
         publish_new(&directory.join("app.test.toml"), &selected)?;
         let prepared = PreparedConfiguration {
             captured: self,
@@ -162,16 +168,19 @@ impl PreparedConfiguration {
     pub(super) fn verify(&self) -> Result<(), String> {
         self.captured.verify()?;
         check_directory(&self.directory, "复核私有配置/检查目录")?;
-        for (name, expected) in [("app.toml", &self.base), ("app.test.toml", &self.selected)] {
-            let path = self.directory.join(name);
-            if capture_file(&path, "复核私有配置文件")?.bytes != *expected {
-                return Err(diagnostic(
-                    "复核私有配置文件",
-                    &path,
-                    "文件字节与本次已发布配置不一致",
-                    "停止导入并核对修改来源；目标文件保留，不重建、不覆盖、不自动重放",
-                ));
-            }
+        verify_captured_file(
+            &self.directory.join("app.toml"),
+            self.base.as_ref(),
+            "复核私有配置文件",
+        )?;
+        let path = self.directory.join("app.test.toml");
+        if capture_file(&path, "复核私有配置文件")?.bytes != self.selected {
+            return Err(diagnostic(
+                "复核私有配置文件",
+                &path,
+                "文件字节与本次已发布配置不一致",
+                "停止导入并核对修改来源；目标文件保留，不重建、不覆盖、不自动重放",
+            ));
         }
         Ok(())
     }
@@ -240,6 +249,35 @@ fn toml_error_kind(error: &toml::de::Error) -> &'static str {
         "字符串转义无效"
     } else {
         "语法或表结构无效"
+    }
+}
+
+fn verify_captured_file(
+    path: &Path,
+    expected: Option<&CapturedFile>,
+    stage: &str,
+) -> Result<(), String> {
+    if capture_optional_file(path, stage)?.as_ref() != expected {
+        return Err(changed_error(stage, path));
+    }
+    Ok(())
+}
+
+fn capture_optional_file(path: &Path, stage: &str) -> Result<Option<CapturedFile>, String> {
+    let parent = path.parent().ok_or_else(|| changed_error(stage, path))?;
+    check_directory(parent, stage)?;
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            check_directory(parent, stage)?;
+            Ok(None)
+        }
+        Err(error) => Err(io_error(
+            stage,
+            path,
+            &error,
+            "检查文件元数据及读取权限；不切换来源、不自动重放",
+        )),
+        Ok(_) => capture_file(path, stage).map(Some),
     }
 }
 

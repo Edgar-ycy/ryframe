@@ -274,14 +274,6 @@ impl RoleService {
         }
     }
 
-    pub async fn get_super_role(&self, actor: &ActorContext) -> AppResult<RoleRecord> {
-        let tenant_id = crate::validated_tenant_id(actor)?;
-        self.read
-            .find_super_role(tenant_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("超级管理员角色不存在".into()))
-    }
-
     pub async fn create(
         &self,
         actor: &ActorContext,

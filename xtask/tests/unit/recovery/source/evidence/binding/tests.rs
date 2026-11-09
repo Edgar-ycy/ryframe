@@ -72,7 +72,10 @@ impl Fixture {
         }
     }
     fn args(&self) -> Value {
-        json!({"backend":self.root,"evidence_root":self.root,"source":self.source,"app_env":"test","config_dir":null})
+        let mut source = self.source.clone();
+        source["s3"] = json!({"configuration": app_configuration::configuration_value(
+            &self.root, &self.root.join("config"), "test").unwrap()});
+        json!({"backend":self.root,"evidence_root":self.root,"source":source,"app_env":"test","config_dir":null})
     }
     fn write(&self) {
         fs::write(
@@ -230,6 +233,48 @@ fn explicit_configuration_root_and_evidence_root_are_independent_and_reloaded() 
         args["app_env"] = env;
         assert!(physical(&args).is_err());
     }
+}
+
+#[test]
+fn generation_v2_consumes_bound_sidecar_configuration_and_freezes_absent_common_file() {
+    use crate::recovery::source::evidence::generation_request::configuration;
+    let f = Fixture::new();
+    f.write();
+    let directory = f.root.join(".local-tests/bootstrap/config");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("app.test.toml"), table_text(&f.table)).unwrap();
+    let frozen = configuration::capture(&f.root, &directory).unwrap();
+    let mut request = json!({"format_version":2,"kind":"devex-clone-seed-source-generation","id":"source-config-test",
+        "source_registration":null,"review_successor":null,"source_rebind":null,"current_storage":null,
+        "execution_backend":f.root.join("clean-execution"),"expected_backend_sha":"a".repeat(40),
+        "adapter_contract":null,"product_backend":null,"backend_build":null,"maintenance_build":null,
+        "source_environment":null,"configuration":frozen,"execution_source":null});
+    fs::create_dir(f.root.join("clean-execution")).unwrap();
+    assert!(!f.root.join("clean-execution/config").exists());
+    assert_eq!(
+        configuration::directory(&f.root, &request).unwrap(),
+        directory
+    );
+    assert!(frozen["files"].get("app.toml").is_none());
+    let mut args = f.args();
+    let expected = physical(&args).unwrap();
+    args["backend"] = request["execution_backend"].clone();
+    args["config_dir"] = json!(directory);
+    args["source"]["s3"]["configuration"] = frozen;
+    assert_eq!(physical(&args).unwrap(), expected);
+    fs::write(directory.join("app.toml"), "scope_id='source-fixture'\n").unwrap();
+    assert!(configuration::verify(&f.root, &request).is_err());
+    fs::remove_file(directory.join("app.toml")).unwrap();
+    configuration::verify(&f.root, &request).unwrap();
+    fs::write(directory.join("app.test.toml"), "scope_id='changed'\n").unwrap();
+    assert!(configuration::verify(&f.root, &request).is_err());
+    request["configuration"]["app_env"] = json!("dev");
+    assert!(configuration::verify(&f.root, &request).is_err());
+    let retired = std::collections::BTreeMap::from([
+        ("APP_ENV".into(), "test".into()),
+        ("APP_CONFIG_DIR".into(), "retired".into()),
+    ]);
+    assert!(crate::recovery::source::evidence::environment::configured(&retired).is_err());
 }
 
 #[test]

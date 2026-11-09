@@ -1,5 +1,5 @@
 use std::{
-    io::Read,
+    io::{Read, Write},
     process::{Command, ExitStatus},
 };
 
@@ -130,6 +130,22 @@ impl ManagedChild {
         #[cfg(not(windows))]
         {
             Ok(Some(Box::new(stdout)))
+        }
+    }
+
+    /// 仅移交已有管道；调用方核验 ready 后才写一次授权，并负责 flush 和关闭。
+    pub(crate) fn take_stdin_writer(&mut self) -> Result<Option<Box<dyn Write + Send>>> {
+        let Some(stdin) = self.child.stdin.take() else {
+            return Ok(None);
+        };
+        #[cfg(windows)]
+        {
+            let handle = stdin.into_owned_handle()?;
+            Ok(Some(Box::new(std::fs::File::from(handle))))
+        }
+        #[cfg(not(windows))]
+        {
+            Ok(Some(Box::new(stdin)))
         }
     }
 

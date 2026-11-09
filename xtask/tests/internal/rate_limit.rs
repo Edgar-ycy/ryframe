@@ -8,7 +8,7 @@ use tempfile::TempDir;
 
 use super::rate_limit::{
     DEFAULT_API_WINDOW_SECS, DEFAULT_LOGIN_CAPACITY, LOGIN_RULE, authority, load_app_table,
-    login_budget_environment, login_rate_limit, settings,
+    settings,
 };
 
 struct Fixture {
@@ -193,39 +193,6 @@ fn booleans_integers_windows_and_api_limits_fail_closed() {
 }
 
 #[test]
-fn login_limit_and_budget_environment_keep_the_explicit_boundary() {
-    let fixture = Fixture::new(BASE);
-    assert_eq!(
-        login_rate_limit(&fixture.backend, None, "test")
-            .unwrap()
-            .capacity,
-        5
-    );
-    let state = fixture.backend.join("budget.json");
-    let values =
-        login_budget_environment(&fixture.backend, None, "test", state.to_str().unwrap()).unwrap();
-    assert_eq!(values.len(), 3);
-    assert_eq!(
-        values["RYFRAME_E2E_LOGIN_BUDGET_STATE"],
-        state.to_str().unwrap()
-    );
-    assert_eq!(values["RYFRAME_E2E_LOGIN_RATE_LIMIT_CAPACITY"], "5");
-    assert_eq!(values["RYFRAME_E2E_LOGIN_RATE_LIMIT_WINDOW_SECS"], "40");
-    for path in ["relative.json", "line\nbreak.json", "nul\0byte.json"] {
-        assert!(login_budget_environment(&fixture.backend, None, "test", path).is_err());
-    }
-    let invalid = fixture.backend.join("line\nbreak.json");
-    assert!(
-        login_budget_environment(&fixture.backend, None, "test", invalid.to_str().unwrap())
-            .is_err()
-    );
-    let over = Fixture::new(
-        "[rate_limit]\napi_window_secs=60\n[rate_limit.api_limits]\n\"POST /api/v1/auth/login\"=10001\n",
-    );
-    assert!(login_rate_limit(&over.backend, None, "test").is_err());
-}
-
-#[test]
 fn selected_only_directories_missing_selected_and_bad_common_are_not_silent() {
     let fixture = Fixture::new(BASE);
     fs::remove_file(fixture.backend.join("config/app.toml")).unwrap();
@@ -283,18 +250,5 @@ fn capacity_and_window_boundaries_keep_the_original_safe_ranges() {
             assert!(error.message().contains("app.test.toml"));
             assert!(error.message().contains("请"));
         }
-    }
-    let fixture = Fixture::new(BASE);
-    for capacity in [1, 10_000] {
-        fixture.write_override(
-            "test",
-            &format!("[rate_limit.api_limits]\n\"{LOGIN_RULE}\"={capacity}\n"),
-        );
-        assert_eq!(
-            login_rate_limit(&fixture.backend, None, "test")
-                .unwrap()
-                .capacity,
-            capacity
-        );
     }
 }

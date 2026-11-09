@@ -1,6 +1,6 @@
 use std::{
-    fs::{self, OpenOptions},
-    io::Write,
+    fs::{self, File, OpenOptions},
+    io::{Read, Seek, Write},
     path::{Path, PathBuf},
 };
 
@@ -11,6 +11,7 @@ use crate::{
 
 const SOURCE_NAME: &str = "source-commit";
 const LOCK_NAME: &str = "source-commit.lock";
+const RESTORE_VERIFIER_NAME: &str = "restore-proof-verifier.json";
 
 /// 在单次 Cargo 构建期间发布精确源码提交，并在内容未漂移时清理。
 pub(crate) fn with_source_commit<T>(
@@ -18,9 +19,29 @@ pub(crate) fn with_source_commit<T>(
     commit: &str,
     operation: impl FnOnce() -> Result<T>,
 ) -> Result<T> {
+    with_binding(root, commit, |_| operation())
+}
+
+/// 在同一源码绑定中只向正式恢复证明操作发放当前核验器。
+pub(crate) fn with_restore_verifier<T>(
+    root: &Path,
+    commit: &str,
+    verifier: &serde_json::Value,
+    operation: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    with_binding(root, commit, |binding| {
+        binding.with_restore_verifier(root, commit, verifier, operation)
+    })
+}
+
+fn with_binding<T>(
+    root: &Path,
+    commit: &str,
+    operation: impl FnOnce(&BuildSourceBinding) -> Result<T>,
+) -> Result<T> {
     validate_commit(commit)?;
     let binding = BuildSourceBinding::create(root, commit)?;
-    let result = operation();
+    let result = operation(&binding);
     let cleanup = binding.finish();
     match (result, cleanup) {
         (Ok(value), Ok(())) => Ok(value),
@@ -91,6 +112,59 @@ impl BuildSourceBinding {
         })
     }
 
+    fn with_restore_verifier<T>(
+        &self,
+        root: &Path,
+        commit: &str,
+        verifier: &serde_json::Value,
+        operation: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        let path = self.lock.with_file_name(RESTORE_VERIFIER_NAME);
+        validate_local_test_path(&path, root, LocalTestPathKind::OutputFile)?;
+        validate_local_test_path(&self.lock, root, LocalTestPathKind::ExistingFile)?;
+        let lock = OpenOptions::new().read(true).write(true).open(&self.lock)?;
+        let identity = same_file::Handle::from_file(lock.try_clone()?)?;
+        lock.try_lock()
+            .map_err(|_| "恢复核验器发放要求独占同一构建来源锁")?;
+        self.check_lock(&lock, &identity)?;
+        let grant = serde_json::json!({
+            "format_version":1, "kind":"ryframe-restore-proof-verifier",
+            "source_sha":commit, "verifier":verifier,
+        });
+        let mut bytes = serde_json::to_vec(&grant)?;
+        bytes.push(b'\n');
+        if bytes.len() > 16 * 1024 {
+            return Err("恢复核验器发放文件超过 16 KiB".into());
+        }
+        write_new(&path, &bytes, "恢复核验器发放文件")?;
+        let grant_identity = same_file::Handle::from_path(&path)?;
+        let result = operation();
+        let cleanup = self.check_lock(&lock, &identity).and_then(|()| {
+            if same_file::Handle::from_path(&path)? != grant_identity {
+                return Err("恢复核验器发放文件身份已漂移，保留现场".into());
+            }
+            drop(grant_identity);
+            remove_exact(&path, &bytes, "恢复核验器发放文件")
+        });
+        match (result, cleanup) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+            (Err(error), Err(cleanup)) => {
+                Err(format!("{error}；恢复核验器发放收尾失败：{cleanup}").into())
+            }
+        }
+    }
+
+    fn check_lock(&self, mut lock: &File, identity: &same_file::Handle) -> Result<()> {
+        lock.rewind()?;
+        let mut bytes = Vec::new();
+        lock.take(4097).read_to_end(&mut bytes)?;
+        if bytes != self.lock_bytes || &same_file::Handle::from_path(&self.lock)? != identity {
+            return Err("构建来源锁在恢复核验期间变化".into());
+        }
+        Ok(())
+    }
+
     fn finish(mut self) -> Result<()> {
         self.active = false;
         remove_exact(&self.source, &self.source_bytes, "构建来源")?;
@@ -132,7 +206,7 @@ fn remove_exact(path: &Path, expected: &[u8], label: &str) -> Result<()> {
 mod tests {
     use std::fs;
 
-    use super::with_source_commit;
+    use super::{RESTORE_VERIFIER_NAME, with_restore_verifier, with_source_commit};
     use crate::workspace::root_dir;
 
     const SHA: &str = "0123456789abcdef0123456789abcdef01234567";
@@ -203,5 +277,31 @@ mod tests {
             .is_err()
         );
         assert!(!called);
+    }
+
+    #[test]
+    fn restore_verifier_is_published_under_the_same_live_source_lock() {
+        let root = fixture();
+        let directory = root.path().join(".local-tests/build");
+        let grant = directory.join(RESTORE_VERIFIER_NAME);
+        let lock = directory.join("source-commit.lock");
+        let tool = serde_json::json!({"path":root.path().join("xtask.exe"),"bytes":1,"sha256":"a".repeat(64)});
+        with_restore_verifier(root.path(), SHA, &tool, || {
+            let contender = fs::OpenOptions::new().read(true).write(true).open(&lock)?;
+            assert!(matches!(contender.try_lock(), Err(fs::TryLockError::WouldBlock)));
+            let value: serde_json::Value = serde_json::from_slice(&fs::read(&grant)?)?;
+            assert_eq!(value, serde_json::json!({"format_version":1,"kind":"ryframe-restore-proof-verifier","source_sha":SHA,"verifier":tool}));
+            Ok(())
+        }).unwrap();
+        assert!(!grant.exists());
+        assert!(!lock.exists());
+
+        let changed = with_restore_verifier(root.path(), SHA, &tool, || {
+            fs::write(&grant, b"changed\n")?;
+            Ok(())
+        })
+        .unwrap_err();
+        assert!(changed.to_string().contains("已漂移"));
+        assert_eq!(fs::read(&grant).unwrap(), b"changed\n");
     }
 }

@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) async fn verify_fence_columns(db: &DatabaseConnection) -> Result<(), DbErr> {
+pub(super) async fn verify_fence_columns<C: ConnectionTrait>(db: &C) -> Result<(), DbErr> {
     let columns = ColumnMetadata::find_by_statement(Statement::from_string(
         DbBackend::MySql,
         "SELECT column_name AS `column_name`, column_type AS `column_type`, \
@@ -83,7 +83,7 @@ pub(super) async fn verify_fence_columns(db: &DatabaseConnection) -> Result<(), 
     Ok(())
 }
 
-pub(super) async fn verify_fence_indexes(db: &DatabaseConnection) -> Result<(), DbErr> {
+pub(super) async fn verify_fence_indexes<C: ConnectionTrait>(db: &C) -> Result<(), DbErr> {
     let indexes = IndexMetadata::find_by_statement(Statement::from_string(
         DbBackend::MySql,
         "SELECT index_name AS `index_name`, column_name AS `column_name`, \
@@ -130,7 +130,7 @@ pub(super) async fn verify_fence_indexes(db: &DatabaseConnection) -> Result<(), 
     Ok(())
 }
 
-pub(super) async fn verify_fence_constraints(db: &DatabaseConnection) -> Result<(), DbErr> {
+pub(super) async fn verify_fence_constraints<C: ConnectionTrait>(db: &C) -> Result<(), DbErr> {
     let constraints = ConstraintMetadata::find_by_statement(Statement::from_string(
         DbBackend::MySql,
         "SELECT constraint_name AS `constraint_name`, constraint_type AS `constraint_type`, \

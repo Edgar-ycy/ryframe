@@ -1,6 +1,8 @@
 """封存 C68 谱系校验失败，并只授权相邻 C70 重试一次。"""
 from __future__ import annotations
 
+from devex_clone_seed_generation_runtime import configuration_directory
+
 from native_s3_client import _invoke as native_invoke, _read_response as native_response
 
 import copy
@@ -102,14 +104,14 @@ def _source(backend: Path, directory: Path, attempts: list, request: dict, tail:
 
 
 def _request(backend: Path, output: Path, request_path: Path | None) -> tuple[dict, dict, dict, dict]:
-    from devex_clone_seed_generation import REQUEST_FIELDS
+    from devex_clone_seed_generation import validate_generation_request
 
     internal_path = output / "request.json"
     internal_descriptor = binding(internal_path)
     internal = read_json(bound_file(backend, internal_descriptor))
     if binding(internal_path) != internal_descriptor:
         raise ValueError("C68 内部请求在读取期间变化")
-    exact(internal, REQUEST_FIELDS)
+    validate_generation_request(internal)
     name(internal["id"])
     selected = internal_path if request_path is None else local_path(backend, str(request_path))
     if request_path is not None and selected == internal_path:
@@ -118,7 +120,7 @@ def _request(backend: Path, output: Path, request_path: Path | None) -> tuple[di
     request = read_json(bound_file(backend, descriptor))
     if binding(selected) != descriptor:
         raise ValueError("C69 当前请求在读取期间变化")
-    exact(request, REQUEST_FIELDS)
+    validate_generation_request(request)
     for field in ("source_registration", "source_rebind", "review_successor", "backend_build", "source_environment"):
         bound_file(backend, request[field])
     bound_file(Path(request["execution_backend"]), request["maintenance_build"])
@@ -174,6 +176,8 @@ def pending_lineage_request(
         "product_backend": None if product_backend is None else str(product_backend),
         "source_environment": binding(environment_path),
     }
+    if previous.get("format_version") == 2:
+        unchanged.update(configuration=previous["configuration"], execution_source=previous["execution_source"])
     request = _model("reregister-request", {"previous": previous, "unchanged": unchanged,
         "backend_build": binding(runtime_path), "maintenance_build": binding(maintenance_path)}, backend)["request"]
     from devex_clone_seed_generation import _reregistered_builds
@@ -205,7 +209,7 @@ def _verify_request(backend: Path, request: dict, source: dict) -> None:
     _model("request-source", {"request": request, "source": {
         key: source.get(key) for key in ("review_successor", "review_successor_binding",
                                        "source_rebind", "storage", "source_generation")}}, backend)
-    execution, build = registered_inputs(backend, request, reconstruct=False)
+    execution, build = registered_inputs(backend, request)
     maintenance = verify_evidence(execution, bound_file(execution, request["maintenance_build"]))
     private = read_json(bound_file(backend, request["source_environment"]))
     exact(private, {"environment"})
@@ -217,7 +221,7 @@ def _verify_request(backend: Path, request: dict, source: dict) -> None:
                         'evidence_root': str(backend),
                         'source': source["request"]["source"],
                         'app_env': private["environment"]["APP_ENV"],
-                        'config_dir': str(execution / "config"),
+                        'config_dir': str(configuration_directory(backend, request)),
                     },
                 }, subprocess.run, may_write=False,
             ))[0]["value"]
@@ -237,10 +241,10 @@ def _runtime(backend: Path, directory: Path, output: Path, request: dict, source
 
     runtime = GenerationRuntime(backend, directory, output, request, source, run)
     runtime.operations = intent["operations"]
-    execution, build = registered_inputs(backend, request, reconstruct=True)
+    execution, build = registered_inputs(backend, request)
     if execution != runtime.execution or build != runtime.build:
         raise ValueError("C68 运行配置没有绑定同一执行来源和构建")
-    verify_build(runtime.execution, runtime.build, request["expected_backend_sha"], run)
+    verify_build(runtime.execution, runtime.build, request["expected_backend_sha"])
     with runtime.environment():
         if (runtime.execution.parent / "fixture.json").exists():
             raise ValueError("C68 运行环境混入独立 fixture")
@@ -251,13 +255,13 @@ def _runtime(backend: Path, directory: Path, output: Path, request: dict, source
                     'evidence_root': str(backend),
                     'source': runtime.selected,
                     'app_env': os.environ.get("APP_ENV"),
-                    'config_dir': str(runtime.execution / "config"),
+                    'config_dir': str(configuration_directory(runtime.backend, runtime.request)),
                 },
             }, subprocess.run, may_write=False,
         ))[0]["value"] != source["generation"]["physical_binding"]:
             raise ValueError("C68 运行配置改变了 C52 物理来源")
         contract = verify_runtime(runtime.execution, runtime.runtime)
-        verify_api_address(runtime.execution, runtime.selected["api_url"], config_dir=runtime.execution / "config")
+        verify_api_address(runtime.execution, runtime.selected["api_url"], config_dir=configuration_directory(runtime.backend, runtime.request))
         if require_idle:
             if current_storage_binding(backend, directory, "target") != request["current_storage"]:
                 raise ValueError("C68 谱系恢复前 RustFS 代次已变化")

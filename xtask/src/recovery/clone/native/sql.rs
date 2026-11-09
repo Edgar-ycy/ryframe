@@ -3,6 +3,7 @@ use std::{
     fs::File,
     io::{BufRead, BufReader},
     path::Path,
+    sync::OnceLock,
 };
 
 use regex::Regex;
@@ -49,46 +50,81 @@ pub(crate) fn for_each_row(
     path: &Path,
     catalog: &Catalog,
     only_table: Option<&str>,
-    mut visit: impl FnMut(&str, &Row) -> Result<()>,
+    visit: impl FnMut(&str, &Row) -> Result<()>,
 ) -> Result<()> {
     let stream = File::open(path)
         .map_err(|error| format!("无法读取复制数据转储 {}：{error}", path.display()))?;
-    let mut reader = BufReader::new(stream);
-    let mut line = String::new();
-    reader.read_line(&mut line)?;
-    if line != format!("{DATA_HEADER}\n") && line != format!("{DATA_HEADER}\r\n") {
+    for_each_reader(BufReader::new(stream), catalog, only_table, visit)
+}
+
+pub(crate) fn for_each_reader(
+    mut reader: impl BufRead,
+    catalog: &Catalog,
+    only_table: Option<&str>,
+    mut visit: impl FnMut(&str, &Row) -> Result<()>,
+) -> Result<()> {
+    if only_table.is_some_and(|table| !catalog.contains_key(table)) {
+        return Err("SQL 过滤表不属于完整目录".into());
+    }
+    let header = bounded_line(&mut reader)?.ok_or("数据转储缺少规范头")?;
+    if header != format!("{DATA_HEADER}\n") && header != format!("{DATA_HEADER}\r\n") {
         return Err("只接受现有工具规范化的数据转储".into());
     }
-    loop {
-        line.clear();
-        let read = reader.read_line(&mut line)?;
-        if read == 0 {
-            break;
+    while let Some(line) = bounded_line(&mut reader)? {
+        let (table, row) = parse_row(line.trim_end_matches(['\r', '\n']), catalog)?;
+        if only_table.is_none_or(|selected| selected == table) {
+            visit(&table, &row)?;
         }
-        if read > MAX_ROW_BYTES {
-            return Err("单行导出超过受限检查大小".into());
-        }
-        let line = line.trim_end_matches(['\r', '\n']);
-        if let Some(table) = only_table
-            && !line.starts_with(&format!("INSERT INTO `{table}` "))
-        {
-            continue;
-        }
-        let (table, row) = parse_row(line, catalog)?;
-        visit(&table, &row)?;
     }
     Ok(())
 }
 
+fn bounded_line(reader: &mut impl BufRead) -> Result<Option<String>> {
+    let mut line = Vec::new();
+    loop {
+        let buffer = reader.fill_buf()?;
+        if buffer.is_empty() {
+            return if line.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(String::from_utf8(line)?))
+            };
+        }
+        let count = buffer
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(buffer.len(), |end| end + 1);
+        if line
+            .len()
+            .checked_add(count)
+            .is_none_or(|length| length > MAX_ROW_BYTES)
+        {
+            return Err("单行导出超过受限检查大小".into());
+        }
+        line.extend_from_slice(&buffer[..count]);
+        let complete = buffer[count - 1] == b'\n';
+        reader.consume(count);
+        if complete {
+            return Ok(Some(String::from_utf8(line)?));
+        }
+    }
+}
+
 pub(crate) fn parse_row(line: &str, catalog: &Catalog) -> Result<(String, Row)> {
-    let structure = Regex::new(r"^INSERT INTO `([a-z0-9_-]+)` \((.*?)\) VALUES \((.*)\);$")?;
+    static STRUCTURE: OnceLock<Regex> = OnceLock::new();
+    static NAMES: OnceLock<Regex> = OnceLock::new();
+    let structure = STRUCTURE.get_or_init(|| {
+        Regex::new(r"^INSERT INTO `([a-z0-9_-]+)` \((.*?)\) VALUES \((.*)\);$")
+            .expect("固定正则必须有效")
+    });
     let part = structure
         .captures(line)
         .ok_or("SQL 行结构无效或包含多语句")?;
     let table = &part[1];
     let columns = catalog.get(table).ok_or("SQL 引用了复制清单之外的表")?;
     validate_insert(&part[2])?;
-    let names = Regex::new(r"`([a-z0-9_]+)`")?
+    let names = NAMES
+        .get_or_init(|| Regex::new(r"`([a-z0-9_]+)`").expect("固定正则必须有效"))
         .captures_iter(&part[2])
         .map(|capture| capture[1].to_owned())
         .collect::<Vec<_>>();
@@ -151,7 +187,10 @@ pub(crate) fn literals(source: &str) -> Result<Vec<SqlValue>> {
 }
 
 fn validate_insert(columns: &str) -> Result<()> {
-    let valid = Regex::new(r"^(?:`[a-z0-9_]+`)(?:, `[a-z0-9_]+`)*$")?;
+    static VALID: OnceLock<Regex> = OnceLock::new();
+    let valid = VALID.get_or_init(|| {
+        Regex::new(r"^(?:`[a-z0-9_]+`)(?:, `[a-z0-9_]+`)*$").expect("固定正则必须有效")
+    });
     if valid.is_match(columns) {
         Ok(())
     } else {
@@ -199,8 +238,11 @@ fn quoted(source: &str, start: usize) -> Result<(SqlValue, usize)> {
 }
 
 fn unsigned_literal(source: &str, start: usize) -> Result<(SqlValue, usize)> {
-    let pattern =
-        Regex::new(r"^(?:NULL|0x[0-9a-fA-F]+|[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)")?;
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    let pattern = PATTERN.get_or_init(|| {
+        Regex::new(r"^(?:NULL|0x[0-9a-fA-F]+|[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)")
+            .expect("固定正则必须有效")
+    });
     let matched = pattern.find(&source[start..]).ok_or("SQL 不是受限字面量")?;
     let token = matched.as_str();
     let value = match token {

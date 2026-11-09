@@ -9,6 +9,7 @@ mod aggregate;
 pub(crate) mod business;
 mod catalog;
 pub(crate) use catalog::access_catalog;
+mod foreign_key;
 mod format;
 pub(crate) use format::rust_assets_in_workspace;
 mod schema;
@@ -79,6 +80,11 @@ pub fn render_resources(resources: &[ResourceIr]) -> Result<GeneratedCatalog, Re
         }
     }
     validate_relation_targets(&ordered)?;
+    let order = super::foreign_key::order(&ordered)?;
+    let ordered = order
+        .iter()
+        .map(|index| ordered[*index].clone())
+        .collect::<Vec<_>>();
     if let Some(resource) = ordered
         .iter()
         .find(|resource| resource.module == "business")
@@ -132,6 +138,7 @@ pub fn render_resources(resources: &[ResourceIr]) -> Result<GeneratedCatalog, Re
 
 /// 显式跨仓生成，前端模板只从指定前端仓库调用。
 pub fn render_resources_with_frontend(
+    backend: &Path,
     resources: &[ResourceIr],
     frontend: &Path,
 ) -> Result<GeneratedCatalog, ResourceError> {
@@ -143,9 +150,9 @@ pub fn render_resources_with_frontend(
             "核对前端目录配置",
         )
     })?;
-    catalog
-        .assets
-        .extend(super::render_frontend_assets(resources, &frontend, true)?);
+    catalog.assets.extend(super::render_frontend_assets(
+        backend, resources, &frontend, true,
+    )?);
     validate_assets(&catalog.assets)?;
     catalog
         .assets

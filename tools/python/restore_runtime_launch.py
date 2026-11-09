@@ -2,20 +2,21 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import tomllib
-import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from process_environment import configured
 from devex_clone_inventory import configuration
 from process_sockets import endpoint
+from rate_limit_tool import tool_binding, verified_tool
 from restore_build import repository
 from restore_frontend_build import FRONTEND_RECEIPT
+from restore_frontend_native import B0_BACKEND_ADAPTER, B0_HEAD, b0_runtime_source
 from restore_runtime_evidence import (
     HEX_40,
     HEX_64,
-    artifact_snapshot,
     exact_fields,
     read_json_document,
     validate_authority,
@@ -98,17 +99,49 @@ def _environment(authority: dict, execution: Path, document, private: dict) -> d
 
 
 def _tools(coordinator: Path) -> dict:
-    inventory = capture_inventory(coordinator)
-    snapshot = inventory["source"]["snapshot"]
-    if not snapshot["clean"]:
-        raise ValueError("恢复运行协调工具必须来自干净工作树")
-    server = artifact_snapshot(coordinator / "tools/python/restore_frontend_server.py")
+    with frontend_tool() as server:
+        inventory = capture_inventory(coordinator)
+        snapshot = inventory["source"]["snapshot"]
+        if not snapshot["clean"]:
+            raise ValueError("恢复运行协调工具必须来自干净工作树")
     return {
         "coordinator_root": str(coordinator),
         "coordinator_head": snapshot["head"],
         "inventory_sha256": canonical_digest(inventory),
-        "frontend_server": server.descriptor(),
+        "frontend_server": server,
     }
+
+
+@contextmanager
+def frontend_tool(expected=None):
+    binding = tool_binding()
+    if binding is None:
+        raise ValueError("恢复前端服务要求当前正式协调器的原生工具绑定")
+    descriptor = {field: binding[field] for field in ("path", "bytes", "sha256")}
+    if expected is not None and descriptor != expected:
+        raise ValueError("恢复前端服务工具与当前正式协调器绑定不同")
+    with verified_tool(binding):
+        yield descriptor
+
+
+def _frontend_launch(authority: dict) -> tuple[int, int, bool]:
+    _family, host, port = endpoint(authority["frontend_endpoint"])
+    if urlsplit(authority["frontend_endpoint"]).scheme != "http" or host != "127.0.0.1" or not 0 < port <= 65535:
+        raise ValueError("恢复前端服务只接受明确的本机 IPv4 HTTP 端口")
+    _family, api_host, api_port = endpoint(authority["api_endpoint"])
+    api_url = urlsplit(authority["api_endpoint"])
+    if (
+        api_url.scheme != "http"
+        or api_url.path != "/readyz"
+        or api_host != "127.0.0.1"
+        or not 0 < api_port <= 65535
+        or api_port == port
+    ):
+        raise ValueError("恢复前端代理只接受不同端口的已登记 IPv4 回环 API")
+    b0 = b0_runtime_source(authority)
+    if not b0 and (authority["frontend_sha"] == B0_HEAD or authority["backend_adapter_contract"] == B0_BACKEND_ADAPTER):
+        raise ValueError("恢复 B0 前端服务必须绑定精确历史产品、执行树和适配合同")
+    return port, api_port, b0
 
 
 def _target_matches(authority: dict, facts: dict, resolved: dict, backend_build, frontend_build) -> None:
@@ -187,8 +220,9 @@ def prepare_request(
     _target_matches(authority, facts, resolved, backend_build, frontend_build)
     environment_document, private_environment = _environment_document(coordinator, facts)
     request = {
-        "format_version": 1,
+        "format_version": 2,
         "kind": "restore-runtime-launch-request",
+        "runtime_directory": facts["runtime_directory"],
         "authority": authority,
         "registration": {
             "registration": _document_descriptor(registration_documents[0]),
@@ -246,6 +280,7 @@ def validate_request(value: object) -> dict:
         {
             "format_version",
             "kind",
+            "runtime_directory",
             "authority",
             "registration",
             "roots",
@@ -259,11 +294,15 @@ def validate_request(value: object) -> dict:
     )
     if (
         type(request["format_version"]) is not int
-        or request["format_version"] != 1
+        or request["format_version"] != 2
         or request["kind"] != "restore-runtime-launch-request"
     ):
         raise ValueError("恢复运行启动请求版本或类型不匹配")
     authority = validate_authority(request["authority"])
+    _frontend_launch(authority)
+    runtime = request["runtime_directory"]
+    if not isinstance(runtime, str) or not Path(runtime).is_absolute() or ".." in Path(runtime).parts:
+        raise ValueError("恢复运行目录必须是明确的绝对路径")
     registration = exact_fields(
         request["registration"], {"registration", "target_plan"}, "恢复运行登记绑定"
     )
@@ -317,7 +356,6 @@ def validate_request(value: object) -> dict:
         or HEX_40.fullmatch(tools["coordinator_head"]) is None
         or not isinstance(tools["inventory_sha256"], str)
         or HEX_64.fullmatch(tools["inventory_sha256"]) is None
-        or Path(server["path"]).name != "restore_frontend_server.py"
     ):
         raise ValueError("恢复运行工具或环境来源无效")
     configurations = exact_fields(environment["configurations"], {"api", "worker"}, "运行角色配置")
@@ -335,30 +373,40 @@ def validate_request(value: object) -> dict:
     same_backend = authority["backend_product_sha"] == authority["backend_execution_sha"]
     if same_backend != (roots["backend_product"] == roots["backend_execution"]):
         raise ValueError("恢复运行产品与执行来源路径不符合适配关系")
+    with frontend_tool(server):
+        pass
     return request
 
 
 def commands(request: dict) -> dict[str, list[str]]:
     request = validate_request(request)
     authority, roots, tools = request["authority"], request["roots"], request["tools"]
-    _family, host, port = endpoint(authority["frontend_endpoint"])
+    port, api_port, b0 = _frontend_launch(authority)
     return {
         "api": [request["artifacts"]["api"]["executable"], "--config-dir",
                 request["environment"]["configurations"]["api"]["directory"]],
         "worker": [request["artifacts"]["worker"]["executable"], "--config-dir",
                    request["environment"]["configurations"]["worker"]["directory"]],
         "frontend": [
-            str(Path(sys.executable).resolve(strict=True)), "-X", "utf8", "-E", "-s", "-B",
             tools["frontend_server"]["path"],
-            "__serve",
+            "__restore-frontend-serve",
             "--frontend",
             roots["frontend"],
             "--receipt",
             request["paths"]["frontend_build"],
+            "--receipt-sha256",
+            request["digests"]["frontend_build"],
+            "--expected-head",
+            authority["frontend_sha"],
             "--host",
-            host,
+            "127.0.0.1",
             "--port",
             str(port),
+            "--runtime-dir",
+            request["runtime_directory"],
+            "--api-port",
+            str(api_port),
+            *(["--b0"] if b0 else []),
         ],
     }
 

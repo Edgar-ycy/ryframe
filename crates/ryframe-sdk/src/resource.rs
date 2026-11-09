@@ -1,5 +1,14 @@
 use serde::Serialize;
 
+mod foreign_key;
+pub use foreign_key::{
+    ResourceForeignKeyAction, ResourceForeignKeyDescriptor, ResourceForeignKeyMatch,
+};
+
+fn foreign_keys_empty(keys: &[ResourceForeignKeyDescriptor]) -> bool {
+    keys.is_empty()
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResourceDatabase {
@@ -52,6 +61,8 @@ pub struct ResourceDescriptor {
     pub menu_parent: Option<&'static str>,
     pub menu_order: u16,
     pub primary_key: &'static [&'static str],
+    #[serde(skip_serializing_if = "foreign_keys_empty")]
+    pub foreign_keys: &'static [ResourceForeignKeyDescriptor],
     pub indexes: &'static [ResourceIndexDescriptor],
     pub fields: &'static [ResourceFieldDescriptor],
 }

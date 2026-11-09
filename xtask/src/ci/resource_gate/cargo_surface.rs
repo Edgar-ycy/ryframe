@@ -110,7 +110,7 @@ const PACKAGE_SURFACES: &[PackageSurface] = &[
         test_features: &[],
         has_lib: true,
         bins: &[],
-        tests: &["resource_tenant_contracts"],
+        tests: &[],
     },
     PackageSurface {
         package: "xtask",
@@ -135,7 +135,7 @@ pub(crate) fn affected_package_args_for_target(
         return Err("resource gate 受影响 crate 集合为空".into());
     }
 
-    let surfaces = packages
+    let mut surfaces = packages
         .iter()
         .map(|package| {
             let mut matching = PACKAGE_SURFACES
@@ -150,6 +150,12 @@ pub(crate) fn affected_package_args_for_target(
             Ok(surface)
         })
         .collect::<std::result::Result<Vec<_>, _>>()?;
+    if operation == "test" {
+        surfaces.retain(|surface| !surface.tests.is_empty());
+        if surfaces.is_empty() {
+            return Err("resource gate 受影响 crate 没有定向测试目标".into());
+        }
+    }
     let features = surfaces
         .iter()
         .flat_map(|surface| {
@@ -182,8 +188,8 @@ pub(crate) fn affected_package_args_for_target(
         target_dir.to_owned(),
         "--no-default-features".to_owned(),
     ];
-    for package in packages {
-        args.extend(["-p".to_owned(), package.clone()]);
+    for surface in &surfaces {
+        args.extend(["-p".to_owned(), surface.package.to_owned()]);
     }
     if !features.is_empty() {
         args.extend([

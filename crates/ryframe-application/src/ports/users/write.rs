@@ -67,6 +67,11 @@ pub trait UserWriteTransaction:
 
     async fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()>;
 
+    async fn increment_authorization_epoch(
+        &self,
+        tenant_id: &str,
+    ) -> ryframe_kernel::AppResult<i32>;
+
     async fn assignment_state<'a>(
         &'a self,
         tenant_id: &'a str,

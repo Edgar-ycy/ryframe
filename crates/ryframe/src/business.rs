@@ -33,6 +33,9 @@ pub fn registered_business_modules() -> AppResult<Vec<RyFrameBusinessModule>> {
         modules
             .iter()
             .flat_map(|module| module.tenant_data_tables().iter().copied()),
+        modules
+            .iter()
+            .flat_map(|module| module.control_tables().iter().map(|table| table.table)),
     )
     .map_err(ryframe_kernel::AppError::Config)?;
     let access = ryframe_db::migration::register_business_access_catalog(
@@ -100,3 +103,8 @@ fn validate_business_access(
     }
     Ok(())
 }
+
+#[cfg(feature = "bin-migrate")]
+mod initialization;
+#[cfg(feature = "bin-migrate")]
+pub use initialization::shared_control_initialization_sql;

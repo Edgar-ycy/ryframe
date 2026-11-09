@@ -7,21 +7,24 @@ use serde_json::{Value, json};
 
 use super::{Fixture, KEYS, SCOPE, bound, database, descriptor, storage, write};
 use crate::recovery::clone::native::{
-    digest, json as json_io, maintenance, source,
+    digest, json as json_io,
+    lifecycle::state,
+    maintenance, source,
     target_verify::{
+        fresh::initialize::reset_configuration::Snapshot,
         input::{request, request_configuration},
         proof, reset, tree,
     },
 };
 
 /// 只构造外部工具替身的协议证据；不执行 Cargo，也不写共享 target。
-pub(super) fn maintenance(fixture: &Fixture) {
-    let directory = fixture.local.join("maintenance");
+pub(super) fn maintenance(backend: &Path, local: &Path) {
+    let directory = local.join("maintenance");
     fs::create_dir(&directory).unwrap();
-    let target = fixture.backend.join("target").join("ci").join("backend");
+    let target = backend.join("target").join("ci").join("backend");
     fs::create_dir_all(&target).unwrap();
     let original = target.join("fixture-cargo-artifact.exe");
-    fs::copy(std::env::current_exe().unwrap(), &original).unwrap();
+    fs::write(&original, b"RyFrame mock-maintenance-artifact-v1\n").unwrap();
     let canonical = portable(&fs::canonicalize(&original).unwrap());
     assert!(canonical.starts_with(portable(&fs::canonicalize(&target).unwrap())));
     let saved = directory.join("fixture-maintenance.exe");
@@ -30,7 +33,7 @@ pub(super) fn maintenance(fixture: &Fixture) {
         digest::file(&canonical).unwrap(),
         digest::file(&saved).unwrap()
     );
-    let inventory = source::capture(&fixture.backend).unwrap();
+    let inventory = source::capture(backend).unwrap();
     let mut artifacts = serde_json::Map::new();
     for (role, feature, name) in [
         ("reset", "bin-reset", "ryframe-reset"),
@@ -39,7 +42,7 @@ pub(super) fn maintenance(fixture: &Fixture) {
     ] {
         let output = directory.join(format!("{role}.cargo.jsonl"));
         let log = directory.join(format!("{role}.cargo.log"));
-        let event = json!({"reason":"compiler-artifact","target":{"name":name,"kind":["bin"]},"manifest_path":fixture.backend.join("crates/ryframe/Cargo.toml"),"executable":canonical});
+        let event = json!({"reason":"compiler-artifact","target":{"name":name,"kind":["bin"]},"manifest_path":backend.join("crates/ryframe/Cargo.toml"),"executable":canonical});
         fs::write(&output, format!("{event}\n")).unwrap();
         fs::write(&log, []).unwrap();
         let command = vec![
@@ -63,16 +66,11 @@ pub(super) fn maintenance(fixture: &Fixture) {
         artifacts.insert(role.into(),json!({"executable":saved,"cargo_executable":canonical,"command":command,"bytes":actual.bytes,"sha256":actual.sha256,
             "cargo_output":log_binding(&output),"cargo_log":log_binding(&log)}));
     }
-    let receipt = json!({"format_version":1,"kind":"devex-clone-tool-build","backend_root":fixture.backend,"source":source::binding_value(&inventory.source),
+    let receipt = json!({"format_version":1,"kind":"devex-clone-tool-build","backend_root":backend,"source":source::binding_value(&inventory.source),
         "source_inventory":source::inventory_value(&inventory),"toolchain":{"rustc":"explicit-fixture-observation","cargo":"explicit-fixture-observation"},
         "target_directory":target,"artifacts":artifacts,"restore_qualified":false,"resources_modified":false});
     write(&directory.join("build.json"), &receipt);
-    maintenance::verify_evidence(
-        &fixture.backend,
-        &directory.join("build.json"),
-        Some(&receipt),
-    )
-    .unwrap();
+    maintenance::verify_evidence(backend, &directory.join("build.json"), Some(&receipt)).unwrap();
 }
 
 fn log_binding(path: &Path) -> Value {
@@ -86,7 +84,7 @@ fn portable(path: &Path) -> PathBuf {
     PathBuf::from(value.strip_prefix(r"\\?\").unwrap_or(value))
 }
 
-pub(super) fn publish(fixture: &Fixture) {
+pub(super) fn publish(fixture: &Fixture, status_registration: bool) {
     write(&fixture.local.join("request.json"), &fixture.request);
     write(&fixture.target.join("request.json"), &fixture.request);
     write(
@@ -101,8 +99,9 @@ pub(super) fn publish(fixture: &Fixture) {
         &fixture.local.join("source-request.json"),
         &json!({"kind":"explicit-fixture-source-request"}),
     );
-    // 与真实初始化一致，控制锁文件在只读复核前已经存在。
-    fs::write(fixture.target.join("copy-target.guard"), [0]).unwrap();
+    if !status_registration {
+        fs::write(fixture.target.join("copy-target.guard"), [0]).unwrap();
+    }
     let binding = request::validate(&fixture.backend, &fixture.request).unwrap();
     let mut generation = request_configuration::validate(
         &fixture.backend,
@@ -120,7 +119,15 @@ pub(super) fn publish(fixture: &Fixture) {
         &fixture.target.join("prepare.json"),
         &prepared(fixture, &generation),
     );
-    lineage(fixture, "prepared");
+    if status_registration {
+        super::observations::prepared(fixture);
+    }
+    lineage(fixture, "prepared", status_registration);
+    if status_registration {
+        // prepare 已封存后才进入初始化控制窗口；不把初始化 guard 写进 prepare 前像。
+        let mut guard = fs::File::create_new(fixture.target.join("copy-target.guard")).unwrap();
+        std::io::Write::write_all(&mut guard, &[0]).unwrap();
+    }
     write(
         &fixture.target.join("initialize.started.json"),
         &json!({"at":"2026-10-18T00:01:00Z","generation_sha256":digest::plan_hash(&generation).unwrap()}),
@@ -130,7 +137,10 @@ pub(super) fn publish(fixture: &Fixture) {
     migrations(fixture, &generation["maintenance"]);
     let inventory = database::initial(fixture, &generation);
     let history = proof::history(&fixture.backend, &fixture.target).unwrap();
-    assert_eq!(history.as_object().unwrap().len(), 17);
+    assert_eq!(
+        history.as_object().unwrap().len(),
+        if fixture.legacy_reset { 17 } else { 18 }
+    );
     let initialized = json!({"format_version":1,"status":"fresh_target_initialized","id":fixture.request["id"],"scope_id":SCOPE,"completed_at":"2026-10-18T00:04:00Z",
         "generation":generation,"prepare_sha256":digest::file(&fixture.target.join("prepare.json")).unwrap().sha256,"reset":completed,"inventory":inventory,
         "objects":database::objects(),"redis":storage::initialized(),"history":history,"controlled_generation_never_started":true,"external_writers_discovered":false,
@@ -140,7 +150,7 @@ pub(super) fn publish(fixture: &Fixture) {
         &initialized,
     );
     write(&fixture.target.join("initialized.json"), &initialized);
-    lineage(fixture, "initialized");
+    lineage(fixture, "initialized", status_registration);
     write(
         &fixture.run.join("manifest.json"),
         &json!({"format_version":1,"kind":"devex-clone-run","id":"target-verify-run",
@@ -168,17 +178,13 @@ fn prepared(fixture: &Fixture, generation: &Value) -> Value {
         "fresh_target_initialized":false,"controlled_generation_only":true,"external_writers_discovered":false,"create_intents":intents})
 }
 
-fn lineage(fixture: &Fixture, stage: &str) {
+fn lineage(fixture: &Fixture, stage: &str, status_registration: bool) {
     let registration = fixture.local.join("registration.json");
     if stage == "prepared" {
-        write(
-            &fixture.local.join("storage-run.json"),
-            &json!({"format_version":1,"kind":"explicit-fixture-storage-protocol","storage":fixture.request["storage"]}),
-        );
+        // 唯一登记在第一份阶段快照之前发布，后续快照只引用同一绑定。
         write(
             &registration,
-            &json!({"format_version":1,"kind":"devex-clone-fresh-target-registration","request":bound(&fixture.local.join("request.json")),
-            "environment":bound(&fixture.local.join("target-environment.json")),"storage_run":bound(&fixture.local.join("storage-run.json")),"target_directory":fixture.target}),
+            &registration_value(fixture, status_registration),
         );
     }
     let predecessor = if stage == "initialized" {
@@ -191,6 +197,25 @@ fn lineage(fixture: &Fixture, stage: &str) {
         &json!({"format_version":1,"kind":format!("devex-clone-fresh-target-{stage}-files"),
         "registration":bound(&registration),"predecessor":predecessor,"files":tree::snapshot(&fixture.backend,&fixture.target,false).unwrap()}),
     );
+}
+
+fn registration_value(fixture: &Fixture, _status_registration: bool) -> Value {
+    let storage = fixture.backend.join(".local-tests/status-storage");
+    fs::create_dir(&storage).unwrap();
+    write(
+        &storage.join("manifest.json"),
+        &json!({"kind":"status-storage"}),
+    );
+    state::initialize(&storage).unwrap();
+    let private = fixture.local.join("status-private.json");
+    write(
+        &private,
+        &json!({"environment":{"APP_ENV":"test","TEMP":fixture.local,"TMP":fixture.local}}),
+    );
+    json!({"format_version":1,"kind":"devex-clone-fresh-target-registration",
+        "request":bound(&fixture.local.join("request.json")),"environment":bound(&private),
+        "storage_run":{"path":storage,"manifest":bound(&storage.join("manifest.json")),"state":bound(&storage.join("state.json"))},
+        "target_directory":fixture.target})
 }
 
 fn creation(fixture: &Fixture) {
@@ -241,20 +266,33 @@ fn reset_manifest(fixture: &Fixture, generation: &Value) -> Value {
         let combined=db["key"]=="shared-control";let mut owners=json!({"tenant-data":format!("ryframe-owner:v1:{SCOPE}:tenant-data")});
         if combined {owners["control"]=json!(format!("ryframe-owner:v1:{SCOPE}:control"));}
         json!({"target_keys":[db["key"]],"host":db["host"],"port":db["port"],"database":db["database"],"control_baseline":combined,"tenant_baseline":true,
-            "ownership_markers":owners,"connection":{"username":"fixture","tls_mode":db["tls_mode"],"tls_ca_sha256":null,"tls_client_cert_sha256":null,"tls_client_key_ref_sha256":null}})
+            "ownership_markers":owners,"connection":{"username":"fixture","password_config_key":if combined {"database.primary.password".to_owned()} else {format!("tenant_data.targets.{}.password",db["key"].as_str().unwrap())},"tls_mode":db["tls_mode"],"tls_ca_sha256":null,"tls_client_cert_sha256":null,"tls_client_key_ref_sha256":null}})
     }).collect::<Vec<_>>();
     let prefixes=["avatar","config-packages","exports","imports","uploads"].map(|bucket|json!({"bucket":bucket,"prefix":format!("{SCOPE}/"),
         "ownership_marker_key":format!("{SCOPE}/.ryframe-owner"),"ownership_marker":format!("ryframe-owner:v1:{SCOPE}:object-storage:{bucket}")}));
     use sha2::{Digest, Sha256};
-    json!({"manifest_version":4,"environment":"test","scope_id":SCOPE,"code_sha":generation["maintenance"]["source"]["snapshot"]["head"],
+    json!({"manifest_version":5,"environment":"test","scope_id":SCOPE,"code_sha":generation["maintenance"]["source"]["snapshot"]["head"],
         "config_sha":fixture.request["configuration_sha256"],"credential_version":"fixture-v1","confirmation_phrase":format!("RESET-RYFRAME-test-{SCOPE}"),
         "legacy_ownership":fixture.request["reset"]["legacy_ownership"],"databases":databases,
-        "object_storage":{"backend":"rustfs","endpoint":"http://127.0.0.1:29000","region":"test-region","use_ssl":false,"prefixes":prefixes},
-        "redis":{"host":"127.0.0.1","port":26379,"database":0,"tls":false,"namespace":format!("ryframe:{{{SCOPE}}}:"),"ownership_marker_key":format!("ryframe:{{{SCOPE}}}:.ryframe-owner"),
+        "object_storage":{"backend":"rustfs","endpoint":"http://127.0.0.1:29000","region":"test-region","use_ssl":false,"access_key_config_key":"object_storage.access_key","secret_key_config_key":"object_storage.secret_key","prefixes":prefixes},
+        "redis":{"host":"127.0.0.1","port":26379,"database":0,"tls":false,"password_config_key":"redis.password","tls_ca_sha256":null,"tls_client_cert_sha256":null,"tls_client_key_ref_sha256":null,"namespace":format!("ryframe:{{{SCOPE}}}:"),"ownership_marker_key":format!("ryframe:{{{SCOPE}}}:.ryframe-owner"),
             "ownership_marker":format!("ryframe-owner:v1:{SCOPE}:redis"),"outside_sentinel_key_sha256":hex::encode(Sha256::digest(fixture.request["reset"]["sentinel_key"].as_str().unwrap().as_bytes()))}})
 }
 
 fn reset_files(fixture: &Fixture, generation: &Value) -> Value {
+    let configuration = if fixture.legacy_reset {
+        None
+    } else {
+        Some(
+            Snapshot::prepare(
+                &fixture.backend,
+                &fixture.target,
+                &fixture.request,
+                generation,
+            )
+            .unwrap(),
+        )
+    };
     let manifest = reset_manifest(fixture, generation);
     let hash = digest::plan_hash(&manifest).unwrap();
     let plan = json!({"manifest":manifest,"plan_hash":hash});
@@ -264,7 +302,7 @@ fn reset_files(fixture: &Fixture, generation: &Value) -> Value {
     let phases=["preflight","object_storage","redis","databases","control_baseline","tenant_baselines","verification","release"].map(|phase|(phase.to_owned(),
         json!({"status":"complete","started_at":"2026-10-18T00:02:00Z","completed_at":"2026-10-18T00:03:00Z"}))).into_iter().collect::<serde_json::Map<_,_>>();
     let resources = reset_resources(&manifest);
-    let mut ledger = json!({"ledger_version":4,"updated_at":"2026-10-18T00:03:00Z","plan_hash":hash,"phases":phases,"resources":resources});
+    let mut ledger = json!({"ledger_version":5,"updated_at":"2026-10-18T00:03:00Z","plan_hash":hash,"phases":phases,"resources":resources});
     for field in [
         "environment",
         "scope_id",
@@ -319,7 +357,10 @@ fn reset_files(fixture: &Fixture, generation: &Value) -> Value {
         &root.join(format!(".{stem}.ledger.json.previous")),
         &previous,
     );
-    let result = reset::completed(&fixture.backend, &fixture.target, &manifest, &hash).unwrap();
+    let mut result = reset::completed(&fixture.backend, &fixture.target, &manifest, &hash).unwrap();
+    if let Some(configuration) = configuration {
+        result["configuration"] = configuration.binding().unwrap();
+    }
     record(fixture, "reset", "intent", json!({"plan_hash":hash}));
     record(fixture, "reset", "confirmed", result.clone());
     reset_commands(fixture, generation, &plan, &result);
@@ -362,6 +403,19 @@ fn command_receipt(fixture: &Fixture, stage: &str, command: Vec<String>, stdout:
 }
 
 fn reset_commands(fixture: &Fixture, generation: &Value, plan: &Value, result: &Value) {
+    let reset_request = if fixture.legacy_reset {
+        fixture.request.clone()
+    } else {
+        Snapshot::open(
+            &fixture.backend,
+            &fixture.target,
+            &fixture.request,
+            &generation["maintenance"],
+        )
+        .unwrap()
+        .request(&fixture.request)
+        .unwrap()
+    };
     let executable = generation["maintenance"]["artifacts"]["reset"]["executable"]
         .as_str()
         .unwrap();
@@ -369,8 +423,17 @@ fn reset_commands(fixture: &Fixture, generation: &Value, plan: &Value, result: &
         command_receipt(
             fixture,
             stage,
-            vec![executable.into(), "plan".into(), "--json".into()],
-            plan.to_string(),
+            vec![
+                executable.into(),
+                "--config-dir".into(),
+                reset_request["config_dir"].as_str().unwrap().into(),
+                "plan".into(),
+            ],
+            format!(
+                "{}\nplan_hash={}\n",
+                plan["manifest"],
+                plan["plan_hash"].as_str().unwrap()
+            ),
         );
     }
     command_receipt(
@@ -378,6 +441,8 @@ fn reset_commands(fixture: &Fixture, generation: &Value, plan: &Value, result: &
         "reset-execute",
         vec![
             executable.into(),
+            "--config-dir".into(),
+            reset_request["config_dir"].as_str().unwrap().into(),
             "execute".into(),
             "--plan-hash".into(),
             plan["plan_hash"].as_str().unwrap().into(),
@@ -408,7 +473,13 @@ fn migrations(fixture: &Fixture, maintenance: &Value) {
         .chain(keys.into_iter().map(|key| ("tenant-data", Some(key))))
     {
         for action in ["up", "verify"] {
-            let mut command = vec![executable.into(), scope.into(), action.into()];
+            let mut command = vec![
+                executable.into(),
+                "--config-dir".into(),
+                fixture.request["config_dir"].as_str().unwrap().into(),
+                scope.into(),
+                action.into(),
+            ];
             let mut stdout = format!("scope={scope} ");
             let mut stage = format!("migrate-{scope}");
             if let Some(key) = key {
@@ -417,7 +488,7 @@ fn migrations(fixture: &Fixture, maintenance: &Value) {
                 stage.push_str(&format!("---target-{key}"));
             }
             stdout.push_str(if action == "up" {
-                "migration=completed schema=verified\n"
+                "migration=completed schema=verified ownership=verified\n"
             } else {
                 "migration_ledger=current schema=verified\n"
             });

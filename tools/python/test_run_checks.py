@@ -42,23 +42,6 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(sys.argv, before)
         runner.assert_not_called()
 
-    def test_unbound_arguments_preserve_all_unittest_arguments(self):
-        arguments = ["--", "-m", "unittest", "discover", "-s", "tools/python", "-v"]
-        original = arguments.copy()
-        self.assertEqual(
-            run_checks.parse_arguments(arguments),
-            (None, ["unittest", "discover", "-s", "tools/python", "-v"]),
-        )
-        self.assertEqual(arguments, original)
-
-    def test_bound_arguments_accept_only_the_front_binding_and_separator(self):
-        self.assertEqual(
-            run_checks.parse_arguments([
-                "--rate-limit-tool-binding", self.raw, "--", "-m", "unittest", "test_module",
-            ]),
-            (self.raw, ["unittest", "test_module"]),
-        )
-
     def test_unbound_execution_does_not_install_and_passes_exact_runpy_options(self):
         runner = mock.Mock()
         with mock.patch.object(run_checks, "install_binding") as install:

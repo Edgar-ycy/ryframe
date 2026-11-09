@@ -4,6 +4,8 @@ use crate::{Result, recovery::clone::native::source};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
+const BUSINESS_MODEL: &str = "tools/python/fixtures/order-business/src/resources/mod.rs";
+
 pub(super) fn verify(root: &Path, directory: &Path) -> Result<()> {
     verify_observed(root, directory, || {})
 }
@@ -17,9 +19,28 @@ pub(super) fn verify_observed(root: &Path, directory: &Path, observe: impl FnOnc
         }
         return Ok(());
     }
-    let mut bindings = evidence_bindings(directory)?;
+    let bindings = evidence_bindings(directory, &["runtime.json", "runtime-evidence.json"])?;
+    verify_build_observed(root, directory, |source, build_binding| {
+        let actual = read_json(&runtime_path, "全栈运行来源证据", 4 * 1024 * 1024)?;
+        if actual != runtime_evidence(directory, source, build_binding)? {
+            return Err("全栈运行来源证据与当前来源不匹配".into());
+        }
+        observe();
+        Ok(())
+    })?;
+    verify_bindings(bindings)
+}
+
+pub(super) fn verify_build_observed<T>(
+    root: &Path,
+    directory: &Path,
+    observe: impl FnOnce(&Value, &Value) -> Result<T>,
+) -> Result<T> {
+    let mut bindings = evidence_bindings(directory, &["source-pair.json", "binaries.json"])?;
     let build_path = directory.join("build-evidence.json");
+    let build_binding = evidence_binding(&build_path)?;
     let build = read_json(&build_path, "全栈构建证据", 4 * 1024 * 1024)?;
+    bindings.push((build_path, build_binding.clone()));
     exact_object(
         &build,
         &[
@@ -28,6 +49,7 @@ pub(super) fn verify_observed(root: &Path, directory: &Path, observe: impl FnOnc
             "backend_root",
             "source",
             "artifacts",
+            "build_jobs",
         ],
         "全栈构建证据",
     )?;
@@ -37,27 +59,67 @@ pub(super) fn verify_observed(root: &Path, directory: &Path, observe: impl FnOnc
     {
         return Err("全栈构建证据格式或后端路径无效".into());
     }
+    if build["build_jobs"].as_u64()
+        != Some(u64::from(
+            crate::recovery::clone::native::bridge::build_jobs(root)?,
+        ))
+    {
+        return Err("全栈构建证据的 build_jobs 与当前 verification.build_jobs 不同；核对工具配置并保留原证据，使用新目录显式构建，不能改写或自动重放".into());
+    }
     let source = &build["source"];
-    if source["fixture"] == "business" {
-        for path in [
-            root.parent()
-                .ok_or("业务后端缺少父目录")?
-                .join("fixture.json"),
-            root.join("tools/python/fixtures/order-business/src/resources/mod.rs"),
-        ] {
-            bindings.push((path.clone(), evidence_binding(&path)?));
-        }
+    let (path, pair) = source_pair(directory)?;
+    let inspect = || {
+        verify_artifacts(directory, &build)?;
+        observe(source, &build_binding)
+    };
+    let observed =
+        if pair["kind"] == crate::recovery::fixture_control::source_pair::execution::PAIR_KIND {
+            crate::recovery::full_stack::provenance::published(root, directory, &pair, |current| {
+                if current != source {
+                    return Err("已发布业务来源与完整当前来源不一致".into());
+                }
+                inspect()
+            })?
+        } else {
+            if source["fixture"] == "business" {
+                let fixture = root
+                    .parent()
+                    .ok_or("业务后端缺少父目录")?
+                    .join("fixture.json");
+                for path in [fixture, root.join(BUSINESS_MODEL)] {
+                    let binding = evidence_binding(&path)?;
+                    bindings.push((path, binding));
+                }
+            }
+            verify_source(root, &path, &pair, source)?;
+            let observed = inspect()?;
+            let (path, pair) = source_pair(directory)?;
+            verify_source(root, &path, &pair, source)?;
+            observed
+        };
+    if build["build_jobs"].as_u64()
+        != Some(u64::from(
+            crate::recovery::clone::native::bridge::build_jobs(root)?,
+        ))
+    {
+        return Err("全栈来源核验期间 verification.build_jobs 变化；保留现场，不自动重放".into());
     }
-    verify_source(root, directory, source)?;
-    verify_artifacts(directory, &build)?;
-    let actual = read_json(&runtime_path, "全栈运行来源证据", 4 * 1024 * 1024)?;
-    let expected = json!({"format_version":1,"kind":"full-stack-runtime","source":source,"build_evidence":evidence_binding(&build_path)?,"runtime":evidence_binding(&directory.join("runtime.json"))?});
-    if actual != expected {
-        return Err("全栈运行来源证据与当前来源不匹配".into());
-    }
-    // 每次调用独立的观察点，不使用全局状态；随后必须重读同一来源和全部证据。
-    observe();
-    verify_source(root, directory, source)?;
+    verify_bindings(bindings)?;
+    Ok(observed)
+}
+
+pub(super) fn runtime_evidence(
+    directory: &Path,
+    source: &Value,
+    build_binding: &Value,
+) -> Result<Value> {
+    Ok(
+        json!({"format_version":1,"kind":"full-stack-runtime","source":source,
+        "build_evidence":build_binding,"runtime":evidence_binding(&directory.join("runtime.json"))?}),
+    )
+}
+
+fn verify_bindings(bindings: Vec<(PathBuf, Value)>) -> Result<()> {
     for (path, original) in bindings {
         if evidence_binding(&path)? != original {
             return Err("全栈来源证据在产物核验期间发生变化".into());
@@ -66,21 +128,15 @@ pub(super) fn verify_observed(root: &Path, directory: &Path, observe: impl FnOnc
     Ok(())
 }
 
-fn evidence_bindings(directory: &Path) -> Result<Vec<(PathBuf, Value)>> {
-    [
-        "build-evidence.json",
-        "source-pair.json",
-        "runtime.json",
-        "runtime-evidence.json",
-        "binaries.json",
-    ]
-    .into_iter()
-    .map(|name| {
-        let path = directory.join(name);
-        let binding = evidence_binding(&path)?;
-        Ok((path, binding))
-    })
-    .collect()
+fn evidence_bindings(directory: &Path, names: &[&str]) -> Result<Vec<(PathBuf, Value)>> {
+    names
+        .iter()
+        .map(|name| {
+            let path = directory.join(name);
+            let binding = evidence_binding(&path)?;
+            Ok((path, binding))
+        })
+        .collect()
 }
 
 fn evidence_binding(path: &Path) -> Result<Value> {
@@ -92,21 +148,19 @@ fn evidence_binding(path: &Path) -> Result<Value> {
 }
 
 fn verify_artifacts(directory: &Path, build: &Value) -> Result<()> {
+    let roles = [
+        "ryframe",
+        "ryframe-worker",
+        "ryframe-reset",
+        "ryframe-migrate",
+    ];
     let binaries = read_json(
         &directory.join("binaries.json"),
         "全栈二进制清单",
         64 * 1024,
     )?;
-    let artifacts = exact_object(
-        &build["artifacts"],
-        &[
-            "ryframe",
-            "ryframe-worker",
-            "ryframe-reset",
-            "ryframe-migrate",
-        ],
-        "构建产物",
-    )?;
+    exact_object(&binaries, &roles, "全栈二进制清单")?;
+    let artifacts = exact_object(&build["artifacts"], &roles, "构建产物")?;
     for (name, binding) in artifacts {
         let path = PathBuf::from(text_field(binding, "path", "构建产物")?);
         crate::local_test_path::validate_absolute_path(
@@ -120,13 +174,24 @@ fn verify_artifacts(directory: &Path, build: &Value) -> Result<()> {
     Ok(())
 }
 
-fn verify_source(root: &Path, directory: &Path, evidence: &Value) -> Result<()> {
-    let path = directory.join("source-pair.json");
+fn source_pair(directory: &Path) -> Result<(PathBuf, Value)> {
+    let original = directory.join("source-pair.json");
+    crate::local_test_path::validate_absolute_path(
+        &original,
+        crate::local_test_path::LocalTestPathKind::ExistingFile,
+    )?;
+    // 与来源生产者保持同一规范路径文本；先核验原路径，避免解析时隐藏链接。
+    let path =
+        super::super::portable_path(&std::fs::canonicalize(directory)?).join("source-pair.json");
     let pair = read_json(&path, "全栈源码组合", 16 * 1024)?;
+    Ok((path, pair))
+}
+
+fn verify_source(root: &Path, path: &Path, pair: &Value, evidence: &Value) -> Result<()> {
     let reference = pair["kind"] == "reference-fixture-source-pair";
     if reference {
         exact_object(
-            &pair,
+            pair,
             &["format_version", "kind", "fixture_receipt", "sources"],
             "参考源码组合",
         )?;
@@ -135,7 +200,7 @@ fn verify_source(root: &Path, directory: &Path, evidence: &Value) -> Result<()> 
         }
     } else {
         exact_object(
-            &pair,
+            pair,
             &[
                 "format_version",
                 "backend_sha",
@@ -156,9 +221,13 @@ fn verify_source(root: &Path, directory: &Path, evidence: &Value) -> Result<()> 
         return Err("业务 fixture 不得使用 core 来源证据".into());
     }
     let mut bound = pair.clone();
-    bound["receipt"] = evidence_binding(&path)?;
+    bound["receipt"] = evidence_binding(path)?;
     if evidence["format_version"] != 1 || evidence["source_pair"] != bound {
-        return Err("构建来源与源码组合不匹配".into());
+        return Err(format!(
+            "构建来源与源码组合不匹配，不一致字段：{}；核对原 source-pair 与构建收据，保留现场，禁止覆盖或重建来源",
+            source_mismatch_fields(evidence, &bound)
+        )
+        .into());
     }
     match evidence["fixture"].as_str() {
         Some("core") => {
@@ -174,7 +243,7 @@ fn verify_source(root: &Path, directory: &Path, evidence: &Value) -> Result<()> 
                 "core 构建来源",
             )?;
             exact_object(
-                &pair,
+                pair,
                 &[
                     "format_version",
                     "backend_sha",
@@ -195,10 +264,10 @@ fn verify_source(root: &Path, directory: &Path, evidence: &Value) -> Result<()> 
                 return Err("core 来源与当前源码不匹配".into());
             }
         }
-        Some("business") => verify_business(root, evidence, &pair)?,
+        Some("business") => verify_business(root, evidence, pair)?,
         _ => return Err("未知全栈来源类型".into()),
     }
-    verify_source_identity(&pair)
+    verify_source_identity(pair)
 }
 
 fn verify_source_identity(pair: &Value) -> Result<()> {
@@ -227,6 +296,30 @@ fn verify_source_identity(pair: &Value) -> Result<()> {
     Ok(())
 }
 
+fn source_mismatch_fields(evidence: &Value, bound: &Value) -> String {
+    let mut fields = match (evidence["source_pair"].as_object(), bound.as_object()) {
+        (Some(actual), Some(expected)) => actual
+            .keys()
+            .chain(expected.keys())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .filter(|key| actual.get(*key) != expected.get(*key))
+            .map(|key| {
+                if expected.contains_key(key) {
+                    key.as_str()
+                } else {
+                    "未声明字段"
+                }
+            })
+            .collect::<Vec<_>>(),
+        _ => vec!["source_pair"],
+    };
+    if evidence["format_version"] != 1 {
+        fields.push("format_version");
+    }
+    fields.join("、")
+}
+
 fn verify_business(root: &Path, evidence: &Value, pair: &Value) -> Result<()> {
     exact_object(
         evidence,
@@ -246,6 +339,9 @@ fn verify_business(root: &Path, evidence: &Value, pair: &Value) -> Result<()> {
         .parent()
         .ok_or("业务后端缺少父目录")?
         .join("fixture.json");
+    if evidence["fixture_receipt"] != evidence_binding(&fixture_path)? {
+        return Err("业务 fixture 来源或状态不匹配".into());
+    }
     let fixture = read_json(&fixture_path, "业务 fixture", 4 * 1024 * 1024)?;
     exact_object(
         &fixture,
@@ -270,7 +366,6 @@ fn verify_business(root: &Path, evidence: &Value, pair: &Value) -> Result<()> {
     if fixture["format_version"] != 1
         || fixture["fixture"] != "business"
         || fixture["status"] != "ready"
-        || evidence["fixture_receipt"] != evidence_binding(&fixture_path)?
         || evidence["original"] != fixture["sources"]
         || pair["sources"] != fixture["sources"]
     {
@@ -297,7 +392,7 @@ fn verify_business(root: &Path, evidence: &Value, pair: &Value) -> Result<()> {
             return Err("业务 fixture 工作树发生漂移".into());
         }
     }
-    let model = root.join("tools/python/fixtures/order-business/src/resources/mod.rs");
+    let model = root.join(BUSINESS_MODEL);
     let binding = evidence_binding(&model)?;
     if evidence["fixture_definition"] != json!({"model":binding})
         || binding["sha256"] != fixture["fixture_sha256"]

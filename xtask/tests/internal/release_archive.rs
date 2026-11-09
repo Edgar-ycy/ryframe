@@ -178,6 +178,7 @@ impl ArchiveFixture {
         let build = json!({
             "format_version": 1,
             "kind": "full-stack-build",
+            "build_jobs": 4,
             "backend_root": backend_root,
             "source": source,
             "artifacts": artifacts,

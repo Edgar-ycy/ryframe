@@ -139,6 +139,8 @@ pub struct ResourceIr {
     pub schema_hash: String,
     pub schema_revision: Option<String>,
     pub indexes: Vec<IndexIr>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub foreign_keys: Vec<super::super::ForeignKeySpec>,
     pub soft_delete: Option<SoftDeleteIr>,
     pub audit: Option<AuditIr>,
     pub fields: Vec<FieldIr>,
@@ -223,6 +225,20 @@ pub struct FieldIr {
     pub labels: LabelsIr,
     pub widget: WidgetIr,
     pub enum_values: BTreeMap<String, LabelsIr>,
+}
+
+impl FieldIr {
+    pub(crate) fn database_clock(&self) -> bool {
+        self.sql_default.is_some() || self.sql_on_update.is_some()
+    }
+
+    pub(crate) fn database_default(&self) -> bool {
+        !self.usage.create && self.sql_default.is_some()
+    }
+
+    pub(crate) fn database_update(&self) -> bool {
+        !self.usage.update && self.database_clock()
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

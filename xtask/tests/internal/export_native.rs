@@ -28,6 +28,77 @@ use crate::{
 static NEXT: AtomicUsize = AtomicUsize::new(1);
 const UUID: &str = "67cd8d4a-fe90-11ef-98fd-5847ca786499";
 
+#[path = "export_native/inventory.rs"]
+mod inventory_tests;
+#[path = "export_native/recovery.rs"]
+mod recovery_tests;
+#[path = "export_native/schema.rs"]
+mod schema_tests;
+
+#[test]
+fn system_transport_environment_keeps_only_declared_fields_and_required_os_root() {
+    use std::{collections::BTreeMap, ffi::OsString};
+
+    use crate::recovery::clone::native::export::transport::configure_environment;
+
+    let ambient = [
+        ("sYsTeMrOoT", r"D:\Windows"),
+        ("PATH", "ambient-path"),
+        ("AWS_SECRET_ACCESS_KEY", "ambient-secret"),
+        ("MYSQL_PWD", "ambient-password"),
+        ("APP_ENV", "prod"),
+        ("APP_CONFIG_DIR", "ambient-configuration"),
+    ]
+    .map(|(name, value)| (OsString::from(name), OsString::from(value)));
+    for root_name in [None, Some("sYsTeMrOoT")] {
+        let mut declared = BTreeMap::from([("APP_ENV".to_owned(), "test".to_owned())]);
+        if let Some(name) = root_name {
+            declared.insert(name.to_owned(), r"D:\BoundWindows".to_owned());
+        }
+        let mut command = Command::new("unused");
+        command.env("UNDECLARED", "previous-command-value");
+        configure_environment(&mut command, &declared, ambient.clone()).unwrap();
+        let actual = command
+            .get_envs()
+            .map(|(name, value)| (name.to_os_string(), value.unwrap().to_os_string()))
+            .collect::<BTreeMap<_, _>>();
+        let expected = declared
+            .into_iter()
+            .map(|(name, value)| (OsString::from(name), OsString::from(value)))
+            .collect::<BTreeMap<_, _>>();
+        #[cfg(windows)]
+        let expected = {
+            let mut expected = expected;
+            if root_name.is_none() {
+                expected.insert("SystemRoot".into(), r"D:\Windows".into());
+            }
+            expected
+        };
+        assert_eq!(actual, expected);
+    }
+    #[cfg(windows)]
+    for (declared, operating_system) in [
+        (BTreeMap::new(), Vec::new()),
+        (
+            BTreeMap::from([("systemroot".to_owned(), String::new())]),
+            ambient.to_vec(),
+        ),
+        (
+            BTreeMap::new(),
+            vec![(OsString::from("SystemRoot"), OsString::new())],
+        ),
+    ] {
+        let mut command = Command::new("unused");
+        let error = configure_environment(&mut command, &declared, operating_system)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error,
+            "Windows 子进程缺少非空 OS SystemRoot；请修复控制器的 Windows 系统环境后再执行显式操作"
+        );
+    }
+}
+
 struct Fixture {
     backend: PathBuf,
     local: PathBuf,
@@ -67,6 +138,9 @@ impl Fixture {
 }
 
 fn write_support_files(backend: &Path, local: &Path) -> (PathBuf, PathBuf) {
+    let directory = local.join("config");
+    fs::create_dir(&directory).unwrap();
+    fs::write(directory.join("app.test.toml"), "[object_storage]\nbackend='rustfs'\nendpoint='http://127.0.0.1:29200'\nregion='us-east-1'\naccess_key='private-fixture-access'\nsecret_key='private-fixture-secret'\n").unwrap();
     let runtime = local.join("runtime");
     fs::create_dir(&runtime).unwrap();
     write_json(
@@ -121,12 +195,8 @@ fn write_request(local: &Path, runtime: &Path, defaults: &Path, request: &Path) 
                 "scope_id": "fixture-source",
                 "runtime_dir": runtime,
                 "api_url": "http://127.0.0.1:18210",
-                "s3": {
-                    "endpoint": "http://127.0.0.1:29200",
-                    "region": "us-east-1",
-                    "access_key": "access",
-                    "secret_key": "secret",
-                },
+                "s3": {"configuration": native::s3::app_configuration::configuration_value(
+                    &workspace::root_dir(), &local.join("config"), "test").unwrap()},
                 "databases": [{
                     "key": "shared-control",
                     "kind": "combined",
@@ -278,7 +348,7 @@ impl Transport for FakeS3 {
                     request.bucket
                 )
             } else if self.wrong_body {
-                "wrong".into()
+                "evil".into()
             } else {
                 "data".into()
             };
@@ -289,7 +359,7 @@ impl Transport for FakeS3 {
                 "ContentType": "text/plain",
                 "Metadata": {},
                 "ETag": "\"fixture-etag\"",
-                "ContentLength": if self.wrong_body { 5 } else { 4 },
+                "ContentLength": 4,
                 "LastModified": "2026-09-04T00:00:00+00:00",
                 "AcceptRanges": "bytes",
                 "StorageClass": "STANDARD",
@@ -312,25 +382,7 @@ impl Transport for FakeS3 {
 #[test]
 fn native_object_capture_uses_read_only_evidence_and_rejects_body_drift() {
     let fixture = Fixture::new();
-    let run_dir = fixture.run.clone();
-    fs::create_dir(run_dir.join("e0001")).unwrap();
-    let request: Value =
-        serde_json::from_slice(&fs::read(fixture.local.join("source-request.json")).unwrap())
-            .unwrap();
-    let context = Context {
-        backend: fixture.backend.clone(),
-        run_dir,
-        mode: "run".into(),
-        attempt: 1,
-        manifest: json!({}),
-        request,
-        request_path: fixture.local.join("source-request.json"),
-        environment: std::collections::BTreeMap::from([
-            ("TEST_ACCESS".to_owned(), "access".to_owned()),
-            ("TEST_SECRET".to_owned(), "secret".to_owned()),
-        ]),
-        execution_backend: fixture.backend.clone(),
-    };
+    let context = object_capture_context(&fixture);
     let inventory = json!({
         "objects": [
             {"bucket": "uploads", "entries": [{"key": "fixture-source/file.txt", "bytes": 4, "sha256": sha(b"data")}]},
@@ -369,33 +421,132 @@ fn native_object_capture_uses_read_only_evidence_and_rejects_body_drift() {
     assert_python_capture_compatible(&fixture, &capture_dir);
 
     let failed = Fixture::new();
-    fs::create_dir(failed.run.join("e0001")).unwrap();
-    let mut failed_request: Value =
-        serde_json::from_slice(&fs::read(failed.local.join("source-request.json")).unwrap())
+    let failed_context = object_capture_context(&failed);
+    let error = object::capture(
+        &failed_context,
+        &FakeS3 { wrong_body: true },
+        &inventory,
+        1024,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("SHA"), "{error}");
+}
+
+fn object_capture_context(fixture: &Fixture) -> Context {
+    let run_dir = fixture.run.clone();
+    fs::create_dir(run_dir.join("e0001")).unwrap();
+    let request: Value =
+        serde_json::from_slice(&fs::read(fixture.local.join("source-request.json")).unwrap())
             .unwrap();
-    failed_request["source"]["scope_id"] = json!("fixture-source");
-    let failed_context = Context {
-        backend: failed.backend.clone(),
-        run_dir: failed.run.clone(),
+    Context {
+        backend: fixture.backend.clone(),
+        output_dir: run_dir.join("e0001"),
+        run_dir,
         mode: "run".into(),
         attempt: 1,
         manifest: json!({}),
-        request: failed_request,
-        request_path: failed.local.join("source-request.json"),
+        object_identity:
+            crate::recovery::clone::native::s3::app_configuration::public_configuration(
+                &fixture.backend,
+                &request["source"]["s3"]["configuration"],
+            )
+            .unwrap(),
+        request,
+        request_path: fixture.local.join("source-request.json"),
         environment: std::collections::BTreeMap::from([
             ("TEST_ACCESS".to_owned(), "access".to_owned()),
             ("TEST_SECRET".to_owned(), "secret".to_owned()),
         ]),
-        execution_backend: failed.backend.clone(),
+        execution_backend: fixture.backend.clone(),
+    }
+}
+
+#[test]
+fn source_cli_reads_bound_sidecar_config_records_actual_argv_and_rejects_drift_before_spawn() {
+    struct Configured {
+        directory: String,
+        arguments: Vec<String>,
+    }
+    impl Transport for Configured {
+        fn run(&self, command: CommandSpec) -> crate::Result<CommandOutput> {
+            assert_eq!(command.args[..2], ["--config-dir", self.directory.as_str()]);
+            assert_eq!(command.args[2..], self.arguments);
+            #[cfg(unix)]
+            use std::os::unix::process::ExitStatusExt;
+            #[cfg(windows)]
+            use std::os::windows::process::ExitStatusExt;
+            Ok(CommandOutput {
+                status: std::process::ExitStatus::from_raw(0),
+                stdout: vec![],
+                stderr: vec![],
+            })
+        }
+        fn s3(&self, _: native::s3::Request) -> crate::Result<Value> {
+            panic!("来源CLI配置用例不能访问对象服务")
+        }
+    }
+    let fixture = Fixture::new();
+    let context = object_capture_context(&fixture);
+    let directory = context.source()["s3"]["configuration"]["directory"]
+        .as_str()
+        .unwrap();
+    for (index, arguments) in [
+        vec!["control", "verify"],
+        vec!["tenant-data", "verify", "--target", "shared"],
+        vec!["target-inventory", "--target", "shared"],
+        vec!["backup-inventory"],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let arguments = arguments.into_iter().map(str::to_owned).collect::<Vec<_>>();
+        let transport = Configured {
+            directory: directory.to_owned(),
+            arguments: arguments.clone(),
+        };
+        let label = format!("configuration-{index}");
+        native::export::database::run_logged(
+            &context,
+            &transport,
+            &label,
+            Path::new("bound-tool"),
+            &arguments,
+            None,
+        )
+        .unwrap();
+        let record: Value = serde_json::from_slice(
+            &fs::read(context.output().join(format!("{label}.command.json"))).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(record["command"][0], "--config-dir");
+        assert_eq!(record["command"][1], directory);
+    }
+    fs::write(
+        Path::new(directory).join("app.test.toml"),
+        "scope_id='drifted'\n",
+    )
+    .unwrap();
+    let transport = Configured {
+        directory: directory.to_owned(),
+        arguments: vec![],
     };
     assert!(
-        object::capture(
-            &failed_context,
-            &FakeS3 { wrong_body: true },
-            &inventory,
-            1024
+        native::export::database::run_logged(
+            &context,
+            &transport,
+            "configuration-drift",
+            Path::new("bound-tool"),
+            &[],
+            None
         )
         .is_err()
+    );
+    assert!(
+        !context
+            .output()
+            .join("configuration-drift.command.json")
+            .exists()
     );
 }
 
@@ -518,45 +669,326 @@ fn snapshot(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
 }
 
 #[test]
-fn public_source_request_excludes_credentials_and_matches_python_projection() {
-    use crate::recovery::clone::native::export::input::public_request;
-    use std::io::Write;
-    use std::process::Stdio;
-    let request = json!({"id":"fixture","source":{"scope_id":"source-scope",
-        "s3":{"endpoint":"http://127.0.0.1:29200","region":"us-east-1",
-        "access_key":"private-fixture-access","secret_key":"private-fixture-secret"}},
-        "tools":{"mysql":{"path":"fixture"}}});
+fn public_source_request_uses_bound_files_without_credentials_or_overrides() {
+    use crate::recovery::clone::native::export::input::{public_request, validate_request};
+    let fixture = Fixture::new();
+    let path = fixture.local.join("source-request.json");
+    let request: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
     let original = request.clone();
-    let public = public_request(&request);
-    let encoded = serde_json::to_string(&public).unwrap();
-    assert!(!encoded.contains("private-fixture"));
-    assert!(!encoded.contains("access_key"));
-    assert!(!encoded.contains("secret_key"));
+    let public = public_request(&fixture.backend, &request).unwrap();
+    for value in [&public, &request] {
+        let encoded = value.to_string();
+        assert!(!encoded.contains("private-fixture"));
+        assert!(!encoded.contains("access_key"));
+        assert!(!encoded.contains("secret_key"));
+    }
     assert_eq!(
         public["source"]["s3"],
         json!({"endpoint":"http://127.0.0.1:29200","region":"us-east-1"})
     );
     assert_eq!(public["tools"], request["tools"]);
     assert_eq!(request, original);
-    let coordinator = workspace::root_dir();
-    let executable = crate::process::resolved_executable(&coordinator, "python").unwrap();
-    let mut child = Command::new(executable).args(["-B", "-c",
-        "import json,sys;sys.path.insert(0,sys.argv[1]);from devex_clone_source_proof import public_request; print(json.dumps(public_request(json.load(sys.stdin))))"])
-        .arg(coordinator.join("tools/python")).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(serde_json::to_string(&request).unwrap().as_bytes())
-        .unwrap();
-    let result = child.wait_with_output().unwrap();
+    let mut override_request = request.clone();
+    override_request["source"]["s3"]["endpoint"] = json!("http://127.0.0.1:9");
+    assert!(validate_request(&fixture.backend, &override_request).is_err());
+    override_request["source"]["s3"] = native::s3::app_configuration::private_configuration(
+        &fixture.backend,
+        &request["source"]["s3"]["configuration"],
+    )
+    .unwrap();
+    assert!(validate_request(&fixture.backend, &override_request).is_err());
+    fs::write(
+        fixture.local.join("config/app.test.toml"),
+        "[object_storage]\nsecret_key='changed-private-value'\n",
+    )
+    .unwrap();
+    let error = public_request(&fixture.backend, &request)
+        .unwrap_err()
+        .to_string();
+    assert!(!error.contains("changed-private-value"));
+    assert!(validate_request(&fixture.backend, &request).is_err());
+}
+
+#[test]
+fn source_registration_context_uses_bound_generation_without_export_stage_or_writes() {
+    let fixture = Fixture::new();
+    let request_path = fixture.local.join("source-request.json");
+    let environment_path = fixture.local.join("registration-environment.json");
+    write_json(
+        &environment_path,
+        &json!({"environment": {"APP_ENV": "test"}}),
+    );
+    let (attempt, _) =
+        state::begin(&fixture.run, "seed-runtime", "source-register", &json!({})).unwrap();
+    let before = snapshot(&fixture.run);
+    let context = Context::from_source_registration(
+        &fixture.backend,
+        &fixture.run,
+        attempt,
+        &binding(&request_path),
+        &binding(&environment_path),
+    )
+    .unwrap();
+    assert_eq!(context.mode, "source-register");
+    assert_eq!(context.attempt, attempt);
+    assert_eq!(context.request_path, request_path);
+    assert_eq!(context.execution_backend, fixture.backend);
+    assert_eq!(context.environment.get("APP_ENV").unwrap(), "test");
+    assert_eq!(snapshot(&fixture.run), before);
+    assert!(!fixture.run.join("run.lock").exists());
+    let request_binding = binding(&request_path);
+    let environment_binding = binding(&environment_path);
+    for number in [0, attempt + 1] {
+        assert!(
+            Context::from_source_registration(
+                &fixture.backend,
+                &fixture.run,
+                number,
+                &request_binding,
+                &environment_binding,
+            )
+            .is_err()
+        );
+    }
+    fs::write(&environment_path, b"{}").unwrap();
     assert!(
-        result.status.success(),
-        "{}",
-        String::from_utf8_lossy(&result.stderr)
+        Context::from_source_registration(
+            &fixture.backend,
+            &fixture.run,
+            attempt,
+            &request_binding,
+            &environment_binding,
+        )
+        .is_err()
     );
+}
+
+#[test]
+fn source_registration_context_rejects_wrong_stage_environment_and_tool_drift() {
+    let fixture = Fixture::new();
+    let request_path = fixture.local.join("source-request.json");
+    let environment_path = fixture.local.join("registration-environment.json");
+    let (attempt, _) = state::begin(&fixture.run, "export", "run", &json!({})).unwrap();
+    write_json(
+        &environment_path,
+        &json!({"environment": {"APP_ENV": "test"}}),
+    );
+    assert!(
+        Context::from_source_registration(
+            &fixture.backend,
+            &fixture.run,
+            attempt,
+            &binding(&request_path),
+            &binding(&environment_path),
+        )
+        .is_err()
+    );
+    state::finish(&fixture.run, attempt, None, Some("FixtureStopped")).unwrap();
+    let (attempt, _) =
+        state::begin(&fixture.run, "seed-runtime", "source-register", &json!({})).unwrap();
+    for environment in [
+        json!({}),
+        json!({"APP_ENV": "dev"}),
+        json!({"APP_ENV": "test", "UNEXPECTED": "private-value"}),
+    ] {
+        write_json(&environment_path, &json!({"environment": environment}));
+        assert!(
+            Context::from_source_registration(
+                &fixture.backend,
+                &fixture.run,
+                attempt,
+                &binding(&request_path),
+                &binding(&environment_path),
+            )
+            .is_err()
+        );
+    }
+    write_json(
+        &environment_path,
+        &json!({"environment": {"APP_ENV": "test"}}),
+    );
+    let request_binding = binding(&request_path);
+    fs::write(fixture.local.join("mysql"), b"changed-tool").unwrap();
+    assert!(
+        Context::from_source_registration(
+            &fixture.backend,
+            &fixture.run,
+            attempt,
+            &request_binding,
+            &binding(&environment_path),
+        )
+        .is_err()
+    );
+}
+
+// 此处只验证正式父入口拒绝未完成的 C69，不把最小导出夹具当作有效 START。
+#[test]
+fn native_generation_recovery_rejects_unqualified_c69_before_claiming_a_new_attempt() {
+    use crate::cli::{SeedSourceOperation, SeedSourceOptions};
+    use crate::recovery::source::evidence::control;
+
+    let sources = native::source::current(&workspace::root_dir()).unwrap();
+    for (error_type, published) in [
+        (Some("StageError"), false),
+        (Some("SourceChanged"), true),
+        (None, false),
+    ] {
+        let fixture = Fixture::new();
+        append_unqualified_c69(&fixture, &sources, error_type, published);
+        let before = snapshot(&fixture.run);
+        let options = SeedSourceOptions {
+            operation: SeedSourceOperation::GenerationRecover,
+            run_dir: fixture.run.clone(),
+            request: Some(fixture.local.join("source-request.json")),
+            write: true,
+        };
+        let error = control::run(&fixture.backend, &options).unwrap_err();
+        let expected = if error_type.is_some() {
+            "C69 谱系恢复失败或未发布，不能授权重试"
+        } else {
+            "源控制预检不能接管正在运行的阶段，保留控制器现场"
+        };
+        assert_eq!(error.to_string(), expected);
+        assert_eq!(snapshot(&fixture.run), before);
+        assert_eq!(
+            state::attempts(&state::load(&fixture.run, true).unwrap())
+                .unwrap()
+                .len(),
+            69
+        );
+        assert!(!fixture.run.join("run.lock").exists());
+        assert!(!fixture.run.join("results/0070.json").exists());
+    }
+}
+
+fn append_unqualified_c69(
+    fixture: &Fixture,
+    sources: &Value,
+    error_type: Option<&str>,
+    published: bool,
+) {
+    for expected in 1..=68 {
+        let (number, _) = state::begin(&fixture.run, "post-copy", "run", sources).unwrap();
+        assert_eq!(number, expected);
+        state::finish(&fixture.run, number, None, Some("StageError")).unwrap();
+    }
+    let (number, _) = state::begin(
+        &fixture.run,
+        "seed-runtime",
+        "source-generation-recover",
+        sources,
+    )
+    .unwrap();
+    assert_eq!(number, 69);
+    let output = fixture.run.join("seed-runtime/attempt-0069");
+    fs::create_dir_all(&output).unwrap();
+    fs::write(
+        output.join("partial-evidence.json"),
+        b"{\"partial\":true}\n",
+    )
+    .unwrap();
+    if let Some(error_type) = error_type {
+        let receipt = json!({"status":"unqualified-local-result"});
+        state::finish(
+            &fixture.run,
+            number,
+            published.then_some(&receipt),
+            Some(error_type),
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn native_generation_status_preserves_missing_and_partial_start_without_repair() {
+    use crate::cli::{SeedSourceOperation, SeedSourceOptions};
+    use crate::recovery::source::evidence::control;
+
+    let fixture = Fixture::new();
+    let sources = native::source::current(&fixture.backend).unwrap();
+    let (number, _) = state::begin(
+        &fixture.run,
+        "seed-runtime",
+        "source-generation-start",
+        &sources,
+    )
+    .unwrap();
+    state::finish(&fixture.run, number, None, Some("StageError")).unwrap();
+    let options = SeedSourceOptions {
+        operation: SeedSourceOperation::GenerationStatus,
+        run_dir: fixture.run.clone(),
+        request: None,
+        write: false,
+    };
+    let output = fixture.run.join(format!("g{number:04}"));
+    for partial in [false, true] {
+        if partial {
+            fs::create_dir(&output).unwrap();
+            write_json(&output.join("request.json"), &json!({"partial":true}));
+        }
+        let before = snapshot(&fixture.run);
+        let observed = control::run(&fixture.backend, &options).unwrap();
+        assert_eq!(observed["status"], "source_generation_observed");
+        assert_eq!(observed["attempt"], number);
+        assert_eq!(observed["start_status"], "failed");
+        assert!(observed["intent"].is_null());
+        for role in ["api", "worker"] {
+            assert_eq!(
+                observed["roles"][role],
+                json!({"state":"unknown","tree":null,"completion":null})
+            );
+        }
+        assert_eq!(observed["remote_writes"], 0);
+        assert_eq!(observed["restore_qualified"], false);
+        assert_eq!(snapshot(&fixture.run), before);
+        assert!(!fixture.run.join("run.lock").exists());
+    }
+    let runtime = output.join("runtime");
+    fs::create_dir(&runtime).unwrap();
+    fs::write(runtime.join("binaries.json"), b"{}\n").unwrap();
+    let before = snapshot(&fixture.run);
     assert_eq!(
-        serde_json::from_slice::<Value>(&result.stdout).unwrap(),
-        public
+        control::run(&fixture.backend, &options).unwrap()["roles"]["api"]["state"],
+        "unknown"
     );
+    assert_eq!(snapshot(&fixture.run), before);
+    fs::write(runtime.join("api.json"), b"{}\n").unwrap();
+    let before = snapshot(&fixture.run);
+    assert!(control::run(&fixture.backend, &options).is_err());
+    assert_eq!(snapshot(&fixture.run), before);
+    fs::remove_file(runtime.join("api.json")).unwrap();
+    fs::write(output.join("unbound.json"), b"{}").unwrap();
+    let before = snapshot(&fixture.run);
+    assert!(control::run(&fixture.backend, &options).is_err());
+    assert_eq!(snapshot(&fixture.run), before);
+    assert!(!fixture.run.join("run.lock").exists());
+}
+
+#[test]
+fn native_generation_control_rejects_unauthorized_start_and_mutating_status_without_writes() {
+    use crate::cli::{SeedSourceOperation, SeedSourceOptions};
+    use crate::recovery::source::evidence::control;
+    let fixture = Fixture::new();
+    let request = fixture.local.join("source-request.json");
+    for (operation, write, request) in [
+        (
+            SeedSourceOperation::GenerationStart,
+            false,
+            Some(request.clone()),
+        ),
+        (SeedSourceOperation::GenerationStart, true, None),
+        (SeedSourceOperation::GenerationStatus, true, None),
+        (SeedSourceOperation::GenerationStatus, false, Some(request)),
+    ] {
+        let before = snapshot(&fixture.run);
+        let options = SeedSourceOptions {
+            operation,
+            run_dir: fixture.run.clone(),
+            request,
+            write,
+        };
+        assert!(control::run(&fixture.backend, &options).is_err());
+        assert_eq!(snapshot(&fixture.run), before);
+        assert!(!fixture.run.join("run.lock").exists());
+    }
 }

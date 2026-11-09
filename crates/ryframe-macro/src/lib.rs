@@ -38,6 +38,9 @@ mod auto_fill;
 mod resource_model;
 mod route;
 
+// 将当前宏源码指纹纳入 rustc 输入，避免共享 target 复用另一来源的宏产物。
+const _: &str = include_str!(concat!(env!("OUT_DIR"), "/macro-source.sha256"));
+
 use proc_macro::TokenStream;
 use quote::format_ident;
 use syn::parse_macro_input;

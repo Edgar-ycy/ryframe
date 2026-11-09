@@ -14,6 +14,11 @@ resource = ["dep:ryframe-generator"]
 
 [dependencies]
 async-trait.workspace = true
+axum = { workspace = true, features = ["http1", "tokio"] }
+mime_guess = "=2.0.5"
+hyper = { version = "=1.11.1", default-features = false, features = ["client", "http1"] }
+hyper-util = { version = "=0.1.21", default-features = false, features = ["tokio"] }
+sha1 = "=0.11.0"
 tree-sitter = "=0.25.2"
 tree-sitter-rust = "=0.24.2"
 ryframe-config = { path = "../crates/ryframe-config", features = ["tools"] }
@@ -35,7 +40,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["arbitrary_precision"] }
 sha2 = { workspace = true }
 tempfile = { workspace = true }
-tokio = { workspace = true, features = ["rt", "signal", "net", "time", "sync", "fs", "io-util", "process"] }
+tokio = { workspace = true, features = ["rt", "signal", "net", "time", "sync", "fs", "io-util", "process", "macros"] }
 toml = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 zip = { workspace = true }
@@ -43,9 +48,14 @@ zip = { workspace = true }
 [target.'cfg(unix)'.dependencies]
 nix = { version = "=0.29.0", default-features = false, features = ["fs", "signal", "user"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "=1.1.5", features = ["process", "event"] }
+
 [target.'cfg(windows)'.dependencies]
+file-id = { version = "=0.2.3", default-features = false }
 processkit = { version = "=3.3.4", default-features = false, features = ["stats", "process-control"] }
 winsafe = { version = "=0.0.19", default-features = false, features = ["kernel"] }
+wmi = { version = "=0.18.4", default-features = false }
 
 [build-dependencies]
 serde = { workspace = true, features = ["derive"] }
@@ -54,6 +64,7 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 
 [dev-dependencies]
+glob = "=0.3.4"
 tempfile = { workspace = true }
 
 [[bin]]

@@ -152,19 +152,48 @@ fn prefix_preserves_all_writers_unicode_and_crlf() {
     initial["attempts"][0]["sources"] = json!({"中文":"🌏\u{7f}"});
     json_io::write_replace(&fixture.run.join("state.json"), &initial).unwrap();
     let raw = serde_json::to_string(&initial).unwrap();
-    let descriptors = prefix::serializations(&raw).into_iter().map(|raw| json!({"path":fixture.run.join("state.json"),"bytes":raw.len(),"sha256":hex::encode(Sha256::digest(&raw))})).collect::<Vec<_>>();
+    let descriptors = state::prefix::serializations(&raw).into_iter().map(|raw| json!({"path":fixture.run.join("state.json"),"bytes":raw.len(),"sha256":hex::encode(Sha256::digest(&raw))})).collect::<Vec<_>>();
     fixture.stage("close", None);
     for descriptor in descriptors {
         assert_eq!(prefix::count(&fixture.run, &descriptor).unwrap(), 3);
+        assert_eq!(
+            state::historical(&fixture.run, &descriptor, true).unwrap()["historical_attempts"],
+            3
+        );
     }
     let mut descriptor = binding(&fixture.run.join("state.json")).unwrap();
     descriptor["sha256"] = json!("a".repeat(64));
     assert!(prefix::count(&fixture.run, &descriptor).is_err());
+    assert!(state::historical(&fixture.run, &descriptor, true).is_err());
+
+    let fixture = Fixture::new();
+    let mut initial = fixture.load();
+    initial["attempts"][0]["sources"] = serde_json::from_str(
+        r#"{"numbers":[18446744073709551616,-9223372036854775809,12345678901234567890.123456789,1e400,-0.0,1.25],"中文":"🌏"}"#,
+    ).unwrap();
+    json_io::write_replace(&fixture.run.join("state.json"), &initial).unwrap();
+    let native = serde_json::to_string_pretty(&initial).unwrap() + "\n";
+    let writers = state::prefix::serializations(&serde_json::to_string(&initial).unwrap());
+    assert_eq!(writers[0], native.as_bytes());
+    assert_eq!(writers[3], native.replace('\n', "\r\n").as_bytes());
+    let descriptors = writers.into_iter().map(|raw| json!({
+        "path":fixture.run.join("state.json"),"bytes":raw.len(),"sha256":hex::encode(Sha256::digest(&raw))
+    })).collect::<Vec<_>>();
+    fixture.stage("close", None);
+    let current = fs::read(fixture.run.join("state.json")).unwrap();
+    for descriptor in descriptors {
+        assert_eq!(prefix::count(&fixture.run, &descriptor).unwrap(), 3);
+        assert_eq!(
+            state::historical(&fixture.run, &descriptor, true).unwrap()["historical_attempts"],
+            3
+        );
+    }
+    assert_eq!(fs::read(fixture.run.join("state.json")).unwrap(), current);
 }
 
 #[test]
 fn prefix_serialization_matches_python_escaping() {
-    let variants = prefix::serializations(r#"{"z":"\u007f中文🌏","a":[]}"#);
+    let variants = state::prefix::serializations(r#"{"z":"\u007f中文🌏","a":[]}"#);
     assert_eq!(
         String::from_utf8(variants[0].clone()).unwrap(),
         "{\n  \"a\": [],\n  \"z\": \"\u{7f}中文🌏\"\n}\n"
@@ -208,14 +237,14 @@ fn reconcilable_restart_requires_only_one_last_failed_restart_and_external_owner
     let value = json!({"attempts":[{"number":1,"stage":STAGE,"mode":"restart","status":"failed"}]});
     let history = json!({"closed":false,"external_recovery":{"path":"recovery"},"unsettled":[1]});
     assert!(reconcilable(&value, &history, "restart").is_some());
-    for (key, value) in [
+    for (key, replacement) in [
         ("closed", json!(true)),
         ("external_recovery", Value::Null),
         ("unsettled", json!([1, 2])),
     ] {
         let mut invalid = history.clone();
-        invalid[key] = value;
-        assert!(reconcilable(&json!({"attempts":[]}), &invalid, "restart").is_none());
+        invalid[key] = replacement;
+        assert!(reconcilable(&value, &invalid, "restart").is_none());
     }
 }
 

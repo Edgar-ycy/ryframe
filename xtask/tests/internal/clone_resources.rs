@@ -31,8 +31,8 @@ struct Fixture {
 
 impl Fixture {
     fn new(name: &str) -> Self {
-        let root = workspace::root_dir().join(format!(
-            ".local-tests/clone-resources-{name}-{}-{}",
+        let root = workspace::root_dir().join(".local-tests").join(format!(
+            "clone-resources-{name}-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -74,6 +74,74 @@ impl Drop for Fixture {
     }
 }
 
+#[cfg(any(unix, windows))]
+#[test]
+fn target_storage_restart_binds_original_external_executable() {
+    let outer = Fixture::new("target-storage-external");
+    let executable = outer.file("tools/rustfs.exe", b"fixture-rustfs");
+    let backend = outer.path("coordinator");
+    let fixture = Fixture {
+        root: backend.join(".local-tests/storage"),
+    };
+    let (run, manifest, request) = target_storage_fixture(&fixture, &backend, &executable);
+    let check = |request: &Value| {
+        storage_model::validate(&backend, &run, &manifest, CloneSide::Target, request)
+    };
+    assert!(!executable.starts_with(backend.join(".local-tests")));
+    assert_eq!(check(&request).unwrap().private["APP_ENV"], "test");
+
+    for (field, value) in [
+        (
+            "bytes",
+            json!(request["executable"]["bytes"].as_u64().unwrap() + 1),
+        ),
+        ("sha256", json!("0".repeat(64))),
+    ] {
+        let mut changed = request.clone();
+        changed["executable"][field] = value;
+        assert_eq!(
+            check(&changed).err().unwrap().to_string(),
+            "RustFS 可执行文件与登记大小或摘要不一致",
+            "{field}"
+        );
+    }
+
+    let mut replacement = request.clone();
+    replacement["executable"] = common::binding(&fixture.path("rustfs.exe")).unwrap();
+    assert_eq!(
+        replacement["executable"]["sha256"],
+        request["executable"]["sha256"]
+    );
+    assert_eq!(
+        check(&replacement).err().unwrap().to_string(),
+        "存储重启不能替换原可执行文件"
+    );
+
+    let linked_directory = outer.path("linked-tools");
+    #[cfg(unix)]
+    create_directory_link(&outer.path("tools"), &linked_directory).unwrap();
+    #[cfg(windows)]
+    assert!(
+        Command::new("cmd.exe")
+            .args(["/D", "/C", "mklink", "/J"])
+            .arg(&linked_directory)
+            .arg(outer.path("tools"))
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let mut linked = request;
+    linked["executable"]["path"] = json!(linked_directory.join("rustfs.exe"));
+    linked["previous"]["identity"]["executable"] = linked["executable"]["path"].clone();
+    let error = check(&linked).err().unwrap().to_string();
+    assert!(
+        error.starts_with("RustFS 可执行文件无效") && error.contains("链接"),
+        "{error}"
+    );
+    assert_eq!(fs::read(&executable).unwrap(), b"fixture-rustfs");
+}
+
 #[test]
 fn storage_request_and_original_generation_are_exactly_bound() {
     let fixture = Fixture::new("storage-model");
@@ -87,7 +155,61 @@ fn storage_request_and_original_generation_are_exactly_bound() {
     )
     .unwrap();
     assert_eq!(validated.private["PATH"], "fixture-bin");
-    assert_eq!(storage_model::arguments(&request).unwrap()[1], "server");
+    assert_eq!(
+        storage_model::arguments(&request).unwrap(),
+        vec![
+            request["executable"]["path"].as_str().unwrap(),
+            "server",
+            "--address",
+            request["api_url"]
+                .as_str()
+                .unwrap()
+                .strip_prefix("http://")
+                .unwrap(),
+            "--console-address",
+            request["console_url"]
+                .as_str()
+                .unwrap()
+                .strip_prefix("http://")
+                .unwrap(),
+            "--console-enable",
+            "--access-key-file",
+            request["credential_files"]["access_key"]["path"]
+                .as_str()
+                .unwrap(),
+            "--secret-key-file",
+            request["credential_files"]["secret_key"]["path"]
+                .as_str()
+                .unwrap(),
+            request["data_directory"]["path"].as_str().unwrap(),
+        ]
+    );
+    let mut command = std::process::Command::new("rustfs");
+    command.env_clear().envs(&validated.private);
+    for key in [
+        "RUSTFS_ACCESS_KEY_FILE",
+        "rustfs_console_enable",
+        "MINIO_ROOT_PASSWORD",
+        "minio_access_key",
+    ] {
+        command.env(key, "forbidden");
+    }
+    storage_model::clear_overrides(&mut command);
+    let retained = command
+        .get_envs()
+        .filter_map(|(key, value)| {
+            value.map(|value| (key.to_str().unwrap(), value.to_str().unwrap()))
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(
+        retained,
+        std::collections::BTreeMap::from([
+            ("PATH", "fixture-bin"),
+            ("APP_ENV", "test"),
+            ("CARGO_HOME", "fixture-cargo"),
+            ("COREPACK_HOME", "fixture-corepack")
+        ])
+    );
 
     let mut changed = request.clone();
     changed["timeout_seconds"] = json!(true);
@@ -145,7 +267,6 @@ fn storage_failure_identity_and_unknown_write_receipts_fail_closed() {
             "controller": controller,
             "attempt": 1,
             "arguments": storage_model::arguments(&request).unwrap(),
-            "environment": storage_model::configuration(&request).unwrap(),
         }),
     )
     .unwrap();
@@ -298,6 +419,9 @@ fn storage_parts(fixture: &Fixture) -> StorageParts {
     let private = json!({
         "environment": {
             "PATH": "fixture-bin",
+            "APP_ENV": "test",
+            "CARGO_HOME": "fixture-cargo",
+            "COREPACK_HOME": "fixture-corepack",
             "RUSTFS_UNDECLARED": "forbidden",
         }
     });
@@ -333,6 +457,87 @@ fn storage_parts(fixture: &Fixture) -> StorageParts {
         api,
         console,
     }
+}
+
+#[cfg(any(unix, windows))]
+fn target_storage_fixture(
+    fixture: &Fixture,
+    backend: &Path,
+    executable: &Path,
+) -> (PathBuf, Value, Value) {
+    use crate::recovery::clone::native::digest;
+
+    let StorageParts {
+        run_dir,
+        data,
+        credentials,
+        environment,
+        source,
+        mut manifest,
+        api,
+        console,
+        ..
+    } = storage_parts(fixture);
+    let (device, inode) = device_inode(&data);
+    let executable = common::binding(executable).unwrap();
+    let identity = json!({"pid":610001,"started":"100","executable":executable["path"]});
+    let mut request = json!({
+        "format_version":1,"kind":"devex-clone-storage-restart","side":"target",
+        "environment":environment,"scope_id":"storage-fixture","executable":executable,
+        "data_directory":{"path":data,"device":device,"inode":inode},
+        "api_url":api,"console_url":console,"credential_files":credentials,"timeout_seconds":5
+    });
+    let service =
+        json!({"scope_id":request["scope_id"],"data_dir":data,"api":api,"console":console});
+    let process = fixture.json(
+        "target-process.json",
+        &json!({
+            "scope_id":request["scope_id"],"data_dir":data,"identity":identity,"lifecycle":"running"
+        }),
+    );
+    let launch = fixture.json(
+        "target-launch.json",
+        &json!({
+            "format_version":1,"scope_id":request["scope_id"],"identity":identity,
+            "arguments":storage_model::arguments(&request).unwrap(),"credential_files":credentials
+        }),
+    );
+    request["previous"] = json!({
+        "identity":identity,"process_receipt":process,"launch_receipt":launch,"ready_receipt":process
+    });
+
+    let target = common::read_bound(backend, &source, "fixture source").unwrap()["source"].clone();
+    let review = json!({"scopes":{"seed":target},"services":{"rustfs":service}});
+    let mut review_binding = fixture.json("target-review.json", &review);
+    review_binding["canonical_sha256"] = json!(digest::plan_hash(&review).unwrap());
+    let original = json!({
+        "side":"seed","review":review_binding,"target":target,
+        "storage":{"rustfs":{"identity":identity,"sha256":executable["sha256"],
+            "process_receipt":process,"launch_receipt":launch}}
+    });
+    fs::create_dir(fixture.path("target")).unwrap();
+    let original_binding = fixture.json("target/request.json", &original);
+    let prepare = fixture.json(
+        "target/prepare.json",
+        &json!({
+            "request":original_binding,"request_sha256":digest::plan_hash(&original).unwrap()
+        }),
+    );
+    let initialized = fixture.json(
+        "target/initialized.json",
+        &json!({
+            "status":"fresh_target_initialized","prepare_sha256":prepare["sha256"]
+        }),
+    );
+    manifest["initialized"] = initialized.clone();
+    fs::write(
+        run_dir.join("manifest.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    request["manifest"] = common::binding(&run_dir.join("manifest.json")).unwrap();
+    request["original"] = initialized;
+    (run_dir, manifest, request)
 }
 
 fn storage_fixture(fixture: &Fixture) -> (PathBuf, Value, Value) {
@@ -498,25 +703,7 @@ fn device_inode(path: &Path) -> (u64, u64) {
     }
     #[cfg(windows)]
     {
-        use winsafe::{self as w, co, prelude::*};
-        let (handle, _) = w::HFILE::CreateFile(
-            path.to_str().unwrap(),
-            co::GENERIC::default(),
-            Some(co::FILE_SHARE::READ | co::FILE_SHARE::WRITE | co::FILE_SHARE::DELETE),
-            None,
-            co::DISPOSITION::OPEN_EXISTING,
-            co::FILE_ATTRIBUTE::NORMAL,
-            Some(co::FILE_FLAG::BACKUP_SEMANTICS),
-            None,
-            None,
-        )
-        .unwrap();
-        let mut info = w::BY_HANDLE_FILE_INFORMATION::default();
-        handle.GetFileInformationByHandle(&mut info).unwrap();
-        (
-            u64::from(info.dwVolumeSerialNumber),
-            (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
-        )
+        common::device_inode_for(path, &_metadata).unwrap()
     }
     #[cfg(not(any(unix, windows)))]
     {

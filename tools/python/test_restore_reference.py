@@ -159,9 +159,13 @@ class ReferenceTests(unittest.TestCase):
         self.assertEqual(tools.create_object_if_absent.call_args.args[:2],
                          ("uploads", "target/tenant/file.txt"))
         for call in tools.restore_database.call_args_list:
-            self.assertEqual(call.args[1], ["sys_post"])
+            _, tables, path, expected = call.args
+            self.assertEqual(tables, ["sys_post"])
+            artifact = next(item for item in manifest["artifacts"]
+                            if item["relative_path"] == path.relative_to(root).as_posix())
+            self.assertEqual(expected, {key: artifact[key] for key in ("bytes", "sha256")})
 
-    def test_restore_requires_running_record_same_physical_targets_and_stopped_processes(self):
+    def test_restore_requires_running_record_and_same_physical_targets(self):
         manifest = inventory(self.plan)
         for change in (lambda value: value.update(status="succeeded"),
                        lambda value: value["plan"]["databases"][0].update(database="source_control"),
@@ -170,11 +174,6 @@ class ReferenceTests(unittest.TestCase):
             change(record)
             with self.assertRaises(ValueError):
                 execution.validate_restore_record(self.plan, manifest, record, record["plan"])
-        with patch.object(reference, "read_process", return_value={"pid": 1}), patch.object(reference, "process_identity", return_value={"pid": 1}):
-            with self.assertRaisesRegex(ValueError, "必须停止"):
-                reference.require_stopped(self.plan, "source")
-        with patch.object(reference, "read_process", return_value={"pid": 1}), patch.object(reference, "process_identity", return_value=None):
-            reference.require_stopped(self.plan, "source")
 
     def test_source_with_existing_tenant_cannot_be_seeded(self):
         tools = Mock()
@@ -183,41 +182,6 @@ class ReferenceTests(unittest.TestCase):
             reference.require_empty_source(self.plan, tools)
         tools.mysql.return_value = "0"
         reference.require_empty_source(self.plan, tools)
-
-    def test_existing_check_defaults_to_target_and_accepts_explicit_source_without_empty_check(self):
-        reference.work_directory(self.plan)
-        path = self.backend / "plan.json"
-        path.write_text(json.dumps(self.plan))
-        original = path.read_bytes()
-        for options, side in (([], "target"), (["--side", "source"], "source"),
-                              (["--side", "target"], "target")):
-            output = io.StringIO()
-            request = reference.ReferenceRequest(command="check-existing", backend_dir=self.backend,
-                                                 plan=path, write=False, side=side)
-            with contextlib.redirect_stdout(output), \
-                    patch.object(reference, "ExternalTools"), patch.object(reference, "check_api") as check, \
-                    patch.object(reference, "require_empty_source") as empty:
-                reference.main(request)
-            self.assertEqual(check.call_args.args[2], side)
-            empty.assert_not_called()
-            self.assertEqual(json.loads(output.getvalue()), {"plan_sha256": reference.plan_hash(self.plan),
-                                                            "side": side, "scope_id": self.plan[side]["scope_id"]})
-        self.assertEqual(path.read_bytes(), original)
-
-
-    def test_dataset_check_stays_source_and_requires_empty_source(self):
-        reference.work_directory(self.plan)
-        path = self.backend / "plan.json"
-        path.write_text(json.dumps(self.plan))
-        request = reference.ReferenceRequest(command="check-dataset", backend_dir=self.backend,
-                                             plan=path, write=False)
-        with contextlib.redirect_stdout(io.StringIO()), \
-                patch.object(reference, "ExternalTools"), patch.object(reference, "check_api") as check, \
-                patch.object(reference, "require_empty_source") as empty:
-            reference.main(request)
-        self.assertEqual(check.call_args.args[2], "source")
-        empty.assert_called_once()
-
 
     def test_dataset_uses_long_stage_timeout_and_preserves_timeout_failure(self):
         self.plan["dataset"] = {"timeout_seconds": 21600}

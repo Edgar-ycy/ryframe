@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from native_s3_client import (NativeS3InvocationError, _invoke as native_invoke,
-                              _read_response as native_response)
+                              _read_response as native_response, configuration as object_configuration)
 import subprocess
 
 from collections import Counter
@@ -22,14 +22,13 @@ from devex_clone_tools import verify as verify_tools
 from full_stack_runtime import configuration_digest, worker_ready_url
 from rate_limit_client import load_app_table
 from restore_build import file_digest
-from restore_reference_plan import BUCKETS, plan_hash
-from source_inventory import snapshot
+from restore_reference_plan import BUCKETS, plan_hash, configuration_binding
 
 KEYS = {"shared-control": ("combined", "shared"), "shared": ("tenant", "shared"),
         "dedicated-a": ("tenant", "dedicated"), "dedicated-b": ("tenant", "dedicated")}
 EXCLUSIVE = {"mysql_exclusive", "redis_exclusive", "object_storage_exclusive"}
 REVIEW_FILE_TOOLS = ("mysql", "mysqldump", "rustfs")
-REVIEW_SUPERVISOR_TOOLS = ("redis_server", "wsl", "redis_python")
+REVIEW_SUPERVISOR_TOOLS = ("redis_server", "wsl", "native_tool")
 REVIEW_TOOLS = (*REVIEW_FILE_TOOLS, *REVIEW_SUPERVISOR_TOOLS)
 _UUID = r"[a-f0-9]{32}"
 _REGISTRATION_FIELDS = {"format_version", "kind", "request", "environment", "storage_run",
@@ -356,7 +355,7 @@ def _redis_observations(target: Path, remaining: set[str], prepared: dict,
     remaining.difference_update(current_paths)
 
 
-def validate_initialization_delta(target: Path, current: list[dict], prepared: list[dict],
+def validate_initialization_delta(backend: Path, target: Path, current: list[dict], prepared: list[dict],
                                   request: dict,
                                   required: set[str], *, observation_rounds: int,
                                   inventory_failed: bool = False,
@@ -375,6 +374,9 @@ def validate_initialization_delta(target: Path, current: list[dict], prepared: l
     if missing:
         raise ValueError("fresh 初始化缺少固定阶段文件：" + ", ".join(sorted(missing)))
     remaining = set(additions) - required - {"copy-target.guard"}
+    from devex_clone_target_prepared_files import active_observations
+
+    prepared_map = _file_map(active_observations(backend, target, prepared))
     objects_initialized = initialized_objects is not None
     for stage in ("bucket-readiness", "bucket-versioning", "scoped-list"):
         _static_observations(
@@ -414,14 +416,15 @@ def _native(operation: str, backend: Path, **arguments) -> dict:
     if tool_binding() is None:
         raise ValueError("目标绑定缺少受管 Rust 工具；请通过 run_checks.py 或正式 xtask 入口执行")
     def invoke(command, **options):
-        options["timeout"] = 30
+        # 完整复验沿用各读命令期限，不增加整体短上界。
+        options["timeout"] = None if operation == "fresh-verify-target" else 30
         return subprocess.run(command, **options)
 
     try:
         result, response = native_invoke(
             "__target-binding", {"format_version": 1, "operation": operation,
                                   "backend": str(backend), "arguments": arguments},
-            invoke, may_write=False,
+            invoke, may_write=operation == "fresh-verify-target",
         )
     except NativeS3InvocationError as error:
         raise ValueError("原生目标绑定进程未完成：" + str(error.error_type)
@@ -459,32 +462,28 @@ def execution_binary_bindings(backend: Path, request: dict) -> list[dict]:
     return _native("binaries", backend, request=request)["bindings"]
 
 
-def pending_request_binding(backend: Path, request: dict, predecessor: dict) -> tuple[dict, dict]:
+def predecessor_request_binding(backend: Path, request: dict, predecessor: dict) -> tuple[dict, dict]:
     result = _native("request", backend, request=request, predecessor=predecessor)
     return result["review"], result["selected"]
 
 
-def execution_backend(backend: Path, request: dict) -> tuple[Path, dict]:
-    """解析可选的冻结 业务 crate 执行工作树，默认继续使用当前后端。"""
-    declared = request.get("execution_backend")
-    if declared is None:
-        return backend.resolve(strict=True), {"kind": "current-backend", "path": str(backend.resolve(strict=True))}
-    exact(declared, {"fixture", "path"})
-    fixture_path = bound_file(backend, declared["fixture"])
-    fixture = read_json(fixture_path)
-    if (fixture.get("format_version") != 1 or fixture.get("fixture") != "business"
-            or fixture.get("status") != "ready" or not isinstance(fixture.get("paths"), dict)
-            or not isinstance(fixture.get("generated"), dict)):
-        raise ValueError("冻结 业务 crate 工作树收据无效")
-    root = local_path(backend, declared["path"])
-    expected = Path(fixture["paths"].get("backend", ""))
-    generated = fixture["generated"].get("backend")
-    if (root != expected or not (root / "Cargo.toml").is_file() or not (root / ".git").exists()
-            # 业务 crate 收据绑定的是生成内容快照；忽略运行目录不应让冻结执行树失效。
-            or not isinstance(generated, dict) or snapshot(root)[0] != generated):
-        raise ValueError("冻结 业务 crate 后端工作树或生成来源已变化")
-    return root, {"kind": "business-fixture", "path": str(root), "fixture": declared["fixture"], "source": generated}
+def review_successor_binding(backend: Path, descriptor: dict) -> dict:
+    return _native("review-successor", backend, descriptor=descriptor)
 
+
+def fixture_arm_storage(backend: Path, registration: dict, binding: dict | None,
+                        *, active: bool) -> dict | None:
+    result = _native("fixture-arm-storage", backend, registration=registration,
+                     binding=binding, active=active)
+    if set(result) != {"binding"} or (result["binding"] is not None and not isinstance(result["binding"], dict)):
+        raise ValueError("原生 arm 夹具存储响应无效；保留现场，不重放")
+    return result["binding"]
+
+
+def execution_backend(backend: Path, request: dict) -> tuple[Path, dict]:
+    """由同一原生权威核验当前、生成或独立发布执行来源。"""
+    result = _native("execution-backend", backend, request=request)
+    return Path(result["path"]), result["binding"]
 
 def application_config_directory(backend: Path, request: dict) -> Path:
     return Path(_native("config-directory", backend, request=request)["path"])
@@ -513,13 +512,17 @@ def generation(backend: Path, request: dict, run) -> dict:
     never_started(backend, selected)
     if configuration_digest(execution_root, config_dir) != digest(request["configuration_sha256"]):
         raise ValueError("新目标 APP 配置或秘密发生变化")
+    object_binding = configuration_binding(execution_root, config_dir)
+    if object_configuration(object_binding, execution_root) != request["target"]["s3"]:
+        raise ValueError("目标对象连接身份与绑定配置文件不同；请核对请求和显式配置，不回显凭据")
+    side = {**request["target"], "s3": {"configuration": object_binding}}
     maintenance = verify_tools(execution_root, bound_file(backend, request["maintenance_build"]), run)
     physical = native_response(*native_invoke(
         "__source-evidence", {"operation": "physical-binding", "write": False,
             "arguments": {
                 'backend': str(execution_root),
                 'evidence_root': str(execution_root),
-                'source': request["target"],
+                'source': side,
                 'app_env': environment.get("APP_ENV"),
                 'config_dir': str(config_dir),
             },
@@ -529,7 +532,7 @@ def generation(backend: Path, request: dict, run) -> dict:
     for actual in physical["databases"]:
         if any(actual[key] != planned[actual["key"]][key] for key in ("host", "port")):
             raise ValueError("目标 MySQL host/port 不是审阅计划中的地址")
-    configuration = inventory_configuration(execution_root, environment, request["target"], config_dir=config_dir)
+    configuration = inventory_configuration(execution_root, environment, side, config_dir=config_dir)
     reset_config(execution_root, request, selected)
     verify_api_address(execution_root, selected["api_url"], config_dir=config_dir)
     table = load_app_table(execution_root, environment, config_dir=config_dir)
@@ -545,13 +548,12 @@ def generation(backend: Path, request: dict, run) -> dict:
     if not isinstance(password, str) or not password.strip():
         raise ValueError("所选配置文件的 bootstrap.admin_password 必须显式提供初始化管理员密码")
     secrets = {"bootstrap.admin_password": password}
+    if (configuration_binding(execution_root, config_dir) != object_binding
+            or configuration_digest(execution_root, config_dir) != request["configuration_sha256"]
+            or inventory_configuration(execution_root, environment, side, config_dir=config_dir) != configuration):
+        raise ValueError("目标代次观察期间绑定配置发生变化；保留现场并重新核对，不自动重放")
     return {"execution": execution, "maintenance": maintenance, "physical": physical, "configuration": configuration,
             "configuration_sha256": request["configuration_sha256"],
             "seed_credentials_sha256": plan_hash(secrets), "request_sha256": plan_hash(request),
             "review_sha256": request["review"]["sha256"], "selected": selected,
             "operator_declared_controlled_generation_only": True, "external_writers_discovered": False}
-
-
-def validate_reset_manifest(manifest: dict, request: dict, original: dict) -> None:
-    _native("reset-manifest", Path(original["maintenance"]["backend_root"]),
-            manifest=manifest, request=request, original=original)

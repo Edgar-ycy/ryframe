@@ -19,7 +19,7 @@ pub(in crate::command) fn execute(plan: &GenerationPlan, module: &str) -> Result
     )?)?;
     println!("→ 在隔离候选工作区创建业务骨架并锁定依赖");
     let candidate = CandidateWorkspace::create(&plan.workspace_root, false)?;
-    let allowed = generate(&candidate, module, &plan.package)?;
+    let allowed = generate(&candidate, module, &plan.package, &plan.target_dir)?;
     let changes = candidate.changes(&allowed)?;
     print_changes("后端", &changes);
     if plan.write {
@@ -37,6 +37,7 @@ fn generate(
     candidate: &CandidateWorkspace,
     module: &str,
     package: &str,
+    target: &Path,
 ) -> Result<BTreeSet<PathBuf>, String> {
     let report = bootstrap_business_package(BusinessBootstrapOptions {
         workspace_root: &candidate.path,
@@ -56,7 +57,7 @@ fn generate(
         })
         .collect::<Result<Vec<_>, String>>()?;
     let external = normalize_external_paths(&candidate.source, &candidate.path)?;
-    lockfile::resolve(&candidate.path, package)?;
+    lockfile::resolve(&candidate.path, package, target)?;
     // 展开路径仅供候选 Cargo 使用，交付清单保留原路径与本次业务注册。
     for (path, bytes) in manifests {
         fs::write(&path, bytes)

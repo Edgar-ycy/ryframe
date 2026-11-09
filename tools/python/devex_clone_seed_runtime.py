@@ -16,13 +16,13 @@ from devex_clone_post_context import Context, absent, execution_root
 from devex_clone_post_model import exact_directory
 from devex_clone_post_process import Producer, require_quiet, recover_session, cleanup_failure, inspect_producer
 from devex_clone_run_state import binding, load_state
-from devex_clone_seed import (registered, history, identity_inputs, identity_evidence,
+from devex_clone_seed import (registered, history, identity_inputs, identity_evidence, invoke_seed_tool,
                               verified_identity_stage, latest)
 from devex_clone_quota_model import capacity_evidence
 from devex_clone_source_proof import bound_file, require_closed_port, verify_api_address
 from devex_clone_target_resources import Resources
 from devex_clone_target_binding import application_config_directory
-from full_stack_process import process_identity, read_process
+from full_stack_process import process_identity
 from full_stack_runtime import register_runtime, verify_runtime, worker_ready_url
 
 
@@ -68,7 +68,7 @@ def resources_guard(context):
         absent(Path(context.selected["runtime_dir"]))
         absent(context.runtime / "worker.json")
         resources = Resources(context.backend, context.target, context.output, context.selected, context.review, context.run,
-                              storage_run=context.resolved_storage_run())
+                              storage_run=context.resolved_storage_run(), request_descriptor=context.target_descriptor)
         resources.storage_identity()
         resources.tools.verify_databases("target")
         resources.tools.verify_objects("target")
@@ -86,13 +86,6 @@ def schedules_guard(context):
         if raw != "0":
             raise ValueError("seed 仍有启用或未明确核清的调度，禁止 Worker")
     return confirmations
-
-
-def old_api_stopped(context, request):
-    bound_file(context.backend, request["api_process"])
-    identity = read_process(context.runtime, "api", context.target_config["scope_id"])
-    if process_identity(identity["pid"]) is not None:
-        raise ValueError("原 API 尚未停止或 PID 已复用，不能启动新运行对")
 
 
 def current_guard(context, request, *, old_api=False):
@@ -247,32 +240,22 @@ def prepare(context, request):
             "outbox_drained": False, "restore_qualified": False}
 
 
-def start(context, request, number):
-    from devex_clone_runtime import control
-
-    directory = context.directory_root
-    prior = [item for item in load_state(directory)["attempts"] if item["number"] != number
-             and item["mode"] not in {"stop", "status", "recover", "recover-session"}]
-    runtime, handoff, private = runtime_inputs(context.backend, directory)
-    if not prior:
-        raise ValueError("最新阶段未通过，不能启动 Worker")
-    if prior[-1]["status"] != "passed":
-        restart_after_stop(context.backend, directory, runtime, handoff, prior[-1], number)
-    proof = verified_identity_stage(context.backend, directory, request)
-    if proof != handoff["identity"]:
-        raise ValueError("seed 交接不是最新明确身份验证结果")
-    if capacity_evidence(context.backend, directory, request) != handoff["capacity"]:
-        raise ValueError("seed 交接的容量证明发生变化")
-    if current_guard(context, request) != handoff["schedules"]:
-        raise ValueError("seed 调度确认变化")
-    old_api_stopped(context, request)
-    with Environments(private, private).use("target"):
-        result = control(context.backend, runtime, "start", ("api", "worker"), handoff["api_url"])
-    current_guard(context, request)
-    if verified_identity_stage(context.backend, directory, request) != proof:
-        raise ValueError("启动期间身份发布证据变化")
-    return {"status": "seed_runtime_started", "runtime": result, "handoff": binding(runtime / "handoff.json"),
-            "outbox_drained": False, "restore_qualified": False}
+def pair_control(backend, runtime, operation, roles, handoff, number):
+    if not ((operation == "status" and roles == ("api", "worker"))
+            or (operation == "stop" and roles in {("api",), ("worker",)})):
+        raise ValueError("Python 角色控制只接受业务关闭的状态或单角色停止")
+    directory = runtime.parent.parent
+    path = runtime / "handoff.json"
+    handoff_binding = binding(path)
+    if read_json(path) != handoff or binding(path) != handoff_binding:
+        raise ValueError("seed 角色控制交接已经变化")
+    result = invoke_seed_tool(backend, "__seed-runtime-control", {
+        "format_version": 1, "kind": "ryframe-seed-runtime-control", "run_dir": str(directory),
+        "attempt": number, "operation": operation, "roles": list(roles), "handoff": handoff_binding,
+    }, timeout=240)
+    if set(result) != {"runtime", "authority"} or not isinstance(result["runtime"], dict):
+        raise ValueError("seed 原生角色控制结果无效，禁止重放")
+    return result
 
 
 def stopped_evidence(runtime, handoff):
@@ -316,45 +299,15 @@ def stopped_evidence(runtime, handoff):
             if (runtime / (role + ".json")).exists() else None for role in ("api", "worker")}}
 
 
-def restart_after_stop(backend, directory, runtime, handoff, failed, number):
-    if failed["stage"] != "seed-runtime" or failed["mode"] != "start":
-        raise ValueError("仅明确停止可解除失败 start 的运行状态，其余失败仍需对应核验")
-    stopped = latest(directory, "seed-runtime", {"stop"}, current=number)
-    result = read_json(bound_file(backend, stopped["result"]))
-    if (stopped["number"] <= failed["number"] or result.get("restart_ready") is not True
-            or result.get("handoff") != binding(runtime / "handoff.json")
-            or result.get("stopped_evidence") != stopped_evidence(runtime, handoff)
-            or result["runtime"]["operation"] != "stop"
-            or result["runtime"]["runtime_directory"] != str(runtime)
-            or result["runtime"]["scope_id"] != handoff["scope_id"]
-            or result["runtime"]["processes"] != {role: {"state": "stopped", "identity": None, "ready": False}
-                                                   for role in ("api", "worker")}):
-        raise ValueError("缺少失败之后同一 runtime 的精确双角色停止证明")
-
-
 def execute_seed(backend, directory, value, mode, number, request_file=None, producer_binding=None):
-    from devex_clone_runtime import control, observe, reconcile_lock
-
+    if mode == "arm-input":
+        raise ValueError("ARM 输入签发必须使用 Rust 正式入口")
+    if mode == "start":
+        raise ValueError("seed 启动只使用 Rust 正式入口")
     if mode == "recover-session":
         if producer_binding is None:
             raise ValueError("身份 Node 回收需要明确收据")
         return recover_session(backend, directory, number, producer_binding)
-    if mode in {"stop", "status", "recover"}:
-        runtime, handoff, private = runtime_inputs(backend, directory)
-        with Environments(private, private).use("target"):
-            result = (reconcile_lock(runtime) if mode == "recover"
-                      else observe(backend, runtime, ("api", "worker"), handoff["api_url"])
-                      if mode == "status"
-                      else control(backend, runtime, mode, ("api", "worker"), handoff["api_url"]))
-        observed = {"status": "seed_runtime_" + mode, "runtime": result, "restore_qualified": False}
-        if mode == "stop":
-            observed["handoff"] = binding(runtime / "handoff.json")
-            try:
-                observed["stopped_evidence"] = stopped_evidence(runtime, handoff)
-                observed["restart_ready"] = True
-            except (ValueError, OSError, KeyError, TypeError) as error:
-                observed.update(restart_ready=False, stopped_evidence_error_type=type(error).__name__)
-        return observed
     if mode in {"source-generation-start", "source-generation-stop", "source-generation-recover"}:
         if request_file is None:
             raise ValueError("source-generation 需要明确 --request")
@@ -371,22 +324,6 @@ def execute_seed(backend, directory, value, mode, number, request_file=None, pro
 
         return execute_close(backend, directory, request_file, number)
     require_quiet(backend, directory, number)
-    if mode in {"source-export", "source-export-reconcile"}:
-        from devex_clone_seed_export import execute_export
-
-        return execute_export(backend, directory, number, reconcile=mode == "source-export-reconcile")
-    if mode == "source-rebind":
-        if request_file is None:
-            raise ValueError("source-rebind 需要明确 successor --request")
-        from devex_clone_seed_rebind import register_rebind
-
-        return register_rebind(backend, directory, request_file, number)
-    if mode == "arm-input":
-        if request_file is None:
-            raise ValueError("arm-input 需要明确 --request")
-        from devex_clone_seed_arm import publish_arm_input
-
-        return publish_arm_input(backend, directory, request_file, number)
     with target_lock(backend, value) as owned_lock_identity:
         if mode == "register":
             if request_file is None:
@@ -414,10 +351,6 @@ def execute_seed(backend, directory, value, mode, number, request_file=None, pro
                     or not isinstance(response["result"], dict)):
                 raise ValueError("seed 原生登记未完成；核对当前 attempt、控制器、目标锁和绑定配置，禁止自动重放")
             return response["result"]
-        if mode == "source-register":
-            from devex_clone_seed_source import register_source
-
-            return register_source(backend, directory, value, number)
         request = registered(backend, directory)
         # 持锁阶段构造上下文必须携带同一锁身份，初始化文件树复核才不会被 guard 锁定拒绝。
         context = Context(backend, directory, value, number, stage="seed-runtime",
@@ -434,8 +367,6 @@ def execute_seed(backend, directory, value, mode, number, request_file=None, pro
             return identity_run(context, request, mode.removeprefix("identities-"))
         if mode == "prepare":
             return prepare(context, request)
-        if mode == "start":
-            return start(context, request, number)
         if mode == "close":
             from devex_clone_seed_close import execute_close
 

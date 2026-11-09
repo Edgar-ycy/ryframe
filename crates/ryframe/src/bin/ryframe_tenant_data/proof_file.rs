@@ -55,11 +55,11 @@ pub(crate) fn stable_artifact_with_hook(
     })
 }
 
-fn same_metadata(left: &std::fs::Metadata, right: &std::fs::Metadata) -> bool {
+pub(super) fn same_metadata(left: &std::fs::Metadata, right: &std::fs::Metadata) -> bool {
     left.len() == right.len() && left.modified().ok() == right.modified().ok()
 }
 
-fn regular_path(path: &Path, label: &str) -> Result<std::fs::Metadata, String> {
+pub(super) fn regular_path(path: &Path, label: &str) -> Result<std::fs::Metadata, String> {
     if !path.is_absolute()
         || path.components().any(|component| {
             matches!(

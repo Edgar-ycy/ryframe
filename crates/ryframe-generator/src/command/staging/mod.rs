@@ -15,6 +15,7 @@ mod frontend;
 mod install;
 mod lock;
 mod manifest;
+mod preflight;
 mod snapshot;
 mod workspace;
 
@@ -32,7 +33,7 @@ pub(super) fn execute(plan: &GenerationPlan, tables: Option<&[TableInfo]>) -> Re
         .transpose()?;
     println!("→ 创建隔离候选工作区，正式源码保持前像");
     let backend = CandidateWorkspace::create(&plan.workspace_root, true)?;
-    let cache = generation_cache(&plan.workspace_root);
+    let cache = plan.target_dir.join("ryframe-generate");
     let catalog_target = cache.join("catalog-target");
     let pipeline_target = cache.join("pipeline");
     println!("→ 编译候选模型并生成整批 CRUD 与迁移");
@@ -40,16 +41,20 @@ pub(super) fn execute(plan: &GenerationPlan, tables: Option<&[TableInfo]>) -> Re
     let mut frontend_allowed = BTreeSet::new();
     let frontend = if let Some(root) = &frontend_root {
         let frontend = CandidateWorkspace::create(root, false)?;
-        frontend_allowed = frontend::generate(
+        frontend_allowed = match frontend::generate(
             &backend.path,
             &frontend,
             root,
             &pipeline_target,
             &catalog_target,
-        )?;
+        ) {
+            Ok(allowed) => allowed,
+            Err(error) => return Err(backend.retain(frontend.retain(error))),
+        };
         backend_allowed.insert("openapi/openapi.json".into());
         Some(frontend)
     } else {
+        preflight::validate(&backend.path, &pipeline_target)?;
         None
     };
     let backend_changes = backend.changes(&backend_allowed)?;
@@ -87,18 +92,22 @@ pub(super) fn execute(plan: &GenerationPlan, tables: Option<&[TableInfo]>) -> Re
     backend_lock.release()
 }
 
-fn generation_cache(root: &Path) -> PathBuf {
-    std::env::var_os("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .map(|path| {
-            if path.is_absolute() {
-                path
-            } else {
-                root.join(path)
-            }
-        })
-        .unwrap_or_else(|| root.join("target"))
-        .join("ryframe-generate")
+pub(super) fn safe_target_directory(target: &Path) -> Result<PathBuf, String> {
+    let anchor = target
+        .ancestors()
+        .last()
+        .ok_or("生成器 target_dir 缺少路径根")?;
+    let relative = target
+        .strip_prefix(anchor)
+        .map_err(|_| "生成器 target_dir 路径无效")?;
+    let target = safe_path(anchor, relative)?;
+    if target
+        .ancestors()
+        .any(|path| path.exists() && !path.is_dir())
+    {
+        return Err("generator.target_dir 及已存在的父路径必须为普通目录".into());
+    }
+    Ok(target)
 }
 
 fn frontend_root(plan: &GenerationPlan) -> Result<Option<PathBuf>, String> {

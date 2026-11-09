@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 from contextlib import nullcontext
 from pathlib import Path
+import subprocess
 import sys
 import unittest
 from workspace_directory import WorkspaceDirectory
@@ -14,6 +15,7 @@ import devex_clone_seed_arm as arm
 from devex_clone_capture import read_json, write_json
 from devex_clone_run_state import binding
 from restore_reference_plan import plan_hash
+from source_inventory import snapshot
 
 
 class SeedArmTests(unittest.TestCase):
@@ -183,7 +185,7 @@ class SeedArmTests(unittest.TestCase):
                 }), \
                 patch.object(arm, "request_binding", return_value=("same-review", {})), \
                 patch.object(arm, "_target_build") as target_build:
-            observed = arm._inputs(self.backend, None, self.request, live_storage=True)
+            observed = arm.validate_arm_request(self.backend, self.request, live_storage=True)
         published.assert_called_once_with(self.backend, self.source_registration, live_storage=True)
         target_build.assert_called_once_with(self.backend, target, [])
         manifest = arm._manifest(self.request, observed)
@@ -210,7 +212,7 @@ class SeedArmTests(unittest.TestCase):
         ):
             changed = {**self.request, field: self.source_request}
             with self.subTest(unknown_field=field), self.assertRaises(ValueError):
-                arm._inputs(self.backend, None, changed, live_storage=False)
+                arm.validate_arm_request(self.backend, changed, live_storage=False)
 
     def test_arm_request_manifest_and_consumer_freeze_same_rebind_receipt(self):
         import devex_clone_run as run
@@ -230,7 +232,7 @@ class SeedArmTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 run._published_seed_source(self.backend, manifest, live_storage=False)
 
-    def test_successor_inputs_bind_held_c52_and_exact_target_side(self):
+    def test_successor_reader_binds_c52_and_exact_target_side(self):
         request, source, lifecycle = self.successor_case()
         with (
             patch(
@@ -241,17 +243,15 @@ class SeedArmTests(unittest.TestCase):
                 arm, "target_lifecycle_binding", return_value=lifecycle
             ),
             patch.object(arm, "request_binding", return_value=("ready-review", {})) as target,
-            patch.object(arm, "_require_owned_run") as held,
             patch.object(arm, "_target_build"),
         ):
-            observed = arm._inputs(
-                self.backend, self.directory, request, live_storage=True
+            observed = arm.validate_arm_request(
+                self.backend, request, live_storage=True
             )
         published.assert_called_once_with(
             self.backend, request["review_successor"], live_storage=True
         )
         regular.assert_not_called()
-        held.assert_called_once_with(self.directory)
         target.assert_called_once_with(self.backend, lifecycle["target"])
         self.assertEqual(observed["target_side"], "base")
         manifest = arm._manifest(request, observed)
@@ -364,10 +364,7 @@ class SeedArmTests(unittest.TestCase):
 
     def test_successor_inputs_reject_detached_source_and_target(self):
         request, source, lifecycle = self.successor_case()
-        detached = copy.deepcopy(source)
-        detached["directory"] = self.local / "other-run"
         cases = (
-            ("held run", detached, lifecycle),
             (
                 "C52",
                 {
@@ -403,71 +400,10 @@ class SeedArmTests(unittest.TestCase):
                     return_value=selected_lifecycle,
                 ),
                 patch.object(arm, "request_binding", return_value=("ready", {})),
-                patch.object(arm, "_require_owned_run"),
                 patch.object(arm, "_target_build"),
                 self.assertRaises(ValueError),
             ):
-                arm._inputs(self.backend, self.directory, request, live_storage=False)
-
-    def test_successor_publish_recomputes_all_inputs_and_records_lineage(self):
-        request, source, _ = self.successor_case()
-        self.request_file.unlink()
-        write_json(self.request_file, request)
-        inputs = {**self.inputs, "source": source}
-        with (
-            patch.object(arm, "load_state", return_value={"attempts": []}),
-            patch.object(arm, "_inputs", return_value=inputs) as read_inputs,
-            patch.object(
-                arm, "target_storage_control", return_value=nullcontext()
-            ),
-            patch("devex_clone_run.target_lifecycle_binding", return_value={}),
-            patch("devex_clone_run._published_seed_source", return_value=source),
-            patch("devex_clone_run.inherited_build_bridges", return_value=[]),
-        ):
-            result = arm.publish_arm_input(
-                self.backend, self.directory, self.request_file, 1
-            )
-        self.assertEqual(read_inputs.call_count, 3)
-        for call in read_inputs.call_args_list:
-            self.assertEqual(call.args[:3], (self.backend, self.directory, request))
-        self.assertEqual(result["review_successor"], request["review_successor"])
-        self.assertEqual(result["source_registration"], self.source_registration)
-        self.assertEqual(result["remote_writes"], 0)
-
-    def test_successor_publish_rejects_target_state_change_after_manifest_write(self):
-        request, source, _ = self.successor_case()
-        self.request_file.unlink()
-        write_json(self.request_file, request)
-        inputs = {**self.inputs, "source": source}
-        storage = self.local / "guarded-target-storage"
-        storage.mkdir()
-        write_json(storage / "manifest.json", {"run": True})
-        write_json(storage / "state.json", {"generation": 1})
-        publish = arm._write_or_match
-
-        def publish_then_change_storage(path: Path, value: dict) -> None:
-            publish(path, value)
-            if path.name == "manifest.json":
-                (storage / "state.json").write_text(
-                    '{"generation": 2}\n', encoding="utf-8"
-                )
-
-        with (
-            patch.object(arm, "load_state", return_value={"attempts": []}),
-            patch.object(arm, "_inputs", return_value=inputs),
-            patch("devex_clone_run.target_storage_run", return_value=storage),
-            patch.object(arm, "_write_or_match", side_effect=publish_then_change_storage),
-            patch("devex_clone_run.target_lifecycle_binding", return_value={}),
-            patch("devex_clone_run._published_seed_source", return_value=source),
-            patch("devex_clone_run.inherited_build_bridges", return_value=[]),
-            self.assertRaisesRegex(ValueError, "阶段期间变化"),
-        ):
-            arm.publish_arm_input(
-                self.backend, self.directory, self.request_file, 1
-            )
-        output = self.directory / "seed-runtime/attempt-0001"
-        self.assertTrue((output / "request.json").is_file())
-        self.assertTrue((output / "manifest.json").is_file())
+                arm.validate_arm_request(self.backend, request, live_storage=False)
 
     def test_target_build_uses_current_audited_bridge_and_verified_tool_receipt(self):
         target = self.inputs["target"]
@@ -490,29 +426,30 @@ class SeedArmTests(unittest.TestCase):
 
     def test_target_build_uses_business_execution_root_and_its_receipt(self):
         execution = self.local / "business-backend"
-        (execution / ".git").mkdir(parents=True)
-        (execution / "Cargo.toml").write_text("[workspace]", encoding="utf-8")
+        execution.mkdir()
+        (execution / "Cargo.toml").write_text("[workspace]\nmembers=[]\n", encoding="utf-8")
+        (execution / ".gitignore").write_text("/.local-tests/\n", encoding="utf-8")
+        for args in (
+            ("init", "--quiet"),
+            ("config", "--local", "core.autocrlf", "false"),
+            ("add", "--", "Cargo.toml", ".gitignore"),
+            ("-c", "user.name=RyFrame fixture", "-c", "user.email=fixture@ryframe.invalid",
+             "-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "test: fixture"),
+        ):
+            subprocess.run(["git", "-C", str(execution), *args], check=True, capture_output=True)
         build = execution / ".local-tests/build/build.json"
         build.parent.mkdir(parents=True)
         write_json(build, {"kind": "devex-clone-tool-build"})
-        generated = {
-            "head": "a" * 40,
-            "patch_sha256": "b" * 64,
-            "files": [],
-        }
-        fixture = self.file(
-            "business-fixture",
-            {
-                "format_version": 1,
-                "fixture": "business",
-                "status": "ready",
-                "paths": {
-                    "backend": str(execution),
-                    "frontend": str(self.local / "business-frontend"),
-                },
-                "generated": {"backend": generated, "frontend": {}},
-            },
-        )
+        generated, _ = snapshot(execution)
+        fixture = self.file("business-fixture", {
+            "format_version": 1,
+            "fixture": "business",
+            "status": "ready",
+            "paths": {"backend": str(execution), "frontend": str(self.local / "business-frontend")},
+            "generated": {"backend": generated, "frontend": {}},
+        })
+        bridge = self.file("source-bridge", {"backend_root": str(self.backend)})
+        bridges = [{key: bridge[key] for key in ("path", "sha256")}]
         target = {
             **self.inputs["target"],
             "maintenance_build": binding(build),
@@ -523,91 +460,17 @@ class SeedArmTests(unittest.TestCase):
             "source": {"worktree_fingerprint": "business-product"},
         }
         with (
-            patch("devex_clone_target_binding.snapshot", return_value=(generated, b"")),
             patch.object(arm, "artifact_sources", return_value=nullcontext()) as audited,
             patch.object(arm, "verify_tools", return_value=receipt) as verify,
         ):
-            arm._target_build(self.backend, target, [])
-        audited.assert_called_once_with(execution, [])
-        verify.assert_called_once_with(execution, build)
+            arm._target_build(self.backend, target, bridges)
+            audited.assert_called_once_with(self.backend, bridges)
+            verify.assert_called_once_with(execution, build)
 
-    def test_publish_resumes_only_identical_failed_prefix(self):
-        partial = self.directory / "seed-runtime/attempt-0001"
-        partial.mkdir()
-        write_json(partial / "request.json", self.request)
-        attempts = [{"number": 1, "stage": "seed-runtime", "mode": "arm-input", "status": "failed"}]
-        with patch.object(arm, "load_state", return_value={"attempts": attempts}), \
-                patch.object(arm, "_inputs", return_value=self.inputs), \
-                patch.object(arm, "target_storage_control", return_value=nullcontext()), \
-                patch("devex_clone_run.target_lifecycle_binding", return_value={}), \
-                patch("devex_clone_run.inherited_build_bridges", return_value=[]):
-            result = arm.publish_arm_input(self.backend, self.directory, self.request_file, 2)
-        self.assertEqual(result["status"], "seed_arm_input_published")
-        self.assertEqual(result["remote_writes"], 0)
-        self.assertEqual(read_json(partial / "request.json"), self.request)
-        self.assertEqual(read_json(partial / "manifest.json")["source_registration"], self.source_registration)
-        self.assertFalse((self.directory / "seed-runtime/attempt-0002").exists())
-
-    def test_partial_resume_rejects_non_prefix_unknown_and_ambiguous_history(self):
-        first = self.directory / "seed-runtime/attempt-0001"
-        first.mkdir()
-        write_json(first / "manifest.json", {"out_of_order": True})
-        attempts = [{"number": 1, "stage": "seed-runtime", "mode": "arm-input", "status": "failed"}]
-        with patch.object(arm, "load_state", return_value={"attempts": attempts}), self.assertRaises(ValueError):
-            arm._existing_output(self.directory, 2)
-
-        (first / "manifest.json").unlink()
-        (first / "unknown.txt").write_text("unknown", encoding="utf-8")
-        with patch.object(arm, "load_state", return_value={"attempts": attempts}), self.assertRaises(ValueError):
-            arm._existing_output(self.directory, 2)
-
-        (first / "unknown.txt").unlink()
-        second = self.directory / "seed-runtime/attempt-0002"
-        second.mkdir()
-        attempts.append({"number": 2, "stage": "seed-runtime", "mode": "arm-input", "status": "failed"})
-        with patch.object(arm, "load_state", return_value={"attempts": attempts}), self.assertRaises(ValueError):
-            arm._existing_output(self.directory, 3)
-
-    def test_repeated_target_side_and_changed_source_registration_fail_closed(self):
-        saved = self.result()
-        result_path = self.directory / "prior-result.json"
-        write_json(result_path, saved)
-        attempts = [{"number": 1, "stage": "seed-runtime", "mode": "arm-input", "status": "passed",
-                     "result": binding(result_path)}]
-        with patch.object(arm, "load_state", return_value={"attempts": attempts}), \
-                patch.object(arm, "_inputs", return_value=self.inputs), \
-                patch.object(arm, "target_storage_control", return_value=nullcontext()), \
-                patch("devex_clone_run.target_lifecycle_binding", return_value={}), \
-                patch("devex_clone_run.inherited_build_bridges", return_value=[]), \
-                self.assertRaises(ValueError):
-            arm.publish_arm_input(self.backend, self.directory, self.request_file, 2)
-
-        other_registration = self.file("other-registration", {"published": "other"})
-        saved = self.result(side="candidate", source_registration=other_registration)
-        result_path.unlink()
-        write_json(result_path, saved)
-        with patch.object(arm, "load_state", return_value={"attempts": attempts}), \
-                patch.object(arm, "_inputs", return_value=self.inputs), \
-                patch.object(arm, "target_storage_control", return_value=nullcontext()), \
-                patch("devex_clone_run.target_lifecycle_binding", return_value={}), \
-                patch("devex_clone_run.inherited_build_bridges", return_value=[]), \
-                self.assertRaises(ValueError):
-            arm.publish_arm_input(self.backend, self.directory, self.request_file, 2)
-
-    def test_publish_keeps_partial_evidence_when_inputs_drift(self):
-        changed = copy.deepcopy(self.inputs)
-        changed["source"]["registration"]["source_storage"] = self.file("changed-storage", {"changed": True})
-        with patch.object(arm, "load_state", return_value={"attempts": []}), \
-                patch.object(arm, "_inputs", side_effect=[self.inputs, self.inputs, changed]), \
-                patch.object(arm, "target_storage_control", return_value=nullcontext()), \
-                patch("devex_clone_run.target_lifecycle_binding", return_value={}), \
-                patch("devex_clone_run.inherited_build_bridges", return_value=[]), \
-                self.assertRaises(ValueError):
-            arm.publish_arm_input(self.backend, self.directory, self.request_file, 1)
-        output = self.directory / "seed-runtime/attempt-0001"
-        self.assertEqual(read_json(output / "request.json"), self.request)
-        self.assertEqual(read_json(output / "manifest.json")["source_registration"], self.source_registration)
-
+            target["maintenance_build"] = self.inputs["target"]["maintenance_build"]
+            with self.assertRaisesRegex(ValueError, "当前后端 .local-tests"):
+                arm._target_build(self.backend, target, bridges)
+            verify.assert_called_once_with(execution, build)
 
 if __name__ == "__main__":
     unittest.main()

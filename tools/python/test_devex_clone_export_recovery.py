@@ -13,11 +13,10 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import devex_clone_export_recovery as recovery
-import devex_clone_run as run
 import devex_clone_run_state as state
 from devex_clone_capture import read_json, write_json
 from restore_reference_plan import plan_hash
-from process_environment import Environments
+from process_environment import Environments, configured
 
 
 class ExportRecoveryTests(unittest.TestCase):
@@ -101,22 +100,24 @@ class ExportRecoveryTests(unittest.TestCase):
         self.prepare_origin()
         controller = {**dict(os.environ), "CARGO_BUILD_JOBS": "4"}
         service = {"APP_ENV": "fixture-service"}
+        effective_service = configured(service, inherited=controller)
+        self.assertNotIn("CARGO_BUILD_JOBS", effective_service)
         environment = Environments(service, controller)
         def control_environment():
-            if dict(os.environ) not in (controller, service):
+            if dict(os.environ) not in (controller, effective_service):
                 raise ValueError("fixture ambient changed")
             return environment.use("target")
         def generation(*_args, control_environment):
-            self.assertEqual(dict(os.environ), service)
+            self.assertEqual(dict(os.environ), effective_service)
             with control_environment():
                 self.assertEqual(dict(os.environ), controller)
-            self.assertEqual(dict(os.environ), service)
+            self.assertEqual(dict(os.environ), effective_service)
             return self.generation
         def storage(*_args):
-            self.assertEqual(dict(os.environ), service)
+            self.assertEqual(dict(os.environ), effective_service)
             return self.storage
         def verify(_backend, exported):
-            self.assertEqual(dict(os.environ), service)
+            self.assertEqual(dict(os.environ), effective_service)
             return self.verified(exported)
         with patch.dict(os.environ, controller, clear=True), \
                 patch("devex_clone_export_verify.verify_source_export", side_effect=verify), \
@@ -134,26 +135,10 @@ class ExportRecoveryTests(unittest.TestCase):
                 state.finish(self.directory, number, result=result)
 
     def test_complete_export_followed_by_outer_failure_forbids_reexport(self):
-        number = self.start("run")
-
-        def export_source(_backend, _request, output, *, control_environment=None):
-            output.mkdir()
-            write_json(output / "export.json", self.export_value)
-
-        with patch("devex_clone_storage.current_storage_binding", return_value=self.storage), \
-                patch("devex_clone_source.export_source", side_effect=export_source) as exported, \
-                patch("devex_clone_export_verify.verify_source_export",
-                      side_effect=lambda _, item: self.verified(item)):
-            result = run.run_export(self.backend, self.directory, self.value, self.environment,
-                                    number, "run", self.sources)
-        self.fail_current(number, result)
+        self.prepare_origin()
         retry = self.start("run")
-        with patch("devex_clone_source.export_source") as repeated, \
-                self.assertRaisesRegex(ValueError, "禁止重新完整导出"):
-            run.run_export(self.backend, self.directory, self.value, self.environment,
-                           retry, "run", self.sources)
-        exported.assert_called_once()
-        repeated.assert_not_called()
+        with self.assertRaisesRegex(ValueError, "禁止重新完整导出"):
+            recovery.reject_reexport(self.backend, self.directory, retry)
         self.fail_current(retry)
 
     def test_reconcile_requires_exactly_one_failed_origin_candidate(self):

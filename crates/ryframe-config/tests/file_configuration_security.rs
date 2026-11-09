@@ -7,6 +7,7 @@ use support::{Fixture, PRODUCTION};
 fn removed_environment_entries_cannot_override_file_configuration_in_a_subprocess() {
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
+            "--ignored",
             "--exact",
             "removed_environment_probe_uses_its_own_files",
             "--nocapture",
@@ -35,6 +36,7 @@ fn removed_environment_entries_cannot_override_file_configuration_in_a_subproces
 }
 
 #[test]
+#[ignore = "仅由父用例在注入已退役配置变量的独立子进程中执行"]
 fn removed_environment_probe_uses_its_own_files() {
     let fixture = Fixture::new();
     fixture.write(
@@ -127,7 +129,11 @@ fn bootstrap_password_is_optional_for_runtime_and_always_redacted_in_debug() {
         let config = fixture.load(Environment::Dev);
         assert_eq!(config.bootstrap.admin_password.as_deref(), Some(password));
         assert!(!format!("{config:?}").contains("private-initial-admin-password"));
-        assert!(format!("{:?}", config.bootstrap).contains("<redacted>"));
+        let bootstrap_debug = format!("{:?}", config.bootstrap);
+        assert!(bootstrap_debug.contains("<redacted>"));
+        if !password.is_empty() {
+            assert!(!bootstrap_debug.contains(password));
+        }
     }
     let absent = BootstrapConfig::default();
     assert!(absent.admin_password.is_none());

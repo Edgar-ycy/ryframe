@@ -36,9 +36,9 @@ class SourceFileConfigurationTests(unittest.TestCase):
         self.assertEqual(table["database"]["primary"]["password"], "fixture-secret")
         self.assertTrue(all(target["password"] == "fixture-secret" for target in table["tenant_data"]["targets"]))
         self.assertEqual(table["redis"]["password"], "redis-fixture-secret")
-        self.assertEqual({field: table["object_storage"][field] for field in ("access_key", "secret_key")},
-                         {field: item.request["source"]["s3"][field] for field in ("access_key", "secret_key")})
-        self.assertEqual(set(item.request["source"]["s3"]), {"endpoint", "region", "access_key", "secret_key"})
+        self.assertEqual(item.request["source"]["s3"], {"configuration": item.object_configuration})
+        self.assertEqual(item.object_configuration, configuration_binding(item.backend, item.backend / "config"))
+        self.assertNotIn(table["object_storage"]["secret_key"], json.dumps(item.request))
         self.assertEqual(load_app_table(item.backend, item.environment, config_dir=item.backend / "config"), table)
         self.assertEqual((item.backend / "config/app.toml").read_text(encoding="utf-8").count("="), 0)
 
@@ -46,6 +46,38 @@ class SourceFileConfigurationTests(unittest.TestCase):
         (self.fixture.backend / "config/app.test.toml").unlink()
         with self.assertRaises((FileNotFoundError, ValueError)):
             load_app_table(self.fixture.backend, self.fixture.environment)
+
+    def test_generation_uses_registered_external_configuration_and_rejects_directory_or_runtime_drift(self):
+        item = self.fixture
+        item.relocate_configuration()
+        directory = Path(item.runtime["api_config_dir"])
+        self.assertFalse((item.backend / "config").exists())
+        with patch.object(proof, "load_app_table", wraps=proof.load_app_table) as loads, \
+                patch.object(proof, "native_invoke", wraps=proof.native_invoke) as native:
+            observed = proof.verify_generation(item.backend, item.request, item)
+        self.assertEqual(observed["runtime"], item.runtime)
+        self.assertTrue(loads.call_args_list)
+        self.assertTrue(all(call.kwargs["config_dir"] == directory for call in loads.call_args_list))
+        physical = [call.args[1] for call in native.call_args_list
+                    if call.args[1].get("operation") == "physical-binding"]
+        self.assertEqual([call["arguments"]["config_dir"] for call in physical], [str(directory)])
+        original = copy.deepcopy(item.request["source"]["s3"])
+        wrong = item.local / "same-bytes-wrong-config"
+        wrong.mkdir()
+        for path in directory.glob("*.toml"):
+            (wrong / path.name).write_bytes(path.read_bytes())
+        item.request["source"]["s3"] = {"configuration": configuration_binding(item.backend, wrong)}
+        with self.assertRaisesRegex(ValueError, "已登记的 API runtime 配置"):
+            proof.verify_generation(item.backend, item.request, item)
+        item.request["source"]["s3"] = original
+        path = item.runtime_dir / "runtime.json"
+        before = path.read_bytes()
+        def changed(_url):
+            path.write_bytes(before + b"\n")
+        with patch.object(proof, "require_closed_port", side_effect=changed), self.assertRaises(ValueError):
+            proof.verify_generation(item.backend, item.request, item)
+        path.write_bytes(before)
+        self.assertEqual(item.calls, [])
 
     def test_plaintext_password_change_is_read_from_the_selected_file(self):
         path = self.fixture.backend / "config/app.test.toml"
@@ -57,6 +89,7 @@ class SourceFileConfigurationTests(unittest.TestCase):
 
 class SourceExportTests(unittest.TestCase):
     def setUp(self):
+        self.controller_environment = dict(os.environ)
         self.fixture = SourceFixture(self)
 
     def export(self):
@@ -66,13 +99,11 @@ class SourceExportTests(unittest.TestCase):
 
     def test_generation_keeps_real_build_context_in_control_and_resources_in_service(self):
         item = self.fixture
-        controller = {**dict(os.environ), "CARGO_BUILD_JOBS": "4", "CARGO_TARGET_DIR": str(item.local / "target")}
+        controller = {**self.controller_environment, "CARGO_BUILD_JOBS": "4", "CARGO_TARGET_DIR": str(item.local / "target")}
         service = configured(item.environment, controller)
         self.assertFalse(any(name.startswith("CARGO_") for name in service))
         environments = Environments(service, controller)
         phases = []
-        def version(_root, _run, command):
-            return "rustc fixture\nhost: fixture-target" if command[0] == "rustc" else "cargo fixture"
         def maintenance(*_args):
             self.assertEqual(dict(os.environ), controller)
             phases.append("tools")
@@ -85,7 +116,7 @@ class SourceExportTests(unittest.TestCase):
             self.assertEqual(dict(os.environ), service)
             self.assertFalse(any(name.startswith("CARGO_") for name in kwargs.get("env", {})))
             return item(command, **kwargs)
-        with patch.object(restore_build, "_version", side_effect=version):
+        with patch.dict(os.environ, controller, clear=True):
             item.build["build"] = restore_build.build_context(item.backend, environment=controller)
             item.request["backend_build"] = item.bind(Path(item.request["backend_build"]["path"]), item.build)
             item.save_request()
@@ -104,8 +135,9 @@ class SourceExportTests(unittest.TestCase):
                 self.assertEqual(dict(os.environ), service)
                 self.assertEqual(exported["status"], "source_export_captured")
                 self.assertEqual(exported["remote_writes"], 0)
-        self.assertEqual(phases[::2], ["tools"] * (len(phases) // 2))
-        self.assertEqual(phases[1::2], ["runtime"] * (len(phases) // 2))
+        self.assertEqual(len(phases) % 3, 0)
+        self.assertEqual([phases[index:index + 3] for index in range(0, len(phases), 3)],
+                         [["tools", "runtime", "runtime"]] * (len(phases) // 3))
 
     def failed(self, stage=None):
         with self.assertRaises(Exception):
@@ -115,7 +147,8 @@ class SourceExportTests(unittest.TestCase):
         self.assertFalse(result["clone_verified"])
         self.assertFalse(result["restore_qualified"])
         if stage:
-            self.assertEqual(result["stage"], stage)
+            self.assertEqual(result["stage"], stage,
+                             f'error_type={result["error_type"]}; reason={result["reason"]}')
         return result
 
     def test_complete_dirty_source_export_preserves_empty_tables_and_never_writes_remote(self):
@@ -145,14 +178,14 @@ class SourceExportTests(unittest.TestCase):
         self.assertEqual((self.fixture.output / uploads["entries"][0]["artifact"]["file"]).read_bytes(), b"data")
         self.assertNotEqual(control["artifact"]["sha256"], result["logical_inventory_sha256"])
         private = self.fixture.request["source"]["s3"]
-        self.assertEqual(set(private), {"endpoint", "region", "access_key", "secret_key"})
+        self.assertEqual(private, {"configuration": self.fixture.object_configuration})
         self.assertEqual(source.read_json(self.fixture.request_path)["source"]["s3"], private)
         published = source.read_json(self.fixture.output / "request.json")["source"]["s3"]
-        self.assertEqual(published, {field: private[field] for field in ("endpoint", "region")})
+        self.assertEqual(published, {field: load_app_table(self.fixture.backend, self.fixture.environment)["object_storage"][field] for field in ("endpoint", "region")})
         for filename in ("request.json", "export.json"):
             raw = (self.fixture.output / filename).read_text(encoding="utf-8")
             for field in ("access_key", "secret_key"):
-                self.assertNotIn(private[field], raw)
+                self.assertNotIn(load_app_table(self.fixture.backend, self.fixture.environment)["object_storage"][field], raw)
 
     def test_registered_unused_target_is_exported_from_actual_target_inventory(self):
         item = self.fixture
@@ -167,7 +200,6 @@ class SourceExportTests(unittest.TestCase):
         item.request["runtime"] = item.bind(item.runtime_dir / "runtime.json", item.runtime)
         item.registry["runtime_sha256"] = item.request["runtime"]["sha256"]
         item.request["producers_registry"] = item.bind(item.local / "producers.json", item.registry)
-        item.object_configuration = configuration_binding(item.backend, item.backend / "config")
         item.save_request()
         item.backup_omits_empty = True
         result = self.export()
@@ -327,7 +359,12 @@ class SourceExportTests(unittest.TestCase):
         self.failed("source_generation_before")
 
     def test_actual_binary_config_and_runtime_binding_changes_fail_closed(self):
-        for field in ("binary", "config", "runtime"):
+        cases = (
+            ("binary", "source_generation_before", "恢复二进制文件与构建收据不一致"),
+            ("config", "request", "参考配置绑定的文件或摘要发生变化"),
+            ("runtime", "source_generation_before", "源导出输入文件与登记摘要不一致"),
+        )
+        for field, stage, reason in cases:
             with self.subTest(field=field):
                 self.fixture.output = self.fixture.local / ("changed-" + field)
                 if field == "binary":
@@ -337,15 +374,18 @@ class SourceExportTests(unittest.TestCase):
                 else:
                     path = self.fixture.runtime_dir / "runtime.json"
                 original = path.read_bytes()
-                path.write_bytes(original.replace(b"port=18210", b"port=18211") if field == "config" else b"changed")
-                self.failed("source_generation_before")
-                self.assertEqual(self.fixture.calls, [])
-                path.write_bytes(original)
+                changed = original.replace(b"port=18210", b"port=18211") if field == "config" else b"changed"
+                self.assertNotEqual(changed, original)
+                try:
+                    path.write_bytes(changed)
+                    failure = self.failed(stage)
+                    self.assertEqual(failure["error_type"], "ValueError")
+                    self.assertIn(reason, failure["reason"])
+                    self.assertEqual(self.fixture.calls, [])
+                finally:
+                    path.write_bytes(original)
 
-    def test_malformed_current_identity_and_missing_producer_registry_fail_before_resources(self):
-        self.fixture.mocks[-2].return_value = {"pid": 100, "started": "other", "executable": "unknown"}
-        self.failed("source_generation_before")
-        self.fixture.mocks[-2].return_value = None
+    def test_missing_producer_registry_fails_before_resources(self):
         self.fixture.registry["processes"] = self.fixture.registry["processes"][:2]
         path = Path(self.fixture.request["producers_registry"]["path"])
         self.fixture.request["producers_registry"] = self.fixture.bind(path, self.fixture.registry)
@@ -354,19 +394,22 @@ class SourceExportTests(unittest.TestCase):
         self.failed("source_generation_before")
         self.assertEqual(self.fixture.calls, [])
 
-    def test_newer_pid_generations_preserve_original_source_generation(self):
-        item = self.fixture
-        identities = {row["identity"]["pid"]: row["identity"] for row in item.registry["processes"]}
-        original = proof.verify_generation(item.backend, item.request, item)
-        item.mocks[-2].side_effect = lambda pid: {**identities[pid], "started": str(int(identities[pid]["started"]) + 1)}
-        self.assertEqual(proof.verify_generation(item.backend, item.request, item), original)
-
     def test_extra_registered_producer_is_checked_even_when_api_and_worker_are_stopped(self):
         identity = self.fixture.registry["processes"][-1]["identity"]
-        self.fixture.mocks[-2].side_effect = lambda pid: identity if pid == identity["pid"] else None
-        self.failed("source_generation_before")
+
+        def require_stopped(expected):
+            if expected == identity:
+                raise ValueError("额外 producer 停止证明拒绝")
+
+        self.fixture.mocks[-2].side_effect = require_stopped
+        failure = self.failed("source_generation_before")
+        self.assertEqual(failure["error_type"], "ValueError")
+        self.assertIn("额外 producer 停止证明拒绝", failure["reason"])
         self.assertEqual(self.fixture.calls, [])
-        self.assertEqual([call.args[0] for call in self.fixture.mocks[-2].call_args_list], [100, 101, 102])
+        self.assertEqual(
+            [call.args[0] for call in self.fixture.mocks[-2].call_args_list],
+            [item["identity"] for item in self.fixture.registry["processes"]],
+        )
 
     def test_registered_empty_target_cannot_be_omitted_from_inventory(self):
         value = copy.deepcopy(self.fixture.request["source"]["databases"][-1])
@@ -383,7 +426,6 @@ class SourceExportTests(unittest.TestCase):
         self.fixture.registry["runtime_sha256"] = self.fixture.request["runtime"]["sha256"]
         self.fixture.request["producers_registry"] = self.fixture.bind(
             self.fixture.local / "producers.json", self.fixture.registry)
-        self.fixture.object_configuration = configuration_binding(self.fixture.backend, self.fixture.backend / "config")
         self.fixture.save_request()
         self.fixture.missing_target = True
         self.failed("inventory_before")
@@ -420,16 +462,20 @@ class SourceExportTests(unittest.TestCase):
         self.fixture.output = self.fixture.local / "physical-overlap"
         self.failed("source_generation_before")
 
-    def test_plaintext_password_mismatch_and_wrong_api_port_are_rejected(self):
-        path = self.fixture.backend / "config/app.test.toml"
-        original = path.read_bytes()
-        path.write_bytes(original.replace(b'password="fixture-secret"', b'password="wrong-secret"', 1))
-        self.failed("source_generation_before")
-        path.write_bytes(original)
-        self.fixture.request["source"]["api_url"] = "http://127.0.0.1:18211"
-        self.fixture.save_request()
-        self.fixture.output = self.fixture.local / "wrong-api-port"
-        self.failed("source_generation_before")
+    def test_wrong_api_port_is_rejected_before_resources(self):
+        request_bytes = self.fixture.request_path.read_bytes()
+        original_url = self.fixture.request["source"]["api_url"]
+        try:
+            self.fixture.request["source"]["api_url"] = "http://127.0.0.1:18211"
+            self.fixture.save_request()
+            self.fixture.output = self.fixture.local / "wrong-api-port"
+            failure = self.failed("source_generation_before")
+            self.assertEqual(failure["error_type"], "ValueError")
+            self.assertEqual(failure["reason"], "源 API 精确端口未绑定实际 APP 配置")
+            self.assertEqual(self.fixture.calls, [])
+        finally:
+            self.fixture.request["source"]["api_url"] = original_url
+            self.fixture.request_path.write_bytes(request_bytes)
 
     def test_mutated_local_dump_or_partial_cli_failure_never_publishes_success(self):
         original = source.capture_objects

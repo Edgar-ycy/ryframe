@@ -56,7 +56,7 @@ groups:
         annotations:
           summary: "RyFrame reports Redis degradation"
           description: "Redis-dependent subsystem {{ $labels.subsystem }} is degraded on {{ $labels.instance }}."
-          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#redis-降级"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#redis-与对象存储约定"
 
       - alert: RyFrameRedisDegradationEvents
         expr: sum by (instance, subsystem) (increase(ryframe_redis_degraded_total[10m])) > 3
@@ -67,7 +67,7 @@ groups:
         annotations:
           summary: "Repeated Redis degradation events"
           description: "Subsystem {{ $labels.subsystem }} recorded repeated degradation events."
-          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#redis-降级"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#redis-与对象存储约定"
 
       - alert: RyFrameRefreshTokenReplay
         expr: increase(ryframe_auth_refresh_replay_total[5m]) > 0
@@ -88,7 +88,7 @@ groups:
         annotations:
           summary: "RyFrame rate-limit rejection rate is high"
           description: "Scope {{ $labels.scope }} is rejecting more than one request per second."
-          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#限流拒绝"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#依赖与任务排障"
 
       - alert: RyFrameDatabaseReplicaUnavailable
         expr: max by (instance, name, kind) (ryframe_db_node_up{kind="replica"}) == 0
@@ -99,7 +99,7 @@ groups:
         annotations:
           summary: "RyFrame database replica is unavailable"
           description: "Replica {{ $labels.name }} on {{ $labels.instance }} is unavailable for read routing."
-          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#数据库副本与读回退"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#依赖与任务排障"
 
       - alert: RyFrameDatabaseReadFallbackHigh
         expr: |
@@ -120,7 +120,7 @@ groups:
         annotations:
           summary: "RyFrame reads are frequently falling back to primary"
           description: "More than 5% of eventual-consistency reads are falling back to primary on {{ $labels.instance }}."
-          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#数据库副本与读回退"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#依赖与任务排障"
 
       - alert: RyFrameJobReadyBacklog
         expr: max by (instance, type) (ryframe_job_oldest_ready_age_seconds) > 300
@@ -131,7 +131,7 @@ groups:
         annotations:
           summary: "RyFrame background-job backlog is waiting too long"
           description: "The oldest ready {{ $labels.type }} job on {{ $labels.instance }} has waited over 5 minutes."
-          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#后台任务"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#依赖与任务排障"
 
       - alert: RyFrameDeadBackgroundJob
         expr: max by (instance, type) (ryframe_job_queue_depth{status="dead"}) > 0
@@ -142,7 +142,7 @@ groups:
         annotations:
           summary: "RyFrame background job entered the dead-letter queue"
           description: "{{ $labels.type }} has dead-letter jobs on {{ $labels.instance }}."
-          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#后台任务"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#依赖与任务排障"
 
       - alert: RyFrameJobScheduleScanErrors
         expr: sum by (instance) (increase(ryframe_job_schedule_scan_total{result="error"}[5m])) > 0
@@ -153,7 +153,7 @@ groups:
         annotations:
           summary: "RyFrame 定时调度扫描持续失败"
           description: "{{ $labels.instance }} 在过去五分钟内持续出现定时调度扫描错误。"
-          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#定时调度"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#依赖与任务排障"
 
       # 调度关闭后不会产生扫描序列；十五分钟持续窗口可避免重启切换开关时误报。
       - alert: RyFrameJobScheduleScanStalled
@@ -165,7 +165,7 @@ groups:
         annotations:
           summary: "RyFrame 定时调度扫描已停滞"
           description: "{{ $labels.instance }} 的已启用定时调度超过十分钟没有完成成功扫描。"
-          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#定时调度"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#依赖与任务排障"
 
       - alert: RyFrameJobScheduleLagHigh
         expr: |
@@ -180,7 +180,7 @@ groups:
         annotations:
           summary: "RyFrame 定时调度延迟 P95 超过 30 秒"
           description: "{{ $labels.instance }} 的定时计划领取延迟持续偏高。"
-          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#定时调度"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#依赖与任务排障"
 
       - alert: RyFrameMessageDeliveryFailures
         expr: sum by (instance) (increase(ryframe_message_delivery_total{result=~"slow_consumer|closed"}[5m])) > 5
@@ -191,7 +191,7 @@ groups:
         annotations:
           summary: "RyFrame message WebSocket delivery is failing"
           description: "More than five message deliveries were dropped for slow or closed consumers on {{ $labels.instance }}."
-          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#消息中心投递"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#依赖与任务排障"
 
       - alert: RyFrameMessageReplayQueryFailures
         expr: sum by (instance) (increase(ryframe_message_replay_query_total{result="error"}[5m])) > 0
@@ -202,7 +202,7 @@ groups:
         annotations:
           summary: "RyFrame shared message replay query is failing"
           description: "The shared inbox replay scheduler cannot query pending messages on {{ $labels.instance }}."
-          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#消息中心投递"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#依赖与任务排障"
 
       - alert: RyFrameOtlpExporterDegraded
         expr: max by (instance) (ryframe_otel_exporter_degraded) == 1
@@ -213,7 +213,7 @@ groups:
         annotations:
           summary: "RyFrame OTLP exporter is degraded"
           description: "The OTLP exporter failed to initialize on {{ $labels.instance }}."
-          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#opentelemetry-导出器"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#依赖与任务排障"
 
       - alert: RyFrameOtlpExporterRuntimeFailure
         expr: sum by (instance) (increase(ryframe_otel_exporter_runtime_failures_total[5m])) > 0
@@ -223,7 +223,7 @@ groups:
         annotations:
           summary: "RyFrame OTLP 导出器运行期失败"
           description: "{{ $labels.instance }} 在过去五分钟内发生了 OTLP 导出或关闭失败。"
-          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#opentelemetry-导出器"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#依赖与任务排障"
 
       # 票据自然过期与重放尚无法精确区分，待原子消费语义确定后再新增告警。
 
@@ -244,7 +244,7 @@ groups:
           service: ryframe
         annotations:
           summary: "MySQL connections exceed 80% of capacity"
-          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#数据库连接容量"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#依赖与任务排障"
 
       - alert: RyFrameMySqlConnectionPoolExhausted
         expr: |
@@ -259,7 +259,7 @@ groups:
           service: ryframe
         annotations:
           summary: "MySQL connections exceed 95% of capacity"
-          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#数据库连接容量"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#依赖与任务排障"
 
       # 应用和存储节点均依赖 prometheus/node_exporter。
       - alert: RyFrameDiskSpaceLow
@@ -276,7 +276,7 @@ groups:
         annotations:
           summary: "Filesystem has less than 15% free space"
           description: "{{ $labels.instance }} mount {{ $labels.mountpoint }} is running low on space."
-          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#磁盘容量"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#依赖与任务排障"
 
       - alert: RyFrameDiskSpaceCritical
         expr: |
@@ -291,7 +291,7 @@ groups:
           service: ryframe
         annotations:
           summary: "Filesystem has less than 5% free space"
-          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#磁盘容量"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#依赖与任务排障"
 
       # API 与 Worker 从控制库采集；时间戳来自备份实际采集时间。
       - alert: RyFrameBackupAging

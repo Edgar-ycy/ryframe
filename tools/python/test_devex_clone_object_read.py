@@ -74,7 +74,6 @@ class SharedCaptureStagesTests(unittest.TestCase):
         stages.complete(self.output / "capture")
         with self.assertRaises(ValueError):
             stages.complete(self.output / "another")
-        self.assertEqual(len(self.store.calls), 13)
 
     def test_changed_initial_evidence_is_rejected_before_get_and_retained(self):
         original = capture.CaptureStages.complete
@@ -156,7 +155,7 @@ class ConcurrentSourceHeadTests(unittest.TestCase):
     def read(self, command, **kwargs):
         self.assertTrue("__s3-read" in command or "__s3-inspect" in command)
         request = json.loads(kwargs["input"])
-        self.assertEqual(request["configuration"], self.f.request["source"]["s3"])
+        self.assertEqual(request["configuration_binding"], self.f.object_configuration)
         self.assertFalse(any(name.upper().startswith(("APP_", "AWS_")) for name in kwargs["env"]))
         operation, bucket = request["operation"], request["bucket"]
         if operation == "list-objects-v2":

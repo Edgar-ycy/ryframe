@@ -6,7 +6,7 @@ from workspace_directory import WorkspaceDirectory
 from restore_build import file_digest
 from restore_reference import artifact, now, write_json
 from restore_reference_io import DATA_HEADER
-from restore_reference_plan import BUCKETS, plan_hash
+from restore_reference_plan import BUCKETS, plan_hash, configuration_binding
 
 
 def environment(test):
@@ -23,9 +23,8 @@ def environment(test):
     configuration = backend / ".local-tests/config"
     configuration.mkdir()
     settings = configuration / "app.test.toml"
-    settings.write_text('[object_storage]\naccess_key="access-fixture"\nsecret_key="secret-fixture"\n', encoding="utf-8")
-    binding = {"app_env":"test", "directory":str(configuration), "files":{"app.test.toml":file_digest(settings)}}
-    binding["sha256"] = plan_hash(binding)
+    settings.write_text('[object_storage]\nbackend="rustfs"\nendpoint="http://127.0.0.1:9000"\nregion="us-east-1"\naccess_key="access-fixture"\nsecret_key="secret-fixture"\n', encoding="utf-8")
+    binding = configuration_binding(backend, configuration)
     plan = {"format_version": 1, "id": "restore-case", "target_side": "base",
             "work_dir": str(config.parent / "reference"),
             "tools": {name: {"path": str(executable), "sha256": file_digest(executable)["sha256"]}
@@ -48,8 +47,10 @@ def inventory(plan):
     observed = now()
     return {"id": plan["id"], "scope_id": "source", "source_sha": "a" * 40,
             "captured_at": observed, "quiesced_at": observed,
+            "control_schema_fingerprint": "a" * 16, "tenant_schema_fingerprint": "b" * 64,
             "databases": [{**{key: db[key] for key in ("key", "kind", "database", "server_uuid")},
                            "shared": db["mode"] == "shared",
+                           "placements": [],
                            "tables": [{"table": "sys_post", "rows": 1, "sha256": "b" * 64}]}
                           for db in plan["source"]["databases"]],
             "objects": [{"bucket": bucket, "prefix": "source/", "entries": []} for bucket in sorted(BUCKETS)]}

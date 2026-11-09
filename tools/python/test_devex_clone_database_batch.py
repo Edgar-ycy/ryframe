@@ -194,7 +194,7 @@ class DatabaseBatchTests(unittest.TestCase):
             engine = self.case.engine()
             before = self.case.ledger.snapshot()
             with patch.object(self.case.guard, "observe_databases", wraps=self.case.guard.observe_databases) as vector:
-                self.assertEqual(engine.check_databases("confirmed", [engine.db_step(first)]), {})
+                self.assertEqual(engine.check_databases("confirmed", [engine.database_ids[first["key"]]]), {})
             self.assertEqual(vector.call_count, 1)
             self.assertEqual(self.case.ledger.snapshot(), before)
         self.assertEqual(len(self.case.writes()), 1)
@@ -255,7 +255,8 @@ class DatabaseFactoryTests(unittest.TestCase):
         inventory = case.mocks[5]
         inventory.reset_mock()
         result = resume.continue_copy(case.backend, case.output, case.environments["source"],
-                                      case.environments["target"], mode="reconcile", run=case.case.runner)
+                                      case.environments["target"], mode="reconcile", run=case.case.runner,
+                                      source_storage_run=case.run_dir)
         self.assertEqual([call.args[1] for call in inventory.call_args_list], ["source", "source", "target"])
         self.assertEqual(result["remote_writes"], 0)
         self.assertEqual(case.case.writes(), [])

@@ -114,7 +114,7 @@ pub(super) fn root_entries(recovered: bool) -> BTreeSet<&'static str> {
 
 pub(super) fn schema(args: &Value) -> Result<Value> {
     documents::exact(args, &["backend", "directory", "value"], "来源运行收据参数")?;
-    let (_, directory) = directory(args)?;
+    let (backend, directory) = directory(args)?;
     let value = &args["value"];
     let recovered = value.get("recovery").is_some();
     let mut fields = RECEIPT.to_vec();
@@ -122,13 +122,18 @@ pub(super) fn schema(args: &Value) -> Result<Value> {
         fields.push("recovery");
     }
     documents::exact(value, &fields, "来源运行收据")?;
-    let actual = std::fs::read_dir(&directory)?
+    let actual = crate::recovery::runtime::dataset_authority::reads::entries(&directory)?
         .map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().into_owned()))
         .collect::<std::io::Result<BTreeSet<_>>>()?;
-    let expected = root_entries(recovered)
+    let mut expected = root_entries(recovered)
         .into_iter()
         .map(str::to_owned)
         .collect::<BTreeSet<_>>();
+    let attempt_entries = super::cache_attempt::entries(&backend, &directory)?;
+    if attempt_entries.is_empty() {
+        return Err("已封口来源缺少原缓存 attempt".into());
+    }
+    expected.extend(attempt_entries.into_iter().map(str::to_owned));
     documents::exact(
         &value["producer"],
         &[
@@ -226,16 +231,17 @@ pub(super) fn final_check(args: &Value) -> Result<Value> {
         ],
         "来源运行封口参数",
     )?;
-    let (_, directory) = directory(args)?;
+    let (backend, directory) = directory(args)?;
     let receipt = &args["receipt"];
     let cleanup = &args["cleanup"];
     let recovered = args["recovered"].as_bool().ok_or("来源恢复标志无效")?;
+    super::cache_attempt::validate_cleanup(&backend, &directory, cleanup)?;
     if args["before"] != args["expected_before"] {
         return Err("来源验收前像与 start 运行像不同".into());
     }
     if receipt["write_effects"] != args["effects"]
         || documents::array(&cleanup["after"], "来源缓存后像")?.len() != 33
-        || !recovered && cleanup["execution"] != "confirmed_lua_result"
+        || !recovered && cleanup["execution"] != "confirmed_watch_exec"
         || receipt["remote_writes"]
             != model::remote_writes(&json!({"cleanup":cleanup,"recovered":recovered}))?
     {

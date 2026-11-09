@@ -48,7 +48,8 @@ fn fixture() -> (tempfile::TempDir, Value) {
     let binding = json!({"registration":descriptor("registration.json"),"target_plan":descriptor("target-plan.json")});
     let request = json!({"operation":"runtime-generation","write":true,"arguments":{
         "action":"create-intent","root":root,"binding":binding,"previous":null,"commands":null,"number":1,
-        "value":{"registration":binding,"tools":{"coordinator_root":coordinator},"authority":{"scope_id":"test-runtime"}}
+        "value":{"registration":binding,"runtime_directory":root,
+            "tools":{"coordinator_root":coordinator},"authority":{"scope_id":"test-runtime"}}
     }});
     (temporary, request)
 }

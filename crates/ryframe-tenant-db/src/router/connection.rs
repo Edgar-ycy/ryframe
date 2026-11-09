@@ -192,6 +192,7 @@ impl TenantDatabaseRouter {
                             .await
                             .map_err(|_| TenantDataError::TargetUnavailable {
                                 target_key: target_key.into(),
+                                source: None,
                             })?;
                         verify_schema_for_catalog(control.write(), target_key, catalog)
                             .await
@@ -297,7 +298,7 @@ async fn verify_schema_for_catalog(
     target_key: &str,
     catalog: &crate::migration::TenantDataCatalog,
 ) -> Result<(), TenantDataError> {
-    crate::migration::verify_for_catalog(database, catalog)
+    crate::migration::verify_shared_control_for_catalog(database, catalog)
         .await
         .map_err(|error| {
             tracing::warn!(
@@ -307,6 +308,7 @@ async fn verify_schema_for_catalog(
             );
             TenantDataError::TargetUnavailable {
                 target_key: target_key.into(),
+                source: None,
             }
         })
 }
@@ -379,10 +381,12 @@ async fn verify_target_mode_invariants(
                             tracing::warn!(target = target_key, %error, "dedicated fence 聚合校验失败");
                             TenantDataError::TargetUnavailable {
                                 target_key: target_key.into(),
+ source: None,
                             }
                         })?
                         .ok_or_else(|| TenantDataError::TargetUnavailable {
                             target_key: target_key.into(),
+ source: None,
                         })?;
                     row.try_get_by_index::<i64>(0).ok() == Some(1)
                         && row.try_get_by_index::<i64>(1).ok() == Some(1)
@@ -396,6 +400,7 @@ async fn verify_target_mode_invariants(
         tracing::warn!(target = target_key, mode = ?target_mode, "租户数据目标 mode/fence/slot 不变量不一致");
         return Err(TenantDataError::TargetUnavailable {
             target_key: target_key.into(),
+            source: None,
         });
     }
     Ok(())
@@ -421,10 +426,12 @@ where
             tracing::warn!(target = target_key, %error, "目标不变量有界查询失败");
             TenantDataError::TargetUnavailable {
                 target_key: target_key.into(),
+                source: None,
             }
         })?
         .ok_or_else(|| TenantDataError::TargetUnavailable {
             target_key: target_key.into(),
+            source: None,
         })?;
     row.try_get_by_index::<i64>(0)
         .map(|value| value != 0)
@@ -432,6 +439,7 @@ where
             tracing::warn!(target = target_key, %error, "目标不变量结果无效");
             TenantDataError::TargetUnavailable {
                 target_key: target_key.into(),
+                source: None,
             }
         })
 }
@@ -447,9 +455,11 @@ async fn read_target_slot(
             tracing::warn!(target = target_key, %error, "目标模式占用槽校验失败");
             TenantDataError::TargetUnavailable {
                 target_key: target_key.into(),
+                source: None,
             }
         })?
         .ok_or_else(|| TenantDataError::TargetUnavailable {
             target_key: target_key.into(),
+            source: None,
         })
 }

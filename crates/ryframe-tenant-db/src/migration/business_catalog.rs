@@ -2,11 +2,15 @@
 
 use super::{TENANT_DATA_CATALOG, TenantDataCatalog};
 use ryframe_application::ports::tenant_data::TenantDataTableDescriptor;
-use std::{collections::BTreeMap, sync::OnceLock};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::OnceLock,
+};
 
 struct RuntimeCatalog {
     catalog: TenantDataCatalog,
     fingerprint: String,
+    control_tables: BTreeSet<String>,
 }
 
 static RUNTIME: OnceLock<RuntimeCatalog> = OnceLock::new();
@@ -52,18 +56,44 @@ pub fn compose_catalog(
     Ok(catalog)
 }
 
+/// 冻结组合根的租户目录及独立 control 名单；后者不参与复制目录或租户指纹。
+/// control 名单来自组合根已完成控制库业务结构预检的正式模块登记。
 pub fn register_business_catalog(
     business: impl IntoIterator<Item = TenantDataTableDescriptor>,
+    control_tables: impl IntoIterator<Item = &'static str>,
 ) -> Result<(), String> {
     let catalog = compose_catalog(business)?;
+    let control_tables = control_tables
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+    for table in &control_tables {
+        if catalog
+            .tables()
+            .iter()
+            .any(|entry| entry.table == table.as_str())
+            || [
+                "biz_tenant_fence",
+                "biz_tenant_target_slot",
+                "biz_data_scope_projection",
+                "biz_data_scope_owner",
+                "biz_data_scope_dept",
+            ]
+            .contains(&table.as_str())
+        {
+            return Err(format!("控制库业务表与租户目录冲突：{table}"));
+        }
+    }
     let value = RuntimeCatalog {
         fingerprint: catalog.schema_fingerprint(),
         catalog,
+        control_tables,
     };
     if let Err(candidate) = RUNTIME.set(value)
-        && RUNTIME
-            .get()
-            .is_none_or(|current| current.catalog != candidate.catalog)
+        && RUNTIME.get().is_none_or(|current| {
+            current.catalog != candidate.catalog
+                || current.control_tables != candidate.control_tables
+        })
     {
         return Err("运行时租户目录已冻结，禁止替换模块或表描述".into());
     }
@@ -73,12 +103,17 @@ pub fn register_business_catalog(
 fn runtime() -> &'static RuntimeCatalog {
     RUNTIME.get_or_init(|| RuntimeCatalog {
         catalog: TENANT_DATA_CATALOG.clone(),
+        control_tables: BTreeSet::new(),
         fingerprint: crate::generated::catalog::GENERATED_TENANT_DATA_SCHEMA_FINGERPRINT.into(),
     })
 }
 
 pub fn tenant_data_catalog() -> &'static TenantDataCatalog {
     &runtime().catalog
+}
+
+pub(super) fn shared_control_tables() -> &'static BTreeSet<String> {
+    &runtime().control_tables
 }
 
 pub(super) fn runtime_fingerprint() -> &'static str {

@@ -73,7 +73,11 @@ pub(super) fn snapshot(args: &Value) -> Result<Value> {
     let versions = &value["versions"];
     documents::exact(
         versions,
-        &["tenant_authorization_epoch", "user_authorization_version"],
+        &[
+            "tenant_authorization_epoch",
+            "user_authorization_version",
+            "data_scope_version",
+        ],
         "来源授权快照版本",
     )?;
     let principal = &value["principal"];
@@ -81,6 +85,9 @@ pub(super) fn snapshot(args: &Value) -> Result<Value> {
         principal,
         &[
             "actor",
+            "password_change_required",
+            "user_authorization_version",
+            "data_scope_version",
             "tenant_authorization_epoch",
             "preferred_locale",
             "roles",
@@ -102,10 +109,12 @@ pub(super) fn snapshot(args: &Value) -> Result<Value> {
             "data_scope",
             "custom_dept_ids",
             "include_self",
+            "data_scope_version",
             "is_super_admin",
         ],
         "来源授权快照 actor",
     )?;
+    snapshot_versions(&value)?;
     let epoch = documents::text(&args["tenant_epoch"], "来源授权快照 epoch")?
         .parse::<u64>()
         .map_err(|_| "来源授权快照 epoch 无效")?;
@@ -125,6 +134,39 @@ pub(super) fn snapshot(args: &Value) -> Result<Value> {
     Ok(json!({"bytes":payload.len(),"sha256":hex::encode(Sha256::digest(payload.as_bytes()))}))
 }
 
+fn snapshot_versions(value: &Value) -> Result<()> {
+    let versions = &value["versions"];
+    let principal = &value["principal"];
+    for (name, maximum) in [
+        ("tenant_authorization_epoch", i64::from(i32::MAX)),
+        ("user_authorization_version", i64::from(i32::MAX)),
+        ("data_scope_version", i64::MAX),
+    ] {
+        let version = versions[name]
+            .as_i64()
+            .filter(|n| (1..=maximum).contains(n))
+            .ok_or("来源授权快照版本必须是产品类型范围内的正整数；请核对同代产品快照，禁止修补")?;
+        if principal[name].as_i64() != Some(version)
+            || name == "data_scope_version" && principal["actor"][name].as_i64() != Some(version)
+        {
+            return Err("来源授权快照 wrapper、principal 或 actor 版本不同；请重新核对同代来源登录，禁止覆盖版本".into());
+        }
+    }
+    if principal["password_change_required"].as_bool() != Some(false) {
+        return Err(
+            "来源授权快照必须属于已完成首次改密的完整主体；请重新核对来源登录，不接受受限会话"
+                .into(),
+        );
+    }
+    if value["tenant_session_version"]
+        .as_i64()
+        .is_none_or(|n| !(1..=i64::from(i32::MAX)).contains(&n))
+    {
+        return Err("来源授权快照租户会话版本必须是正 i32 整数；请核对同代产品快照".into());
+    }
+    Ok(())
+}
+
 pub(super) fn remote_writes(args: &Value) -> Result<Value> {
     documents::exact(args, &["cleanup", "recovered"], "来源远端写入计数参数")?;
     let cleanup = &args["cleanup"];
@@ -132,8 +174,8 @@ pub(super) fn remote_writes(args: &Value) -> Result<Value> {
     let expired = documents::array(&cleanup["expired_snapshot_keys"], "来源过期快照")?.len();
     let after = documents::array(&cleanup["after"], "来源缓存后像")?.len();
     let reconciled = match cleanup["execution"].as_str() {
-        Some("confirmed_lua_result") => false,
-        Some("reconciled_unknown_lua_result") if recovered && cleanup["deleted"].is_null() => true,
+        Some("confirmed_watch_exec") => false,
+        Some("reconciled_unknown_exec_result") if recovered && cleanup["deleted"].is_null() => true,
         _ => return Err("来源授权缓存执行类型无效，未知写入不能推定成功或重放".into()),
     };
     if !reconciled
@@ -145,9 +187,9 @@ pub(super) fn remote_writes(args: &Value) -> Result<Value> {
     }
     Ok(json!({"api_session_commands":22,"authorization_cache":{
         "confirmed_commands":u8::from(!reconciled),
-        "unknown_result_commands":if recovered {Value::Null} else {json!(0)},
+        "unknown_result_commands":if reconciled {Value::Null} else {json!(0)},
         "phase":if recovered {"recovery"} else {"initial_verification"},
-        "historical_cleanup":if recovered {"unknown"} else {"not_applicable"},
+        "historical_cleanup":if recovered {super::cache_attempt::historical(cleanup)?} else {"not_applicable"},
         "deleted_keys":cleanup["deleted"],"expired_snapshot_keys":expired,"observed_absent_keys":after},
         "confirmed_total_commands":22+u8::from(!reconciled)}))
 }

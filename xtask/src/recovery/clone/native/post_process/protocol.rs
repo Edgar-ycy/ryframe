@@ -1,16 +1,21 @@
 use std::{
     fs,
     io::{Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use serde_json::{Value, json};
 
 use super::{
-    super::{json as json_io, lifecycle::state, resources::common},
+    super::{
+        digest, json as json_io, lifecycle::state, resources::common, target_verify::guard::Inputs,
+    },
     command, inspection, lock, registration, runtime,
 };
-use crate::Result;
+use crate::{
+    Result,
+    local_test_path::{LocalTestPathKind, validate_local_test_path},
+};
 
 const ENTRY: &str = "__clone-post-process";
 
@@ -81,7 +86,7 @@ pub(super) fn terminate_process(request: &Value) -> Result<Value> {
     Ok(json!({"terminated":true,"already_stopped":false}))
 }
 
-fn record_cleanup_failure(request: &Value) -> Result<Value> {
+pub(super) fn record_cleanup_failure(request: &Value) -> Result<Value> {
     let root = json_io::exact(
         request,
         &["backend", "output", "label", "error_type"],
@@ -108,7 +113,7 @@ fn record_cleanup_failure(request: &Value) -> Result<Value> {
     common::binding(&destination)
 }
 
-fn record_process(request: &Value) -> Result<Value> {
+pub(super) fn record_process(request: &Value) -> Result<Value> {
     let root = json_io::exact(
         request,
         &["output", "identity", "kind", "owner"],
@@ -125,7 +130,7 @@ fn record_process(request: &Value) -> Result<Value> {
     if identity["executable"] != launch["tool"]["path"] {
         return Err("生产者 executable 与已授权启动工具不同".into());
     }
-    inspection::require_actual_argv(pid, &launch["command"])?;
+    inspection::require_actual_argv(&identity, &launch["command"])?;
     let kind = json_io::text(&root["kind"], "生产者类型")?;
     let mut receipt = json!({"format_version":1,"kind":"devex-post-producer","launch":common::binding(&output.join("session-launch.json"))?,"identity":identity});
     if kind != "existing" {
@@ -145,7 +150,7 @@ fn record_process(request: &Value) -> Result<Value> {
     Ok(receipt)
 }
 
-fn prepare_launch(request: &Value) -> Result<Value> {
+pub(super) fn prepare_launch(request: &Value) -> Result<Value> {
     let root = json_io::exact(
         request,
         &[
@@ -208,7 +213,7 @@ fn prepare_launch(request: &Value) -> Result<Value> {
     Ok(json!({"launch":launch,"command":plan["argv"],"owner":root["owner"]}))
 }
 
-fn recover_session(request: &Value) -> Result<Value> {
+fn recovery_stage(request: &Value) -> Result<(PathBuf, PathBuf, u64)> {
     let root = json_io::exact(
         request,
         &[
@@ -237,16 +242,37 @@ fn recover_session(request: &Value) -> Result<Value> {
     if latest["number"].as_u64() != Some(current)
         || latest["mode"] != "recover-session"
         || latest["status"] != "running"
+        || latest["stage"] != root["attempt"]["stage"]
+        || root["attempt"]["number"]
+            .as_u64()
+            .is_none_or(|number| number >= current)
+        || !state::attempts(&state_value)?.contains(&root["attempt"])
     {
         return Err("原生回收必须属于明确恢复阶段".into());
     }
     verify_controller(&run, &root["controller_identity"])?;
-    let observed = inspection::inspect(
-        &json!({"backend":backend,"run_dir":run,"attempt":root["attempt"],"registration":root["registration"],"registration_binding":root["registration_binding"]}),
-    )?;
+    Ok((backend, run, current))
+}
+
+pub(super) fn recover_session(root: &Value) -> Result<Value> {
+    let (backend, run, current) = recovery_stage(root)?;
+    let inspection = json!({"backend":backend,"run_dir":run,"attempt":root["attempt"],
+        "registration":root["registration"],"registration_binding":root["registration_binding"]});
+    let observed = inspection::inspect(&inspection)?;
     if observed.is_null() || observed["receipt"] != root["descriptor"] {
         return Err("明确生产者收据发生变化".into());
     }
+    let identity_lock = identity_lock_request(
+        &backend,
+        &run,
+        &root["attempt"],
+        &root["registration"],
+        &observed["value"],
+    )?;
+    if identity_lock != root["identity_lock"] {
+        return Err("回收的身份锁与历史生产者和登记不同".into());
+    }
+    let identity_plan = protect_identity_plan(&backend, &root["registration"], &identity_lock)?;
     let controller = &observed["controller"]["owner"]["identity"];
     let controller_pid = u32::try_from(controller["pid"].as_u64().ok_or("控制器 PID 无效")?)
         .map_err(|_| "控制器 PID 超出范围")?;
@@ -261,9 +287,7 @@ fn recover_session(request: &Value) -> Result<Value> {
         &output.join("session-recovery-intent.json"),
         &json!({"producer":root["descriptor"],"identity":observed["value"]["identity"],"action":"terminate_exact_producer","copy_requires_reconciliation":true}),
     )?;
-    let current_observed = inspection::inspect(
-        &json!({"backend":backend,"run_dir":run,"attempt":root["attempt"],"registration":root["registration"],"registration_binding":root["registration_binding"]}),
-    )?;
+    let current_observed = inspection::inspect(&inspection)?;
     if current_observed != observed {
         return Err("回收窗口内生产者证据或内核身份发生变化".into());
     }
@@ -282,12 +306,86 @@ fn recover_session(request: &Value) -> Result<Value> {
     {
         return Err("原生生产者回收后身份仍不确定".into());
     }
-    if !root["identity_lock"].is_null() {
-        lock::recover(&root["identity_lock"])?;
+    if !identity_lock.is_null() {
+        release_identity_lock(&backend, &run, &identity_lock)?;
+    }
+    if let Some(identity_plan) = identity_plan {
+        identity_plan.check()?;
     }
     Ok(
         json!({"status":if root["attempt"]["stage"]=="seed-runtime"{"seed_session_recovered"}else{"post_session_recovered"},"producer":root["descriptor"],"already_stopped":current_observed["alive"]==false,"copy_requires_reconciliation":true,"remote_writes":0,"restore_qualified":false}),
     )
+}
+
+pub(super) fn identity_lock_request(
+    backend: &Path,
+    run: &Path,
+    attempt: &Value,
+    registration: &Value,
+    process: &Value,
+) -> Result<Value> {
+    if attempt["stage"] == "seed-runtime"
+        && matches!(
+            attempt["mode"].as_str(),
+            Some("identities-apply" | "identities-verify")
+        )
+        && process.get("identity_lock_owner").is_some()
+    {
+        identity_state(backend, run, &registration["identity_state"])?;
+        let mut plan = common::read_bound(backend, &registration["identity_plan"], "原身份计划")?;
+        if plan["format_version"] != 1 || plan["kind"] != "devex-identities" {
+            return Err("回收身份锁需要原身份计划版本和类型".into());
+        }
+        let declared = plan
+            .as_object_mut()
+            .and_then(|fields| fields.remove("plan_sha256"))
+            .ok_or("回收身份锁缺少原计划摘要")?;
+        if declared != digest::plan_hash(&plan)? {
+            return Err("原身份计划正文摘要不同，拒绝回收锁".into());
+        }
+        Ok(
+            json!({"backend":backend,"identity_state":registration["identity_state"],
+            "identity":process["identity"],"owner_token":process["identity_lock_owner"],
+            "plan_sha256":declared}),
+        )
+    } else {
+        Ok(Value::Null)
+    }
+}
+
+fn protect_identity_plan(
+    backend: &Path,
+    registration: &Value,
+    request: &Value,
+) -> Result<Option<Inputs>> {
+    if request.is_null() {
+        return Ok(None);
+    }
+    let bound = &registration["identity_plan"];
+    let input = Inputs::open([common::bound_file(backend, bound, "回收身份计划")?])?;
+    common::bound_file(backend, bound, "回收原身份计划")?;
+    Ok(Some(input))
+}
+
+fn identity_state(backend: &Path, run: &Path, value: &Value) -> Result<PathBuf> {
+    let path = Path::new(json_io::text(value, "回收身份账本路径")?);
+    if path != run.join("seed-runtime/identities") {
+        return Err("身份锁必须属于本运行的固定账本".into());
+    }
+    Ok(validate_local_test_path(
+        path,
+        backend,
+        LocalTestPathKind::StateDirectory,
+    )?)
+}
+
+pub(super) fn release_identity_lock(backend: &Path, run: &Path, request: &Value) -> Result<()> {
+    let path = identity_state(backend, run, &request["identity_state"])?;
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+        Ok(_) => lock::recover(request).map(|_| ()),
+    }
 }
 
 fn verify_controller(run: &std::path::Path, value: &Value) -> Result<()> {

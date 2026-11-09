@@ -16,7 +16,7 @@ mod recover;
 pub(crate) mod source;
 pub(crate) mod stage;
 pub(crate) mod state;
-mod status;
+pub(crate) mod status;
 
 pub(crate) fn run(command: &CloneCommand, backend: &Path) -> Result<Value> {
     match command {
@@ -35,9 +35,10 @@ pub(crate) fn run(command: &CloneCommand, backend: &Path) -> Result<Value> {
             crate::cli::CloneStage::TargetVerify,
             &super::target_verify::TargetVerifyRunner::new(backend),
         ),
-        CloneCommand::Stage { run_dir, stage } => {
-            stage::run(backend, run_dir, *stage, &stage::PythonRunner::new(backend))
-        }
+        CloneCommand::Stage {
+            run_dir,
+            stage: stage @ crate::cli::CloneStage::Copy(_),
+        } => stage::run(backend, run_dir, *stage, &super::copy_transfer::Runner),
         CloneCommand::Recover {
             run_dir,
             owner_binding,

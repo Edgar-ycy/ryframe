@@ -16,16 +16,16 @@ import subprocess
 from full_stack_process import process_identity
 from process_sockets import verify_listener
 from restore_build import (
-    build_registered,
     repository,
     validate_new_output,
     write_new,
 )
 from restore_frontend_build import (
     FRONTEND_RECEIPT,
-    build_registered_frontend,
+    frontend_input_recheck,
     frontend_snapshots,
 )
+from restore_frontend_native import B0_KIND
 from restore_runtime_source import require_bindings, resolve_runtime_sources, runtime_authority
 from restore_runtime_evidence import (
     HEX_40,
@@ -47,7 +47,6 @@ from restore_runtime_evidence import (
     validate_runtime_receipt as _validate_runtime_receipt,
 )
 from source_inventory import build_source_domains, capture_inventory
-from restore_frontend_configuration import verify_frontend_inputs
 
 ROLES = ("api", "worker", "frontend")
 
@@ -75,22 +74,22 @@ def _native_probe(role: str, url: str, **values) -> dict:
 
 def _verify_frontend_artifacts(root: Path, receipt: dict, base_url: str) -> tuple[list[dict], list[ArtifactSnapshot]]:
     _canonical_endpoint(base_url, "", "前端端点")
-    receipt = _validate_frontend_receipt(receipt)
-    inputs = verify_frontend_inputs(root, receipt["build"])
+    receipt = _validate_frontend_receipt(receipt, b0=receipt.get("kind") == B0_KIND)
+    recheck = frontend_input_recheck(root, receipt)
     files, snapshots = frontend_snapshots(root)
     if files != receipt["files"]:
         raise ValueError("前端生产构建与文件收据不一致")
     if not {"index.html", ".vite/manifest.json"}.issubset({item["path"] for item in files}):
         raise ValueError("恢复前端缺少生产首页或 Vite manifest")
     _native_probe("frontend", base_url, files=files)
-    inputs.assert_unchanged()
+    recheck()
     if frontend_snapshots(root)[0] != files:
         raise ValueError("探针期间前端完整 dist 文件集合或内容发生漂移")
     return files, snapshots
 
 
 def verify_frontend(root: Path, receipt: dict, sha: str, base_url: str) -> None:
-    receipt = _validate_frontend_receipt(receipt)
+    receipt = _validate_frontend_receipt(receipt, b0=receipt.get("kind") == B0_KIND)
     before = capture_inventory(root)
     snapshot = before["source"]["snapshot"]
     if (
@@ -99,11 +98,11 @@ def verify_frontend(root: Path, receipt: dict, sha: str, base_url: str) -> None:
         or receipt["sources"] != build_source_domains(before, "frontend")
     ):
         raise ValueError("恢复前端必须使用精确干净 SHA 的生产构建")
-    inputs = verify_frontend_inputs(root, receipt["build"], expected_head=sha)
+    recheck = frontend_input_recheck(root, receipt, expected_head=sha)
     _files, snapshots = _verify_frontend_artifacts(root, receipt, base_url)
     if capture_inventory(root) != before:
         raise ValueError("核验期间前端源码发生变化")
-    inputs.assert_unchanged()
+    recheck()
     for snapshot in snapshots:
         snapshot.assert_unchanged()
 
@@ -584,24 +583,20 @@ def verify(
 PROTOCOL_KIND = "ryframe-xtask-restore-runtime"
 PROTOCOL_MAX_BYTES = 16 * 1024
 OPERATIONS = frozenset(
-    {"build", "register", "start", "status", "stop", "recover", "bind", "verify"}
+    {"start", "recover", "bind", "verify"}
 )
-WRITING_OPERATIONS = frozenset({"build", "register", "start", "stop", "recover", "bind"})
+WRITING_OPERATIONS = frozenset({"start", "recover", "bind"})
 BASE_FIELDS = {"backend_dir", "format_version", "kind", "operation", "write"}
 SOURCE_FIELDS = {"source_backend", "source_frontend"}
 CONTROL_FIELDS = {"runtime_registration", "target_plan"}
 OPERATION_FIELDS = {
-    "build": SOURCE_FIELDS | {"frontend_dir", "expected_head", "expected_frontend_head", "output"},
-    "register": {"plan", "target_plan", "output"},
     "start": CONTROL_FIELDS | SOURCE_FIELDS | {"build_receipt", "bindings", "timeout"},
-    "status": CONTROL_FIELDS,
-    "stop": CONTROL_FIELDS | {"generation"},
     "recover": CONTROL_FIELDS | {"generation", "owner"},
     "bind": SOURCE_FIELDS | {"build_receipt", "launch_receipt", "bindings", "output"},
     "verify": SOURCE_FIELDS | {"bindings", "receipt"},
 }
 PATH_FIELDS = {
-    "backend_dir", "frontend_dir", "plan", "target_plan", "output", "source_backend",
+    "backend_dir", "frontend_dir", "target_plan", "output", "source_backend",
     "source_frontend", "product_backend", "runtime_registration", "build_receipt", "bindings",
     "owner", "launch_receipt", "receipt",
 }
@@ -675,6 +670,8 @@ def private_protocol_request(argv: list[str] | None = None) -> RuntimeRequest:
         envelope = _exact_fields(document.value, {"request", "native_tool"}, "恢复运行受管请求")
         parse_binding(envelope["native_tool"])
         request = decode_request(json.dumps(envelope["request"], ensure_ascii=False))
+        if request.operation == "recover":
+            raise RuntimeProtocolError("runtime Recover 由 Rust 公共入口执行")
         if (".." in path.parts or path.resolve(strict=True) != path
                 or not path.is_relative_to(request.values["backend_dir"] / ".local-tests")):
             raise ValueError("请求文件不在后端受管目录")
@@ -705,7 +702,7 @@ def decode_request(raw: str) -> RuntimeRequest:
     if not isinstance(operation, str) or operation not in OPERATIONS:
         raise RuntimeProtocolError("恢复运行私有协议操作无效")
     fields = BASE_FIELDS | OPERATION_FIELDS[operation]
-    if operation in {"build", "start", "bind", "verify"}:
+    if operation in {"start", "bind", "verify"}:
         fields = _protocol_sources(protocol, fields)
     if set(protocol) != fields:
         raise RuntimeProtocolError("恢复运行私有协议字段不完整或含未知字段")
@@ -717,7 +714,7 @@ def decode_request(raw: str) -> RuntimeRequest:
         for name, value in protocol.items()
         if name not in {"format_version", "kind", "operation", "write"}
     }
-    if operation in {"build", "start", "bind", "verify"}:
+    if operation in {"start", "bind", "verify"}:
         decoded.setdefault("adapter_contract", None)
         decoded.setdefault("product_backend", None)
     _validate_protocol_values(operation, decoded)
@@ -748,41 +745,14 @@ def _validate_protocol_values(operation: str, values: dict) -> None:
 
 
 def execute(request: RuntimeRequest) -> dict:
-    from restore_runtime_registration import execute as execute_registration
     from restore_runtime_lifecycle import dispatch as dispatch_lifecycle
 
     args = request.namespace()
     backend = args.backend_dir.resolve()
-    if args.command == "register":
-        return execute_registration(args, backend)
-    if args.command in {"start", "status", "stop", "recover"}:
+    if args.command in {"start", "recover"}:
         return dispatch_lifecycle(
             args, backend, _probe_api, _probe_worker, verify_frontend_artifacts
         )
-    if args.command == "build":
-        expected_source = repository(args.source_backend, "后端构建来源")
-        output = validate_new_output(args.output, expected_source)
-        frontend_source, frontend_receipt, frontend_action = build_registered_frontend(
-            args.frontend_dir.resolve(),
-            args.source_frontend,
-            args.expected_frontend_head,
-        )
-        source, receipt = build_registered(
-            backend,
-            expected_source,
-            args.expected_head,
-            adapter_contract=args.adapter_contract,
-            product_backend=args.product_backend,
-        )
-        if source != expected_source:
-            raise ValueError("后端构建来源在校验与构建之间发生变化")
-        write_new(output, receipt, source)
-        return {
-            "backend_receipt": str(output),
-            "frontend_receipt": str(frontend_receipt.path),
-            "frontend_source": str(frontend_source),
-            "frontend_action": frontend_action,
-        }
     if args.command == "bind":
         bind_and_write(
             backend,

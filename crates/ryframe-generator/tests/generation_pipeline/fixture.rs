@@ -1,34 +1,27 @@
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use ryframe_generator::command::{GenerationBuilder, GenerationOperation};
 
-#[path = "../../src/command/staging/snapshot.rs"]
-mod snapshot;
+use super::snapshot;
 
-pub(super) fn verify(frontend_source: &Path) {
-    let backend_source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let backend_before = snapshot::SourceSnapshot::capture(&backend_source).unwrap();
+pub(super) fn verify(frontend_source: &Path, target_dir: &Path) {
+    let backend_before =
+        snapshot::SourceSnapshot::capture(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+            .unwrap();
     let frontend_before = snapshot::SourceSnapshot::capture(frontend_source).unwrap();
     assert!(
         backend_before
             .input_paths()
             .any(|path| path == Path::new("Cargo.toml"))
     );
-    let backend_cache = backend_source.join(".local-tests/generation-pipeline");
-    let frontend_cache = frontend_source.join(".local-tests/generation-pipeline");
-    fs::create_dir_all(&backend_cache).unwrap();
-    fs::create_dir_all(&frontend_cache).unwrap();
-    let backend_scope = tempfile::tempdir_in(backend_cache).unwrap();
-    let frontend_scope = tempfile::tempdir_in(frontend_cache).unwrap();
-    let backend = backend_scope.path().join("backend");
-    let frontend = frontend_scope.path().join("frontend");
-    backend_before.copy_to(&backend).unwrap();
-    frontend_before.copy_to(&frontend).unwrap();
+    let (_backend_scope, _frontend_scope, backend, frontend) =
+        prepare(&backend_before, &frontend_before, target_dir);
     bootstrap(&backend);
     let model = backend.join("crates/pipeline-business/src/resources/mod.rs");
     fs::write(&model, MODELS).unwrap();
-    fs::create_dir_all(backend.join(".local-tests")).unwrap();
-    fs::write(backend.join(".local-tests/tools.toml"), format!("[workspace]\nfrontend_dir={:?}\n[generator]\npackage='pipeline-business'\nsync_frontend=true\n", frontend.to_string_lossy())).unwrap();
     let before = snapshot::SourceSnapshot::capture(&backend).unwrap();
     let before_front = snapshot::SourceSnapshot::capture(&frontend).unwrap();
     generate(&backend, false).unwrap();
@@ -70,6 +63,28 @@ pub(super) fn verify(frontend_source: &Path) {
     fs::remove_file(fault).unwrap();
     backend_before.verify().unwrap();
     frontend_before.verify().unwrap();
+}
+
+pub(super) fn prepare(
+    backend_before: &snapshot::SourceSnapshot,
+    frontend_before: &snapshot::SourceSnapshot,
+    target_dir: &Path,
+) -> (tempfile::TempDir, tempfile::TempDir, PathBuf, PathBuf) {
+    let backend_cache = backend_before.root.join(".local-tests/generation-pipeline");
+    let frontend_cache = frontend_before
+        .root
+        .join(".local-tests/generation-pipeline");
+    fs::create_dir_all(&backend_cache).unwrap();
+    fs::create_dir_all(&frontend_cache).unwrap();
+    let backend_scope = tempfile::tempdir_in(backend_cache).unwrap();
+    let frontend_scope = tempfile::tempdir_in(frontend_cache).unwrap();
+    let backend = backend_scope.path().join("backend");
+    let frontend = frontend_scope.path().join("frontend");
+    backend_before.copy_to(&backend).unwrap();
+    frontend_before.copy_to(&frontend).unwrap();
+    fs::create_dir_all(backend.join(".local-tests")).unwrap();
+    fs::write(backend.join(".local-tests/tools.toml"), format!("[workspace]\nfrontend_dir={:?}\n[generator]\ntarget_dir={:?}\npackage='pipeline-business'\nsync_frontend=true\n", frontend.to_string_lossy(), target_dir.to_string_lossy())).unwrap();
+    (backend_scope, frontend_scope, backend, frontend)
 }
 
 fn bootstrap(root: &Path) {
@@ -152,7 +167,7 @@ fn verify_outputs(backend: &Path, frontend: &Path) {
     );
 }
 
-const MODELS: &str = r#"
+pub(super) const MODELS: &str = r#"
 #[derive(ryframe_sdk::ResourceModel)]
 #[resource(name="table1",title="表一",table="table1",database="control",menu_parent="system")]
 pub struct Table1 {

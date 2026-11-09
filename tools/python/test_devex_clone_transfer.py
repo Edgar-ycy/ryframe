@@ -19,7 +19,8 @@ from devex_clone_ledger import CloneLedger, LedgerError
 from devex_clone_transfer import DatabaseBasis, DatabaseObservation, GenerationObservation, ObjectObservation, TransferSteps
 from restore_build import file_digest
 from restore_reference_io import ExternalTools, ObjectCreateError
-from restore_reference_plan import plan_hash
+from restore_reference_plan import _native, plan_hash, configuration_binding
+from native_s3_client import configuration as object_configuration
 
 GENERATION = "e" * 64
 
@@ -67,7 +68,7 @@ class OfflineGuard:
         return copy.deepcopy(self.current[key])
 
     def observe_object(self, bucket, key):
-        resource = {"kind": "object", "scope_id": "clone-target", "endpoint": self.case.tools.plan["target"]["s3"]["endpoint"], "bucket": bucket, "key": key}
+        resource = {"kind": "object", "scope_id": "clone-target", "endpoint": object_configuration(self.case.tools.plan["target"]["s3"]["configuration"], self.case.backend)["endpoint"], "bucket": bucket, "key": key}
         stored = self.case.runner.objects.get((bucket, key))
         if stored is None:
             return ObjectObservation(resource, None, "d" * 64)
@@ -186,7 +187,12 @@ class TransferTests(unittest.TestCase):
         tools_plan = {"tools": {name: {"path": str(executable), "sha256": file_digest(executable)["sha256"]} for name in ("mysql",)}}
         for side in ("source", "target"):
             declared = self.fixture.value[side]
-            tools_plan[side] = {"scope_id": declared["scope_id"], "s3": {"endpoint": declared["object_endpoint"], "region": "us-east-1", "access_key": "fixture-access", "secret_key": "fixture-secret"},
+            configuration = self.work / side / "config"
+            configuration.mkdir(parents=True)
+            (configuration / "app.test.toml").write_text(
+                '[object_storage]\nbackend="rustfs"\n' + f'endpoint="{declared["object_endpoint"]}"\n'
+                + 'region="us-east-1"\naccess_key="fixture-access"\nsecret_key="fixture-secret"\n', encoding="utf-8")
+            tools_plan[side] = {"scope_id": declared["scope_id"], "s3": {"configuration": configuration_binding(self.backend, configuration)},
                                 "databases": [{**item, "defaults_file": str(defaults), "defaults_sha256": file_digest(defaults)["sha256"]} for item in declared["databases"]]}
         self.runner = OfflineTools(self)
         self.tools = ExternalTools(tools_plan, self.work, self.runner)
@@ -235,7 +241,7 @@ class TransferTests(unittest.TestCase):
         with self.open():
             engine = self.engine()
             self.assertEqual(self.guard.proof_selections, [None])
-            step = engine.object_step(item)
+            step = engine.object_ids[(item["bucket"], item["target_key"])]
             self.guard.proof_selections.clear()
             engine.verify_pending(step)
             self.assertEqual(self.guard.proof_selections, [expected, expected])
@@ -292,7 +298,7 @@ class TransferTests(unittest.TestCase):
         with self.open(create=False, mode="reconcile"):
             engine = self.engine()
             self.guard.proof_selections.clear()
-            step = engine.object_step(item)
+            step = engine.object_ids[(item["bucket"], item["target_key"])]
             self.assertEqual(engine.reconcile(step), "reconciled_before")
             self.assertEqual(self.guard.proof_selections, [expected, expected])
         with self.open(create=False, mode="resume"):
@@ -302,9 +308,13 @@ class TransferTests(unittest.TestCase):
             self.assertEqual(self.guard.proof_selections, [expected] * 3)
 
     def test_sql_and_constructor_use_global_proof_and_unknown_step_never_reaches_guard(self):
-        with self.open():
+        with self.open(), patch("devex_clone_transfer._native", wraps=_native) as native:
             engine = self.engine()
             engine.apply_database(self.plan["databases"][0]["key"])
+            native.assert_called_once_with("reference-copy-step-ids", {
+                "databases": [{"key": item["key"]} for item in self.plan["databases"]],
+                "objects": [{"bucket": item["bucket"], "target_key": item["target_key"]} for item in self.plan["objects"]],
+            })
             self.assertTrue(all(value is None for value in self.guard.proof_selections))
             count = len(self.guard.proof_selections)
             with self.assertRaisesRegex(ValueError, "当前完整计划"):
@@ -515,7 +525,7 @@ class TransferTests(unittest.TestCase):
         with self.open():
             engine = self.engine()
             item = self.plan["databases"][0]
-            step = engine.db_step(item)
+            step = engine.database_ids[item["key"]]
             before, after = engine._database_basis(item)
             self.ledger.intent(step, before, {**after, "tables_sha256": "7" * 64}, item["artifact"]["sha256"])
         with self.assertRaises(ValueError), self.open(create=False, mode="reconcile"):

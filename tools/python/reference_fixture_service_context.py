@@ -4,16 +4,16 @@ from __future__ import annotations
 from pathlib import Path
 
 from rate_limit_client import load_app_table
-from fixture_service_client import _invoke, lifecycle
+from fixture_service_client import _invoke
 
 
 def service_run(review: dict) -> Path:
     return Path(_invoke("service-run", {"review": review}))
 
 
-def application_settings(bootstrap_file: Path, execution: Path) -> dict:
-    """从已绑定 bootstrap 相邻的唯一明文配置目录读取应用值。"""
-    return load_app_table(execution, {"APP_ENV": "test"}, config_dir=bootstrap_file.parent / "config")
+def application_settings(bootstrap: dict, execution: Path) -> dict:
+    """从原生已核验收据明确绑定的配置目录读取应用值。"""
+    return load_app_table(execution, {"APP_ENV": "test"}, config_dir=Path(bootstrap["config_dir"]))
 
 
 def load_prepared_environment(backend: Path, value: Path, secret_files: tuple[str, ...]) -> tuple[Path, Path, dict, dict]:
@@ -41,7 +41,3 @@ def observe_services(services: dict) -> dict:
 
 def runtime_transition(backend: Path, run: Path, expected: dict) -> tuple[dict | None, dict | None]:
     return tuple(_invoke("service-transition", {"run": run, "expected": expected}, backend=backend))
-
-
-def status(backend: Path, review: Path, bootstrap: Path) -> dict:
-    return lifecycle(backend, "status", review, bootstrap, None, write=False)

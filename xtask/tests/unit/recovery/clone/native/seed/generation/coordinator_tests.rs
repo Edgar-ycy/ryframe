@@ -5,10 +5,11 @@ fn record(number: u64, mode: &str, status: &str) -> Value {
 }
 
 fn request_fixture() -> Value {
-    json!({"format_version":1,"kind":"devex-clone-seed-source-generation","id":"same-seed",
+    json!({"format_version":2,"kind":"devex-clone-seed-source-generation","id":"same-seed",
         "source_registration":{"c52":true},"source_rebind":{"same":true},"review_successor":{"review":true},
         "current_storage":{"storage":true},"execution_backend":"execution","expected_backend_sha":"a".repeat(40),
-        "adapter_contract":null,"product_backend":null,"backend_build":{},"maintenance_build":{},"source_environment":{}})
+        "adapter_contract":null,"product_backend":null,"backend_build":{},"maintenance_build":{},"source_environment":{},
+        "configuration":{"app_env":"test","directory":crate::workspace::root_dir().join("config"),"files":{},"sha256":"a".repeat(64)},"execution_source":null})
 }
 fn source_fixture(request: &Value) -> Value {
     json!({"review_successor":{"source_result":request["source_registration"]},
@@ -77,7 +78,7 @@ fn audited_resume_requires_complete_resources_exact_request_and_unique_rebind() 
             "{pointer}"
         );
     }
-    let mut changed = valid.clone();
+    let mut changed = valid;
     changed["attempts"]
         .as_array_mut()
         .unwrap()
@@ -156,7 +157,7 @@ fn running_receipt_freezes_history_tools_request_and_strict_zero_write_fields() 
     let mut changed = valid.clone();
     changed["receipt"]["remote_writes"] = json!(false);
     assert_eq!(call("running", changed).unwrap(), reject("running"));
-    let mut changed = valid.clone();
+    let mut changed = valid;
     changed["receipt"]["extra"] = json!(true);
     assert!(call("running", changed).is_err());
 }
@@ -190,6 +191,53 @@ fn source_request_keeps_original_physical_target_and_only_replaces_generation_bi
     assert_eq!(value["source"]["runtime_dir"], "new");
     assert_eq!(value["other"], original["other"]);
     assert_eq!(original["source"]["runtime_dir"], "old");
+    assert_eq!(
+        value["source"]["s3"]["configuration"],
+        request["configuration"]
+    );
+}
+
+#[test]
+fn current_v2_and_original_v1_history_have_distinct_strict_schema_boundaries() {
+    let current = request_fixture();
+    current_request(&current).unwrap();
+    let mut historical = current.clone();
+    historical["format_version"] = json!(1);
+    historical.as_object_mut().unwrap().remove("configuration");
+    historical
+        .as_object_mut()
+        .unwrap()
+        .remove("execution_source");
+    let before = serde_json::to_vec(&historical).unwrap();
+    request(&historical).unwrap();
+    assert!(current_request(&historical).is_err());
+    assert_eq!(serde_json::to_vec(&historical).unwrap(), before);
+    let mut incomplete = current.clone();
+    incomplete.as_object_mut().unwrap().remove("configuration");
+    assert!(request(&incomplete).is_err());
+    let mut mixed = historical;
+    mixed["configuration"] = current["configuration"].clone();
+    assert!(request(&mixed).is_err());
+    let mut drift = current.clone();
+    drift["configuration"]["sha256"] = json!("b".repeat(64));
+    assert!(
+        crate::recovery::clone::native::seed::generation::archived_request(
+            &current,
+            &drift,
+            &Value::Null
+        )
+        .is_err()
+    );
+    drift = current.clone();
+    drift["execution_source"] = json!({"path":"changed","bytes":1,"sha256":"b".repeat(64)});
+    assert!(
+        crate::recovery::clone::native::seed::generation::archived_request(
+            &current,
+            &drift,
+            &Value::Null
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -297,7 +345,7 @@ fn generation_proof_preserves_exact_artifacts_physical_binding_and_sorted_produc
             "{field}"
         );
     }
-    let mut changed = args.clone();
+    let mut changed = args;
     changed["runtime_physical"] = json!({"same":false});
     assert_eq!(call("generation-proof", changed).unwrap(), reject("proof"));
 }

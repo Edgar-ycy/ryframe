@@ -17,7 +17,6 @@ const DEFAULT_WINDOW_SECS: i64 = 60;
 const DEFAULT_USER_CAPACITY: i64 = 500;
 const MAX_RULE_CAPACITY: i64 = u32::MAX as i64;
 const MAX_WINDOW_SECS: i64 = 86_400;
-const MAX_LOGIN_CAPACITY: u32 = 10_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RateLimitError {
@@ -81,14 +80,6 @@ const LIMIT_DISABLED: RateLimitError = RateLimitError {
 const RULE_INVALID: RateLimitError = RateLimitError {
     code: "rate_limit_rule_invalid",
     message: Cow::Borrowed("rate_limit.api_limits 的规则名和正整数上限无效"),
-};
-const LOGIN_LIMIT_INVALID: RateLimitError = RateLimitError {
-    code: "login_limit_invalid",
-    message: Cow::Borrowed("登录接口限流容量必须是 1 到 10000 的整数"),
-};
-const LOGIN_BUDGET_PATH_INVALID: RateLimitError = RateLimitError {
-    code: "login_budget_path_invalid",
-    message: Cow::Borrowed("登录预算账本必须使用无换行、无 NUL 的绝对文件路径"),
 };
 pub(crate) const RESULT_INVALID: RateLimitError = RateLimitError {
     code: "rate_limit_result_invalid",
@@ -169,29 +160,6 @@ fn table_settings(table: &Table) -> Result<Table, RateLimitError> {
     }
     Ok(rate_limit)
 }
-pub(crate) fn login_rate_limit(
-    backend: &Path,
-    config_dir: Option<&Path>,
-    app_env: &str,
-) -> Result<LoginRateLimit, RateLimitError> {
-    let settings = settings(backend, config_dir, app_env)?;
-    let capacity = api_limits(&settings)
-        .get(LOGIN_RULE)
-        .and_then(Value::as_integer)
-        .and_then(|value| u32::try_from(value).ok())
-        .unwrap_or(DEFAULT_LOGIN_CAPACITY);
-    if !(1..=MAX_LOGIN_CAPACITY).contains(&capacity) {
-        return Err(LOGIN_LIMIT_INVALID
-            .at_field("rate_limit.api_limits 的登录规则")
-            .at_source(&configuration_directory(backend, config_dir)?, app_env));
-    }
-    let window_secs = setting_integer(&settings, "api_window_secs")? as u64;
-    Ok(LoginRateLimit {
-        capacity,
-        window_secs,
-    })
-}
-
 pub(crate) fn authority(
     backend: &Path,
     config_dir: Option<&Path>,
@@ -230,43 +198,6 @@ pub(crate) fn authority(
             window_ms: setting_integer(&settings, "api_window_secs")? as u64 * 1000,
         },
     })
-}
-
-pub(crate) fn login_budget_environment(
-    backend: &Path,
-    config_dir: Option<&Path>,
-    app_env: &str,
-    state_path: &str,
-) -> Result<BTreeMap<String, String>, RateLimitError> {
-    let path = Path::new(state_path);
-    if !path.is_absolute()
-        || state_path
-            .chars()
-            .any(|character| matches!(character, '\r' | '\n' | '\0'))
-    {
-        return Err(LOGIN_BUDGET_PATH_INVALID);
-    }
-    let limits = login_rate_limit(backend, config_dir, app_env)?;
-    Ok(BTreeMap::from([
-        (
-            "RYFRAME_E2E_LOGIN_BUDGET_STATE".to_owned(),
-            state_path.to_owned(),
-        ),
-        (
-            "RYFRAME_E2E_LOGIN_RATE_LIMIT_CAPACITY".to_owned(),
-            limits.capacity.to_string(),
-        ),
-        (
-            "RYFRAME_E2E_LOGIN_RATE_LIMIT_WINDOW_SECS".to_owned(),
-            limits.window_secs.to_string(),
-        ),
-    ]))
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct LoginRateLimit {
-    pub(crate) capacity: u32,
-    pub(crate) window_secs: u64,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]

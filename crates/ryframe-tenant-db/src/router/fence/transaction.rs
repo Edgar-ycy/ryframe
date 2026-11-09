@@ -17,10 +17,12 @@ pub(in crate::router) async fn provision_fence_in_transaction(
             tracing::warn!(target = %provision.target_key, %error, "dedicated 固定占用槽锁定失败");
             TenantDataError::TargetUnavailable {
                 target_key: provision.target_key.clone(),
+                source: None,
             }
         })?
         .ok_or_else(|| TenantDataError::TargetUnavailable {
             target_key: provision.target_key.clone(),
+            source: None,
         })?;
         if slot
             .tenant_id
@@ -44,6 +46,7 @@ pub(in crate::router) async fn provision_fence_in_transaction(
         tracing::warn!(tenant_id = %provision.tenant_id, target = %provision.target_key, %error, "现有 fence 查询失败");
         TenantDataError::TargetUnavailable {
             target_key: provision.target_key.clone(),
+ source: None,
         }
     })?;
     if let Some(existing) = existing {
@@ -73,6 +76,7 @@ pub(in crate::router) async fn provision_fence_in_transaction(
                     tracing::warn!(tenant_id = %provision.tenant_id, %error, "frozen fence 激活失败");
                     TenantDataError::TargetUnavailable {
                         target_key: provision.target_key.clone(),
+ source: None,
                     }
                 })?;
             claim_dedicated_slot(transaction, provision, target_mode).await?;
@@ -103,6 +107,7 @@ pub(in crate::router) async fn provision_fence_in_transaction(
             tracing::warn!(tenant_id = %provision.tenant_id, target = %provision.target_key, %error, "初始 active fence 创建失败");
             TenantDataError::TargetUnavailable {
                 target_key: provision.target_key.clone(),
+ source: None,
             }
         })?;
     claim_dedicated_slot(transaction, provision, target_mode).await?;
@@ -171,6 +176,7 @@ pub(in crate::router) async fn set_fence_state_in_transaction(
     if result.rows_affected() > 1 {
         return Err(TenantDataError::TargetUnavailable {
             target_key: provision.target_key.clone(),
+            source: None,
         });
     }
     Ok(())
@@ -230,10 +236,12 @@ pub(in crate::router) async fn lock_target_slot(
         tracing::warn!(target = target_key, %error, "dedicated 固定占用槽锁定失败");
         TenantDataError::TargetUnavailable {
             target_key: target_key.into(),
+            source: None,
         }
     })?
     .ok_or_else(|| TenantDataError::TargetUnavailable {
         target_key: target_key.into(),
+        source: None,
     })
 }
 
@@ -267,6 +275,7 @@ pub(in crate::router) fn target_write_error(
     tracing::warn!(tenant_id = %provision.tenant_id, target = %provision.target_key, %error, operation);
     TenantDataError::TargetUnavailable {
         target_key: provision.target_key.clone(),
+        source: None,
     }
 }
 
@@ -280,6 +289,7 @@ pub(in crate::router) async fn finish_target_transaction(
             tracing::warn!(target = target_key, %error, "租户数据目标事务提交失败");
             TenantDataError::TargetUnavailable {
                 target_key: target_key.into(),
+                source: None,
             }
         }),
         Err(error) => {
@@ -313,11 +323,13 @@ pub(in crate::router) async fn claim_dedicated_slot(
             tracing::warn!(target = %provision.target_key, %error, "dedicated 固定占用槽更新失败");
             TenantDataError::TargetUnavailable {
                 target_key: provision.target_key.clone(),
+                source: None,
             }
         })?;
     if result.rows_affected() > 1 {
         return Err(TenantDataError::TargetUnavailable {
             target_key: provision.target_key.clone(),
+            source: None,
         });
     }
     if result.rows_affected() == 0 {
@@ -332,6 +344,7 @@ pub(in crate::router) async fn claim_dedicated_slot(
             tracing::warn!(target = %provision.target_key, %error, "dedicated 固定占用槽复核失败");
             TenantDataError::TargetUnavailable {
                 target_key: provision.target_key.clone(),
+                source: None,
             }
         })?;
         let exact = slot.is_some_and(|slot| {
@@ -342,6 +355,7 @@ pub(in crate::router) async fn claim_dedicated_slot(
         if !exact {
             return Err(TenantDataError::TargetUnavailable {
                 target_key: provision.target_key.clone(),
+                source: None,
             });
         }
     }

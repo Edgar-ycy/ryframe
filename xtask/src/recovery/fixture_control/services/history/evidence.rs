@@ -3,10 +3,13 @@ use std::{collections::BTreeSet, path::Path};
 use serde_json::{Value, json};
 
 use super::{generation, prefix};
+#[path = "close_recovery.rs"]
+mod close_recovery;
 use crate::{
     Result,
     recovery::clone::native::{digest, json as json_io, lifecycle::state},
 };
+pub(crate) use close_recovery::{candidate as close_candidate, recovery_evidence};
 
 #[derive(Debug)]
 pub(super) struct HistoryError(pub(super) &'static str);
@@ -25,7 +28,10 @@ pub(super) fn check(valid: bool, message: &'static str) -> Result<()> {
     }
 }
 
-pub(super) fn exact(value: &Value, fields: &[&str]) -> Result<()> {
+pub(in crate::recovery::fixture_control::services) fn exact(
+    value: &Value,
+    fields: &[&str],
+) -> Result<()> {
     json_io::exact(value, fields, "夹具历史证据")
         .map(|_| ())
         .map_err(|_| {
@@ -41,7 +47,7 @@ pub(super) fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
         .ok_or_else(|| format!("夹具历史证据缺少字符串字段 {key}").into())
 }
 
-pub(super) fn path_is(value: &Value, path: &Path) -> bool {
+pub(in crate::recovery::fixture_control::services) fn path_is(value: &Value, path: &Path) -> bool {
     value.as_str().is_some_and(|value| Path::new(value) == path)
 }
 
@@ -167,11 +173,15 @@ pub(crate) fn close_evidence(
     let redis = read(&redis_path)?;
     check(
         redis["status"] == "redis_process_stopped"
-            && redis["alive"] == false
             && redis["resources_deleted"] == false
             && redis["runtime"] == services["runtime"],
         "Redis 失败 close 证据与原服务代次不一致",
     )?;
+    if services["runtime"]["format_version"] == 3 {
+        windows_redis_stop(run, &redis)?;
+    } else {
+        check(redis["alive"] == false, "Redis 失败 close 未确认原进程退出")?;
+    }
     let (rustfs, _) = generation::paths(run, generation)?;
     let tree_path = rustfs.join("rustfs-tree.json");
     let tree = read(&tree_path)?;
@@ -204,7 +214,52 @@ pub(crate) fn close_evidence(
     Ok((evidence, controller(run, failed)?))
 }
 
-pub(super) fn members(proof: &Value, run: &Path) -> Result<()> {
+pub(in crate::recovery::fixture_control::services) fn windows_redis_stop(
+    run: &Path,
+    receipt: &Value,
+) -> Result<()> {
+    exact(
+        receipt,
+        &[
+            "state",
+            "status",
+            "runtime",
+            "resources_deleted",
+            "windows",
+            "exited",
+        ],
+    )?;
+    let runtime = &receipt["runtime"];
+    let output = Path::new(text(runtime, "output")?);
+    check(
+        runtime["format_version"] == 3
+            && receipt["state"] == "stopped"
+            && receipt["windows"] == json!({"identity":runtime["process"],"alive":false})
+            && path_is(&receipt["exited"]["path"], &output.join("exited.json"))
+            && path_is(
+                &runtime["process_receipt"]["path"],
+                &output.join("process.json"),
+            ),
+        "Windows Redis 停止收据未绑定原代次及退出记录",
+    )?;
+    let process = bound(run, &runtime["process_receipt"])?;
+    let exited = bound(run, &receipt["exited"])?;
+    exact(&exited, &["process", "returncode", "job_empty"])?;
+    check(
+        process
+            == json!({"launch":runtime["launch"],"supervisor":runtime["supervisor"],
+            "process":runtime["process"]})
+            && exited["process"] == runtime["process_receipt"]
+            && exited["returncode"] == 0
+            && exited["job_empty"] == true,
+        "Windows Redis 停止收据未证明原进程正常退出及 Job 清空",
+    )
+}
+
+pub(in crate::recovery::fixture_control::services) fn members(
+    proof: &Value,
+    run: &Path,
+) -> Result<()> {
     let tree = &proof["tree"];
     check(
         proof["state"] == "stopped" && tree["format_version"] == 2,
@@ -385,14 +440,27 @@ fn validate_reconciliation(
     if close {
         let (rustfs, redis) = generation::paths(run, &history["active_generation"])?;
         let tree_path = rustfs.join("rustfs-tree.json");
-        let services = json!({"tree":read(&tree_path)?,"runtime":read(&redis.join("runtime.json"))?,"evidence":{"rustfs_tree":binding(&tree_path)?}});
-        let (evidence, _) = close_evidence(
-            run,
-            failed,
-            &history["active_generation"],
-            &item["sources"],
-            &services,
-        )?;
+        let mut services = json!({"tree":read(&tree_path)?,"runtime":read(&redis.join("runtime.json"))?,"evidence":{"rustfs_tree":binding(&tree_path)?}});
+        let evidence = if proof["evidence"].get("close_recovery").is_some() {
+            services["requests"] = json!({"redis":read(&redis.join("request.json"))?});
+            recovery_evidence(
+                run,
+                failed,
+                &history["active_generation"],
+                &item["sources"],
+                &services,
+                &proof["evidence"]["close_recovery"],
+            )?
+        } else {
+            close_evidence(
+                run,
+                failed,
+                &history["active_generation"],
+                &item["sources"],
+                &services,
+            )?
+            .0
+        };
         check(proof["evidence"] == evidence, "夹具关闭和解证据不匹配")?;
     } else {
         restart_evidence(run, failed, &item["sources"], &history["external_recovery"])?;

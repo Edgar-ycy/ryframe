@@ -1,7 +1,7 @@
 use super::*;
 use crate::recovery::clone::native::resources::{common, storage};
 
-fn frozen() -> FakeRuntime {
+pub(super) fn frozen() -> FakeRuntime {
     let mut runtime = FakeRuntime::new();
     let fixture = &mut runtime.fixture;
     let output = fixture.run.join("rustfs");
@@ -9,23 +9,37 @@ fn frozen() -> FakeRuntime {
     fs::create_dir(&data).unwrap();
     let (device, inode) = common::device_inode_for(&data, &fs::metadata(&data).unwrap()).unwrap();
     let identity = json!({"pid":12345,"started":"1","executable":std::env::current_exe().unwrap()});
+    let mut credentials = json!({});
+    for key in ["access_key", "secret_key"] {
+        let path = data.join(format!("{key}.txt"));
+        fs::write(&path, format!("fixture-{key}")).unwrap();
+        credentials[key] = binding(&path).unwrap();
+    }
     let request = json!({"scope_id":"services-fixture-seed","executable":{"path":identity["executable"],"sha256":"1".repeat(64)},
-        "data_directory":{"path":data,"device":device,"inode":inode},"credential_files":{},
+        "data_directory":{"path":data,"device":device,"inode":inode},"credential_files":credentials,
         "api_url":"http://127.0.0.1:29200","console_url":"http://127.0.0.1:29201"});
     json_io::write_replace(&output.join("request.json"), &request).unwrap();
     let controller = fixture.run.join("controller-0001.json");
     json_io::write_new(&controller, &json!({"fixture":true})).unwrap();
     let manifest = binding(&fixture.run.join("manifest.json")).unwrap();
-    json_io::write_new(&output.join("intent.json"), &json!({"format_version":1,"kind":"devex-clone-storage-intent",
+    json_io::write_new(
+        &output.join("intent.json"),
+        &json!({"format_version":1,"kind":"devex-clone-storage-intent",
         "request":manifest,"controller":binding(&controller).unwrap(),"attempt":1,
-        "arguments":storage::model::arguments(&request).unwrap(),"environment":storage::model::configuration(&request).unwrap()})).unwrap();
+        "arguments":storage::model::arguments(&request).unwrap()}),
+    )
+    .unwrap();
     let process = json!({"format_version":1,"role":"rustfs","scope_id":request["scope_id"],"lifecycle":"running",
         "identity":identity,"api_url":request["api_url"],"console_url":request["console_url"],
         "data_dir":request["data_directory"]["path"],"intent":binding(&output.join("intent.json")).unwrap()});
     json_io::write_new(&output.join("process.json"), &process).unwrap();
-    json_io::write_new(&output.join("launch.json"), &json!({"format_version":1,"scope_id":request["scope_id"],
+    json_io::write_new(
+        &output.join("launch.json"),
+        &json!({"format_version":1,"scope_id":request["scope_id"],
         "identity":identity,"arguments":storage::model::arguments(&request).unwrap(),
-        "environment":storage::model::configuration(&request).unwrap(),"credential_files":request["credential_files"]})).unwrap();
+        "credential_files":request["credential_files"]}),
+    )
+    .unwrap();
     let mut tree = read(&output.join("rustfs-tree.json")).unwrap();
     tree["process"] = identity.clone();
     json_io::write_replace(&output.join("rustfs-tree.json"), &tree).unwrap();
@@ -62,6 +76,10 @@ fn frozen_requests_tree_results_and_launch_evidence_must_agree() {
         observed["origin"]["storage"]["identity"]
     );
     assert_eq!(observed["storage_observation"]["state"], "recorded");
+    assert_eq!(
+        observed["evidence"]["redis_runtime"],
+        binding(&runtime.fixture.run.join("redis").join("runtime.json")).unwrap()
+    );
     assert!(observed["cache_effective"].is_null());
     assert_eq!(runtime.fixture.state(), before);
     assert_eq!(runtime.events, ["tree-read"]);
@@ -140,4 +158,38 @@ fn successor_tools_may_only_change_the_same_launcher_bytes() {
     context["documents"]["review"]["tools"]["redis_python"]["resolved_path"] =
         json!("/other/python");
     assert!(registration::load(&mut runtime, &backend, &context, true).is_err());
+}
+
+#[test]
+fn historical_projection_keeps_the_initial_and_published_successor_and_rejects_modified_ledger() {
+    let mut runtime = frozen();
+    let services = registered(&mut runtime).unwrap();
+    let original =
+        json!({"rustfs":services["origin"]["storage"],"redis":services["origin"]["redis"]});
+    runtime.fixture.services = services;
+    runtime.execute("close", None).unwrap();
+    let result = runtime.execute("restart", Some(runtime.owner())).unwrap();
+    let backend = runtime.fixture.backend.clone();
+    let run = runtime.fixture.run.clone();
+    let before = fs::read(run.join("state.json")).unwrap();
+    runtime.events.clear();
+    let values = super::super::projection::historical(&mut runtime, &backend, &run).unwrap();
+    assert_eq!(values.as_array().unwrap().len(), 2);
+    assert_eq!(values[0]["value"], original);
+    assert_eq!(
+        values[1]["runtime"]["generation"],
+        runtime.fixture.history()["active_generation"]
+    );
+    assert_ne!(
+        values[1]["value"]["rustfs"]["identity"],
+        values[0]["value"]["rustfs"]["identity"]
+    );
+    assert_eq!(fs::read(run.join("state.json")).unwrap(), before);
+    assert_eq!(runtime.events, ["context", "registered"]);
+    let path = Path::new(text(&result["generation"], "path").unwrap());
+    let raw = fs::read(path).unwrap();
+    fs::write(path, b"{}").unwrap();
+    assert!(super::super::projection::historical(&mut runtime, &backend, &run).is_err());
+    assert_eq!(fs::read(path).unwrap(), b"{}");
+    fs::write(path, raw).unwrap();
 }

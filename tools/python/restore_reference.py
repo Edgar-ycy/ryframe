@@ -7,7 +7,6 @@ import sys
 sys.dont_write_bytecode = True
 
 from dataclasses import dataclass
-import hashlib
 import json
 import os
 import subprocess
@@ -16,15 +15,14 @@ from pathlib import Path
 from full_stack_process import process_identity, read_process
 from process_sockets import verify_listener
 from restore_build import file_digest, source_snapshot
-from restore_reference_backup import backup_source, document_binding, validate_backup_result
+from restore_reference_backup import document_binding
 from restore_reference_execution import RestoreInputs, restore_inputs, restore_output
 from restore_reference_images import RestoreImages
 from restore_reference_io import ExternalTools, redact_object_diagnostic
 from restore_reference_plan import (dataset_timeout_seconds, plan_hash,
-                                    validate_inventory, validate_plan,
+                                    validate_plan,
                                     verify_artifacts)
 from restore_runtime import read_json
-from restore_runtime_evidence import read_json_document
 from restore_runtime_registration import registered_stopped_runtime
 from restore_reference_target import execute_plan
 from source_inventory import build_source_domains, capture_inventory
@@ -73,64 +71,8 @@ def work_directory(plan: dict) -> Path:
     return Path(_coordinate("work-directory", {"plan": plan}, write=True))
 
 
-def require_stopped(plan: dict, side: str) -> None:
-    config = plan[side]
-    for role in ("api", "worker"):
-        identity = read_process(Path(config["runtime_dir"]), role, config["scope_id"])
-        actual = process_identity(identity["pid"])
-        if actual is not None:
-            raise ValueError("复制和还原期间已登记 API/Worker 必须停止；PID 重用也须重新确认")
-
-
 def artifact(root: Path, path: Path, resource: str) -> dict:
     return {"relative_path": path.relative_to(root).as_posix(), "resource": resource, **file_digest(path)}
-
-
-def backup(plan: dict, tools: ExternalTools, work: Path, inventory: dict,
-           backend: Path, source_generation: Path,
-           source_export_result: Path) -> dict:
-    validate_inventory(plan, inventory)
-    inputs = backup_source(backend, plan, inventory, source_generation, source_export_result, live=True)
-    require_stopped(plan, "source")
-    tools.verify_databases("source")
-    tools.verify_objects("source")
-    root = work / "backup"
-    root.mkdir(exist_ok=False)
-    artifacts = []
-    for database in inventory["databases"]:
-        path = root / "databases" / f"{database['key']}.sql"
-        path.parent.mkdir(exist_ok=True)
-        settings = next(db for db in plan["source"]["databases"] if db["key"] == database["key"])
-        tools.dump(settings, [table["table"] for table in database["tables"]], path)
-        artifacts.append(artifact(root, path, f"db:{database['key']}"))
-    for objects in inventory["objects"]:
-        directory = root / "objects" / objects["bucket"]
-        directory.mkdir(parents=True, exist_ok=False)
-        entries = []
-        for entry in objects["entries"]:
-            path = directory / (hashlib.sha256(entry["key"].encode()).hexdigest() + ".bin")
-            metadata = tools.read_object("source", objects["bucket"], entry["key"], path,
-                                         max_bytes=max(1, entry["bytes"]))
-            if any(file_digest(path)[key] != entry[key] for key in ("bytes", "sha256")):
-                raise ValueError("外部对象复制与静止采集清单不一致")
-            value = artifact(root, path, f"objects:{objects['bucket']}")
-            artifacts.append(value)
-            entries.append({**entry, "file": value["relative_path"], "content_type": metadata.get("ContentType", "application/octet-stream")})
-        path = directory / "index.json"
-        write_json(path, {"entries": entries})
-        artifacts.append(artifact(root, path, f"objects:{objects['bucket']}"))
-    manifest = _coordinate("backup-manifest", {
-        "plan": plan, "inventory": inventory, "artifacts": artifacts, "root": str(root),
-    })
-    require_stopped(plan, "source")
-    if backup_source(backend, plan, inventory, source_generation, source_export_result, live=True) != inputs:
-        raise ValueError("备份期间共享导出或来源绑定被替换")
-    write_json(root / "manifest.json", manifest)
-    result = {"format_version": 2, "kind": "restore-reference-backup", "reference_plan": plan,
-            "manifest": document_binding(read_json_document(root / "manifest.json")),
-            "backup_root": str(root), "artifacts": len(artifacts), **inputs}
-    validate_backup_result(result)
-    return result
 
 
 def restore(plan: dict, tools: ExternalTools, backend: Path, inputs: RestoreInputs) -> dict:
@@ -196,12 +138,12 @@ def restore_resources(plan: dict, tools: ExternalTools, current: RestoreInputs, 
             "root": str(current.root), "manifest": current.manifest.value, "relative": task["relative"],
         })
         source = Path(bound["path"])
+        expected = {key: bound[key] for key in ("bytes", "sha256")}
         with images.target_environment():
             if task["kind"] == "database":
-                tools.restore_database(task["target"], task["tables"], source)
+                tools.restore_database(task["target"], task["tables"], source, expected)
             else:
-                tools.create_object_if_absent(task["bucket"], task["key"], source,
-                                               task["metadata"], {key: bound[key] for key in ("bytes", "sha256")})
+                tools.create_object_if_absent(task["bucket"], task["key"], source, task["metadata"], expected)
 
 
 
@@ -215,9 +157,6 @@ class ReferenceRequest:
     backend_dir: Path
     plan: Path
     write: bool
-    inventory: Path | None = None
-    source_generation: Path | None = None
-    source_export_result: Path | None = None
     backup_root: Path | None = None
     record: Path | None = None
     runtime_registration: Path | None = None
@@ -258,8 +197,10 @@ def _request_from_raw(raw: str) -> ReferenceRequest:
         values = _coordinate("request", {"raw": raw})
     except (ValueError, RuntimeError) as error:
         raise ReferenceProtocolError("reference 私有参数协议无效") from error
+    if values["command"] in {"backup", "restore"}:
+        raise ReferenceProtocolError("参考备份和恢复由 Rust 公共入口执行")
     paths = {name: Path(value) for name, value in values.items() if name in {
-        "backend_dir", "plan", "inventory", "source_generation", "source_export_result",
+        "backend_dir", "plan",
         "backup_root", "record", "runtime_registration", "backup_receipt", "comparison_sources",
         "arm_input", "fresh_target_verify", "product_plan", "target_plan", "output"}}
     return ReferenceRequest(**{**values, **paths})
@@ -271,16 +212,6 @@ def main(args: ReferenceRequest) -> None:
     if args.command == "plan":
         result = execute_plan(args, backend, plan)
         print(json.dumps(result if result is not None else _coordinate("summary", {"plan": plan}), ensure_ascii=False))
-        return
-    if args.command in ("check-dataset", "check-existing"):
-        work = Path(plan["work_dir"])
-        _coordinate("work-verify", {"plan": plan})
-        side = "source" if args.command == "check-dataset" else args.side or "target"
-        check_api(plan, ExternalTools(plan, work), side)
-        if args.command == "check-dataset":
-            require_empty_source(plan, ExternalTools(plan, work))
-        print(json.dumps({"plan_sha256": plan_hash(plan), "side": side,
-                          "scope_id": plan[side]["scope_id"]}))
         return
     if not args.write:
         raise ReferenceProtocolError("所有执行阶段必须显式授权写入")
@@ -345,14 +276,6 @@ def execute(args, plan: dict, backend: Path, tools: ExternalTools, work: Path) -
                 "source": source, "actual_source": source_snapshot(backend),
                 "tools": tool_inventory, "actual_tools": capture_inventory(tool_root), "result": result,
             })
-        elif args.command == "backup":
-            inventory = read_json(args.inventory)
-            if "id" in inventory:
-                raise ValueError("backup 必须直接消费共享导出的原始库存，不能手工补写 id")
-            inventory = _coordinate("backup-inventory", {
-                "plan": plan, "inventory": inventory, "source": source_snapshot(backend),
-            })
-            result = backup(plan, tools, work, inventory, backend, args.source_generation.absolute(), args.source_export_result.absolute())
         elif args.command == "restore":
             result = restore(plan, tools, backend, inputs)
         else:

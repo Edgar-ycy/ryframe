@@ -23,7 +23,8 @@ impl Fixture {
         let descriptor =
             |name: &str| json!({"path":local.join(name),"bytes":2,"sha256":"1".repeat(64)});
         let binding = json!({"registration":descriptor("registration.json"),"target_plan":descriptor("target.json")});
-        let request = json!({"registration":binding,"tools":{"coordinator_root":coordinator},"authority":{"scope_id":"runtime-test"}});
+        let request = json!({"registration":binding,"runtime_directory":root,
+            "tools":{"coordinator_root":coordinator},"authority":{"scope_id":"runtime-test"}});
         let exe = std::env::current_exe().unwrap();
         let commands = json!({"api":[exe],"worker":[exe],"frontend":[exe]});
         Self {
@@ -107,6 +108,9 @@ fn roles_reject_duplicate_operations_boolean_numbers_and_command_drift() {
         assert!(validate_generation(&value, &f.root, 1, &f.binding, &f.commands).is_err());
     }
     value = original;
+    value["request"]["runtime_directory"] = json!(f.root.join("other"));
+    assert!(validate_generation(&value, &f.root, 1, &f.binding, &f.commands).is_err());
+    value["request"]["runtime_directory"] = json!(f.root);
     value["roles"]["api"]["command"] = json!(["unexpected"]);
     assert!(validate_generation(&value, &f.root, 1, &f.binding, &f.commands).is_err());
 }
@@ -195,4 +199,38 @@ fn document_rejects_empty_and_oversized_inputs_before_unbounded_read() {
         .set_len(strict::MAX_JSON_BYTES + 1)
         .unwrap();
     assert!(files::document(&path).is_err());
+}
+
+#[test]
+fn interrupted_stop_retains_exact_monitor_proof_without_inventing_product_receipt() {
+    let f = Fixture::new();
+    let mut state = f.state();
+    let generation = &mut state["generations"][0];
+    f.seed_processes(generation);
+    generation["status"] = json!("stopped");
+    let directory = f.root.join("generation-0001");
+    let product = directory.join("api.json");
+    fs::remove_file(&product).unwrap();
+    generation["roles"]["api"]["state"] = json!("stopped");
+    assert!(validate_generation(generation, &f.root, 1, &f.binding, &f.commands).is_err());
+
+    let tree = &generation["roles"]["api"]["tree"];
+    let operation = text(&tree["operation_id"]).unwrap();
+    let path = directory.join(format!("api-members-{operation}-stopped.json"));
+    let mut proof = json!({
+        "format_version":1, "operation_id":operation, "directory":directory,
+        "role":"api", "scope_id":"runtime-test", "supervisor":tree["supervisor"],
+        "monitor":tree["monitor"], "status":"stopped",
+        "members":[tree["supervisor"],tree["process"]], "error_type":null,
+    });
+    strict::write_new(&path, &proof).unwrap();
+    generation["roles"]["api"]["completion"] = files::bound_value(&path).unwrap();
+    validate_generation(generation, &f.root, 1, &f.binding, &f.commands).unwrap();
+    assert!(!product.exists());
+
+    proof["scope_id"] = json!("unknown");
+    strict::write_replace(&path, &proof).unwrap();
+    generation["roles"]["api"]["completion"] = files::bound_value(&path).unwrap();
+    assert!(validate_generation(generation, &f.root, 1, &f.binding, &f.commands).is_err());
+    assert!(!product.exists());
 }

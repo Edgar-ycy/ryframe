@@ -2,7 +2,7 @@ use std::{collections::BTreeSet, fs, path::Path, process::Command};
 
 type Identity = (String, String, Option<String>, Option<String>);
 
-pub(super) fn resolve(root: &Path, package: &str) -> Result<(), String> {
+pub(super) fn resolve(root: &Path, package: &str, target: &Path) -> Result<(), String> {
     let path = root.join("Cargo.lock");
     let before = read(&path)?;
     let manifest = read(&root.join("Cargo.toml"))?;
@@ -14,6 +14,7 @@ pub(super) fn resolve(root: &Path, package: &str) -> Result<(), String> {
         .ok_or("Workspace 缺少 package.version；本批未安装")?;
     let output = Command::new("cargo")
         .args(["metadata", "--offline", "--format-version", "1"])
+        .env("CARGO_TARGET_DIR", target)
         .current_dir(root)
         .output()
         .map_err(|error| {

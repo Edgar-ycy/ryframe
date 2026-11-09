@@ -1,4 +1,4 @@
-use sea_orm::{DatabaseConnection, DbBackend, DbErr, FromQueryResult, Statement};
+use sea_orm::{ConnectionTrait, DbBackend, DbErr, FromQueryResult, Statement};
 
 use super::{normalize_column_default, normalize_column_extra, schema_fingerprint_mismatch};
 use ryframe_db::migration::normalize_check_clause;
@@ -6,8 +6,8 @@ use ryframe_db::schema::{
     CheckMetadata, ColumnMetadata, ConstraintMetadata, IndexMetadata, TableMetadata,
 };
 
-pub(super) async fn verify_target_slot_schema(
-    db: &DatabaseConnection,
+pub(super) async fn verify_target_slot_schema<C: ConnectionTrait>(
+    db: &C,
     tables: &[TableMetadata],
 ) -> Result<(), DbErr> {
     let slot = tables
@@ -31,7 +31,7 @@ pub(super) async fn verify_target_slot_schema(
     Ok(())
 }
 
-async fn verify_columns(db: &DatabaseConnection) -> Result<(), DbErr> {
+async fn verify_columns<C: ConnectionTrait>(db: &C) -> Result<(), DbErr> {
     let columns = ColumnMetadata::find_by_statement(Statement::from_string(
         DbBackend::MySql,
         "SELECT column_name AS `column_name`, column_type AS `column_type`, \
@@ -118,7 +118,7 @@ async fn verify_columns(db: &DatabaseConnection) -> Result<(), DbErr> {
     Ok(())
 }
 
-async fn verify_indexes(db: &DatabaseConnection) -> Result<(), DbErr> {
+async fn verify_indexes<C: ConnectionTrait>(db: &C) -> Result<(), DbErr> {
     let indexes = IndexMetadata::find_by_statement(Statement::from_string(
         DbBackend::MySql,
         "SELECT index_name AS `index_name`, column_name AS `column_name`, \
@@ -145,7 +145,7 @@ async fn verify_indexes(db: &DatabaseConnection) -> Result<(), DbErr> {
     Ok(())
 }
 
-async fn verify_constraints(db: &DatabaseConnection) -> Result<(), DbErr> {
+async fn verify_constraints<C: ConnectionTrait>(db: &C) -> Result<(), DbErr> {
     let constraints = ConstraintMetadata::find_by_statement(Statement::from_string(
         DbBackend::MySql,
         "SELECT constraint_name AS `constraint_name`, constraint_type AS `constraint_type`, \

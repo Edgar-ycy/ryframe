@@ -119,6 +119,32 @@ fn stage_status_table_preserves_explicit_actions_and_fail_closed_paths() {
         assert_eq!(result["evidence_valid"], false);
         assert_eq!(result["next_action"], Value::Null);
     }
+    for prepared in [false, true] {
+        let result = status(
+            "initialize-blocked",
+            json!(prepared),
+            Value::Null,
+            Value::Null,
+        );
+        assert_eq!(
+            result["last_successful_stage"],
+            if prepared { "prepared" } else { "registered" }
+        );
+        assert_eq!(result["next_action"], Value::Null);
+    }
+    for reason in ["已存在资源写入 intent", "包含非只读 prepare 证据"] {
+        let result = status("prepare-blocked", json!(reason), Value::Null, Value::Null);
+        assert_eq!(result["blocking_reason"], reason);
+        assert_eq!(result["next_action"], Value::Null);
+    }
+    let inventory = status(
+        "initialize-resume",
+        json!({"resumable":true,"mode":"inventory"}),
+        Value::Null,
+        Value::Null,
+    );
+    assert_eq!(inventory["last_successful_stage"], "reset");
+    assert_eq!(inventory["next_action"], "resume-initialize");
 }
 
 #[test]

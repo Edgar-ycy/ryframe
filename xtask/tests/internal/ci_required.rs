@@ -203,22 +203,80 @@ fn required_uses_exactly_one_registered_task_node() {
 
 #[test]
 fn workflow_calls_xtask_required_with_the_complete_needs_document() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-    let workflow = fs::read_to_string(root.join(".github/workflows/ci.yml")).unwrap();
-    let required = workflow.split("\n  required:\n").nth(1).unwrap();
-    assert!(required.contains("cargo xtask check ci required"));
-    assert!(required.contains("${{ toJSON(needs) }}"));
-    assert!(required.contains("--action \"$EVENT_ACTION\""));
-    assert!(required.contains("dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30"));
-    assert!(!required.contains("check_required_jobs.py"));
-    assert!(!root.join("scripts/check_required_jobs.py").exists());
-    assert!(
-        !root
-            .join("scripts/tests/test_check_required_jobs.py")
-            .exists()
-    );
-}
+    use crate::check::supply_chain::yaml;
+    use serde_json::json;
 
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let workflow =
+        yaml::parse(&fs::read_to_string(root.join(".github/workflows/ci.yml")).unwrap()).unwrap();
+    let required = workflow.get("jobs").unwrap().get("required").unwrap();
+    assert_eq!(
+        required.get("if").unwrap().as_str(),
+        Some("${{ always() }}")
+    );
+    assert!(required.get("env").is_none());
+    let expected = options_for(RequiredEvent::Push, None, &[]);
+    let jobs = required
+        .get("needs")
+        .unwrap()
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(jobs, expected.needs.keys().map(String::as_str).collect());
+    let steps = required.get("steps").unwrap().as_sequence().unwrap();
+    let invocation = steps
+        .iter()
+        .position(|step| step.get("shell").is_some())
+        .unwrap();
+    assert!(steps[..invocation].iter().any(|step| {
+        step.get("run")
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| {
+                value.split_whitespace().eq([
+                    "cargo",
+                    "build",
+                    "--locked",
+                    "--target-dir",
+                    "target/xtask-run",
+                    "-p",
+                    "xtask",
+                    "--bin",
+                    "xtask",
+                ])
+            })
+    }));
+    let step = &steps[invocation];
+    assert!(step.get("env").is_none());
+    assert_eq!(
+        step.get("shell").unwrap().as_str(),
+        Some("${{ github.workspace }}/target/xtask-run/debug/xtask check ci required --input {0}")
+    );
+    let needs = expected
+        .needs
+        .iter()
+        .map(|(name, need)| {
+            (
+                name.clone(),
+                json!({"result":need.result.as_str(),"outputs":need.outputs}),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    let body = step
+        .get("run")
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .replace("${{ toJSON(github.event_name) }}", "\"push\"")
+        .replace("${{ toJSON(github.event.action) }}", "null")
+        .replace(
+            "${{ toJSON(needs) }}",
+            &serde_json::to_string(&needs).unwrap(),
+        );
+    let actual: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(actual, json!({"event":"push","action":null,"needs":needs}));
+}
 fn contains_error(options: &RequiredOptions, expected: &str) -> bool {
     validate_required_jobs(options)
         .unwrap()

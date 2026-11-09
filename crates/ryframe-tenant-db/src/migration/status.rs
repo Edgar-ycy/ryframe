@@ -1,8 +1,6 @@
 use std::collections::BTreeSet;
 
-use sea_orm::{
-    ConnectionTrait, DatabaseConnection, DbBackend, DbErr, FromQueryResult, Statement, TryGetable,
-};
+use sea_orm::{ConnectionTrait, DbBackend, DbErr, FromQueryResult, Statement, TryGetable};
 
 use super::schema::{ensure_mysql, verify_mysql_80};
 
@@ -55,14 +53,14 @@ struct MigrationVersionRow {
 }
 
 /// 读取独立迁移账本，不执行 DDL。
-pub async fn status(db: &DatabaseConnection) -> Result<MigrationStatus, DbErr> {
+pub async fn status<C: ConnectionTrait>(db: &C) -> Result<MigrationStatus, DbErr> {
     ensure_mysql(db)?;
     verify_mysql_80(db).await?;
     status_after_server_validation(db).await
 }
 
-pub(super) async fn status_after_server_validation(
-    db: &DatabaseConnection,
+pub(super) async fn status_after_server_validation<C: ConnectionTrait>(
+    db: &C,
 ) -> Result<MigrationStatus, DbErr> {
     let ledger_exists = scalar_i64(
         db,
@@ -92,7 +90,7 @@ pub(super) async fn status_after_server_validation(
     ))
 }
 
-async fn scalar_i64(db: &DatabaseConnection, sql: &str) -> Result<i64, DbErr> {
+async fn scalar_i64<C: ConnectionTrait>(db: &C, sql: &str) -> Result<i64, DbErr> {
     let row = db
         .query_one_raw(Statement::from_string(DbBackend::MySql, sql.to_owned()))
         .await?

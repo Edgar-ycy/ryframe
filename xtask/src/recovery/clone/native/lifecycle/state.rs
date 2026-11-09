@@ -14,6 +14,8 @@ use super::super::{
 use super::manifest;
 use crate::Result;
 
+pub(crate) mod prefix;
+
 pub(crate) const STAGES: &[&str] = &[
     "export",
     "target-verify",
@@ -28,6 +30,12 @@ pub(crate) const STAGES: &[&str] = &[
     "fixture-buckets",
     "fixture-services",
 ];
+
+pub(super) fn resource_cleanup(stage: &str, mode: &str) -> bool {
+    matches!(stage, "cache-target" | "runtime-target") && matches!(mode, "stop" | "recover")
+        || stage == "seed-runtime" && matches!(mode, "stop" | "recover")
+        || matches!(stage, "post-copy" | "seed-runtime") && mode == "recover-session"
+}
 
 pub(crate) fn load(directory: &Path, verify_results: bool) -> Result<Value> {
     let value = json_io::read(&directory.join("state.json"))?;
@@ -73,7 +81,7 @@ pub(crate) fn begin(
     if !STAGES.contains(&stage) {
         return Err("未知验收阶段".into());
     }
-    let mut value = load(directory, true)?;
+    let mut value = load(directory, !resource_cleanup(stage, mode))?;
     let attempts = value["attempts"].as_array_mut().unwrap();
     if attempts
         .iter()
@@ -107,16 +115,23 @@ pub(crate) fn bind_controller(
     owner: &Value,
     attempt: &Value,
 ) -> Result<()> {
-    let value = load(directory, true)?;
+    let value = load(directory, false)?;
     let last = value["attempts"]
         .as_array()
         .and_then(|items| items.last())
         .ok_or("验收阶段记录为空")?;
-    if last.get("number").and_then(Value::as_u64) != Some(number)
+    if last != attempt
+        || last.get("number").and_then(Value::as_u64) != Some(number)
         || last.get("status").and_then(Value::as_str) != Some("running")
         || json_io::read(&directory.join("run.lock/owner.json"))? != *owner
     {
         return Err("只能绑定当前持锁控制器刚开始的阶段".into());
+    }
+    if !resource_cleanup(
+        json_io::text(&last["stage"], "阶段")?,
+        json_io::text(&last["mode"], "模式")?,
+    ) {
+        load(directory, true)?;
     }
     json_io::write_new(
         &controller_path(directory, number),
@@ -136,7 +151,14 @@ pub(crate) fn finish(
     result: Option<&Value>,
     error_type: Option<&str>,
 ) -> Result<()> {
-    let mut value = load(directory, true)?;
+    let mut value = load(directory, false)?;
+    let current = running_attempt(&value)?.ok_or("不能收尾不存在的运行阶段")?;
+    if !resource_cleanup(
+        json_io::text(&current["stage"], "阶段")?,
+        json_io::text(&current["mode"], "模式")?,
+    ) {
+        value = load(directory, true)?;
+    }
     let attempts = value["attempts"].as_array_mut().unwrap();
     let last = attempts.last_mut().ok_or("不能收尾不存在的阶段")?;
     if last.get("number").and_then(Value::as_u64) != Some(number)
@@ -237,30 +259,18 @@ pub(crate) fn historical(
     }
     let before = digest::file(path)?;
     let value = load(directory, verify_results)?;
-    let historical_attempts = if descriptor.get("bytes").and_then(Value::as_u64)
-        == Some(before.bytes)
-        && expected_sha == before.sha256
+    let raw = fs::read(path)?;
+    if raw.len() as u64 != before.bytes
+        || hex::encode(Sha256::digest(&raw)) != before.sha256
+        || serde_json::from_slice::<Value>(&raw)? != value
     {
-        attempts(&value)?.len()
-    } else {
-        let attempts = attempts(&value)?;
-        let mut matches = Vec::new();
-        for count in 0..=attempts.len() {
-            let mut candidate = value.clone();
-            candidate["attempts"] = Value::Array(attempts[..count].to_vec());
-            if serialized_matches(
-                &candidate,
-                descriptor.get("bytes").and_then(Value::as_u64).unwrap(),
-                expected_sha,
-            )? {
-                matches.push(count);
-            }
-        }
-        if matches.len() != 1 {
-            return Err("历史阶段记录不是当前账本的精确追加前缀".into());
-        }
-        matches[0]
-    };
+        return Err("阶段记录在历史前缀核对期间变化".into());
+    }
+    let historical_attempts = prefix::count(
+        &raw,
+        descriptor.get("bytes").and_then(Value::as_u64).unwrap(),
+        expected_sha,
+    )?;
     if digest::file(path)? != before {
         return Err("阶段记录在历史前缀核对期间变化".into());
     }
@@ -268,20 +278,6 @@ pub(crate) fn historical(
         "state": value,
         "historical_attempts": historical_attempts,
         "current": manifest::binding(path, &before)?,
-    }))
-}
-
-fn serialized_matches(value: &Value, bytes: u64, expected_sha: &str) -> Result<bool> {
-    let mut pretty = serde_json::to_string_pretty(value)?;
-    pretty.push('\n');
-    let variants = [pretty.clone(), pretty.replace('\n', "\r\n")];
-    Ok(variants.iter().any(|candidate| {
-        candidate.len() as u64 == bytes
-            && Sha256::digest(candidate.as_bytes())
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect::<String>()
-                == expected_sha
     }))
 }
 

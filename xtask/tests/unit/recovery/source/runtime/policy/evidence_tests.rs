@@ -127,10 +127,10 @@ fn completion_binds_empty_streams_exact_exit_and_ordered_time() {
 fn snapshot_identity_rejects_subject_version_and_duplicate_field_changes() {
     let subject =
         json!({"user_id":"9007199254740993","tenant_id":"system","user_authorization_version":1});
-    let payload = json!({"versions":{"tenant_authorization_epoch":1,"user_authorization_version":1},"tenant_session_version":1,
+    let payload = json!({"versions":{"tenant_authorization_epoch":1,"user_authorization_version":1,"data_scope_version":i64::MAX},"tenant_session_version":1,
         "principal":{"actor":{"user_id":"9007199254740993","tenant_id":"system","username":"owner","dept_id":null,
-            "dept_path":null,"data_scope":"all","custom_dept_ids":[],"include_self":true,"is_super_admin":false},
-            "tenant_authorization_epoch":1,"preferred_locale":null,"roles":[],"role_ids":[],"permissions":[],"tenant_request_limit_per_minute":600}});
+            "dept_path":null,"data_scope":"all","custom_dept_ids":[],"include_self":true,"data_scope_version":i64::MAX,"is_super_admin":false},
+            "password_change_required":false,"user_authorization_version":1,"data_scope_version":i64::MAX,"tenant_authorization_epoch":1,"preferred_locale":null,"roles":[],"role_ids":[],"permissions":[],"tenant_request_limit_per_minute":600}});
     let args = json!({"payload":payload.to_string(),"subject":subject,"tenant_epoch":"1"});
     assert!(model::snapshot(&args).is_ok());
     let mut invalid = args.clone();
@@ -139,6 +139,55 @@ fn snapshot_identity_rejects_subject_version_and_duplicate_field_changes() {
     invalid = args.clone();
     invalid["tenant_epoch"] = json!("2");
     assert!(model::snapshot(&invalid).is_err());
+    for (pointer, replacement) in [
+        ("/versions/data_scope_version", json!(0)),
+        ("/versions/data_scope_version", json!(1.0)),
+        (
+            "/versions/tenant_authorization_epoch",
+            json!(i64::from(i32::MAX) + 1),
+        ),
+        ("/principal/user_authorization_version", json!(2)),
+        ("/principal/data_scope_version", json!(2)),
+        ("/principal/actor/data_scope_version", json!(2)),
+        ("/principal/password_change_required", json!(true)),
+        ("/principal/password_change_required", json!("false")),
+        ("/tenant_session_version", json!(false)),
+    ] {
+        let mut changed = payload.clone();
+        *changed.pointer_mut(pointer).unwrap() = replacement;
+        let mut invalid = args.clone();
+        invalid["payload"] = json!(changed.to_string());
+        assert!(model::snapshot(&invalid).is_err(), "{pointer}");
+    }
+    let mut legacy = payload.clone();
+    legacy["versions"]
+        .as_object_mut()
+        .unwrap()
+        .remove("data_scope_version");
+    for name in [
+        "password_change_required",
+        "user_authorization_version",
+        "data_scope_version",
+    ] {
+        legacy["principal"].as_object_mut().unwrap().remove(name);
+    }
+    legacy["principal"]["actor"]
+        .as_object_mut()
+        .unwrap()
+        .remove("data_scope_version");
+    invalid = args.clone();
+    invalid["payload"] = json!(legacy.to_string());
+    assert!(model::snapshot(&invalid).is_err());
+    let mut secret = payload;
+    secret["secret"] = json!("private-source-v4-secret");
+    invalid = args.clone();
+    invalid["payload"] = json!(secret.to_string());
+    assert!(
+        !model::snapshot(&invalid)
+            .unwrap_err()
+            .to_string()
+            .contains("private-source-v4-secret")
+    );
     invalid = args;
     invalid["payload"] = json!("{\"versions\":{},\"versions\":{}}");
     assert!(model::snapshot(&invalid).is_err());

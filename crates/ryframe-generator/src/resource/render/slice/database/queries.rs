@@ -109,9 +109,9 @@ pub(crate) fn persistence_parts(resource: &ResourceIr) -> PersistenceParts {
             declaration: format!(
                 "pub fn port(router: Arc<crate::TenantDatabaseRouter>) -> Arc<dyn {pascal}PersistencePort> {{\n    Arc::new(Database{pascal}Persistence {{ router }})\n}}\n\nstruct Database{pascal}Persistence {{\n    router: Arc<crate::TenantDatabaseRouter>,\n}}\n\nstruct Database{pascal}Transaction {{\n    tenant_id: String,\n    transaction: DatabaseTransaction,\n}}"
             ),
-            read_connection: "        let session = self.router.resolve(tenant_id).await.map_err(tenant_data_error)?;\n        let database = session\n            .select_read(ryframe_db::ReadConsistency::Eventual)\n            .await\n            .map_err(tenant_data_error)?\n            .connection;"
+            read_connection: "        let session = self.router.resolve(tenant_id).await.map_err(AppError::from)?;\n        let database = session\n            .select_read(ryframe_db::ReadConsistency::Eventual)\n            .await\n            .map_err(AppError::from)?\n            .connection;"
                 .into(),
-            begin_transaction: "        let session = self.router.resolve(tenant_id).await.map_err(tenant_data_error)?;\n        let transaction = session.begin_write().await.map_err(tenant_data_error)?;"
+            begin_transaction: "        let session = self.router.resolve(tenant_id).await.map_err(AppError::from)?;\n        let transaction = session.begin_write().await.map_err(AppError::from)?;"
                 .into(),
             read_scope_begin_by_id: String::new(),
             read_scope_begin_page: String::new(),
@@ -128,15 +128,15 @@ pub(crate) fn persistence_parts(resource: &ResourceIr) -> PersistenceParts {
     if resource.access.owner_field.is_some() && resource.storage == StorageKind::TenantData {
         parts.read_connection.clear();
         parts.read_connection.push_str(
-            "        let session = self.router.resolve(tenant_id).await.map_err(tenant_data_error)?;",
+            "        let session = self.router.resolve(tenant_id).await.map_err(AppError::from)?;",
         );
-        parts.read_scope_begin_by_id = "        let read = session\n            .begin_scoped_read(data_scope.data_scope_version)\n            .await\n            .map_err(tenant_data_error)?;\n        let database = read.transaction();\n        let build_token = read.build_token();"
+        parts.read_scope_begin_by_id = "        let read = session\n            .begin_scoped_read(data_scope.data_scope_version)\n            .await\n            .map_err(AppError::from)?;\n        let database = read.transaction();\n        let build_token = read.build_token();"
             .into();
-        parts.read_scope_begin_page = "        let read = session\n            .begin_scoped_read(filter.data_scope.data_scope_version)\n            .await\n            .map_err(tenant_data_error)?;\n        let database = read.transaction();\n        let build_token = read.build_token();"
+        parts.read_scope_begin_page = "        let read = session\n            .begin_scoped_read(filter.data_scope.data_scope_version)\n            .await\n            .map_err(AppError::from)?;\n        let database = read.transaction();\n        let build_token = read.build_token();"
             .into();
         parts.read_wrap_open = "        let result = async {".into();
         parts.read_wrap_close =
-            "        }.await;\n        read.finish().await.map_err(tenant_data_error)?;\n        result"
+            "        }.await;\n        read.finish().await.map_err(AppError::from)?;\n        result"
                 .into();
     }
     parts.read_connection.insert_str(0, &guard);
@@ -294,6 +294,12 @@ pub(crate) fn delete_body(resource: &ResourceIr) -> String {
         let time_update = resource
             .audit
             .as_ref()
+            .filter(|audit| {
+                !resource
+                    .fields
+                    .iter()
+                    .any(|field| field.name == audit.updated_at && field.database_update())
+            })
             .map(|audit| {
                 let updated_at = resource
                     .fields
@@ -339,39 +345,6 @@ pub(crate) fn field_literal(resource: &ResourceIr, field: &str, value: &toml::Va
         .expect("数据库字段已由 IR 验证")
         .value_type;
     rust_literal(value, value_type)
-}
-
-pub(crate) fn tenant_error_mapper() -> String {
-    r#"fn tenant_data_error(error: crate::TenantDataError) -> AppError {
-    let message = error.to_string();
-    match error {
-        crate::TenantDataError::InvalidConfiguration(_) => AppError::Config(message),
-        crate::TenantDataError::InvalidTenantId(_) => AppError::Validation(message),
-        crate::TenantDataError::StalePlacementGeneration { .. } => {
-            AppError::StalePlacementGeneration(message)
-        }
-        crate::TenantDataError::DataScopeProjectionStale { .. } => {
-            AppError::StaleRuntimeEpoch(message)
-        }
-        crate::TenantDataError::TenantDataMaintenance { .. }
-        | crate::TenantDataError::FenceRejected { .. } => {
-            AppError::TenantDataMaintenance(message, 5)
-        }
-        crate::TenantDataError::DedicatedTargetOccupied { .. } => {
-            AppError::TenantOperationConflict(message)
-        }
-        crate::TenantDataError::UnknownTarget { .. }
-        | crate::TenantDataError::TargetUnavailable { .. }
-        | crate::TenantDataError::PlacementUnavailable { .. }
-        | crate::TenantDataError::InvalidPlacement { .. }
-        | crate::TenantDataError::PoolCapacityExhausted { .. }
-        | crate::TenantDataError::ConnectionBudgetExhausted { .. } => {
-            AppError::TenantDataTargetUnavailable(message, 5)
-        }
-    }
-}
-"#
-    .into()
 }
 
 pub(crate) fn unique_business_indexes(resource: &ResourceIr) -> impl Iterator<Item = &IndexIr> {

@@ -10,6 +10,7 @@ use std::{
     path::{Path, PathBuf},
     process,
     sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
 };
 
 static SCHEMA_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -226,9 +227,7 @@ impl MySqlFixture {
         ownership: &mut Ownership,
         evidence: &mut Evidence,
     ) -> Result<(), String> {
-        evidence.verify()?;
-        let observed = admin.observe(&ownership.plan.schema, true).await?;
-        evidence.observed("cleanup-observed", &observed)?;
+        let observed = Self::await_quiescence(admin, ownership, evidence).await?;
         ownership.drop_intent(&observed)?;
         evidence.record("drop-intent")?;
         // 意图已落盘后再核对一次；任何失败均保留现场，不能重放该 DROP。
@@ -241,6 +240,27 @@ impl MySqlFixture {
         let absent = !admin.exists(&ownership.plan.schema).await?;
         ownership.dropped(absent)?;
         evidence.record("dropped-confirmed")
+    }
+
+    async fn await_quiescence(
+        admin: &mut AdminSession,
+        ownership: &Ownership,
+        evidence: &mut Evidence,
+    ) -> Result<ownership::Observation, String> {
+        // 连接池关闭后，服务端会话退役可能稍晚；只在首次 DROP 意图前观察。
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                evidence.verify()?;
+                let observed = admin.observe(&ownership.plan.schema, true).await?;
+                evidence.observed("cleanup-observed", &observed)?;
+                if ownership.cleanup_quiescent(&observed)? {
+                    return Ok(observed);
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .map_err(|_| "fixture 服务端连接退役观察超过 5 秒，保留 schema，禁止 DROP".to_string())?
     }
 
     async fn preserve(self, stage: &'static str) {

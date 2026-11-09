@@ -61,6 +61,16 @@ pub(super) fn execute(bytes: &[u8]) -> Result<Value> {
 
 fn dispatch(backend: &Path, operation: &str, args: &Value) -> Result<Value> {
     match operation {
+        "execution-backend" => {
+            json_io::exact(args, &["request"], "执行后端选择")?;
+            let (path, binding) = super::input::request::execution_backend(
+                backend,
+                args["request"].get("execution_backend"),
+                &super::input::request::SystemSourceObserver,
+            )?;
+            Ok(json!({"path":path,"binding":binding}))
+        }
+        "fresh-verify-target" => super::fresh::verify::binding(backend, args),
         "reset-configuration" | "redis-configuration" => super::binding_configuration::validate(
             backend,
             args,
@@ -80,20 +90,14 @@ fn dispatch(backend: &Path, operation: &str, args: &Value) -> Result<Value> {
             json_io::exact(args, &["request", "predecessor"], "目标请求绑定")?;
             binding_request::validate(backend, &args["request"], &args["predecessor"])
         }
+        "review-successor" => {
+            json_io::exact(args, &["descriptor"], "seed review successor 绑定")?;
+            super::super::cache::binding::source::relationship::load(backend, &args["descriptor"])
+        }
+        "fixture-arm-storage" => fixture_arm_storage(backend, args),
         "binaries" => {
             json_io::exact(args, &["request"], "目标二进制绑定")?;
             binding_request::binaries(backend, &args["request"])
-        }
-        "private-environment" => {
-            json_io::exact(args, &["descriptor"], "目标私有环境绑定")?;
-            private_environment(backend, &args["descriptor"])
-        }
-        "preflight-reconciliation" => {
-            json_io::exact(args, &["target"], "目标收尾绑定")?;
-            reconciliation(
-                backend,
-                Path::new(json_io::text(&args["target"], "目标收尾路径")?),
-            )
         }
         "config-directory" => {
             json_io::exact(args, &["request"], "目标配置目录绑定")?;
@@ -104,25 +108,58 @@ fn dispatch(backend: &Path, operation: &str, args: &Value) -> Result<Value> {
             never_started(backend, &args["selected"])?;
             Ok(json!({"status":"never_started_verified"}))
         }
-        "reset-manifest" => {
-            json_io::exact(
-                args,
-                &["manifest", "request", "original"],
-                "目标 reset 清单绑定",
-            )?;
-            super::evidence_reset::validate_manifest(
-                backend,
-                &args["manifest"],
-                &args["request"],
-                &args["original"],
-            )?;
-            Ok(json!({"status":"reset_manifest_verified"}))
-        }
         _ => Err("未知目标绑定操作；请使用当前受管工具和协议".into()),
     }
 }
 
-fn private_environment(backend: &Path, descriptor: &Value) -> Result<Value> {
+fn fixture_arm_storage(backend: &Path, args: &Value) -> Result<Value> {
+    use super::super::lifecycle::manifest::fixture_storage;
+    use crate::recovery::fixture_control::services::lifecycle::query;
+
+    json_io::exact(
+        args,
+        &["registration", "binding", "active"],
+        "arm 夹具存储绑定",
+    )?;
+    let active = args["active"]
+        .as_bool()
+        .ok_or("arm 夹具存储 active 必须是布尔值")?;
+    let expected = match &args["binding"] {
+        Value::Null => None,
+        binding @ Value::Object(_) => Some(binding),
+        _ => return Err("arm 夹具存储绑定必须是对象或 null".into()),
+    };
+    let registration = &args["registration"];
+    let Some(fixture) = fixture_storage::resolve(backend, registration, expected, active)? else {
+        return Ok(json!({"binding":null}));
+    };
+    if active || expected.is_none() {
+        let fresh = read(backend, &bound(backend, registration)?)?;
+        let request = read(backend, &bound(backend, &fresh["request"])?)?;
+        let result = (|| {
+            super::published::request_binding(backend, &request)?;
+            super::storage::arm_fixture_projection(backend, &fixture.run, &request["storage"])?;
+            if active {
+                query::observe_arm_generation(
+                    backend,
+                    &fixture.run,
+                    &fixture.binding["generation"],
+                )?;
+            }
+            Ok(())
+        })();
+        super::execution::combine(
+            result,
+            (|| {
+                bound(backend, &fresh["request"])?;
+                fixture.check(backend)
+            })(),
+        )?;
+    }
+    Ok(json!({"binding":fixture.binding}))
+}
+
+pub(super) fn private_environment(backend: &Path, descriptor: &Value) -> Result<Value> {
     let path = bound(backend, descriptor)?;
     let document = read(backend, &path)?;
     json_io::exact(&document, &["environment"], "目标私有环境")?;
@@ -161,7 +198,7 @@ fn private_environment(backend: &Path, descriptor: &Value) -> Result<Value> {
     Ok(json!({"path":path,"environment":private}))
 }
 
-fn never_started(backend: &Path, selected: &Value) -> Result<()> {
+pub(super) fn never_started(backend: &Path, selected: &Value) -> Result<()> {
     let runtime = Path::new(json_io::text(&selected["runtime_dir"], "目标运行目录")?);
     validate_local_test_path(runtime, backend, LocalTestPathKind::StateDirectory)?;
     for filename in ["producer-history.json", "api.json", "worker.json"] {
@@ -191,7 +228,7 @@ fn never_started(backend: &Path, selected: &Value) -> Result<()> {
     Ok(())
 }
 
-fn reconciliation(backend: &Path, target: &Path) -> Result<Value> {
+pub(super) fn reconciliation(backend: &Path, target: &Path) -> Result<Value> {
     validate_local_test_path(target, backend, LocalTestPathKind::ExistingDirectory)?;
     let completed = target.join("reconciliation-completed.json");
     let descriptor = binding(backend, &completed)?;
@@ -259,3 +296,7 @@ fn reconciliation(backend: &Path, target: &Path) -> Result<Value> {
     check(binding(backend, &completed)? == descriptor, DIAGNOSTICS[4])?;
     Ok(json!({"binding":descriptor}))
 }
+
+#[cfg(test)]
+#[path = "../../../../../tests/unit/recovery/clone/native/target_verify/binding.rs"]
+mod tests;

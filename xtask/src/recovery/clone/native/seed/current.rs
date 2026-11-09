@@ -64,6 +64,9 @@ fn controller(backend: &Path, run: &Path, saved: &Value) -> Result<Value> {
                     | "departments-apply"
                     | "departments-reconcile"
                     | "departments-verify"
+                    | "prepare"
+                    | "start"
+                    | "close"
             )
         )
     {

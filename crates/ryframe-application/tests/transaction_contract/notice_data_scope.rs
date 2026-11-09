@@ -28,77 +28,7 @@ fn command() -> UpdateNoticeCommand {
     }
 }
 
-#[tokio::test]
-async fn self_only_hides_another_owner_in_both_list_and_detail() {
-    let (_, service) = fixture(Some(2));
-    let page = service.find_by_page(&actor(), list()).await.unwrap();
-    assert_eq!(page.total, 0);
-    assert!(
-        service.find_by_id(&actor(), 8).await.unwrap().is_none(),
-        "列表不可见的记录不得通过已知 ID 读取"
-    );
-}
-
-#[tokio::test]
-async fn self_only_rejects_another_owner_update_without_writes() {
-    let (persistence, service) = fixture(Some(2));
-    let result = service.update(&actor(), 8, command()).await;
-    assert!(matches!(result, Err(AppError::NotFound(_))));
-    assert_eq!(
-        persistence.transaction_states(),
-        [NoticeTransactionState::RolledBack]
-    );
-    let mut unrestricted = actor();
-    unrestricted.data_scope = DataScope::All;
-    let item = service.find_by_id(&unrestricted, 8).await.unwrap().unwrap();
-    assert_eq!(item.title, "旧通知");
-    assert_eq!(item.created_by, Some(2));
-}
-
-#[tokio::test]
-async fn self_only_rejects_another_owner_delete_without_writes() {
-    let (persistence, service) = fixture(Some(2));
-    assert!(matches!(
-        service.delete(&actor(), 8).await,
-        Err(AppError::NotFound(_))
-    ));
-    assert_eq!(
-        persistence.transaction_states(),
-        [NoticeTransactionState::RolledBack]
-    );
-    let mut unrestricted = actor();
-    unrestricted.data_scope = DataScope::All;
-    assert!(
-        service
-            .find_by_id(&unrestricted, 8)
-            .await
-            .unwrap()
-            .is_some()
-    );
-}
-
-#[tokio::test]
-async fn all_scope_includes_records_without_owner_but_self_only_excludes_them() {
-    let (_, service) = fixture(None);
-    let mut unrestricted = actor();
-    unrestricted.data_scope = DataScope::All;
-    let page = service.find_by_page(&unrestricted, list()).await.unwrap();
-    assert_eq!(page.total, 1, "fake 与真实 SQL 的 All 范围必须一致");
-    assert!(
-        service
-            .find_by_id(&unrestricted, 8)
-            .await
-            .unwrap()
-            .is_some()
-    );
-    assert_eq!(
-        service.find_by_page(&actor(), list()).await.unwrap().total,
-        0
-    );
-    assert!(service.find_by_id(&actor(), 8).await.unwrap().is_none());
-}
-
-fn matrix_fixture() -> NoticeService {
+fn matrix_fixture() -> (Arc<NoticeFakePersistence>, NoticeService) {
     let persistence = Arc::new(NoticeFakePersistence::default());
     let timestamp = Utc.with_ymd_and_hms(2026, 8, 20, 0, 0, 0).single().unwrap();
     for (id, owner) in [(1, Some(1)), (2, Some(2)), (3, Some(3)), (4, None)] {
@@ -114,7 +44,8 @@ fn matrix_fixture() -> NoticeService {
     other_tenant.tenant_id = "tenant-b".into();
     other_tenant.id = 99;
     persistence.insert_record("tenant-b", other_tenant);
-    NoticeService::new(persistence)
+    let service = NoticeService::new(persistence.clone());
+    (persistence, service)
 }
 
 #[tokio::test]
@@ -141,7 +72,7 @@ async fn every_scope_has_consistent_list_detail_update_and_delete_boundaries() {
         scoped_actor.dept_id = department;
         scoped_actor.custom_dept_ids = custom;
         scoped_actor.include_self = include_self;
-        let service = matrix_fixture();
+        let (_, service) = matrix_fixture();
         let page = service.find_by_page(&scoped_actor, list()).await.unwrap();
         let mut actual = page.records.iter().map(|item| item.id).collect::<Vec<_>>();
         actual.sort_unstable();
@@ -173,7 +104,7 @@ async fn every_scope_has_consistent_list_detail_update_and_delete_boundaries() {
 }
 
 async fn verify_update_scope(actor: &ActorContext, id: i64, allowed: bool) {
-    let service = matrix_fixture();
+    let (persistence, service) = matrix_fixture();
     let mut unrestricted = actor.clone();
     unrestricted.data_scope = DataScope::All;
     let before = service
@@ -198,11 +129,18 @@ async fn verify_update_scope(actor: &ActorContext, id: i64, allowed: bool) {
     } else {
         assert!(matches!(result, Err(AppError::NotFound(_))));
         assert_eq!(after, before, "拒绝更新后完整记录必须不变");
+        // 承接原 SelfOnly 他人记录用例，不为其他拒绝路径额外规定事务步骤。
+        if matches!(actor.data_scope, DataScope::SelfOnly) && id == 2 {
+            assert_eq!(
+                persistence.transaction_states(),
+                [NoticeTransactionState::RolledBack]
+            );
+        }
     }
 }
 
 async fn verify_delete_scope(actor: &ActorContext, id: i64, allowed: bool) {
-    let service = matrix_fixture();
+    let (persistence, service) = matrix_fixture();
     let mut unrestricted = actor.clone();
     unrestricted.data_scope = DataScope::All;
     let before = service.find_by_id(&unrestricted, id).await.unwrap();
@@ -218,6 +156,12 @@ async fn verify_delete_scope(actor: &ActorContext, id: i64, allowed: bool) {
     } else {
         assert!(matches!(result, Err(AppError::NotFound(_))));
         assert_eq!(after, before, "拒绝删除后完整记录必须不变");
+        if matches!(actor.data_scope, DataScope::SelfOnly) && id == 2 {
+            assert_eq!(
+                persistence.transaction_states(),
+                [NoticeTransactionState::RolledBack]
+            );
+        }
     }
 }
 

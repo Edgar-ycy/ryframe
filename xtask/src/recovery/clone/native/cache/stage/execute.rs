@@ -126,6 +126,9 @@ fn start(
     let num = p["number"].as_u64().ok_or("缓存序号无效")?;
     let output = path(&p["output"])?;
     markers::require_owners(context, request, descriptor)?;
+    if process["format_version"] == 3 {
+        require_windows_predecessor_stopped(context, request)?;
+    }
     let mut predecessors = Vec::new();
     for (attempt, earlier, runtime) in previous {
         let original = successor::generation(context, request, earlier, &Value::Null, true)?.0;
@@ -163,6 +166,27 @@ fn start(
     )?;
     doc::write_new(&output.join("runtime.json"), &runtime)?;
     Ok((runtime, common::binding(&output.join("runtime.json"))?))
+}
+
+fn require_windows_predecessor_stopped(context: &mut Context<'_>, request: &Value) -> Result<()> {
+    #[cfg(not(windows))]
+    {
+        let _ = (context, request);
+        Err(rejected("Windows 缓存前代只能在原 Windows 主机核验"))
+    }
+    #[cfg(windows)]
+    {
+        let descriptor = &request["process_receipt"];
+        let path = common::bound_file(context.backend, descriptor, "Windows 缓存原运行收据")?;
+        let runtime = common::read_bound(context.backend, descriptor, "Windows 缓存原运行收据")?;
+        let original =
+            super::super::windows::predecessor_request(context.backend, &path, &runtime)?;
+        let observed = context.call("status", json!({"request":original,"runtime":runtime}))?;
+        if observed["state"] != "stopped" {
+            return Err(rejected("Windows 缓存原登记代次尚未完整停止"));
+        }
+        Ok(())
+    }
 }
 fn observe(
     context: &mut Context<'_>,

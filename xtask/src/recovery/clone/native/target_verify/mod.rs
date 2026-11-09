@@ -3,32 +3,39 @@ use std::{fs, path::Path};
 use serde_json::{Value, json};
 
 use super::lifecycle::stage::{StageRequest, StageRunner};
-use super::{digest, export::transport::SystemTransport, json as json_io};
+use super::{
+    cache::handoff::locks::Storage, digest, export::transport::SystemTransport, json as json_io,
+};
 use crate::Result;
 
 pub(crate) mod authority;
 mod binding;
 mod binding_configuration;
-mod binding_request;
+pub(crate) mod binding_request;
 mod cli;
 mod creation_plan;
 pub(crate) mod database;
+mod diagnostic;
 pub(crate) mod evidence_creation;
 mod evidence_model;
 pub(crate) mod evidence_prepare;
 pub(crate) mod evidence_protocol;
 pub(crate) mod evidence_reset;
 mod execution;
+pub(crate) mod fresh;
 pub(crate) mod guard;
 pub(crate) mod input;
 mod object;
-mod prepare_state;
+mod prepare_groups;
+pub(crate) mod prepare_observations;
+pub(crate) mod prepare_state;
 pub(crate) mod proof;
 pub(crate) mod publication;
+pub(crate) mod published;
 pub(crate) mod redis;
 pub(crate) mod reset;
 mod resume;
-mod resume_baseline;
+pub(crate) mod resume_baseline;
 mod resume_confirmed;
 mod resume_model;
 mod resume_observations;
@@ -42,41 +49,40 @@ mod resume_tests;
 pub(crate) mod storage;
 pub(crate) mod tree;
 
-pub(crate) fn preflight(backend: &Path, request: &StageRequest<'_>) -> Result<()> {
-    preflight_with(backend, request, &authority::SystemObserver)
-}
+pub(crate) use diagnostic::diagnostic;
+#[cfg(not(test))]
+use execution::execute_context;
+#[cfg(test)]
+pub(crate) use execution::execute_context;
 
-pub(crate) fn preflight_with(
-    backend: &Path,
-    request: &StageRequest<'_>,
-    observer: &impl authority::Observer,
-) -> Result<()> {
-    input::validate_inputs(backend, request)?;
-    let _ = authority::inspect(backend, request, observer)?;
+pub(crate) fn preflight(backend: &Path, request: &StageRequest<'_>) -> Result<()> {
+    input::validate_live_inputs(backend, request)?;
+    authority::inspect(backend, request, &authority::SystemObserver)?;
     Ok(())
 }
 
 pub(crate) fn execute(backend: &Path, request: &StageRequest<'_>) -> Result<Value> {
-    let transport = SystemTransport;
-    execute_with(
-        backend,
+    let context = input::TargetContext::load(backend, request)?;
+    storage::redis_layout::require_windows(&context.storage()["redis"])?;
+    execute_context(
+        &context,
         request,
-        &transport,
-        &storage::SystemObserver::new(&transport),
+        &SystemTransport,
+        &storage::SystemObserver,
         &authority::SystemObserver,
     )
 }
 
-pub(crate) fn execute_with<T: super::export::transport::Transport>(
-    backend: &Path,
+fn verify_and_publish<T: super::export::transport::Transport>(
+    context: &input::TargetContext,
     request: &StageRequest<'_>,
     transport: &T,
     storage_observer: &impl storage::StorageObserver,
     authority_observer: &impl authority::Observer,
+    external_storage: Option<&Storage>,
 ) -> Result<Value> {
-    let context = input::TargetContext::load(backend, request)?;
-    let authority = authority::inspect(backend, request, authority_observer)?;
-    let frame = execution::Frame::begin(&context, authority)?;
+    let authority = authority::inspect(&context.backend, request, authority_observer)?;
+    let frame = execution::Frame::begin(context, authority)?;
     let result = (|| {
         fs::create_dir(&context.observation_dir)
             .map_err(|error| format!("无法创建目标观察目录：{error}"))?;
@@ -88,35 +94,34 @@ pub(crate) fn execute_with<T: super::export::transport::Transport>(
             inner: storage_observer,
             frame: &frame,
         };
-        verify(&context, &transport, &observer, &|| frame.checkpoint())
+        let owner = frame.owner()?;
+        let selected = storage::generation::select(context, owner)?;
+        let observed = verify(context, owner, &selected, &transport, &observer, &|| {
+            frame.checkpoint()
+        });
+        execution::combine(observed, selected.check(context)).map(|value| (value, selected))
     })();
     let result = frame.finish(result, authority_observer);
     match result {
-        Ok(value) => {
-            if let Err(error) =
+        Ok((value, selected)) => {
+            let publication = (|| {
+                selected.check(context)?;
+                if let Some(storage) = external_storage {
+                    storage.check()?;
+                }
                 publication::publish(&context.observation_dir.join("verify.json"), &value)
-            {
-                return fail(&context, error);
+            })();
+            match publication {
+                Ok(()) => Ok(value),
+                Err(error) => fail(context, error),
             }
-            Ok(value)
         }
-        Err(error) => fail(&context, error),
+        Err(error) => fail(context, error),
     }
 }
 
 fn fail(context: &input::TargetContext, error: Box<dyn std::error::Error>) -> Result<Value> {
-    let secrets = context
-        .environment
-        .iter()
-        .filter(|(key, value)| {
-            !value.is_empty()
-                && ["KEY", "PASSWORD", "PASSWD", "SECRET", "TOKEN", "CREDENTIAL"]
-                    .iter()
-                    .any(|part| key.contains(part))
-        })
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect();
-    let reason = super::export::transport::redact(&error.to_string(), &secrets);
+    let reason = diagnostic::reason(error.as_ref());
     let path = context.observation_dir.join("failure.json");
     if !context.observation_dir.is_dir() {
         return Err(format!(
@@ -129,12 +134,8 @@ fn fail(context: &input::TargetContext, error: Box<dyn std::error::Error>) -> Re
         "at": chrono::Utc::now().to_rfc3339(), "error_type": "TargetVerifyError", "reason": reason,
         "automatic_retry": false, "automatic_resource_cleanup": false,
         "fresh_target_initialized": false, "clone_verified": false, "restore_qualified": false,
-    })).map_err(|write| format!("目标复核未完成：{reason}；失败收据保存同时失败：{write}；保留现场，不自动重放或清理"))?;
-    Err(format!(
-        "目标复核未完成：{reason}；诊断保留在 {}；核对原证据后显式选择后续操作，不自动重放或清理",
-        path.display()
-    )
-    .into())
+    })).map_err(|_| format!("目标复核未完成：{reason}；失败收据保存同时失败；保留现场并核对运行 attempt 证据，不自动重放或清理"))?;
+    Err(diagnostic::saved(error, &path, &context.run_dir))
 }
 
 pub(crate) struct TargetVerifyRunner {
@@ -161,13 +162,15 @@ impl StageRunner for TargetVerifyRunner {
 
 fn verify<T: super::export::transport::Transport>(
     context: &input::TargetContext,
+    owner: &guard::Generation,
+    selected: &storage::generation::Selected,
     transport: &T,
     observer: &impl storage::StorageObserver,
     checkpoint: &impl Fn() -> Result<()>,
 ) -> Result<Value> {
     proof::verify_history(context)?;
     proof::verify_initial_inventory(context)?;
-    proof::verify_reset(context)?;
+    proof::verify_reset(context, owner)?;
     proof::verify_generation(context)?;
     let captured = database::capture_with(context, transport, checkpoint)?;
     let expected_inventory = context
@@ -182,15 +185,11 @@ fn verify<T: super::export::transport::Transport>(
     if objects != context.initialized["objects"] {
         return Err("目标当前对象状态与初始化像不同".into());
     }
-    let redis = redis::verify_with_observer(
-        context,
-        &context.initialized["generation"]["storage"]["redis"],
-        observer,
-    )?;
+    let redis = redis::verify_with_observer(context, &selected.storage["redis"], observer)?;
     if redis != context.initialized["redis"] {
         return Err("目标当前 Redis 状态与初始化像不同".into());
     }
-    storage::verify_with_observer(context, observer)?;
+    storage::verify_with_observer(context, selected, observer)?;
     if tree::snapshot(
         &context.backend,
         &context.observation_dir.join("inventory"),

@@ -1,4 +1,4 @@
-//! 参考恢复的纯协调、文件证据与阶段收据；不启动外部资源操作。
+//! 参考恢复协调、文件证据与阶段收据；只读检查仅观察绑定资源。
 use std::path::{Component, Path};
 
 use serde_json::Value;
@@ -8,17 +8,22 @@ use crate::{
     recovery::{clone::native, inputs},
 };
 
+mod backup;
+mod dataset;
 mod files;
 mod local;
 mod model;
+mod plan;
 mod proof;
 mod protocol;
+pub(crate) mod readonly;
 mod receipts;
+mod restore;
 #[cfg(test)]
 #[path = "../../../../../tests/unit/recovery/source/evidence/reference_workflow/tests.rs"]
 mod tests;
 
-pub(crate) fn run_local(raw: &str) -> Result<Option<Value>> {
+pub(crate) fn run_local(raw: &str) -> Result<Value> {
     local::run(raw)
 }
 
@@ -26,6 +31,7 @@ pub(crate) fn handles(operation: &str) -> bool {
     matches!(
         operation,
         "reference-request"
+            | "reference-readonly"
             | "reference-dataset-protocol"
             | "reference-work-directory"
             | "reference-work-verify"
@@ -33,7 +39,6 @@ pub(crate) fn handles(operation: &str) -> bool {
             | "reference-damage"
             | "reference-receipt-start"
             | "reference-receipt-finish"
-            | "reference-backup-manifest"
             | "reference-restore-resources"
             | "reference-bound-artifact"
             | "reference-summary"
@@ -44,13 +49,13 @@ pub(crate) fn handles(operation: &str) -> bool {
             | "reference-product-hash"
             | "reference-dataset-preflight"
             | "reference-dataset-result"
-            | "reference-backup-inventory"
     )
 }
 
 pub(crate) fn request(operation: &str, args: &Value) -> Result<Value> {
     match operation {
         "reference-request" => protocol::request(args),
+        "reference-readonly" => readonly::execute(args),
         "reference-dataset-protocol" => protocol::dataset(args),
         "reference-work-directory" => files::work(args, true),
         "reference-work-verify" => files::work(args, false),
@@ -58,14 +63,12 @@ pub(crate) fn request(operation: &str, args: &Value) -> Result<Value> {
         "reference-damage" => files::damage(args),
         "reference-receipt-start" => receipts::start(args),
         "reference-receipt-finish" => receipts::finish(args),
-        "reference-backup-manifest" => model::manifest(args),
         "reference-restore-resources" => model::resources(args),
         "reference-bound-artifact" => model::bound_artifact(args),
         "reference-summary" => model::summary(args),
         "reference-restore-result" => model::restore_result(args),
         "reference-dataset-preflight" => model::preflight(args),
         "reference-dataset-result" => model::dataset_result(args),
-        "reference-backup-inventory" => model::backup_inventory(args),
         "reference-backup-source" => proof::backup_source(args),
         "reference-backup-result" => proof::backup_result(args),
         "reference-restore-record" => proof::record(args),

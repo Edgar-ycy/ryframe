@@ -70,7 +70,7 @@ pub(super) fn execute_create_bucket_request(value: Value) -> Result<Value> {
             "format_version",
             "kind",
             "scope_id",
-            configuration_field(&value),
+            "configuration_binding",
             "bucket",
         ],
         "原生对象桶创建请求",
@@ -109,7 +109,7 @@ pub(super) fn execute_request(value: Value) -> Result<Value> {
             "format_version",
             "kind",
             "scope_id",
-            configuration_field(&value),
+            "configuration_binding",
             "bucket",
             "key",
             "source",
@@ -171,7 +171,7 @@ pub(super) fn execute_read_request(value: Value) -> Result<Value> {
             "format_version",
             "kind",
             "scope_id",
-            configuration_field(&value),
+            "configuration_binding",
             "bucket",
             "operation",
             "key",
@@ -252,7 +252,7 @@ pub(super) fn execute_inspect_request(value: Value) -> Result<Value> {
             "format_version",
             "kind",
             "scope_id",
-            configuration_field(&value),
+            "configuration_binding",
             "bucket",
             "operation",
             "prefix",
@@ -305,16 +305,9 @@ pub(super) fn execute_inspect_request(value: Value) -> Result<Value> {
     finish_bound(&value, result, false)
 }
 
-fn configuration_field(value: &Value) -> &'static str {
-    if value.get("configuration_binding").is_some() {
-        "configuration_binding"
-    } else {
-        "configuration"
-    }
-}
 fn finish_bound(value: &Value, result: Result<Value>, may_write: bool) -> Result<Value> {
     if let Some(binding) = value.get("configuration_binding")
-        && Configuration::read_app_binding(&crate::workspace::root_dir(), binding).is_err()
+        && Configuration::from_app_binding(&crate::workspace::root_dir(), binding).is_err()
     {
         if may_write {
             return Ok(
@@ -326,13 +319,10 @@ fn finish_bound(value: &Value, result: Result<Value>, may_write: bool) -> Result
     result
 }
 fn configuration(value: &Value) -> Result<Configuration> {
-    match configuration_field(value) {
-        "configuration_binding" => Configuration::read_app_binding(
-            &crate::workspace::root_dir(),
-            &value["configuration_binding"],
-        ),
-        _ => Configuration::read(&value["configuration"]),
-    }
+    Configuration::from_app_binding(
+        &crate::workspace::root_dir(),
+        &value["configuration_binding"],
+    )
 }
 
 fn required_text<'a>(value: Option<&'a Value>, label: &str) -> Result<&'a str> {
@@ -342,7 +332,7 @@ fn required_text<'a>(value: Option<&'a Value>, label: &str) -> Result<&'a str> {
         .ok_or_else(|| format!("{label}缺失或无效").into())
 }
 
-fn validate_key(scope: &str, key: &str, allow_owner: bool) -> Result<()> {
+pub(crate) fn validate_key(scope: &str, key: &str, allow_owner: bool) -> Result<()> {
     let prefix = format!("{scope}/");
     let logical = key.strip_prefix(&prefix).unwrap_or_default();
     if logical.is_empty()

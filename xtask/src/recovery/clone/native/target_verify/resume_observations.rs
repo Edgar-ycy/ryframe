@@ -2,6 +2,7 @@
 use super::{
     super::{digest, json as json_io},
     evidence_model::*,
+    prepare_observations,
 };
 use crate::Result;
 use regex::Regex;
@@ -227,6 +228,69 @@ pub(super) fn redis(
     )
 }
 
+pub(super) fn windows_redis_names(names: &BTreeSet<String>) -> Result<Vec<String>> {
+    check(
+        stage(names, "redis-kernel")?.is_empty(),
+        "Windows Redis 观察不能混有 WSL 内核收据",
+    )?;
+    Ok(names
+        .iter()
+        .filter(|name| prepare_observations::windows_redis_name(name))
+        .cloned()
+        .collect())
+}
+
+pub(super) fn windows_redis_baseline(
+    backend: &Path,
+    target: &Path,
+    names: &BTreeSet<String>,
+) -> Result<Value> {
+    let names = windows_redis_names(names)?;
+    let [first, second] = names.as_slice() else {
+        return Err("fresh prepare Windows Redis 缺少精确两轮观察".into());
+    };
+    let expected = read(backend, &target.join(first))?;
+    prepare_observations::windows_redis_projection(&expected)?;
+    check(
+        read(backend, &target.join(second))? == expected,
+        "fresh prepare Windows Redis 两轮观察代次不同",
+    )?;
+    Ok(expected)
+}
+
+fn redis_delta(
+    backend: &Path,
+    target: &Path,
+    before: &BTreeSet<String>,
+    remaining: &mut BTreeSet<String>,
+    original: &Value,
+    rounds: usize,
+) -> Result<()> {
+    let names = if original["platform"] == "windows" {
+        let expected = windows_redis_baseline(backend, target, before)?;
+        prepare_observations::windows_redis_transition(original, &expected)?;
+        let names = windows_redis_names(remaining)?;
+        check(
+            names.len() == rounds,
+            "fresh 初始化 Windows Redis 观察轮次与原阶段不同",
+        )?;
+        for name in &names {
+            check(
+                read(backend, &target.join(name))? == expected,
+                "fresh 初始化 Windows Redis 当前观察与原代次不同",
+            )?;
+        }
+        names
+    } else {
+        redis(backend, target, before, remaining, rounds)?;
+        stage(remaining, "redis-kernel")?
+    };
+    for name in names {
+        remaining.remove(&name);
+    }
+    Ok(())
+}
+
 pub(super) struct Delta<'a> {
     pub(super) required: &'a BTreeSet<String>,
     pub(super) rounds: usize,
@@ -265,7 +329,9 @@ pub(super) fn delta(
         required.iter().all(|name| current.contains_key(name)),
         "fresh 初始化缺少固定阶段文件",
     )?;
-    let before = baseline.keys().cloned().collect::<BTreeSet<_>>();
+    let prepared_files = Value::Array(baseline.values().cloned().collect());
+    let active = super::resume_baseline::active(backend, target, &prepared_files, request)?;
+    let before = file_map(&active)?.into_keys().collect::<BTreeSet<_>>();
     let mut remaining = current
         .keys()
         .filter(|name| {
@@ -293,10 +359,14 @@ pub(super) fn delta(
         owner_reads(backend, target, &mut remaining, request, objects)?;
     }
     mysql(backend, target, &before, &mut remaining, request)?;
-    redis(backend, target, &before, &remaining, rounds)?;
-    for name in stage(&remaining, "redis-kernel")? {
-        remaining.remove(&name);
-    }
+    redis_delta(
+        backend,
+        target,
+        &before,
+        &mut remaining,
+        &request["storage"]["redis"],
+        rounds,
+    )?;
     let pattern = Regex::new(r"^storage-layout-[a-f0-9]{32}\.json$")?;
     let layouts = before
         .iter()
@@ -435,7 +505,7 @@ fn mysql(
     Ok(())
 }
 
-fn owner_reads(
+pub(super) fn owner_reads(
     backend: &Path,
     target: &Path,
     remaining: &mut BTreeSet<String>,
@@ -465,6 +535,7 @@ fn owner_reads(
         )?;
         let owner = format!("ryframe-owner:v1:{scope}:object-storage:{bucket}");
         let key = format!("{scope}/.ryframe-owner");
+        super::fresh::initialized_objects::metadata(&value["response"], owner.len())?;
         crate::local_test_path::validate_local_test_path(
             &target.join(body),
             backend,

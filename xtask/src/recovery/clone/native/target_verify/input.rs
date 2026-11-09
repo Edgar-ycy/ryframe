@@ -27,7 +27,7 @@ pub(crate) mod request_evidence;
 #[path = "request_physical.rs"]
 pub(crate) mod request_physical;
 #[path = "request_review.rs"]
-pub(super) mod request_review;
+pub(crate) mod request_review;
 #[cfg(test)]
 #[path = "../../../../../tests/internal/target_request_native.rs"]
 mod request_tests;
@@ -46,6 +46,15 @@ pub(crate) struct TargetContext {
 }
 
 impl TargetContext {
+    pub(crate) fn storage_inputs(&self) -> super::storage::StorageInputs<'_> {
+        super::storage::StorageInputs {
+            backend: &self.backend,
+            request: &self.request,
+            environment: &self.environment,
+            observation_dir: &self.observation_dir,
+        }
+    }
+
     pub(crate) fn load(backend: &Path, request: &StageRequest<'_>) -> Result<Self> {
         let attempt = request.attempt.ok_or("target-verify 执行缺少阶段序号")?;
         let inputs = read_inputs(backend, request)?;
@@ -67,22 +76,15 @@ impl TargetContext {
         })
     }
     pub(crate) fn target(&self) -> &Value {
-        self.request.get("target").expect("已校验目标请求")
+        self.storage_inputs().target()
     }
 
     pub(crate) fn target_scope(&self) -> Result<&str> {
-        self.target()
-            .get("scope_id")
-            .and_then(Value::as_str)
-            .ok_or_else(|| "目标请求缺少 scope".into())
+        self.storage_inputs().target_scope()
     }
 
     pub(crate) fn databases(&self) -> Result<Vec<Value>> {
-        self.target()
-            .get("databases")
-            .and_then(Value::as_array)
-            .cloned()
-            .ok_or_else(|| "目标请求缺少数据库".into())
+        self.storage_inputs().databases()
     }
 
     pub(crate) fn storage(&self) -> &Value {
@@ -110,34 +112,7 @@ impl TargetContext {
     }
 
     pub(crate) fn tool(&self, name: &str) -> Result<PathBuf> {
-        request::external_file(
-            self.request
-                .pointer(&format!("/tools/{name}"))
-                .ok_or("目标请求缺少工具")?,
-        )
-    }
-    pub(crate) fn maintenance_executable(&self, role: &str) -> Result<PathBuf> {
-        let path = manifest::bound_file(
-            &self.backend,
-            self.request
-                .get("maintenance_build")
-                .ok_or("目标请求缺少维护构建")?,
-            "目标维护构建",
-            true,
-        )?;
-        let receipt = json_io::read(&path)?;
-        let executable = receipt
-            .pointer(&format!("/artifacts/{role}/executable"))
-            .and_then(Value::as_str)
-            .ok_or_else(|| format!("目标维护构建缺少 {role} 工具"))?;
-        let executable = PathBuf::from(executable);
-        let artifact = receipt
-            .pointer(&format!("/artifacts/{role}"))
-            .ok_or("维护工具产物缺失")?;
-        request::external_file(
-            &serde_json::json!({"path": executable, "sha256": artifact.get("sha256").ok_or("维护工具缺少摘要")?}),
-        )?;
-        Ok(executable)
+        self.storage_inputs().tool(name)
     }
 }
 
@@ -158,6 +133,11 @@ pub(crate) fn validate_inputs(backend: &Path, stage: &StageRequest<'_>) -> Resul
     Ok(())
 }
 
+pub(super) fn validate_live_inputs(backend: &Path, stage: &StageRequest<'_>) -> Result<()> {
+    let inputs = read_inputs(backend, stage)?;
+    super::storage::redis_layout::require_windows(&inputs.request["storage"]["redis"])
+}
+
 fn read_inputs(backend: &Path, stage: &StageRequest<'_>) -> Result<Inputs> {
     if stage.stage != "target-verify" || stage.mode != "run" {
         return Err("target-verify 只支持首次 run，不接受 reconcile 或 resume".into());
@@ -170,7 +150,9 @@ fn read_inputs(backend: &Path, stage: &StageRequest<'_>) -> Result<Inputs> {
         .clone();
     let initialized_path =
         manifest::bound_file(backend, &initialized_binding, "目标初始化收据", true)?;
-    let target_dir = initialized_path
+    let (registered_path, registration) =
+        super::published::tree::registered(backend, &initialized_path)?;
+    let target_dir = registered_path
         .parent()
         .ok_or("初始化收据缺少父目录")?
         .to_path_buf();
@@ -218,6 +200,7 @@ fn read_inputs(backend: &Path, stage: &StageRequest<'_>) -> Result<Inputs> {
     if manifest::load(backend, &stage.run_dir.join("manifest.json"))?.digest != loaded.digest {
         return Err("目标输入核验期间复制运行清单变化".into());
     }
+    registration.check()?;
     Ok(Inputs {
         manifest: loaded.value,
         target_dir,

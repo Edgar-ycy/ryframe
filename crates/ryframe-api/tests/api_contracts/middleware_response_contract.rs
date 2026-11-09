@@ -21,6 +21,38 @@ use tower::ServiceExt;
 
 struct FixedLimiter(Result<RateLimitDecision, String>);
 
+#[test]
+fn tenant_data_unavailability_preserves_retry_and_does_not_request_session_refresh() {
+    use axum::response::IntoResponse;
+    use ryframe_api::http::HttpAppError;
+    use ryframe_kernel::AppError;
+
+    runtime().block_on(async {
+        let response = HttpAppError::from(AppError::TenantDataTargetUnavailable(
+            "租户 projection-tenant 的数据范围投影暂不可用: expected=9, actual=Some(8)".into(),
+            5,
+        ))
+        .into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.headers()[RETRY_AFTER], "5");
+        let body = to_bytes(response.into_body(), 4096).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["error_key"], "tenant_data_target_unavailable");
+        assert_eq!(body["message"], "error.tenant_data_target_unavailable");
+        assert!(body["details"].is_null());
+        assert!(!body.to_string().contains("expected=9"));
+
+        let changed_runtime =
+            HttpAppError::from(AppError::StaleRuntimeEpoch("产品运行代次确实变化".into()))
+                .into_response();
+        assert_eq!(changed_runtime.status(), StatusCode::CONFLICT);
+        assert!(!changed_runtime.headers().contains_key(RETRY_AFTER));
+        let body = to_bytes(changed_runtime.into_body(), 4096).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["error_key"], "stale_runtime_epoch");
+    });
+}
+
 #[async_trait::async_trait]
 impl HttpRateLimiter for FixedLimiter {
     async fn acquire(&self, _: &str, _: u64, _: u32) -> Result<RateLimitDecision, String> {
@@ -172,4 +204,265 @@ fn permission_middleware_typed_error_preserves_unauthorized_response() {
 
 async fn protected_handler() -> &'static str {
     panic!("未认证请求不得进入处理器")
+}
+
+mod first_password {
+    use super::*;
+    use axum::{
+        extract::OriginalUri, http::Method, middleware::Next, response::Response, routing::any,
+    };
+    use ryframe_api::{
+        auth_middleware::{AuthState, auth_middleware},
+        session_security::{AccessRevocationStore, RefreshSessionControl, SessionRevocation},
+    };
+    use ryframe_application::PrincipalResolver;
+    use ryframe_auth::{
+        RequestPrincipal,
+        jwt::{TokenIdentity, TokenSettings, encode_access},
+    };
+    use ryframe_kernel::{ActorContext, AppResult, DataScope};
+
+    struct Identity(RequestPrincipal);
+
+    #[async_trait::async_trait]
+    impl PrincipalResolver for Identity {
+        async fn resolve_principal(&self, _: &Claims) -> AppResult<RequestPrincipal> {
+            Ok(self.0.clone())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl AccessRevocationStore for Identity {
+        async fn is_revoked(&self, _: &str) -> AppResult<bool> {
+            Ok(false)
+        }
+        async fn revoke(&self, _: &str, _: u64) -> AppResult<()> {
+            unreachable!()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl RefreshSessionControl for Identity {
+        async fn is_active_for_identity(&self, _: &str, _: &str, _: i64) -> AppResult<bool> {
+            Ok(true)
+        }
+        async fn revoke(&self, _: &str) -> AppResult<bool> {
+            unreachable!()
+        }
+        async fn revoke_for_tenant(&self, _: &str, _: &str) -> AppResult<bool> {
+            unreachable!()
+        }
+        async fn revoke_for_user(&self, _: &str, _: i64, _: &str) -> AppResult<SessionRevocation> {
+            unreachable!()
+        }
+        async fn session_sids_for_user(&self, _: &str, _: i64) -> AppResult<Vec<String>> {
+            unreachable!()
+        }
+        async fn revoke_other_sessions_for_user(
+            &self,
+            _: &str,
+            _: i64,
+            _: &str,
+            _: &[String],
+        ) -> AppResult<u64> {
+            unreachable!()
+        }
+    }
+
+    fn identity(restricted: bool, permitted: bool) -> Identity {
+        Identity(RequestPrincipal {
+            actor: ActorContext {
+                user_id: 2,
+                tenant_id: "system".into(),
+                username: "user".into(),
+                dept_id: None,
+                dept_path: None,
+                data_scope: DataScope::SelfOnly,
+                custom_dept_ids: vec![],
+                include_self: true,
+                data_scope_version: 1,
+                is_super_admin: false,
+            },
+            password_change_required: restricted,
+            user_authorization_version: 1,
+            data_scope_version: 1,
+            tenant_authorization_epoch: 1,
+            preferred_locale: None,
+            roles: vec![],
+            role_ids: vec![],
+            permissions: if permitted {
+                vec!["system:post:list".into()]
+            } else {
+                vec![]
+            },
+            tenant_request_limit_per_minute: 100,
+        })
+    }
+
+    async fn reached(request: axum::extract::Request) -> &'static str {
+        assert!(
+            request
+                .extensions()
+                .get::<ryframe_api::RequestPrincipal>()
+                .is_some()
+        );
+        "已进入处理器"
+    }
+
+    fn router(restricted: bool, permitted: bool, nested: bool) -> (Router, String) {
+        let settings =
+            Arc::new(TokenSettings::new("isolated-auth-middleware-secret", "1h", "1h").unwrap());
+        let (token, _) = encode_access(
+            &TokenIdentity {
+                user_id: 2,
+                tenant_id: "system",
+                tenant_session_version: 1,
+                user_authorization_version: 1,
+                username: "user",
+            },
+            &settings,
+        )
+        .unwrap();
+        let identity = Arc::new(identity(restricted, permitted));
+        let state = AuthState {
+            token_settings: settings,
+            allow_multiple_tenants: false,
+            access_revocations: identity.clone(),
+            principal_resolver: identity.clone(),
+            refresh_sessions: identity,
+        };
+        let protected = Router::new()
+            .route("/posts", any(reached))
+            .layer(from_fn(require_permission("system:post:list")));
+        let app = if nested {
+            let profile = Router::new()
+                .route("/password", any(reached))
+                .route("/", any(reached))
+                .layer(from_fn_with_state(state.clone(), auth_middleware));
+            let auth = Router::new()
+                .route("/context", any(reached))
+                .route("/context/extra", any(reached))
+                .route("/logout", any(reached))
+                .route("/ws-ticket", any(reached))
+                .layer(from_fn_with_state(state.clone(), auth_middleware))
+                .nest("/profile", profile);
+            Router::new().nest(
+                "/api/v1",
+                Router::new()
+                    .nest("/auth", auth)
+                    .nest(
+                        "/system",
+                        protected
+                            .route("/users", any(reached))
+                            .layer(from_fn_with_state(state.clone(), auth_middleware)),
+                    )
+                    .nest(
+                        "/message",
+                        Router::new()
+                            .route("/ws-ticket", any(reached))
+                            .layer(from_fn_with_state(state, auth_middleware)),
+                    ),
+            )
+        } else {
+            Router::new()
+                .route("/api/v1/auth/context", any(reached))
+                .layer(from_fn_with_state(state, auth_middleware))
+                .layer(from_fn(without_original_uri))
+        };
+        (app, token)
+    }
+
+    async fn without_original_uri(mut request: axum::extract::Request, next: Next) -> Response {
+        request.extensions_mut().remove::<OriginalUri>();
+        next.run(request).await
+    }
+
+    #[test]
+    fn nested_restricted_identity_reaches_only_required_session_handlers() {
+        runtime().block_on(async {
+            let (app, token) = router(true, true, true);
+            for (method, path, allowed) in [
+                (Method::GET, "/api/v1/auth/context", true),
+                (Method::PUT, "/api/v1/auth/profile/password", true),
+                (Method::POST, "/api/v1/auth/logout", true),
+                (Method::GET, "/api/v1/system/users", false),
+                (Method::GET, "/api/v1/system/posts", false),
+                (Method::GET, "/api/v1/auth/profile", false),
+                (Method::PUT, "/api/v1/auth/profile", false),
+                (Method::POST, "/api/v1/message/ws-ticket", false),
+                (Method::POST, "/api/v1/auth/ws-ticket", false),
+                (Method::GET, "/api/v1/auth/context/extra", false),
+                (Method::POST, "/api/v1/auth/profile/password", false),
+                (Method::GET, "/api/v1/auth/logout", false),
+            ] {
+                let response = app
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(path)
+                            .header("Authorization", format!("Bearer {token}"))
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    response.status(),
+                    if allowed {
+                        StatusCode::OK
+                    } else {
+                        StatusCode::FORBIDDEN
+                    },
+                    "{path}"
+                );
+                let body = to_bytes(response.into_body(), 4096).await.unwrap();
+                if allowed {
+                    assert_eq!(body.as_ref(), "已进入处理器".as_bytes());
+                } else {
+                    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                    assert_eq!(body["error_key"], "permission_denied");
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn complete_identity_still_requires_business_permission_and_flat_uri_is_supported() {
+        runtime().block_on(async {
+            for permitted in [false, true] {
+                let (app, token) = router(false, permitted, true);
+                let response = app
+                    .oneshot(
+                        Request::builder()
+                            .uri("/api/v1/system/posts")
+                            .header("Authorization", format!("Bearer {token}"))
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    response.status(),
+                    if permitted {
+                        StatusCode::OK
+                    } else {
+                        StatusCode::FORBIDDEN
+                    }
+                );
+            }
+            let (app, token) = router(true, false, false);
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/v1/auth/context")
+                        .header("Authorization", format!("Bearer {token}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        });
+    }
 }
