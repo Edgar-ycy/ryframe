@@ -4,8 +4,170 @@ mod process_liveness;
 #[path = "full_stack_worker/support.rs"]
 mod support;
 use serde_json::{Value, json};
-use std::{fs, net::TcpListener};
+use std::{
+    collections::BTreeMap,
+    fs,
+    net::TcpListener,
+    path::{Path, PathBuf},
+    process::{Command, Output},
+};
 use support::*;
+
+fn file_binding(path: &Path) -> Value {
+    let bytes = fs::read(path).unwrap();
+    json!({"path":path,"bytes":bytes.len(),"sha256":sha(&bytes)})
+}
+
+fn clone_status_run(local: &Path, runtime: &Path, side: &str, api_port: u16) -> PathBuf {
+    let run = local.join(format!("run-{side}"));
+    fs::create_dir(&run).unwrap();
+    let selected = json!({"runtime_dir":runtime,"api_url":format!("http://127.0.0.1:{api_port}")});
+    let missing = json!({"path":run.join("missing.json"),"bytes":1,"sha256":"a".repeat(64)});
+    let environment = run.join("environment.json");
+    write(&environment, &json!({"environment":{"APP_ENV":"test"}}));
+    let input = run.join("selected.json");
+    let mut manifest = json!({"format_version":1,"kind":"devex-clone-run","id":"legacy-status",
+        "source_request":missing,"source_export":missing,"initialized":missing,
+        "source_environment":missing,"target_environment":missing,
+        "copy_directory":run.join("unused-copy"),"copy_stage":"source_to_seed","build_bridges":[]});
+    if side == "source" {
+        write(&input, &json!({"source":selected}));
+        manifest["source_request"] = file_binding(&input);
+    } else {
+        write(&input, &json!({"generation":{"selected":selected}}));
+        manifest["initialized"] = file_binding(&input);
+    }
+    manifest[format!("{side}_environment")] = file_binding(&environment);
+    let path = run.join("manifest.json");
+    write(&path, &manifest);
+    write(
+        run.join("state.json"),
+        &json!({"format_version":1,"manifest":file_binding(&path),"attempts":[]}),
+    );
+    run
+}
+
+fn clone_status(backend: &Path, run: &Path, side: &str, role: &str) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .current_dir(backend)
+        .env_remove("APP_ENV")
+        .args(["check", "recovery", "clone", "runtime", "--run-dir"])
+        .arg(run)
+        .args(["--side", side, "--operation", "status", "--roles", role])
+        .output()
+        .unwrap()
+}
+
+fn file_image(root: &Path) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
+    let mut entries = BTreeMap::new();
+    for entry in fs::read_dir(root).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        let kind = entry.file_type().unwrap();
+        if kind.is_dir() {
+            entries.extend(file_image(&path));
+            entries.insert(path, None);
+        } else {
+            assert!(kind.is_file());
+            entries.insert(path.clone(), Some(fs::read(path).unwrap()));
+        }
+    }
+    entries
+}
+
+fn status_result(output: Output) -> Value {
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+fn rejected_status(output: Output, diagnostic: &str) {
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains(diagnostic), "{error}");
+}
+
+#[test]
+fn clone_runtime_status_observes_both_legacy_sides_without_writing_or_using_other_inputs() {
+    let fixture = Fixture::with_role("normal", Role::Api);
+    fs::write(fixture.backend.join("Cargo.toml"), "[workspace]\n").unwrap();
+    fs::create_dir(fixture.backend.join("xtask")).unwrap();
+    let local = fixture.backend.join(".local-tests");
+    let legacy = local.join("legacy-runtime");
+    fs::create_dir_all(&legacy).unwrap();
+    for name in ["binaries.json", "runtime.json"] {
+        fs::copy(fixture.run.join(name), legacy.join(name)).unwrap();
+    }
+    let source = clone_status_run(&local, &legacy, "source", fixture.api_port);
+    let target = clone_status_run(&local, &legacy, "target", fixture.api_port);
+    let runtime = read(legacy.join("runtime.json"));
+    let observation_image = || {
+        // 原 API 监督器的运行文件可能仍被独占打开，另外核对原收据绑定的配置目录。
+        let mut image = file_image(&local);
+        for field in ["api_config_dir", "worker_config_dir"] {
+            let directory = Path::new(runtime[field].as_str().unwrap());
+            image.extend(file_image(directory));
+        }
+        image
+    };
+
+    let started = fixture.ok("start");
+    let receipt = legacy.join("api.json");
+    fs::copy(fixture.run.join("api.json"), &receipt).unwrap();
+    let before = observation_image();
+    for (run, side) in [(&source, "source"), (&target, "target")] {
+        let status = status_result(clone_status(&fixture.backend, run, side, "api"));
+        assert_eq!(
+            status,
+            json!({"format_version":1,"kind":"devex-clone-runtime-observation",
+            "operation":"status","scope_id":"worker-native-tests","runtime_directory":legacy,
+            "processes":{"api":{"state":"running","identity":started["identity"],"ready":true}}})
+        );
+    }
+    assert_eq!(observation_image(), before);
+    let original = fs::read(&receipt).unwrap();
+    let mut reused = read(&receipt);
+    reused["identity"]["started"] = json!("0");
+    write(&receipt, &reused);
+    let before = observation_image();
+    rejected_status(
+        clone_status(&fixture.backend, &source, "source", "api"),
+        "PID 已复用",
+    );
+    assert_eq!(observation_image(), before);
+    fs::write(&receipt, original).unwrap();
+
+    fixture.ok("stop");
+    let before = observation_image();
+    let status = status_result(clone_status(&fixture.backend, &target, "target", "api"));
+    assert_eq!(
+        status["processes"]["api"],
+        json!({"state":"stopped","identity":null,"ready":false})
+    );
+    assert_eq!(observation_image(), before);
+
+    let listener = TcpListener::bind(("127.0.0.1", fixture.port)).unwrap();
+    let before = observation_image();
+    rejected_status(
+        clone_status(&fixture.backend, &target, "target", "worker"),
+        "监听",
+    );
+    assert_eq!(listener.local_addr().unwrap().port(), fixture.port);
+    assert_eq!(observation_image(), before);
+    drop(listener);
+
+    let config = fixture.run.join("config/app.test.toml");
+    let original = fs::read(&config).unwrap();
+    fs::write(&config, b"scope_id='different'\n").unwrap();
+    let before = observation_image();
+    let drift = clone_status(&fixture.backend, &source, "source", "api");
+    assert_eq!(observation_image(), before);
+    fs::write(config, original).unwrap();
+    rejected_status(drift, "配置摘要");
+}
 
 #[test]
 fn api_survives_controller_exit_and_stops_its_complete_role_tree() {

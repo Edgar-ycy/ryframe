@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 
 use crate::{
     Result,
-    cli::{CloneCommand, CloneRuntimeOptions, StorageOptions},
+    cli::{CloneCommand, CloneRuntimeOperation, CloneRuntimeOptions, StorageOptions},
     local_test_path::{LocalTestPathKind, validate_local_test_path},
 };
 
@@ -17,6 +17,11 @@ pub(crate) fn protocol(command: &CloneCommand, root: &Path) -> Result<String> {
     }
     if matches!(command, CloneCommand::SeedRuntime(_)) {
         return Err("seed-runtime 由 Rust 正式入口执行".into());
+    }
+    if let CloneCommand::Runtime(options) = command
+        && options.operation == CloneRuntimeOperation::Status
+    {
+        return Err("复制运行 status 由 Rust 只读入口执行".into());
     }
     if let CloneCommand::Runtime(options) = command
         && native::cache::handoff::selected(root, options)?

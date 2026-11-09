@@ -67,7 +67,7 @@ pub(super) fn guard(
         }
     }
 }
-pub(super) fn ready(url: &str) -> Result<bool> {
+pub(in crate::recovery) fn ready(url: &str) -> Result<bool> {
     super::probes::execute(&json!({"action":"ready","url":url,"timeout":0})).map(|v| v == true)
 }
 fn free(role: Role, runtime: &Value, timeout: f64) -> Result<()> {

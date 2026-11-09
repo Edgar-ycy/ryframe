@@ -7,7 +7,7 @@ from rate_limit_tool import parse_binding
 
 from devex_clone_capture import read_json
 from devex_clone_model import local_path
-from devex_clone_run import cleanup_inputs, execute, run_runtime
+from devex_clone_run import execute
 
 SEED_SOURCE_PROTOCOL_KIND = "ryframe-xtask-recovery-seed-source"
 STAGE_PROTOCOL_KIND = "ryframe-xtask-recovery-clone-stage"
@@ -236,10 +236,7 @@ def dispatch(args, backend: Path) -> dict:
         return {key: result[key] for key in ("status", "stage", "mode", "attempt", "restore_qualified")}
     if args.command == "runtime":
         if args.operation == "status":
-            if args.write:
-                raise ValueError("runtime status 是只读操作，不接受 --write")
-            value, environment = cleanup_inputs(backend, directory, args.side)
-            return run_runtime(backend, value, environment, args.side, "status", tuple(args.roles), run_directory=directory)
+            raise ValueError("复制运行 status 由 Rust 只读入口执行")
         if not args.write:
             raise ValueError("环境启停需要显式 --write")
         result = execute(backend, directory, "runtime-" + args.side, args.operation, tuple(args.roles))

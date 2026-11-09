@@ -45,7 +45,7 @@ pub(crate) struct Manifest {
     pub(crate) digest: FileDigest,
 }
 
-/// 仅供 cache/runtime-target stop/recover：保留登记形状和本地字节绑定，不读取历史资源输入。
+/// 保留登记形状和本地字节绑定，供状态观察和清理读取，无需历史资源输入。
 pub(super) fn registered(backend: &Path, path: &Path) -> Result<Manifest> {
     validate_local_test_path(path, backend, LocalTestPathKind::ExistingFile)?;
     let before = digest::file(path)?;

@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 
 use crate::{
     Result,
-    cli::CloneCommand,
+    cli::{CloneCommand, CloneRuntimeOperation},
     local_test_path::{LocalTestPathKind, validate_local_test_path},
 };
 
@@ -71,6 +71,12 @@ pub(crate) fn run(command: &CloneCommand, backend: &Path) -> Result<()> {
         }
         CloneCommand::Storage(_) => resources::run(command, backend)?,
         CloneCommand::Cache(options) => cache::run(backend, options)?,
+        CloneCommand::Runtime(options)
+            if options.operation == CloneRuntimeOperation::Status
+                && !cache::handoff::selected(backend, options)? =>
+        {
+            lifecycle::runtime_status::run(backend, options)?
+        }
         CloneCommand::Runtime(options) => cache::handoff::run(backend, options)?,
         CloneCommand::PostCopy(options) => post_process::entry::run(backend, options)?,
         CloneCommand::SeedRuntime(options) => seed::run(backend, options)?,

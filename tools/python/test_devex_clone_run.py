@@ -202,29 +202,6 @@ class RunTests(unittest.TestCase):
             run.run_runtime(self.backend, value, run.environments(self.backend, value), "source", "stop", ("api",))
         self.assertEqual(control.call_args.args[2:4], ("stop", ("api",)))
 
-    def test_runtime_status_uses_zero_write_observation_without_control_lock(self):
-        value = dict(self.value)
-        runtime_dir = self.local / "runtime"
-        request = self.file("runtime-status-request", {
-            "source": {"runtime_dir": str(runtime_dir), "api_url": "http://127.0.0.1:18210"},
-        })
-        value["source_request"] = request
-        before = {path: path.read_bytes() for path in self.local.rglob("*") if path.is_file()}
-        expected = {"kind": "devex-clone-runtime-observation", "operation": "status"}
-        with patch("devex_clone_runtime.observe", return_value=expected) as observe, \
-                patch("devex_clone_runtime.control", side_effect=AssertionError("status 不能取得控制锁")):
-            result = run.run_runtime(
-                self.backend, value, run.environments(self.backend, value),
-                "source", "status", ("api",),
-            )
-        self.assertEqual(result, expected)
-        observe.assert_called_once_with(
-            self.backend, runtime_dir, ("api",), "http://127.0.0.1:18210",
-        )
-        self.assertEqual(before, {
-            path: path.read_bytes() for path in self.local.rglob("*") if path.is_file()
-        })
-
     def test_stop_does_not_require_current_source_to_match_build(self):
         with patch("source_fingerprints.artifact_sources", side_effect=ValueError("changed product")) as bridge, \
                 patch.object(run, "run_runtime", return_value={"state": "stopped"}):

@@ -5,7 +5,8 @@ use std::path::Path;
 use crate::{
     Result,
     cli::{
-        CloneCommand, FreshTargetCommand, RecoveryCommand, SeedSourceOperation, SeedSourceOptions,
+        CloneCommand, CloneRuntimeOperation, FreshTargetCommand, RecoveryCommand,
+        SeedSourceOperation, SeedSourceOptions,
     },
     process::{protocol_stdin, run_with_stdin},
     workspace::root_dir,
@@ -122,7 +123,8 @@ fn run_clone(command: &CloneCommand) -> Result<()> {
             Ok(())
         }
         CloneCommand::Runtime(options)
-            if !clone::native::cache::handoff::selected(&root, options)? =>
+            if options.operation != CloneRuntimeOperation::Status
+                && !clone::native::cache::handoff::selected(&root, options)? =>
         {
             let payload = clone::protocol(command, &root)?;
             run_with_stdin(

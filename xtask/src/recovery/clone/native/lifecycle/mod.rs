@@ -13,6 +13,7 @@ pub(crate) mod identity;
 pub(crate) mod lock;
 pub(crate) mod manifest;
 mod recover;
+pub(super) mod runtime_status;
 pub(crate) mod source;
 pub(crate) mod stage;
 pub(crate) mod state;
