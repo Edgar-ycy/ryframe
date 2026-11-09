@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix non-production rebuild preflight rejecting exact schema-level grants. Verify each target's privileges on both the migration and lock-holding connections, with partial revocation, ownership, and write boundaries enforced.
+
 - Remove a simulated quota-recovery refresh failure and its fixture branch that duplicate the post-write unknown-response scenario, along with an assertion that only checks mock restoration. Keep coverage for unknown writes, explicit reconciliation, identity and evidence binding, idempotency, and failure cleanup.
 
 - Enforce the 24-hour backup-to-fault limit at microsecond precision in the application and recovery tool. Rereading a saved product plan uses the same time validation as generating it.
