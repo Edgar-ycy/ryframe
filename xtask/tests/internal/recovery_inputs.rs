@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, path::Path};
 
 use serde_json::{Value, json};
 
@@ -145,6 +145,51 @@ fn invalid_identifier_and_utc_time_are_rejected() {
     let mut invalid_time = fixture.product_options(None);
     invalid_time.fault_at = "2026-10-18T00:00:00+08:00".into();
     assert!(product::build(&fixture.backend, &invalid_time).is_err());
+}
+
+#[test]
+fn saved_product_plan_rechecks_the_exact_recovery_point() {
+    use super::recovery_inputs_support::{capture_target_plan, write_value};
+    use chrono::{DateTime, Duration, SecondsFormat};
+
+    let fixture = Fixture::new();
+    let mut receipt = read_json(&fixture.backup_receipt);
+    let manifest_path = Path::new(receipt["result"]["manifest"]["path"].as_str().unwrap());
+    let mut manifest = read_json(manifest_path);
+    // 让合成备份的两个边界都早于当前时间，单独检验恢复点时长。
+    let captured = DateTime::parse_from_rfc3339(manifest["captured_at"].as_str().unwrap()).unwrap()
+        - Duration::hours(25);
+    manifest["captured_at"] = json!(captured.to_rfc3339_opts(SecondsFormat::AutoSi, true));
+    manifest["quiesced_at"] = manifest["captured_at"].clone();
+    fs::write(manifest_path, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
+    receipt["result"]["manifest"] = binding(manifest_path);
+    fs::write(
+        &fixture.backup_receipt,
+        serde_json::to_vec_pretty(&receipt).unwrap(),
+    )
+    .unwrap();
+
+    let capture = |path: &Path| {
+        capture_target_plan(
+            &fixture.backend,
+            &fixture.reference_plan,
+            &fixture.backup_receipt,
+            &fixture.comparison_sources,
+            &fixture.arm_input,
+            &fixture.fresh_verify,
+            path,
+        )
+    };
+    let mut product = fixture.product_value.clone();
+    let boundary = captured + Duration::hours(24);
+    product["fault_at"] = json!(boundary.to_rfc3339_opts(SecondsFormat::AutoSi, true));
+    let exact = write_value(&fixture.root, "product-exact-recovery-point.json", &product);
+    assert_eq!(capture(&exact).unwrap()["product_plan"], product);
+
+    let late = boundary + Duration::microseconds(1);
+    product["fault_at"] = json!(late.to_rfc3339_opts(SecondsFormat::AutoSi, true));
+    let late = write_value(&fixture.root, "product-late-recovery-point.json", &product);
+    assert!(capture(&late).unwrap_err().to_string().contains("24 小时"));
 }
 
 #[test]

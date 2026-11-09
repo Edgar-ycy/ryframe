@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use chrono::{DateTime, SecondsFormat, Timelike, Utc};
+use chrono::{DateTime, Duration, SecondsFormat, Timelike, Utc};
 use serde_json::{Value, json};
 
 use super::{
@@ -74,14 +74,6 @@ pub(crate) fn build(backend: &Path, options: &ProductInputOptions) -> Result<Val
         "worker_ready_url": target.get("worker_ready_url").unwrap(),
         "frontend_sha": chain::frontend_sha(&chain)?,
     });
-    validate_fault_time(
-        &options.fault_at,
-        chain
-            .backup
-            .manifest
-            .get("captured_at")
-            .ok_or("备份清单缺少采集时间")?,
-    )?;
     validate_product(&chain, &value)?;
     chain.reference.assert_unchanged()?;
     chain.backup_document.assert_unchanged()?;
@@ -99,7 +91,16 @@ pub(crate) fn validate_product(chain: &Chain, value: &Value) -> Result<()> {
     identifier(id)?;
     identifier(text(value_object.get("backup_id").unwrap(), "产品备份 ID")?)?;
     scope_identifier(text(value_object.get("scope_id").unwrap(), "产品 scope")?)?;
-    validate_fault_shape(text(value_object.get("fault_at").unwrap(), "产品故障时间")?)?;
+    let fault_at = text(value_object.get("fault_at").unwrap(), "产品故障时间")?;
+    validate_fault_shape(fault_at)?;
+    validate_fault_time(
+        fault_at,
+        chain
+            .backup
+            .manifest
+            .get("captured_at")
+            .ok_or("备份清单缺少采集时间")?,
+    )?;
     let target = chain
         .reference
         .value
@@ -180,7 +181,7 @@ fn validate_fault_time(value: &str, captured: &Value) -> Result<()> {
     let fault = timestamp(&Value::String(value.to_owned()), "恢复故障时间")?.with_timezone(&Utc);
     let captured = timestamp(captured, "备份采集时间")?.with_timezone(&Utc);
     let now = Utc::now();
-    if fault < captured || fault > now || (fault - captured).num_seconds() > 86_400 {
+    if fault < captured || fault > now || fault - captured > Duration::hours(24) {
         return Err("恢复故障时间必须位于实际备份采集后 24 小时内且不能在未来".into());
     }
     let precision = if fault.nanosecond() == 0 {
