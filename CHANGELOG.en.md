@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix authentication settings rejecting the lowercase `s` lifetime suffix already accepted by configuration validation. Access and refresh tokens use the same duration formats, and invalid formats or numeric overflow report the relevant configuration field, cause and remedy. Check time addition during construction and issuance; excessive CSRF lifetimes return an error instead of panicking or wrapping.
+
 - Fix non-production rebuild preflight rejecting exact schema-level grants. Verify each target's privileges on both the migration and lock-holding connections, with partial revocation, ownership, and write boundaries enforced.
 
 - Remove a simulated quota-recovery refresh failure and its fixture branch that duplicate the post-write unknown-response scenario, along with an assertion that only checks mock restoration. Keep coverage for unknown writes, explicit reconciliation, identity and evidence binding, idempotency, and failure cleanup.
