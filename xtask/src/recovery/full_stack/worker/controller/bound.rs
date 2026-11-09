@@ -183,6 +183,7 @@ pub(crate) fn observe_worker_under_outer_lock(
 
 #[derive(Debug, PartialEq, Eq)]
 struct OuterLock {
+    runtime: (u64, u64),
     directory: (u64, u64),
     owner: (u64, u64),
     binding: Value,
@@ -214,11 +215,18 @@ fn outer_lock(directory: &Path, expected: &Value) -> Result<OuterLock> {
     let names = fs::read_dir(&lock)?
         .map(|entry| entry.map(|value| value.file_name()))
         .collect::<std::io::Result<Vec<_>>>()?;
+    let recorded = Path::new(
+        owner["runtime_directory"]
+            .as_str()
+            .ok_or("Worker 外层锁缺少已登记运行目录")?,
+    );
+    let runtime = common::device_inode_for(directory, &fs::symlink_metadata(directory)?)?;
     if names != [OsString::from("owner.json")]
         || owner != *expected
         || owner["format_version"].as_u64() != Some(1)
         || owner["kind"] != "devex-clone-runtime-lock"
-        || owner["runtime_directory"] != json!(directory)
+        || operation::canonical(recorded)? != operation::canonical(directory)?
+        || common::device_inode_for(recorded, &fs::symlink_metadata(recorded)?)? != runtime
         || !matches!(owner["operation"].as_str(), Some("start" | "stop"))
         || !documents::hex(&owner["token"], 32)
         || common::device_inode_for(&lock, &fs::symlink_metadata(&lock)?)? != lock_identity
@@ -229,6 +237,7 @@ fn outer_lock(directory: &Path, expected: &Value) -> Result<OuterLock> {
     }
     common::validate_process_identity(&owner["identity"])?;
     Ok(OuterLock {
+        runtime,
         directory: lock_identity,
         owner: owner_identity,
         binding,

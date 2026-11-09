@@ -12,6 +12,8 @@
 
 - Rust now recovers the original outer control lock for legacy copy runs on the source side and on targets without post-copy registration. It checks the registered directory and the original controller's process creation identity, and preserves v1 recovery receipts and unfinished attempts.
 
+- Post-copy Worker stop observations accept mixed Windows separators in the original outer lock receipt when they identify the same real directory, and preserve the original receipt bytes.
+
 - Final recovery registration uses the Rust verifier issued by the formal data command to independently check browser business proof, database authority, and the original runtime generation. The binding is valid while the same build source lock is held.
 
 - Reference backup verification checks control and tenant schema fingerprints and tenant placements against the product manifest contract. Generated completion and retention timestamps use the UTC format and microsecond precision accepted by backup registration.
