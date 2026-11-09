@@ -11,7 +11,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import devex_clone_runtime as runtime
 from ci_full_stack_resources import BINARIES
-from full_stack_process import process_identity, write_receipt
+from full_stack_process import write_receipt
 from full_stack_runtime import register_runtime
 
 
@@ -167,54 +167,26 @@ class RuntimeControlTests(unittest.TestCase):
             runtime.control(self.root, self.directory, "start", ("api",), "http://127.0.0.1:1234")
         self.launch.assert_not_called()
 
-    def test_controller_lock_blocks_concurrent_control_and_live_reconciliation(self):
+    def test_controller_lock_blocks_concurrent_start(self):
         with runtime.controller_lock(self.directory, "start"):
             with self.assertRaisesRegex(ValueError, "并发"):
                 self.control("start")
-            with self.assertRaisesRegex(ValueError, "并发"):
-                runtime.reconcile_lock(self.directory)
+        self.launch.assert_not_called()
         self.assertFalse((self.directory / runtime.LOCK).exists())
 
-    def stale_lock(self, identity):
+    def test_modified_lock_is_retained_and_blocks_a_new_start(self):
         path = self.directory / runtime.LOCK
-        path.mkdir()
-        write_receipt(path / "owner.json", {
-            "format_version": 1, "kind": "devex-clone-runtime-lock", "identity": identity,
-            "runtime_directory": str(self.directory), "operation": "start", "token": "a" * 32,
-        })
-
-    def test_dead_owner_lock_reconciliation_does_not_claim_remote_writes(self):
-        child = self.popen([sys.executable, "-c", "import time; time.sleep(30)"],
-                           creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-        self.children.append(child)
-        identity = process_identity(child.pid)
-        child.kill()
-        child.wait(timeout=5)
-        self.stale_lock(identity)
-        result = runtime.reconcile_lock(self.directory)
-        self.assertFalse(result["remote_writes_reconciled"])
-        self.assertIsNone(result["observed_identity"])
-        self.assertFalse((self.directory / runtime.LOCK).exists())
-        self.assertEqual(len(list(self.directory.glob("controller-reconcile-*.json"))), 1)
-
-    def test_reused_pid_can_release_old_lock_without_signalling_new_owner(self):
-        current = process_identity(os.getpid())
-        self.stale_lock({**current, "started": "0"})
-        with mock.patch.object(runtime, "terminate_owned_process") as terminate:
-            result = runtime.reconcile_lock(self.directory)
-        self.assertEqual(result["observed_identity"], current)
-        terminate.assert_not_called()
-
-    def test_unidentified_or_modified_lock_is_retained(self):
-        path = self.directory / runtime.LOCK
-        path.mkdir()
-        with self.assertRaises(FileNotFoundError):
-            runtime.reconcile_lock(self.directory)
-        path.rmdir()
+        owner = path / "owner.json"
+        unknown = path / "unexpected"
         with self.assertRaisesRegex(ValueError, "锁已变化"):
             with runtime.controller_lock(self.directory, "start"):
-                (path / "unexpected").write_text("evidence", encoding="utf-8")
-        self.assertTrue((path / "owner.json").exists())
+                original = owner.read_bytes()
+                unknown.write_bytes(b"evidence")
+        self.assertEqual(owner.read_bytes(), original)
+        self.assertEqual(unknown.read_bytes(), b"evidence")
+        with self.assertRaisesRegex(ValueError, "异常退出"):
+            self.control("start")
+        self.launch.assert_not_called()
 
 
 if __name__ == "__main__":

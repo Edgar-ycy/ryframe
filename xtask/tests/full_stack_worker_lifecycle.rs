@@ -9,7 +9,7 @@ use std::{
     fs,
     net::TcpListener,
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
 };
 use support::*;
 
@@ -47,13 +47,27 @@ fn clone_status_run(local: &Path, runtime: &Path, side: &str, api_port: u16) -> 
     run
 }
 
-fn clone_status(backend: &Path, run: &Path, side: &str, role: &str) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_xtask"))
+fn clone_runtime(backend: &Path, run: &Path, side: &str, operation: &str) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_xtask"));
+    command
         .current_dir(backend)
         .env_remove("APP_ENV")
         .args(["check", "recovery", "clone", "runtime", "--run-dir"])
         .arg(run)
-        .args(["--side", side, "--operation", "status", "--roles", role])
+        .args(["--side", side, "--operation", operation]);
+    command
+}
+
+fn clone_status(backend: &Path, run: &Path, side: &str, role: &str) -> Output {
+    clone_runtime(backend, run, side, "status")
+        .args(["--roles", role])
+        .output()
+        .unwrap()
+}
+
+fn clone_recover(backend: &Path, run: &Path, side: &str) -> Output {
+    clone_runtime(backend, run, side, "recover")
+        .args(["--roles", "worker", "--write"])
         .output()
         .unwrap()
 }
@@ -167,6 +181,215 @@ fn clone_runtime_status_observes_both_legacy_sides_without_writing_or_using_othe
     assert_eq!(observation_image(), before);
     fs::write(config, original).unwrap();
     rejected_status(drift, "配置摘要");
+}
+
+struct LegacyRecoverFixture {
+    _temporary: tempfile::TempDir,
+    backend: PathBuf,
+    runtime: PathBuf,
+    local: PathBuf,
+}
+
+impl LegacyRecoverFixture {
+    fn new() -> Self {
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let parent = workspace.join(".local-tests");
+        fs::create_dir_all(&parent).unwrap();
+        let temporary = tempfile::tempdir_in(parent).unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        #[cfg(windows)]
+        let root = PathBuf::from(root.to_str().unwrap().trim_start_matches(r"\\?\"));
+        let backend = root.join("backend");
+        let runtime = root.join("external legacy runtime");
+        let local = backend.join(".local-tests");
+        fs::create_dir_all(backend.join("xtask")).unwrap();
+        fs::create_dir(&runtime).unwrap();
+        fs::create_dir(&local).unwrap();
+        fs::write(backend.join("Cargo.toml"), "[workspace]\n").unwrap();
+        fs::write(runtime.join("api.json"), b"role receipts are untouched").unwrap();
+        Self {
+            _temporary: temporary,
+            backend,
+            runtime,
+            local,
+        }
+    }
+
+    fn run(&self, side: &str) -> PathBuf {
+        let run = clone_status_run(&self.local, &self.runtime, side, 18210);
+        fs::create_dir(run.join("results")).unwrap();
+        run
+    }
+
+    fn lock(&self, identity: Value) -> (PathBuf, Value) {
+        let lock = self.runtime.join("worker-control.lock");
+        fs::create_dir(&lock).unwrap();
+        let owner = json!({"format_version":1,"kind":"devex-clone-runtime-lock","identity":identity,
+            "runtime_directory":self.runtime,"operation":"start","token":"a".repeat(32)});
+        write(lock.join("owner.json"), &owner);
+        (lock, owner)
+    }
+}
+
+#[cfg(windows)]
+fn test_identity(pid: u32) -> Value {
+    use winsafe::{FILETIME, HPROCESS, co, prelude::kernel_Hprocess};
+    let process =
+        HPROCESS::OpenProcess(co::PROCESS::QUERY_LIMITED_INFORMATION, false, pid).unwrap();
+    let [mut creation, mut exit, mut kernel, mut user] =
+        std::array::from_fn(|_| FILETIME::default());
+    process
+        .GetProcessTimes(&mut creation, &mut exit, &mut kernel, &mut user)
+        .unwrap();
+    let started = (u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime);
+    let executable = process
+        .QueryFullProcessImageName(co::PROCESS_NAME::WIN32)
+        .unwrap();
+    json!({"pid":pid,"started":started.to_string(),"executable":executable.replace('/', "\\")})
+}
+
+#[cfg(unix)]
+fn test_identity(pid: u32) -> Value {
+    let process = PathBuf::from(format!("/proc/{pid}"));
+    let stat = fs::read_to_string(process.join("stat")).unwrap();
+    let started = stat
+        .rsplit_once(')')
+        .unwrap()
+        .1
+        .split_whitespace()
+        .nth(19)
+        .unwrap();
+    json!({"pid":pid,"started":started,"executable":fs::read_link(process.join("exe")).unwrap()})
+}
+
+#[test]
+fn clone_runtime_recover_releases_only_the_bound_external_legacy_lock() {
+    let fixture = LegacyRecoverFixture::new();
+    let mut dead = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .arg("__full-stack-worker")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let dead_identity = test_identity(dead.id());
+    drop(dead.stdin.take());
+    dead.wait().unwrap();
+    let live_identity = test_identity(std::process::id());
+    let mut reused = live_identity.clone();
+    reused["started"] = json!("0");
+
+    for (side, recorded, actual) in [
+        ("source", dead_identity, Value::Null),
+        ("target", reused, live_identity),
+    ] {
+        let run = fixture.run(side);
+        let (lock, owner) = fixture.lock(recorded);
+        let before = file_image(&fixture.runtime);
+        let summary = status_result(clone_recover(&fixture.backend, &run, side));
+        assert_eq!(
+            summary,
+            json!({"status":"stage_finished","stage":format!("runtime-{side}"),
+            "mode":"recover","attempt":1,"restore_qualified":false})
+        );
+        let result = json!({"format_version":1,"kind":"devex-clone-runtime-lock-reconciliation",
+            "owner":owner,"observed_identity":actual,"remote_writes_reconciled":false});
+        let result_path = run.join("results").join("0001.json");
+        assert_eq!(read(&result_path), result);
+        let state = read(run.join("state.json"));
+        assert_eq!(state["attempts"][0]["status"], "passed");
+        assert_eq!(state["attempts"][0]["result"], file_binding(&result_path));
+        assert!(run.join("controller-0001.json").is_file());
+        assert!(!run.join("run.lock").exists());
+        assert!(!lock.exists());
+        let mut after = file_image(&fixture.runtime);
+        let new_receipts = after
+            .keys()
+            .filter(|path| {
+                path.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("controller-reconcile-")
+                    && !before.contains_key(*path)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(new_receipts.len(), 1);
+        assert_eq!(read(&new_receipts[0]), result);
+        after.remove(&new_receipts[0]);
+        let guard = fixture.runtime.join("runtime-control.guard");
+        if !before.contains_key(&guard) {
+            assert_eq!(after.remove(&guard), Some(Some(vec![0])));
+        }
+        assert_eq!(
+            after,
+            before
+                .into_iter()
+                .filter(|(path, _)| !path.starts_with(&lock))
+                .collect::<BTreeMap<_, _>>()
+        );
+    }
+}
+
+#[test]
+fn clone_runtime_recover_retains_live_or_unknown_lock_and_original_running_attempt() {
+    let fixture = LegacyRecoverFixture::new();
+    let run = fixture.run("target");
+    let live = test_identity(std::process::id());
+    let (lock, owner) = fixture.lock(live);
+    let mut before = file_image(&fixture.runtime);
+    rejected_status(
+        clone_recover(&fixture.backend, &run, "target"),
+        "阶段 runtime-target 未完成",
+    );
+    let guard = fixture.runtime.join("runtime-control.guard");
+    before.insert(guard, Some(vec![0]));
+    assert_eq!(file_image(&fixture.runtime), before);
+    assert_eq!(
+        read(run.join("state.json"))["attempts"][0]["status"],
+        "failed"
+    );
+
+    let mut drifted = owner.clone();
+    drifted["identity"]["executable"] = json!(fixture.runtime.join("different-image"));
+    write(lock.join("owner.json"), &drifted);
+    let before = file_image(&fixture.runtime);
+    rejected_status(
+        clone_recover(&fixture.backend, &run, "target"),
+        "阶段 runtime-target 未完成",
+    );
+    assert_eq!(file_image(&fixture.runtime), before);
+    assert_eq!(
+        read(run.join("state.json"))["attempts"][1]["status"],
+        "failed"
+    );
+
+    let mut reused = owner;
+    reused["identity"]["started"] = json!("0");
+    write(lock.join("owner.json"), &reused);
+    fs::write(lock.join("unidentified"), b"preserve").unwrap();
+    let before = file_image(&fixture.runtime);
+    rejected_status(
+        clone_recover(&fixture.backend, &run, "target"),
+        "阶段 runtime-target 未完成",
+    );
+    assert_eq!(file_image(&fixture.runtime), before);
+    let path = run.join("state.json");
+    let mut state = read(&path);
+    assert_eq!(state["attempts"][2]["status"], "failed");
+    state["attempts"].as_array_mut().unwrap().push(
+        json!({"number":4,"stage":"runtime-target","mode":"start",
+        "status":"running","started_at":"2026-11-10T00:00:00Z","finished_at":null,"sources":{},
+        "result":null,"error_type":null}),
+    );
+    write(path, &state);
+    let ledger = file_image(&run);
+    rejected_status(
+        clone_recover(&fixture.backend, &run, "target"),
+        "存在未收尾阶段",
+    );
+    assert_eq!(file_image(&run), ledger);
+    assert_eq!(file_image(&fixture.runtime), before);
 }
 
 #[test]

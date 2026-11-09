@@ -19,9 +19,12 @@ pub(crate) fn protocol(command: &CloneCommand, root: &Path) -> Result<String> {
         return Err("seed-runtime 由 Rust 正式入口执行".into());
     }
     if let CloneCommand::Runtime(options) = command
-        && options.operation == CloneRuntimeOperation::Status
+        && matches!(
+            options.operation,
+            CloneRuntimeOperation::Status | CloneRuntimeOperation::Recover
+        )
     {
-        return Err("复制运行 status 由 Rust 只读入口执行".into());
+        return Err("复制运行 status/recover 由 Rust 正式入口执行".into());
     }
     if let CloneCommand::Runtime(options) = command
         && native::cache::handoff::selected(root, options)?

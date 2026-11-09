@@ -492,7 +492,7 @@ def run_copy(backend: Path, directory: Path, value: dict, environment: Environme
 
 def run_runtime(backend: Path, value: dict, environment: Environments, side: str, operation: str, roles: tuple,
                 *, run_directory: Path | None = None) -> dict:
-    from devex_clone_runtime import control, observe, reconcile_lock
+    from devex_clone_runtime import control, observe
 
     if side == "target" and run_directory is not None and (run_directory / "post-copy.json").exists():
         raise ValueError("已登记post-copy目标API生命周期必须使用原生完整树控制入口")
@@ -510,8 +510,6 @@ def run_runtime(backend: Path, value: dict, environment: Environments, side: str
                 raise ValueError("目标启动必须绑定当前统一验收目录")
             require_target_copy(backend, run_directory, value, roles)
     with environment.use(side):
-        if operation == "recover":
-            return reconcile_lock(Path(runtime["runtime_dir"]))
         if operation == "status":
             return observe(backend, Path(runtime["runtime_dir"]), roles, runtime["api_url"])
         return control(backend, Path(runtime["runtime_dir"]), operation, roles, runtime["api_url"])
@@ -565,13 +563,15 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
         raise ValueError("登记、准备和环境修订必须使用原生持锁正式入口")
     if stage in {"export", "target-verify"}:
         raise ValueError("导出和目标复核必须使用原生 Rust 入口")
+    if stage in {"runtime-source", "runtime-target"} and mode == "recover":
+        raise ValueError("复制运行 recover 由 Rust 正式入口执行")
     if stage == "seed-runtime" and mode == "arm-input":
         raise ValueError("ARM 输入签发必须使用 Rust 正式入口")
 
     # 停止只依据已登记运行产物及内核身份，不能被后来源码变化阻挡。
     session_cleanup = stage in {"post-copy", "seed-runtime"} and mode == "recover-session"
     seed_cleanup = stage == "seed-runtime" and mode == "source-generation-recover"
-    cleanup = session_cleanup or seed_cleanup or (stage.startswith("runtime-") and mode in {"stop", "recover"})
+    cleanup = session_cleanup or seed_cleanup or (stage.startswith("runtime-") and mode == "stop")
     evidence_handoff = stage == "seed-runtime" and mode in {
         "source-generation-start", "source-generation-stop", "source-generation-recover",
         "source-generation-reboot-close",
@@ -621,7 +621,7 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
                     from devex_clone_seed_runtime import execute_seed
 
                     result = execute_seed(backend, directory, value, mode, number, seed_request, producer_binding)
-                elif stage in {"runtime-source", "runtime-target"} and mode in {"start", "stop", "status", "recover"}:
+                elif stage in {"runtime-source", "runtime-target"} and mode in {"start", "stop", "status"}:
                     result = run_runtime(backend, value, environment, stage.removeprefix("runtime-"), mode, roles,
                                          run_directory=directory)
                 else:

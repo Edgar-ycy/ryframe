@@ -19,7 +19,6 @@ from full_stack_process import (
 from full_stack_runtime import process_environment, verify_runtime
 from process_sockets import endpoint, verify_listener
 from runtime_control_lock import ControllerLockSpec, controller_lock as _controller_lock
-from runtime_control_lock import reconcile_lock as _reconcile_controller_lock
 
 LOCK = "worker-control.lock"
 HISTORY = "producer-history.json"
@@ -53,12 +52,6 @@ def _directory(path: Path) -> Path:
 def controller_lock(directory: Path, operation: str):
     with _controller_lock(directory, operation, LOCK_SPEC):
         yield
-
-
-def reconcile_lock(runtime_directory: Path) -> dict:
-    """显式核验已退出的控制器，仅释放其精确锁；不停止进程或推定远端写入成功。"""
-    result = _reconcile_controller_lock(_directory(runtime_directory), LOCK_SPEC)
-    return {key: value for key, value in result.items() if key != "receipt"}
 
 
 def _identity(directory: Path, receipt: dict, role: str) -> dict | None:

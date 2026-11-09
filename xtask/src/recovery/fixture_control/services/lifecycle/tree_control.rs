@@ -17,6 +17,8 @@ use std::{
 #[cfg(any(windows, test))]
 #[path = "tree_control/windows.rs"]
 mod windows;
+#[cfg(windows)]
+pub(in crate::recovery) use windows::observe as observe_recovery_process;
 
 pub(in crate::recovery::fixture_control::services) fn stop(
     backend: &Path,

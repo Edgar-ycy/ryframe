@@ -235,8 +235,8 @@ def dispatch(args, backend: Path) -> dict:
         result = execute(backend, directory, "post-copy", args.operation, producer_binding=producer)
         return {key: result[key] for key in ("status", "stage", "mode", "attempt", "restore_qualified")}
     if args.command == "runtime":
-        if args.operation == "status":
-            raise ValueError("复制运行 status 由 Rust 只读入口执行")
+        if args.operation in {"status", "recover"}:
+            raise ValueError("复制运行 status/recover 由 Rust 正式入口执行")
         if not args.write:
             raise ValueError("环境启停需要显式 --write")
         result = execute(backend, directory, "runtime-" + args.side, args.operation, tuple(args.roles))

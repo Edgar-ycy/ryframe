@@ -1,27 +1,20 @@
 //! 只读观察旧复制运行的登记产品身份；不要求后继原生整树收据。
-use super::{manifest, state};
+use super::{manifest, runtime_selection, state};
 use crate::{
     Result,
-    cli::{CloneRole, CloneRuntimeOptions, CloneSide},
-    local_test_path::{LocalTestPathKind, validate_absolute_path},
+    cli::{CloneRole, CloneRuntimeOptions},
     recovery::{
         clone::native::{
             export::proof, json as document, resources::common, target_verify::authority,
         },
-        fixture_control::{
-            artifact::runtime, portable_path, read_json, services::lifecycle::readonly::process,
-        },
+        fixture_control::{artifact::runtime, read_json, services::lifecycle::readonly::process},
         full_stack::worker::controller,
         inputs::domain,
         runtime::dataset_authority::reads,
     },
 };
 use serde_json::{Map, Value, json};
-use std::{
-    fs,
-    io::ErrorKind,
-    path::{Path, PathBuf},
-};
+use std::{fs, io::ErrorKind, path::Path};
 
 pub(in crate::recovery::clone::native) fn run(
     backend: &Path,
@@ -41,12 +34,19 @@ fn observe(backend: &Path, options: &CloneRuntimeOptions) -> Result<Value> {
     ) {
         return Err("运行状态必须选择不重复的 API 或 Worker".into());
     }
-    let backend = directory(backend)?;
+    let backend = runtime_selection::directory(backend)?;
     let run = common::local_directory(&backend, &options.run_dir, "复制运行目录")?;
     let saved = manifest::registered(&backend, &run.join("manifest.json"))?;
     state::load(&run, false)?;
-    let selected = selected(&backend, &saved.value, options.side)?;
-    let directory = directory(Path::new(document::text(
+    let environment = runtime_selection::environment(&backend, &saved.value, options.side)?;
+    if !environment.iter().any(|(name, value)| {
+        (name == "APP_ENV" || cfg!(windows) && name.eq_ignore_ascii_case("APP_ENV"))
+            && value == "test"
+    }) {
+        return Err("运行状态要求原登记环境的 APP_ENV=test".into());
+    }
+    let selected = runtime_selection::selected(&backend, &saved.value, options.side)?;
+    let directory = runtime_selection::directory(Path::new(document::text(
         &selected["runtime_dir"],
         "已登记运行目录",
     )?))?;
@@ -79,35 +79,6 @@ fn observe(backend: &Path, options: &CloneRuntimeOptions) -> Result<Value> {
         json!({"format_version":1,"kind":"devex-clone-runtime-observation","operation":"status",
         "scope_id":binding.scope,"runtime_directory":directory,"processes":processes}),
     )
-}
-
-fn selected(backend: &Path, manifest: &Value, side: CloneSide) -> Result<Value> {
-    let (environment, descriptor) = match side {
-        CloneSide::Source => ("source_environment", "source_request"),
-        CloneSide::Target => ("target_environment", "initialized"),
-    };
-    let environment = common::environment(backend, &manifest[environment])?;
-    let mut names = std::collections::BTreeSet::new();
-    if environment
-        .keys()
-        .any(|name| !names.insert(name.to_uppercase()))
-        || !environment.iter().any(|(name, value)| {
-            (name == "APP_ENV" || cfg!(windows) && name.eq_ignore_ascii_case("APP_ENV"))
-                && value == "test"
-        })
-    {
-        return Err("运行状态要求原登记环境的 APP_ENV=test 且字段不重复".into());
-    }
-    let receipt = common::read_bound(backend, &manifest[descriptor], "已登记侧运行选择")?;
-    Ok(match side {
-        CloneSide::Source => receipt["source"].clone(),
-        CloneSide::Target => receipt["generation"]["selected"].clone(),
-    })
-}
-
-fn directory(path: &Path) -> Result<PathBuf> {
-    validate_absolute_path(path, LocalTestPathKind::ExistingDirectory)?;
-    Ok(portable_path(&path.canonicalize()?))
 }
 
 fn role_status(

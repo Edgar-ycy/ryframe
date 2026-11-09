@@ -63,6 +63,8 @@ mod status;
 mod tests;
 #[path = "lifecycle/tree_control.rs"]
 pub(super) mod tree_control;
+#[cfg(windows)]
+pub(in crate::recovery) use tree_control::observe_recovery_process;
 
 use model::{Context, binding, check, read, text};
 

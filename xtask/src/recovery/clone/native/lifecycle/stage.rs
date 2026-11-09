@@ -24,6 +24,9 @@ pub(crate) struct StageRequest<'a> {
 
 pub(crate) trait StageRunner {
     fn preflight(&self, request: &StageRequest<'_>) -> Result<()>;
+    fn guarded_preflight(&self, _request: &StageRequest<'_>) -> Result<()> {
+        Ok(())
+    }
     fn execute(&self, request: &StageRequest<'_>) -> Result<Value>;
 }
 
@@ -85,6 +88,7 @@ pub(crate) fn run_named(
     runner.preflight(&request)?;
 
     let guard = ProcessGuard::acquire(run_dir)?;
+    runner.guarded_preflight(&request)?;
     let run_lock = RunLock::claim(run_dir)?;
     let execution = (|| {
         if stage_name == "cache-target"

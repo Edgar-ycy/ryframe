@@ -21,7 +21,7 @@ pub(super) fn open(
 }
 
 #[cfg(windows)]
-pub(super) fn observe(pid: u32) -> Result<Option<Value>> {
+pub(in crate::recovery) fn observe(pid: u32) -> Result<Option<Value>> {
     match open(pid, false)? {
         Some(handle) => snapshot(&handle, pid),
         None => Ok(None),
