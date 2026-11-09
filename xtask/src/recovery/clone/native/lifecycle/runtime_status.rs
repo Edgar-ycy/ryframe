@@ -25,15 +25,7 @@ pub(in crate::recovery::clone::native) fn run(
 }
 
 fn observe(backend: &Path, options: &CloneRuntimeOptions) -> Result<Value> {
-    if !matches!(
-        options.roles.as_slice(),
-        [CloneRole::Api]
-            | [CloneRole::Worker]
-            | [CloneRole::Api, CloneRole::Worker]
-            | [CloneRole::Worker, CloneRole::Api]
-    ) {
-        return Err("运行状态必须选择不重复的 API 或 Worker".into());
-    }
+    runtime_selection::validate_roles(&options.roles)?;
     let backend = runtime_selection::directory(backend)?;
     let run = common::local_directory(&backend, &options.run_dir, "复制运行目录")?;
     let saved = manifest::registered(&backend, &run.join("manifest.json"))?;
@@ -46,39 +38,72 @@ fn observe(backend: &Path, options: &CloneRuntimeOptions) -> Result<Value> {
         return Err("运行状态要求原登记环境的 APP_ENV=test".into());
     }
     let selected = runtime_selection::selected(&backend, &saved.value, options.side)?;
-    let directory = runtime_selection::directory(Path::new(document::text(
-        &selected["runtime_dir"],
-        "已登记运行目录",
-    )?))?;
-    let api_url = document::text(&selected["api_url"], "已登记 API 地址")?;
-    let binding = runtime::verify(&backend, &directory)?;
-    proof::verify_api_address(api_url, &serde_json::to_value(&binding.table)?)?;
-    let api_ready = format!("{}/readyz", api_url.trim_end_matches('/'));
-    let worker_ready = document::text(&binding.receipt["worker_ready_url"], "Worker 就绪地址")?;
-    let api = domain::endpoint(&json!(api_ready), "API 就绪端点", Some("/readyz"))?;
-    let worker = domain::endpoint(&json!(worker_ready), "Worker 就绪端点", Some("/readyz"))?;
-    if (api.host, api.port) == (worker.host, worker.port) {
-        return Err("API 与 Worker 必须使用不同的明确监听端点".into());
-    }
+    let context = Context::load(&backend, &selected)?;
     let mut processes = Map::new();
     for role in &options.roles {
-        let (url, endpoint) = match role {
-            CloneRole::Api => (api_ready.as_str(), &api),
-            CloneRole::Worker => (worker_ready, &worker),
-        };
+        let (url, endpoint) = context.endpoint(*role);
         processes.insert(
             role.as_str().into(),
-            role_status(&directory, &binding, *role, url, endpoint)?,
+            role_status(&context.directory, &context.binding, *role, url, endpoint)?,
         );
     }
-    let current = runtime::verify(&backend, &directory)?;
-    if current.receipt != binding.receipt || current.table != binding.table {
-        return Err("运行登记在只读状态观察期间发生变化".into());
-    }
+    context.check(&backend)?;
     Ok(
         json!({"format_version":1,"kind":"devex-clone-runtime-observation","operation":"status",
-        "scope_id":binding.scope,"runtime_directory":directory,"processes":processes}),
+        "scope_id":context.binding.scope,"runtime_directory":context.directory,"processes":processes}),
     )
+}
+
+pub(super) struct Context {
+    pub directory: std::path::PathBuf,
+    pub binding: runtime::Binding,
+    api_ready: String,
+    worker_ready: String,
+    api: domain::Endpoint,
+    worker: domain::Endpoint,
+}
+
+impl Context {
+    pub(super) fn load(backend: &Path, selected: &Value) -> Result<Self> {
+        let directory = runtime_selection::directory(Path::new(document::text(
+            &selected["runtime_dir"],
+            "已登记运行目录",
+        )?))?;
+        let api_url = document::text(&selected["api_url"], "已登记 API 地址")?;
+        let binding = runtime::verify(backend, &directory)?;
+        proof::verify_api_address(api_url, &serde_json::to_value(&binding.table)?)?;
+        let api_ready = format!("{}/readyz", api_url.trim_end_matches('/'));
+        let worker_ready =
+            document::text(&binding.receipt["worker_ready_url"], "Worker 就绪地址")?.to_owned();
+        let api = domain::endpoint(&json!(api_ready), "API 就绪端点", Some("/readyz"))?;
+        let worker = domain::endpoint(&json!(worker_ready), "Worker 就绪端点", Some("/readyz"))?;
+        if (api.host, api.port) == (worker.host, worker.port) {
+            return Err("API 与 Worker 必须使用不同的明确监听端点".into());
+        }
+        Ok(Self {
+            directory,
+            binding,
+            api_ready,
+            worker_ready,
+            api,
+            worker,
+        })
+    }
+
+    pub(super) fn endpoint(&self, role: CloneRole) -> (&str, &domain::Endpoint) {
+        match role {
+            CloneRole::Api => (&self.api_ready, &self.api),
+            CloneRole::Worker => (&self.worker_ready, &self.worker),
+        }
+    }
+
+    pub(super) fn check(&self, backend: &Path) -> Result<()> {
+        let current = runtime::verify(backend, &self.directory)?;
+        if current.receipt != self.binding.receipt || current.table != self.binding.table {
+            return Err("运行登记在角色观察或控制期间发生变化".into());
+        }
+        Ok(())
+    }
 }
 
 fn role_status(
@@ -109,7 +134,7 @@ fn role_status(
     Ok(json!({"state":"stopped","identity":null,"ready":false}))
 }
 
-fn role_receipt(path: &Path) -> Result<Option<Value>> {
+pub(super) fn role_receipt(path: &Path) -> Result<Option<Value>> {
     match fs::symlink_metadata(path) {
         Ok(_) => Ok(Some(read_json(path, "已登记角色进程", 64 * 1024)?)),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
@@ -117,7 +142,11 @@ fn role_receipt(path: &Path) -> Result<Option<Value>> {
     }
 }
 
-fn role_identity(receipt: &Value, binding: &runtime::Binding, role: CloneRole) -> Result<Value> {
+pub(super) fn role_identity(
+    receipt: &Value,
+    binding: &runtime::Binding,
+    role: CloneRole,
+) -> Result<Value> {
     let role = role.as_str();
     let identity = common::validate_process_identity(&receipt["identity"])?;
     let executable = document::text(&identity["executable"], "登记角色产物")?;

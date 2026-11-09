@@ -299,7 +299,10 @@ fn load(
     Ok((before, history))
 }
 
-fn append(history: &mut Value, mut event: Value) -> Result<()> {
+pub(in crate::recovery::clone::native) fn append(
+    history: &mut Value,
+    mut event: Value,
+) -> Result<()> {
     let events = history["events"]
         .as_array_mut()
         .ok_or("API生产者历史必须是事件数组")?;

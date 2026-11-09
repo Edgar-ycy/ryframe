@@ -123,10 +123,8 @@ fn run_clone(command: &CloneCommand) -> Result<()> {
             Ok(())
         }
         CloneCommand::Runtime(options)
-            if matches!(
-                options.operation,
-                CloneRuntimeOperation::Start | CloneRuntimeOperation::Stop
-            ) && !clone::native::cache::handoff::selected(&root, options)? =>
+            if options.operation == CloneRuntimeOperation::Start
+                && !clone::native::cache::handoff::selected(&root, options)? =>
         {
             let payload = clone::protocol(command, &root)?;
             run_with_stdin(

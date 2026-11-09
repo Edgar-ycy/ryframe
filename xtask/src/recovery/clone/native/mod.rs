@@ -83,6 +83,12 @@ pub(crate) fn run(command: &CloneCommand, backend: &Path) -> Result<()> {
         {
             lifecycle::runtime_recover::run(backend, options)?
         }
+        CloneCommand::Runtime(options)
+            if options.operation == CloneRuntimeOperation::Stop
+                && !cache::handoff::selected(backend, options)? =>
+        {
+            lifecycle::runtime_stop::run(backend, options)?
+        }
         CloneCommand::Runtime(options) => cache::handoff::run(backend, options)?,
         CloneCommand::PostCopy(options) => post_process::entry::run(backend, options)?,
         CloneCommand::SeedRuntime(options) => seed::run(backend, options)?,

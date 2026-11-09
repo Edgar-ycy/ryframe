@@ -1,5 +1,8 @@
 //! 旧运行控制锁的目录与 owner 核验。
-use super::super::{digest, json as document, resources::common};
+use super::{
+    super::{digest, json as document, resources::common},
+    identity,
+};
 use crate::{
     Result,
     local_test_path::{LocalTestPathKind, validate_absolute_path},
@@ -23,10 +26,15 @@ pub(super) struct Original {
 
 impl Original {
     pub(super) fn load(directory: &Path) -> Result<Self> {
+        let original = Self::read(directory)?;
+        original.check()?;
+        Ok(original)
+    }
+
+    fn read(directory: &Path) -> Result<Self> {
         validate_absolute_path(directory, LocalTestPathKind::ExistingDirectory)?;
         let path = directory.join("worker-control.lock");
-        validate_absolute_path(&path, LocalTestPathKind::ExistingDirectory)?;
-        let inode = common::device_inode_for(&path, &fs::symlink_metadata(&path)?)?;
+        let inode = lock_inode(&path)?;
         let (digest, owner) = owner_file(&path)?;
         document::exact(
             &owner,
@@ -56,19 +64,17 @@ impl Original {
             return Err("原外层控制器owner形状或登记运行目录不符，不能回收".into());
         }
         let runtime_inode = same_runtime(&owner["runtime_directory"], directory)?;
-        let original = Self {
+        Ok(Self {
             directory: directory.to_owned(),
             path,
             inode,
             runtime_inode,
             digest,
             owner,
-        };
-        original.check()?;
-        Ok(original)
+        })
     }
 
-    pub(super) fn check(&self) -> Result<Option<Value>> {
+    fn check_files(&self) -> Result<()> {
         validate_absolute_path(&self.path, LocalTestPathKind::ExistingDirectory)?;
         let metadata = fs::symlink_metadata(&self.path)?;
         let names = fs::read_dir(&self.path)?
@@ -84,6 +90,11 @@ impl Original {
         if same_runtime(&self.owner["runtime_directory"], &self.directory)? != self.runtime_inode {
             return Err("外层控制器登记运行目录身份在核对期间变化".into());
         }
+        Ok(())
+    }
+
+    pub(super) fn check(&self) -> Result<Option<Value>> {
+        self.check_files()?;
         let pid = u32::try_from(
             self.owner["identity"]["pid"]
                 .as_u64()
@@ -120,10 +131,63 @@ impl Original {
         if &self.check()? != actual {
             return Err("外层锁owner进程观察在恢复发布期间变化，保留现场".into());
         }
+        self.remove_files()
+    }
+
+    fn remove_files(self) -> Result<()> {
         fs::remove_file(self.path.join("owner.json"))?;
         fs::remove_dir(&self.path)?;
         Ok(())
     }
+}
+
+/// stop 调用方持有 runtime-control.guard，外层锁只在显式释放时清理。
+pub(super) struct Active(Original);
+
+impl Active {
+    pub(super) fn claim(directory: &Path) -> Result<Self> {
+        let runtime = directory.to_str().ok_or("外层控制器运行目录必须是 UTF-8")?;
+        let owner = json!({"format_version":1,"kind":"devex-clone-runtime-lock",
+            "identity":identity::current()?,"runtime_directory":runtime,"operation":"stop",
+            "token":uuid::Uuid::new_v4().simple().to_string()});
+        let runtime_inode = same_runtime(&owner["runtime_directory"], directory)?;
+        let path = directory.join("worker-control.lock");
+        fs::create_dir(&path)
+            .map_err(|error| format!("无法独占创建外层运行控制锁，保留现场：{error}"))?;
+        let inode = lock_inode(&path)?;
+        if same_runtime(&owner["runtime_directory"], directory)? != runtime_inode {
+            return Err("创建外层锁期间运行目录身份变化，保留现场".into());
+        }
+        document::write_new(&path.join("owner.json"), &owner)?;
+        let original = Original::read(directory)?;
+        if original.inode != inode
+            || original.runtime_inode != runtime_inode
+            || original.owner != owner
+        {
+            return Err("创建外层锁期间目录身份或 owner 变化，保留现场".into());
+        }
+        let active = Self(original);
+        active.check()?;
+        Ok(active)
+    }
+
+    pub(super) fn check(&self) -> Result<()> {
+        self.0.check_files()?;
+        if self.0.owner["identity"] != identity::current()? {
+            return Err("外层运行控制锁不属于当前创建身份，保留现场".into());
+        }
+        Ok(())
+    }
+
+    pub(super) fn release(self) -> Result<()> {
+        self.check()?;
+        self.0.remove_files()
+    }
+}
+
+fn lock_inode(path: &Path) -> Result<(u64, u64)> {
+    validate_absolute_path(path, LocalTestPathKind::ExistingDirectory)?;
+    common::device_inode_for(path, &fs::symlink_metadata(path)?)
 }
 
 fn creation(value: &Value) -> Option<&str> {

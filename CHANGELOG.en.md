@@ -12,6 +12,8 @@
 
 - Rust now recovers the original outer control lock for legacy copy runs on the source side and on targets without post-copy registration. It checks the registered directory and the original controller's process creation identity, and preserves v1 recovery receipts and unfinished attempts.
 
+- Rust now stops API and Worker processes for legacy copy runs. It checks all selected process identities before stopping them in reverse order and retains the original v1 producer history.
+
 - Post-copy Worker stop observations accept mixed Windows separators in the original outer lock receipt when they identify the same real directory, and preserve the original receipt bytes.
 
 - Final recovery registration uses the Rust verifier issued by the formal data command to independently check browser business proof, database authority, and the original runtime generation. The binding is valid while the same build source lock is held.

@@ -14,11 +14,32 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(target_os = "linux")]
+#[path = "tree_control/linux.rs"]
+mod linux;
 #[cfg(any(windows, test))]
 #[path = "tree_control/windows.rs"]
 mod windows;
 #[cfg(windows)]
 pub(in crate::recovery) use windows::observe as observe_recovery_process;
+
+pub(in crate::recovery) fn stop_recovery_process(expected: &Value) -> Result<bool> {
+    #[cfg(any(windows, target_os = "linux"))]
+    {
+        common::validate_process_identity(expected)?;
+        let pid = u32::try_from(expected["pid"].as_u64().ok_or("登记进程 PID 无效")?)?;
+        #[cfg(target_os = "linux")]
+        use linux as platform;
+        #[cfg(windows)]
+        use windows as platform;
+        platform::stop_process(pid, expected)
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        let _ = expected;
+        Err("当前平台无法精确停止已登记进程，未发送信号".into())
+    }
+}
 
 pub(in crate::recovery::fixture_control::services) fn stop(
     backend: &Path,

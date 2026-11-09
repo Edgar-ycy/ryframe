@@ -177,7 +177,7 @@ B0/B1 正式对照前，使用 `cargo xtask check recovery source comparison-cap
 
 B0 后端构建仍由当前受信任工具执行，但 `--source-backend` 必须指向登记的适配提交，并同时提供 `--expected-head <adapter-sha> --adapter-contract legacy-stable-readiness-b0-v1 --product-backend <original-b0-absolute-worktree>`。入口会从当前工具内嵌补丁重建适配树，核对原 B0、适配提交、补丁摘要和产品输入域，任一项不匹配都会在调用 Cargo 前失败；不能复制当前脚本到旧工作树或手工补写 v2 收据。 普通 `runtime build` 由 Rust 执行两角色后端构建，并在指定后端收据旁独占创建 `<output文件名>.artifacts` 目录，收据仅登记其中的 API/Worker 副本。开始前同时拒绝已有收据或副本目录；失败保留部分副本和诊断，不覆盖或自动重放。后续共享 target 构建不会改变这些已登记副本；旧 v2 收据仍按原字段、精确来源、构建上下文和实际字节严格核验，不改写历史。普通前端仍调用受控工具的 `external-build`。B0 另外在隔离的原前端工作树准备原锁文件依赖，使用 Node `24.15.0` 和 Corepack 的 pnpm `11.20.0`。适配入口仅在新的 `dist` 上执行原构建，核对原插件生成的两个跟踪类型声明前后字节一致，并验证 Vite 实际生成的身份和完整产物，再在同一收据路径独占发布。已有收据须用同一适配合同重验，失败产物保留。构建成功不提供恢复或业务验收资格。
 
-恢复浏览器套件逐一登录十一个租户读取备份前已有的岗位，下载并校验全部原有上传对象，再执行正常核心业务。故障与 Worker 重启场景继续由普通全栈套件执行。每阶段保留独立收据，失败不覆盖、不自动清理资源；只有最终产品 CLI 核算后的成功记录能证明 24 小时恢复点与 60 分钟恢复时间。
+恢复浏览器套件逐一登录十一个租户读取备份前已有的岗位，下载并校验全部原有上传对象，再执行正常核心业务。故障与 Worker 重启场景继续由普通全栈套件执行。每阶段保留独立收据，失败不覆盖、不自动清理资源；只有最终产品 CLI 核算后的成功记录能证明 24 小时恢复点与 60 分钟恢复时间。 旧复制运行可用 `cargo xtask check recovery clone runtime --run-dir <run> --side <source|target> --operation stop --roles <api|worker> --write` 停止已登记的单进程 API 或 Worker。Rust 只读取所选侧登记及原运行合同，先核对所有所选进程的创建身份，再按角色参数的逆序停止，确认端口关闭并保留原 v1 生产者历史。已登记的 post-copy 目标继续使用原完整树停止入口。
 
 ### 指标与告警
 

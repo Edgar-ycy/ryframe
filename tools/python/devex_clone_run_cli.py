@@ -197,6 +197,8 @@ def dispatch(args, backend: Path) -> dict:
         raise ValueError("Python 阶段入口仅接受 copy")
     if args.command == "seed-runtime" and args.operation not in SEED_RUNTIME_OPERATIONS:
         raise ValueError("Python seed-runtime 不接受此操作；请使用 Rust 正式入口")
+    if args.command == "runtime" and args.operation in {"stop", "status", "recover"}:
+        raise ValueError(f"复制运行 {args.operation} 由 Rust 正式入口执行")
     directory = evidence_path(backend, args.run_dir)
     if args.command == "seed-runtime":
         request_operations = {"register", "source-generation-start", "source-generation-stop", "source-generation-recover", "source-generation-reboot-close"}
@@ -235,10 +237,8 @@ def dispatch(args, backend: Path) -> dict:
         result = execute(backend, directory, "post-copy", args.operation, producer_binding=producer)
         return {key: result[key] for key in ("status", "stage", "mode", "attempt", "restore_qualified")}
     if args.command == "runtime":
-        if args.operation in {"status", "recover"}:
-            raise ValueError("复制运行 status/recover 由 Rust 正式入口执行")
         if not args.write:
-            raise ValueError("环境启停需要显式 --write")
+            raise ValueError("环境启动需要显式 --write")
         result = execute(backend, directory, "runtime-" + args.side, args.operation, tuple(args.roles))
         return {key: result[key] for key in ("status", "stage", "mode", "attempt", "restore_qualified")}
     raise ValueError("未知统一验收命令")

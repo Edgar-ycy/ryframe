@@ -1,7 +1,7 @@
 //! 旧复制运行按本侧冻结收据选择原目录，不读取对侧。
 use crate::{
     Result,
-    cli::CloneSide,
+    cli::{CloneRole, CloneSide},
     local_test_path::{LocalTestPathKind, validate_absolute_path},
     recovery::{clone::native::resources::common, fixture_control::portable_path},
 };
@@ -47,4 +47,14 @@ pub(super) fn selected(backend: &Path, manifest: &Value, side: CloneSide) -> Res
 pub(super) fn directory(path: &Path) -> Result<PathBuf> {
     validate_absolute_path(path, LocalTestPathKind::ExistingDirectory)?;
     Ok(portable_path(&path.canonicalize()?))
+}
+
+pub(super) fn validate_roles(roles: &[CloneRole]) -> Result<()> {
+    match roles {
+        [CloneRole::Api]
+        | [CloneRole::Worker]
+        | [CloneRole::Api, CloneRole::Worker]
+        | [CloneRole::Worker, CloneRole::Api] => Ok(()),
+        _ => Err("运行控制必须选择不重复的 API 或 Worker".into()),
+    }
 }

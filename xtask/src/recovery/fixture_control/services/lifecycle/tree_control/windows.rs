@@ -29,6 +29,26 @@ pub(in crate::recovery) fn observe(pid: u32) -> Result<Option<Value>> {
 }
 
 #[cfg(windows)]
+pub(super) fn stop_process(pid: u32, expected: &Value) -> Result<bool> {
+    use winsafe::{co, prelude::kernel_Hprocess};
+
+    let Some(handle) = open(pid, true)? else {
+        return Ok(false);
+    };
+    control_with(
+        expected,
+        || snapshot(&handle, pid),
+        || {
+            handle.TerminateProcess(0)?;
+            super::check(
+                handle.WaitForSingleObject(Some(5000))? == co::WAIT::OBJECT_0,
+                "原登记进程未在期限内退出",
+            )
+        },
+    )
+}
+
+#[cfg(windows)]
 pub(super) fn snapshot(handle: &winsafe::HPROCESS, pid: u32) -> Result<Option<Value>> {
     use winsafe::{FILETIME, co, prelude::kernel_Hprocess};
     let started = std::time::Instant::now();
@@ -128,12 +148,13 @@ pub(super) fn control_with(
     expected: &Value,
     observe: impl FnOnce() -> Result<Option<Value>>,
     terminate: impl FnOnce() -> Result<()>,
-) -> Result<()> {
-    if let Some(actual) = observe()? {
-        super::check(actual == *expected, "停止句柄的创建身份或映像不同")?;
-        terminate()?;
-    }
-    Ok(())
+) -> Result<bool> {
+    let Some(actual) = observe()? else {
+        return Ok(false);
+    };
+    super::check(actual == *expected, "停止句柄的创建身份或映像不同")?;
+    terminate()?;
+    Ok(true)
 }
 
 #[cfg(test)]

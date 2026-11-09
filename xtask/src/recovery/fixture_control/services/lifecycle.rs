@@ -65,6 +65,7 @@ mod tests;
 pub(super) mod tree_control;
 #[cfg(windows)]
 pub(in crate::recovery) use tree_control::observe_recovery_process;
+pub(in crate::recovery) use tree_control::stop_recovery_process;
 
 use model::{Context, binding, check, read, text};
 

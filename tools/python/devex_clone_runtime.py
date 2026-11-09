@@ -149,16 +149,10 @@ def _start(backend: Path, directory: Path, receipt: dict, roles: tuple[str, ...]
         raise
 
 
-def _observe(directory: Path, receipt: dict, roles: tuple[str, ...], urls: dict, stop: bool) -> dict:
-    # 先核验全部身份；发现任何异常时不会先停止另一个角色。
+def _observe(directory: Path, receipt: dict, roles: tuple[str, ...], urls: dict) -> dict:
     identities = {role: _identity(directory, receipt, role) for role in roles}
     results = {}
-    for role in reversed(roles) if stop else roles:
-        identity = identities[role]
-        if stop and identity is not None:
-            terminate_owned_process(identity)
-            _event(directory, receipt, {"event": "stopped", "role": role, "identity": identity})
-            identity = None
+    for role, identity in identities.items():
         if identity is None:
             require_closed_port(urls[role])
         else:
@@ -193,7 +187,7 @@ def observe(backend: Path, runtime_directory: Path, roles: tuple[str, ...], api_
     backend, directory, receipt, urls = _control_context(
         backend, runtime_directory, roles, api_url
     )
-    results = _observe(directory, receipt, roles, urls, False)
+    results = _observe(directory, receipt, roles, urls)
     if verify_runtime(backend, directory) != receipt:
         raise ValueError("运行时收据在无锁观察期间发生变化")
     verify_api_address(backend, api_url, config_dir=Path(receipt["api_config_dir"]))
@@ -205,7 +199,7 @@ def observe(backend: Path, runtime_directory: Path, roles: tuple[str, ...], api_
 def control(backend: Path, runtime_directory: Path, operation: str, roles: tuple[str, ...],
             api_url: str, timeout: float = 60) -> dict:
     """使用调用方注入的测试环境；不读取全源码指纹，不改写源停止或新库初始化证明。"""
-    if operation not in {"start", "stop", "status"}:
+    if operation not in {"start", "status"}:
         raise ValueError("未知运行控制操作")
     if isinstance(timeout, bool) or not 0 < timeout <= 180:
         raise ValueError("运行就绪超时必须在 0 到 180 秒之间")
@@ -215,7 +209,7 @@ def control(backend: Path, runtime_directory: Path, operation: str, roles: tuple
             backend, directory, roles, api_url
         )
         results = (_start(backend, directory, receipt, roles, urls, timeout) if operation == "start"
-                   else _observe(directory, receipt, roles, urls, operation == "stop"))
+                   else _observe(directory, receipt, roles, urls))
         return {"format_version": 1, "kind": "devex-clone-runtime-control", "operation": operation,
                 "scope_id": receipt["scope_id"], "runtime_directory": str(directory), "processes": results,
                 "producer_history": str(directory / HISTORY) if (directory / HISTORY).exists() else None}

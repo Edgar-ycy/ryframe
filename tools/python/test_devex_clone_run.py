@@ -1,6 +1,7 @@
 """统一入口的阶段隔离、失败续跑与来源证据；不连接外部服务。"""
 from contextlib import contextmanager, nullcontext
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 import sys
@@ -10,6 +11,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from workspace_directory import WorkspaceDirectory
 import devex_clone_run as run
+import devex_clone_run_cli as cli
 import devex_clone_run_state as state
 from devex_clone_capture import read_json, write_json
 
@@ -194,30 +196,34 @@ class RunTests(unittest.TestCase):
                 protect.assert_not_called()
                 continuation.assert_not_called()
 
-    def test_runtime_environment_and_identity_are_delegated_without_build(self):
+    def test_runtime_start_delegates_with_the_registered_side_environment(self):
         value = dict(self.value)
-        request = self.file("runtime-request", {"source": {"runtime_dir": str(self.local / "runtime"), "api_url": "http://127.0.0.1:18210"}})
-        value["source_request"] = request
-        with patch("devex_clone_runtime.control", return_value={"state": "stopped"}) as control:
-            run.run_runtime(self.backend, value, run.environments(self.backend, value), "source", "stop", ("api",))
-        self.assertEqual(control.call_args.args[2:4], ("stop", ("api",)))
+        runtime = {"runtime_dir": str(self.local / "runtime"), "api_url": "http://127.0.0.1:18210"}
+        value["source_request"] = self.file("runtime-request", {"source": runtime})
 
-    def test_stop_does_not_require_current_source_to_match_build(self):
-        with patch("source_fingerprints.artifact_sources", side_effect=ValueError("changed product")) as bridge, \
-                patch.object(run, "run_runtime", return_value={"state": "stopped"}):
-            result = run.execute(self.backend, self.directory, "runtime-source", "stop")
-        self.assertEqual(result["status"], "stage_finished")
-        bridge.assert_not_called()
+        def start(*_args):
+            self.assertEqual(os.environ["SIDE"], "source")
+            return {"state": "running"}
 
-    def test_stop_survives_missing_export_opposite_environment_and_source_scan_error(self):
-        Path(self.value["source_export"]["path"]).unlink()
-        Path(self.value["target_environment"]["path"]).unlink()
-        with patch("source_fingerprints.current_execution_source", side_effect=OSError("source unavailable")), \
-                patch.object(run, "run_runtime", return_value={"state": "stopped"}) as stop:
-            result = run.execute(self.backend, self.directory, "runtime-source", "stop")
-        self.assertEqual(result["status"], "stage_finished")
-        stop.assert_called_once()
-        self.assertEqual(state.load_state(self.directory)["attempts"][0]["sources"], {"source_capture_error_type": "OSError"})
+        with patch("devex_clone_runtime.control", side_effect=start) as control:
+            result = run.run_runtime(self.backend, value, run.environments(self.backend, value), "source", "start", ("api",))
+        control.assert_called_once_with(self.backend, Path(runtime["runtime_dir"]), "start", ("api",), runtime["api_url"])
+        self.assertEqual(result, {"state": "running"})
+
+    def test_retired_runtime_stop_is_rejected_before_paths_or_locks(self):
+        original = {path: path.read_bytes() for path in self.directory.iterdir() if path.is_file()}
+        with patch.object(cli, "evidence_path") as evidence, patch.object(run, "process_guard") as guard:
+            for side in ("source", "target"):
+                with self.subTest(side=side):
+                    args = SimpleNamespace(command="runtime", operation="stop", side=side, run_dir=self.directory,
+                                           roles=("api", "worker"), write=True)
+                    with self.assertRaisesRegex(ValueError, "Rust 正式入口"):
+                        cli.dispatch(args, self.backend)
+                    with self.assertRaisesRegex(ValueError, "Rust 正式入口"):
+                        run.execute(self.backend, self.directory, "runtime-" + side, "stop")
+        evidence.assert_not_called()
+        guard.assert_not_called()
+        self.assertEqual({path: path.read_bytes() for path in self.directory.iterdir() if path.is_file()}, original)
 
     def test_session_recovery_uses_same_run_journal_without_source_or_environment(self):
         for field in ('source_export', 'source_environment', 'target_environment'):

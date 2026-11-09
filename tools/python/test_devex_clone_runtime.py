@@ -80,23 +80,14 @@ class RuntimeControlTests(unittest.TestCase):
                          first["processes"]["api"]["identity"])
         with self.assertRaisesRegex(ValueError, "重复启动"):
             self.control("start")
-        self.control("stop")
-        for child in self.children:
-            child.wait(timeout=5)
+        self.cleanup_children()
         second = self.control("start")
         self.assertNotEqual(first["processes"]["worker"]["identity"], second["processes"]["worker"]["identity"])
-        self.control("stop")
+        self.cleanup_children()
         self.assertTrue(all(value["state"] == "stopped" for value in self.control("status")["processes"].values()))
         self.assertEqual(sum(event["event"] == "start-intent" for event in self.history()["events"]), 4)
         self.assertEqual(len(list(self.directory.glob("api-*.log"))), 2)
         self.assertEqual(len(list(self.directory.glob("worker-*.log"))), 2)
-
-    def test_unrelated_tool_change_does_not_prevent_exact_stop(self):
-        self.control("start", ("worker",))
-        (self.root / "tools.py").write_text("# unrelated tool revision\n", encoding="utf-8")
-        result = self.control("stop", ("worker",))
-        self.assertEqual(result["processes"]["worker"]["state"], "stopped")
-        self.children[0].wait(timeout=5)
 
     def test_timeout_preserves_log_and_start_intent_and_reaps_process(self):
         self._ready.return_value = False
@@ -112,9 +103,8 @@ class RuntimeControlTests(unittest.TestCase):
         self.children[0].kill()
         self.children[0].wait(timeout=5)
         self.assertEqual(self.control("status", ("worker",))["processes"]["worker"]["state"], "stopped")
-        self.control("start", ("worker",))
-        self.control("stop", ("worker",))
-        self.children[1].wait(timeout=5)
+        restarted = self.control("start", ("worker",))
+        self.assertEqual(restarted["processes"]["worker"]["state"], "running")
 
     def test_unlocked_observation_creates_no_lock_history_or_receipt(self):
         source = self.root / "config/app.toml"
@@ -137,16 +127,6 @@ class RuntimeControlTests(unittest.TestCase):
         for child in self.children:
             self.assertIsNotNone(child.wait(timeout=5))
         self.assertEqual(self.history()["events"][-1]["event"], "startup-rollback")
-
-    def test_pid_reuse_fails_before_stopping_either_role(self):
-        self.control("start")
-        path = self.directory / "worker.json"
-        receipt = json.loads(path.read_text(encoding="utf-8"))
-        receipt["identity"]["started"] = "0"
-        write_receipt(path, receipt)
-        with self.assertRaisesRegex(ValueError, "身份已变化"):
-            self.control("stop")
-        self.assertTrue(all(child.poll() is None for child in self.children))
 
     def test_unknown_listener_and_configuration_changes_fail_closed(self):
         self.require_closed_port.side_effect = ValueError("明确端口已有监听")

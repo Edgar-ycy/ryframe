@@ -21,10 +21,12 @@ pub(crate) fn protocol(command: &CloneCommand, root: &Path) -> Result<String> {
     if let CloneCommand::Runtime(options) = command
         && matches!(
             options.operation,
-            CloneRuntimeOperation::Status | CloneRuntimeOperation::Recover
+            CloneRuntimeOperation::Status
+                | CloneRuntimeOperation::Recover
+                | CloneRuntimeOperation::Stop
         )
     {
-        return Err("复制运行 status/recover 由 Rust 正式入口执行".into());
+        return Err("复制运行 status/recover/stop 由 Rust 正式入口执行".into());
     }
     if let CloneCommand::Runtime(options) = command
         && native::cache::handoff::selected(root, options)?

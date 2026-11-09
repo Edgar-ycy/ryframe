@@ -314,16 +314,6 @@ def target_storage_control(backend: Path, current_run: Path, value: dict):
             unchanged(frozen)
 
 
-def cleanup_inputs(backend: Path, directory: Path, side: str) -> tuple[dict, Environments]:
-    """停止只读取固定清单与该侧运行环境，不依赖导出或另一侧的证据文件。"""
-    value = registered_manifest(backend, directory)
-    if side == "target" and (directory / "post-copy.json").exists():
-        raise ValueError("已登记post-copy目标API清理必须使用原生完整树控制入口")
-    private = read_json(bound_file(backend, value[side + "_environment"]))
-    exact(private, {"environment"})
-    return value, Environments(private["environment"], private["environment"])
-
-
 def environments(backend: Path, value: dict) -> Environments:
     result = {}
     for side in ("source", "target"):
@@ -563,23 +553,21 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
         raise ValueError("登记、准备和环境修订必须使用原生持锁正式入口")
     if stage in {"export", "target-verify"}:
         raise ValueError("导出和目标复核必须使用原生 Rust 入口")
-    if stage in {"runtime-source", "runtime-target"} and mode == "recover":
-        raise ValueError("复制运行 recover 由 Rust 正式入口执行")
+    if stage in {"runtime-source", "runtime-target"} and mode in {"stop", "recover"}:
+        raise ValueError(f"复制运行 {mode} 由 Rust 正式入口执行")
     if stage == "seed-runtime" and mode == "arm-input":
         raise ValueError("ARM 输入签发必须使用 Rust 正式入口")
 
-    # 停止只依据已登记运行产物及内核身份，不能被后来源码变化阻挡。
+    # 会话恢复只依赖已登记证据，不能被后来源码变化阻挡。
     session_cleanup = stage in {"post-copy", "seed-runtime"} and mode == "recover-session"
     seed_cleanup = stage == "seed-runtime" and mode == "source-generation-recover"
-    cleanup = session_cleanup or seed_cleanup or (stage.startswith("runtime-") and mode == "stop")
+    cleanup = session_cleanup or seed_cleanup
     evidence_handoff = stage == "seed-runtime" and mode in {
         "source-generation-start", "source-generation-stop", "source-generation-recover",
         "source-generation-reboot-close",
     }
-    if session_cleanup or seed_cleanup or evidence_handoff:
+    if cleanup or evidence_handoff:
         value, environment = registered_manifest(backend, directory), None
-    elif cleanup:
-        value, environment = cleanup_inputs(backend, directory, stage.removeprefix("runtime-"))
     else:
         value = read_manifest(backend, directory)
         environment = environments(backend, value)
@@ -621,7 +609,7 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
                     from devex_clone_seed_runtime import execute_seed
 
                     result = execute_seed(backend, directory, value, mode, number, seed_request, producer_binding)
-                elif stage in {"runtime-source", "runtime-target"} and mode in {"start", "stop", "status"}:
+                elif stage in {"runtime-source", "runtime-target"} and mode in {"start", "status"}:
                     result = run_runtime(backend, value, environment, stage.removeprefix("runtime-"), mode, roles,
                                          run_directory=directory)
                 else:

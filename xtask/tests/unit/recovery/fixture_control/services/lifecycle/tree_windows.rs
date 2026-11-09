@@ -113,7 +113,7 @@ fn exit_during_query_error_allows_continuation_without_signal_and_reuse_rejects(
     let expected = json!({"pid":101,"started":"1001","executable":"fixture.exe"});
     let observations = Cell::new(0);
     let signals = Cell::new(0);
-    control_with(
+    let stopped = control_with(
         &expected,
         || {
             query_with::<Value>(
@@ -133,6 +133,7 @@ fn exit_during_query_error_allows_continuation_without_signal_and_reuse_rejects(
         },
     )
     .unwrap();
+    assert!(!stopped);
     assert_eq!(signals.get(), 0);
     let mut reused = expected.clone();
     reused["started"] = json!("1002");
@@ -148,7 +149,7 @@ fn exit_during_query_error_allows_continuation_without_signal_and_reuse_rejects(
         .is_err()
     );
     assert_eq!(signals.get(), 0);
-    control_with(
+    let stopped = control_with(
         &expected,
         || Ok(Some(expected.clone())),
         || {
@@ -157,6 +158,7 @@ fn exit_during_query_error_allows_continuation_without_signal_and_reuse_rejects(
         },
     )
     .unwrap();
+    assert!(stopped);
     assert_eq!(signals.get(), 1);
 }
 
