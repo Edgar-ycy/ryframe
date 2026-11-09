@@ -10,6 +10,7 @@ use super::cli::{
     BindingsInputOptions, ProductInputOptions, ReferenceInputOptions, RestoreInputPublication,
     RestoreInputSide,
 };
+use super::clone_lifecycle_tests::arm_storage_bindings;
 use super::recovery::inputs::{product, reference};
 use chrono::{SecondsFormat, Utc};
 type Object = serde_json::Map<String, Value>;
@@ -113,21 +114,14 @@ fn registration_state(base: &Base, request: &Value, selected: &Value) -> Registr
     let target_workspace = base.root.join("target-workspace");
     let target_dir = target_workspace.join("target");
     fs::create_dir_all(&target_dir).unwrap();
-    let storage_run = base.root.join("storage-run");
-    fs::create_dir_all(&storage_run).unwrap();
+    let (historical_storage, effective_storage) =
+        arm_storage_bindings(&base.root.join("storage-run"));
     let environment_path = write_value(
         &base.root,
         "target-environment.json",
         &json!({"environment": {}}),
     );
     let environment = binding(&environment_path);
-    let storage_manifest = write_value(&storage_run, "manifest.json", &json!({"kind": "fixture"}));
-    let value = json!({
-        "path": storage_run.to_string_lossy(),
-        "manifest": binding(&storage_manifest),
-        "storage": {"status": "ready"},
-        "cache": {"status": "ready"},
-    });
     let registration = write_value(
         &target_workspace,
         "registration.json",
@@ -136,7 +130,7 @@ fn registration_state(base: &Base, request: &Value, selected: &Value) -> Registr
             "kind": "devex-clone-fresh-target-registration",
             "request": request,
             "environment": environment,
-            "storage_run": value,
+            "storage_run": historical_storage,
             "target_directory": target_dir.to_string_lossy(),
         }),
     );
@@ -174,7 +168,7 @@ fn registration_state(base: &Base, request: &Value, selected: &Value) -> Registr
     );
     RegistrationState {
         environment,
-        storage_run: value,
+        storage_run: effective_storage,
         registration_binding,
         initialized_files_binding: binding(&initialized_files),
         initialized_binding: binding(&initialized),
@@ -864,6 +858,7 @@ fn write_backup(
                 "database": database["database"],
                 "server_uuid": database["server_uuid"],
                 "shared": database["mode"] == "shared",
+                "placements": [],
                 "tables": [{"table": "sys_post", "rows": 1, "sha256": "a".repeat(64)}],
             })
         })
@@ -878,6 +873,8 @@ fn write_backup(
         "source_sha": "a".repeat(40),
         "captured_at": captured,
         "quiesced_at": captured,
+        "control_schema_fingerprint": "b".repeat(16),
+        "tenant_schema_fingerprint": "c".repeat(64),
         "databases": databases,
         "objects": objects,
         "completed_at": now(),

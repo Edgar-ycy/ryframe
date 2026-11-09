@@ -28,7 +28,11 @@ pub(in super::super) fn registered(
     Ok((recorded, inputs))
 }
 
-pub(in super::super) fn initialized(backend: &Path, target: &Path, locked: bool) -> Result<Value> {
+pub(in super::super) fn initialized(
+    backend: &Path,
+    target: &Path,
+    owner: Option<&super::guard::Generation>,
+) -> Result<Value> {
     let workspace = target.parent().ok_or("初始化目标缺少登记目录")?;
     let initialized_path = workspace.join("initialized-files.json");
     let prepared_path = workspace.join("prepared-files.json");
@@ -68,7 +72,7 @@ pub(in super::super) fn initialized(backend: &Path, target: &Path, locked: bool)
     )?;
     super::super::resume_observations::file_map(&value["files"])?;
     check(
-        value["files"] == super::super::tree::snapshot(backend, target, locked)?
+        value["files"] == super::super::tree::protected_snapshot(backend, target, owner)?
             && binding(backend, &initialized_path)? == initialized
             && binding(backend, &prepared_path)? == prepared
             && binding(backend, &registration_path)? == registration,

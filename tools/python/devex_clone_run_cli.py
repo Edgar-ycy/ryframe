@@ -7,7 +7,7 @@ from rate_limit_tool import parse_binding
 
 from devex_clone_capture import read_json
 from devex_clone_model import local_path
-from devex_clone_run import cleanup_inputs, execute, recover_copy, run_runtime
+from devex_clone_run import cleanup_inputs, execute, run_runtime
 
 SEED_SOURCE_PROTOCOL_KIND = "ryframe-xtask-recovery-seed-source"
 STAGE_PROTOCOL_KIND = "ryframe-xtask-recovery-clone-stage"
@@ -16,13 +16,13 @@ SEED_SOURCE_OPERATIONS = {
     "source-generation-stop", "source-generation-status",
     "source-generation-reboot-status",
     "source-generation-reboot-close",
-    "source-generation-recover", "source-export", "source-export-reconcile",
+    "source-generation-recover",
 }
 SEED_RUNTIME_OPERATIONS = SEED_SOURCE_OPERATIONS | {
     "register", "quotas-plan", "quotas-apply", "quotas-reconcile",
     "departments-plan", "departments-apply", "departments-reconcile", "departments-verify",
-    "identities-apply", "identities-verify", "prepare", "start", "close", "arm-input",
-    "stop", "status", "recover", "recover-session",
+    "identities-apply", "identities-verify", "prepare", "close",
+    "recover-session",
 }
 SEED_SOURCE_REQUEST_OPERATIONS = {
     "source-generation-start", "source-generation-stop",
@@ -196,20 +196,14 @@ def dispatch(args, backend: Path) -> dict:
     if args.command == "stage" and args.stage != "copy":
         raise ValueError("Python 阶段入口仅接受 copy")
     if args.command == "seed-runtime" and args.operation not in SEED_RUNTIME_OPERATIONS:
-        raise ValueError("Python seed-runtime 不接受此操作；来源登记与重绑定必须使用原生 Rust 入口")
+        raise ValueError("Python seed-runtime 不接受此操作；请使用 Rust 正式入口")
     directory = evidence_path(backend, args.run_dir)
     if args.command == "seed-runtime":
-        request_operations = {"register", "arm-input", "source-generation-start", "source-generation-stop", "source-generation-recover", "source-generation-reboot-close"}
+        request_operations = {"register", "source-generation-start", "source-generation-stop", "source-generation-recover", "source-generation-reboot-close"}
         if (args.operation in request_operations) != (args.request is not None):
             raise ValueError("当前 seed 操作的 --request 缺失或不适用")
         if (args.operation == "recover-session") != (args.producer_binding is not None):
             raise ValueError("仅 seed recover-session 且必须明确提供 --producer-binding")
-        if args.operation == "status":
-            if args.write:
-                raise ValueError("seed status 是只读操作，不接受 --write")
-            from devex_clone_seed_runtime import execute_seed
-
-            return execute_seed(backend, directory, None, "status", None)
         if args.operation == "source-generation-status":
             from devex_clone_seed_generation_control import status as generation_status
 
@@ -240,10 +234,6 @@ def dispatch(args, backend: Path) -> dict:
         producer = read_json(local_path(backend, str(args.producer_binding))) if args.producer_binding else None
         result = execute(backend, directory, "post-copy", args.operation, producer_binding=producer)
         return {key: result[key] for key in ("status", "stage", "mode", "attempt", "restore_qualified")}
-    if args.command == "recover-copy":
-        if not args.write:
-            raise ValueError("recover-copy 需要显式 --write")
-        return recover_copy(backend, directory, read_json(local_path(backend, str(args.owner_binding))))
     if args.command == "runtime":
         if args.operation == "status":
             if args.write:

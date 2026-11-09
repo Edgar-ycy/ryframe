@@ -3,6 +3,26 @@ use serde_json::{Value, json};
 use super::{execute, model};
 
 #[test]
+fn copy_generation_accepts_only_the_read_only_registered_run() {
+    let mut request = json!({"operation":"copy-source-generation","write":true,
+        "arguments":{"backend":"relative","run_dir":"relative"}});
+    let reject = |value: &Value| {
+        execute(&serde_json::to_vec(value).unwrap())
+            .unwrap_err()
+            .to_string()
+    };
+    assert!(reject(&request).contains("写入授权"));
+    request["write"] = json!(false);
+    request["arguments"]["source_request"] = json!({"forged":true});
+    assert!(reject(&request).contains("字段"));
+    request["arguments"]
+        .as_object_mut()
+        .unwrap()
+        .remove("source_request");
+    assert!(reject(&request).contains("绝对路径"));
+}
+
+#[test]
 fn full_stack_source_facts_are_read_only_and_reject_undeclared_inputs() {
     let backend = crate::workspace::root_dir();
     let local = backend.join(".local-tests");
@@ -359,4 +379,51 @@ fn source_evidence_protocol_requires_exact_write_authorization_before_dispatch()
                 .contains("写入授权")
         );
     }
+}
+
+#[test]
+fn copy_step_ids_preserve_ledger_hashes_and_fail_closed_on_inexact_vectors() {
+    let mut request = json!({"operation":"reference-copy-step-ids","write":false,
+        "arguments":{"databases":[{"key":"shared-control"},{"key":"dedicated-1"}],
+            "objects":[{"bucket":"uploads","target_key":"side/目录/a.json"},
+                {"bucket":"exports","target_key":"side/目录/a.json"}]}});
+    let call = |value: &Value| execute(&serde_json::to_vec(value).unwrap());
+    // 原逐项摘要协议输出的固定 ID，可直接与既有账本键比较。
+    assert_eq!(
+        call(&request).unwrap(),
+        json!({"databases":["database-075921cce671fc36b9360281d8b631a2",
+                            "database-2e23488b489f7e19b53a25393ac35d28"],
+               "objects":["object-87c0fda0cfaf8d51466fd3b5320075ef",
+                          "object-a19e6131c2dc22a819ac47fcde9093d4"]})
+    );
+
+    for field in ["databases", "objects"] {
+        let mut duplicated = request.clone();
+        let items = duplicated["arguments"][field].as_array_mut().unwrap();
+        let repeated = items[0].clone();
+        items.push(repeated);
+        assert!(
+            call(&duplicated)
+                .unwrap_err()
+                .to_string()
+                .contains("重复或碰撞")
+        );
+    }
+    for malformed in [
+        json!({"databases":[]}),
+        json!({"databases":[{"key":false}],"objects":[]}),
+        json!({"databases":[],"objects":[{"bucket":"uploads","key":"side/a"}]}),
+        json!({"databases":[],"objects":[{"bucket":"uploads","target_key":"side/a","artifact":{}}]}),
+    ] {
+        let mut invalid = request.clone();
+        invalid["arguments"] = malformed;
+        assert!(call(&invalid).is_err());
+    }
+    request["arguments"] = json!({"databases":[],"objects":[]});
+    assert_eq!(
+        call(&request).unwrap(),
+        json!({"databases":[],"objects":[]})
+    );
+    request["write"] = json!(true);
+    assert!(call(&request).unwrap_err().to_string().contains("写入授权"));
 }

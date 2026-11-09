@@ -1,11 +1,14 @@
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-};
+use std::{collections::BTreeMap, path::Path};
 
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(any(windows, test))]
+use serde_json::json;
+#[cfg(any(windows, test))]
+use std::path::PathBuf;
 
-use super::{StorageInputs, StorageObserver, common, json_io};
+use super::{StorageInputs, StorageObserver};
+#[cfg(any(windows, test))]
+use super::{common, json_io};
 use crate::Result;
 #[cfg(windows)]
 use {
@@ -19,6 +22,16 @@ use {
     },
 };
 
+pub(crate) const WINDOWS_REQUIRED: &str =
+    "目标存储只接受已登记的 Windows 原生 Redis 代次；历史 WSL 收据仅供离线核对";
+
+pub(crate) fn require_windows(redis: &Value) -> Result<()> {
+    if redis["platform"] != "windows" {
+        return Err(WINDOWS_REQUIRED.into());
+    }
+    Ok(())
+}
+
 pub(crate) fn verify<O: StorageObserver>(
     context: &StorageInputs<'_>,
     review: &Value,
@@ -29,8 +42,28 @@ pub(crate) fn verify<O: StorageObserver>(
         #[cfg(windows)]
         return verify_windows(context, review, redis, observer);
         #[cfg(not(windows))]
-        return Err("目标 Windows Redis 物理代次只能在本机 Windows 核验".into());
+        {
+            let _ = (context, review, observer);
+            return Err("目标 Windows Redis 物理代次只能在本机 Windows 核验".into());
+        }
     }
+    #[cfg(test)]
+    {
+        verify_historical_fixture(context, review, redis, observer)
+    }
+    #[cfg(not(test))]
+    {
+        Err(WINDOWS_REQUIRED.into())
+    }
+}
+
+#[cfg(test)]
+fn verify_historical_fixture<O: StorageObserver>(
+    context: &StorageInputs<'_>,
+    review: &Value,
+    redis: &Value,
+    observer: &O,
+) -> Result<()> {
     validate_identity(context, review, redis)?;
     let (directory, config) = configuration_paths(context, review, redis)?;
     let linux_file = wsl_path(&config)?;
@@ -86,6 +119,7 @@ pub(crate) fn verify<O: StorageObserver>(
     Ok(())
 }
 
+#[cfg(any(windows, test))]
 fn configuration_paths(
     context: &StorageInputs<'_>,
     review: &Value,
@@ -267,6 +301,7 @@ fn observe_windows_configuration<O: StorageObserver>(
     })
 }
 
+#[cfg(test)]
 fn validate_identity(context: &StorageInputs<'_>, review: &Value, redis: &Value) -> Result<()> {
     json_io::exact(
         redis,
@@ -330,6 +365,7 @@ pub(crate) fn info(raw: &str) -> Result<BTreeMap<String, String>> {
     Ok(result)
 }
 
+#[cfg(test)]
 pub(crate) fn validate_kernel(
     redis: &Value,
     stat: &str,
@@ -355,6 +391,7 @@ pub(crate) fn validate_kernel(
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn verify_configuration(
     redis: &Value,
     directory: &Path,
@@ -365,6 +402,7 @@ pub(crate) fn verify_configuration(
     verify_configuration_values(&port, &directory, command)
 }
 
+#[cfg(any(windows, test))]
 fn verify_configuration_values(
     port: &str,
     directory: &str,

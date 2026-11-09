@@ -17,9 +17,28 @@ pub(super) fn verify_observed(root: &Path, directory: &Path, observe: impl FnOnc
         }
         return Ok(());
     }
-    let bindings = evidence_bindings(directory)?;
+    let bindings = evidence_bindings(directory, &["runtime.json", "runtime-evidence.json"])?;
+    verify_build_observed(root, directory, |source, build_binding| {
+        let actual = read_json(&runtime_path, "全栈运行来源证据", 4 * 1024 * 1024)?;
+        if actual != runtime_evidence(directory, source, build_binding)? {
+            return Err("全栈运行来源证据与当前来源不匹配".into());
+        }
+        observe();
+        Ok(())
+    })?;
+    verify_bindings(bindings)
+}
+
+pub(super) fn verify_build_observed<T>(
+    root: &Path,
+    directory: &Path,
+    observe: impl FnOnce(&Value, &Value) -> Result<T>,
+) -> Result<T> {
+    let mut bindings = evidence_bindings(directory, &["source-pair.json", "binaries.json"])?;
     let build_path = directory.join("build-evidence.json");
+    let build_binding = evidence_binding(&build_path)?;
     let build = read_json(&build_path, "全栈构建证据", 4 * 1024 * 1024)?;
+    bindings.push((build_path, build_binding.clone()));
     exact_object(
         &build,
         &[
@@ -47,40 +66,48 @@ pub(super) fn verify_observed(root: &Path, directory: &Path, observe: impl FnOnc
     }
     let source = &build["source"];
     let (path, pair) = source_pair(directory)?;
-    let inspect = || -> Result<()> {
+    let inspect = || {
         verify_artifacts(directory, &build)?;
-        let actual = read_json(&runtime_path, "全栈运行来源证据", 4 * 1024 * 1024)?;
-        let expected = json!({"format_version":1,"kind":"full-stack-runtime","source":source,"build_evidence":evidence_binding(&build_path)?,"runtime":evidence_binding(&directory.join("runtime.json"))?});
-        if actual != expected {
-            return Err("全栈运行来源证据与当前来源不匹配".into());
-        }
-        observe();
-        Ok(())
+        observe(source, &build_binding)
     };
-    if pair["kind"] == crate::recovery::fixture_control::source_pair::execution::PAIR_KIND {
-        crate::recovery::full_stack::provenance::published(root, directory, &pair, |current| {
-            if current != source {
-                return Err("已发布业务来源与完整当前来源不一致".into());
-            }
-            inspect()
-        })?;
-        return verify_unchanged(root, &build["build_jobs"], bindings);
-    }
-    verify_source(root, &path, &pair, source)?;
-    inspect()?;
-    let (path, pair) = source_pair(directory)?;
-    verify_source(root, &path, &pair, source)?;
-    verify_unchanged(root, &build["build_jobs"], bindings)
-}
-
-fn verify_unchanged(root: &Path, jobs: &Value, bindings: Vec<(PathBuf, Value)>) -> Result<()> {
-    if jobs.as_u64()
+    let observed =
+        if pair["kind"] == crate::recovery::fixture_control::source_pair::execution::PAIR_KIND {
+            crate::recovery::full_stack::provenance::published(root, directory, &pair, |current| {
+                if current != source {
+                    return Err("已发布业务来源与完整当前来源不一致".into());
+                }
+                inspect()
+            })?
+        } else {
+            verify_source(root, &path, &pair, source)?;
+            let observed = inspect()?;
+            let (path, pair) = source_pair(directory)?;
+            verify_source(root, &path, &pair, source)?;
+            observed
+        };
+    if build["build_jobs"].as_u64()
         != Some(u64::from(
             crate::recovery::clone::native::bridge::build_jobs(root)?,
         ))
     {
         return Err("全栈来源核验期间 verification.build_jobs 变化；保留现场，不自动重放".into());
     }
+    verify_bindings(bindings)?;
+    Ok(observed)
+}
+
+pub(super) fn runtime_evidence(
+    directory: &Path,
+    source: &Value,
+    build_binding: &Value,
+) -> Result<Value> {
+    Ok(
+        json!({"format_version":1,"kind":"full-stack-runtime","source":source,
+        "build_evidence":build_binding,"runtime":evidence_binding(&directory.join("runtime.json"))?}),
+    )
+}
+
+fn verify_bindings(bindings: Vec<(PathBuf, Value)>) -> Result<()> {
     for (path, original) in bindings {
         if evidence_binding(&path)? != original {
             return Err("全栈来源证据在产物核验期间发生变化".into());
@@ -89,21 +116,15 @@ fn verify_unchanged(root: &Path, jobs: &Value, bindings: Vec<(PathBuf, Value)>) 
     Ok(())
 }
 
-fn evidence_bindings(directory: &Path) -> Result<Vec<(PathBuf, Value)>> {
-    [
-        "build-evidence.json",
-        "source-pair.json",
-        "runtime.json",
-        "runtime-evidence.json",
-        "binaries.json",
-    ]
-    .into_iter()
-    .map(|name| {
-        let path = directory.join(name);
-        let binding = evidence_binding(&path)?;
-        Ok((path, binding))
-    })
-    .collect()
+fn evidence_bindings(directory: &Path, names: &[&str]) -> Result<Vec<(PathBuf, Value)>> {
+    names
+        .iter()
+        .map(|name| {
+            let path = directory.join(name);
+            let binding = evidence_binding(&path)?;
+            Ok((path, binding))
+        })
+        .collect()
 }
 
 fn evidence_binding(path: &Path) -> Result<Value> {
@@ -115,21 +136,19 @@ fn evidence_binding(path: &Path) -> Result<Value> {
 }
 
 fn verify_artifacts(directory: &Path, build: &Value) -> Result<()> {
+    let roles = [
+        "ryframe",
+        "ryframe-worker",
+        "ryframe-reset",
+        "ryframe-migrate",
+    ];
     let binaries = read_json(
         &directory.join("binaries.json"),
         "全栈二进制清单",
         64 * 1024,
     )?;
-    let artifacts = exact_object(
-        &build["artifacts"],
-        &[
-            "ryframe",
-            "ryframe-worker",
-            "ryframe-reset",
-            "ryframe-migrate",
-        ],
-        "构建产物",
-    )?;
+    exact_object(&binaries, &roles, "全栈二进制清单")?;
+    let artifacts = exact_object(&build["artifacts"], &roles, "构建产物")?;
     for (name, binding) in artifacts {
         let path = PathBuf::from(text_field(binding, "path", "构建产物")?);
         crate::local_test_path::validate_absolute_path(

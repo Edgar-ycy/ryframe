@@ -9,7 +9,7 @@ use crate::{
 };
 use serde_json::Value;
 
-pub(super) fn runtime(value: &Value) -> Result<()> {
+pub(in crate::recovery::runtime) fn runtime(value: &Value) -> Result<()> {
     strict::exact(
         value,
         &[
@@ -104,7 +104,7 @@ pub(super) fn runtime(value: &Value) -> Result<()> {
     processes(&value["processes"])
 }
 
-pub(super) fn endpoints(value: &Value) -> Result<()> {
+pub(in crate::recovery::runtime) fn endpoints(value: &Value) -> Result<()> {
     strict::exact(value, &["api", "worker", "frontend"], "恢复端点")?;
     let mut ports = std::collections::BTreeSet::new();
     for role in ["api", "worker", "frontend"] {

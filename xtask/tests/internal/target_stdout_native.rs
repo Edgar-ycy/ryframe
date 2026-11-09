@@ -348,6 +348,7 @@ fn nonzero_exit_keeps_raw_stdout_and_both_receipts_without_retry() {
     let mut evidence = Evidence::default();
     let port = Port {
         configuration: None,
+        side: crate::cli::CloneSide::Target,
         context: &fixture.context.storage_inputs(),
         transport: &fake,
         checkpoint: &|| Ok(()),
@@ -387,6 +388,7 @@ fn transport_failure_keeps_successful_capture_without_fake_capture_error() {
     let mut evidence = Evidence::default();
     let port = Port {
         configuration: None,
+        side: crate::cli::CloneSide::Target,
         context: &fixture.context.storage_inputs(),
         transport: &fake,
         checkpoint: &|| Ok(()),
@@ -479,6 +481,7 @@ fn drift_between_outer_and_inner_capture_fails_before_response_is_used() {
     };
     let port = Port {
         configuration: None,
+        side: crate::cli::CloneSide::Target,
         context: &fixture.context.storage_inputs(),
         transport: &fake,
         checkpoint: &checkpoint,

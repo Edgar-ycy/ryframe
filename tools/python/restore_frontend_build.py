@@ -13,6 +13,7 @@ from restore_runtime_evidence import (
 )
 from source_inventory import capture_inventory
 from restore_frontend_configuration import verify_frontend_inputs
+from restore_frontend_native import B0_HEAD, B0_KIND, request
 
 FRONTEND_RECEIPT = ".vite/restore-build.json"
 
@@ -50,19 +51,46 @@ def registered_frontend_inventory(root: Path, expected_head: str) -> dict:
     return inventory
 
 
-def validate_frontend_build(root: Path, inventory: dict | None = None) -> tuple[dict, JsonDocument]:
+def validate_frontend_build(root: Path, inventory: dict | None = None, *,
+                            b0: bool = False) -> tuple[dict, JsonDocument]:
     """原生校验返回快照；本接口同时保留现有收据的使用窗口末端复核。"""
-    from restore_frontend_native import request
-
     document = read_json_document(frontend_build_receipt(root))
-    proof = request("validate", root, inventory=inventory)
+    proof = request("validate-b0", root, expected_head=B0_HEAD, inventory=inventory) if b0 else (
+        request("validate", root, inventory=inventory)
+    )
     if proof["receipt"] != document.value:
         raise ValueError("前端构建收据在核验期间漂移；请稳定输入后重新构建")
     document.assert_unchanged()
     return proof["inventory"], document
 
 
-def validate_registered_frontend(root: Path, expected_head: str) -> tuple[dict, JsonDocument]:
-    inventory, receipt = validate_frontend_build(root, registered_frontend_inventory(root, expected_head))
-    verify_frontend_inputs(root, receipt.value["build"], expected_head=expected_head)
+def validate_registered_frontend(root: Path, expected_head: str, *,
+                                 b0: bool = False) -> tuple[dict, JsonDocument]:
+    if b0 and expected_head != B0_HEAD:
+        raise ValueError("B0 恢复构建必须绑定原始前端提交")
+    inventory, receipt = validate_frontend_build(
+        root, registered_frontend_inventory(root, expected_head), b0=b0
+    )
+    if not b0:
+        verify_frontend_inputs(root, receipt.value["build"], expected_head=expected_head)
     return inventory, receipt
+
+
+def frontend_input_recheck(root: Path, receipt: dict, *, expected_head: str | None = None):
+    """普通构建保留原配置窗口，B0 重验同一收据及原版构建输入。"""
+    if receipt["kind"] != B0_KIND:
+        return verify_frontend_inputs(root, receipt["build"], expected_head=expected_head).assert_unchanged
+    if expected_head is not None and expected_head != B0_HEAD:
+        raise ValueError("B0 恢复构建必须绑定原始前端提交")
+    inventory, document = validate_frontend_build(root, b0=True)
+    if document.value != receipt:
+        raise ValueError("B0 构建收据不同于本次绑定")
+
+    def recheck():
+        document.assert_unchanged()
+        proof = request("validate-b0", root, expected_head=B0_HEAD, inventory=inventory)
+        if proof["receipt"] != receipt:
+            raise ValueError("B0 构建收据在核验期间漂移")
+        document.assert_unchanged()
+
+    return recheck

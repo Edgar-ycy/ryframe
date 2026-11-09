@@ -289,12 +289,22 @@ def _protect(bindings: list[dict], *, binary: bool):
 
 @contextmanager
 def protect_binary_invocation(binding: dict):
-    """为单次只读工具调用持有独立句柄，不占用控制器的阶段保护集合。"""
+    """同一控制器可借用精确登记的阶段 PE，其他调用仍独立保护。"""
     if not _WINDOWS:
         yield
         return
-    path, expected = next(iter(_bindings([binding], binary=True).values()))
-    protected = _Protected(path, expected, binary=True)
+    key, (path, expected) = next(iter(_bindings([binding], binary=True).items()))
+    protected = None
+    with _LOCK:
+        if (_ACTIVE is not None and _ACTIVE["binary"]
+                and _ACTIVE["thread"] == threading.get_ident() and key in _ACTIVE["bindings"]):
+            if _ACTIVE["bindings"][key] != (path, expected):
+                raise ValueError("同一二进制路径登记了不同摘要")
+            protected = _ACTIVE["files"][key]
+            protected.check()
+    owned = protected is None
+    if owned:
+        protected = _Protected(path, expected, binary=True)
     primary = None
     try:
         yield
@@ -307,7 +317,7 @@ def protect_binary_invocation(binding: dict):
             protected.check()
         except BaseException as error:
             cleanup = error
-        released = _release([protected])
+        released = _release([protected]) if owned else None
         if cleanup is not None and released is not None:
             cleanup.add_note(f"单次工具保护句柄释放同时失败：{type(released).__name__}")
         cleanup = cleanup or released

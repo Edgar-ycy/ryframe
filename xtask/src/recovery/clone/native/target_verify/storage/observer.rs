@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use super::{StorageInputs, Transport, common, json_io, kernel};
+use super::{StorageInputs, common, redis_layout};
 use crate::{Result, recovery::fixture_control::services::lifecycle::readonly::process};
 
 /// 文件证据仍由核验器读取；端口只提供固定目标的外部进程与协议事实。
@@ -8,7 +8,11 @@ pub(crate) trait StorageObserver {
     fn process_identity(&self, pid: u32) -> Result<Option<Value>>;
     fn arguments(&self, _context: &StorageInputs<'_>, identity: &Value) -> Result<Vec<String>>;
     fn listener(&self, _context: &StorageInputs<'_>, identity: &Value, url: &str) -> Result<()>;
-    fn wsl(&self, context: &StorageInputs<'_>, redis: &Value, args: &[String]) -> Result<String>;
+    // 历史夹具只从内存提供冻结的内核观察输出。
+    #[cfg(test)]
+    fn wsl(&self, _: &StorageInputs<'_>, _: &Value, _: &[String]) -> Result<String> {
+        Err(redis_layout::WINDOWS_REQUIRED.into())
+    }
     fn redis(&self, context: &StorageInputs<'_>, redis: &Value, parts: &[&str]) -> Result<Value>;
 
     fn redis_window<T>(
@@ -27,17 +31,9 @@ pub(crate) trait StorageObserver {
     }
 }
 
-pub(crate) struct SystemObserver<'a, T: Transport> {
-    transport: &'a T,
-}
+pub(crate) struct SystemObserver;
 
-impl<'a, T: Transport> SystemObserver<'a, T> {
-    pub(crate) fn new(transport: &'a T) -> Self {
-        Self { transport }
-    }
-}
-
-impl<T: Transport> StorageObserver for SystemObserver<'_, T> {
+impl StorageObserver for SystemObserver {
     fn process_identity(&self, pid: u32) -> Result<Option<Value>> {
         common::process_identity(pid)
     }
@@ -50,27 +46,9 @@ impl<T: Transport> StorageObserver for SystemObserver<'_, T> {
         process::listener(identity, url)
     }
 
-    fn wsl(&self, context: &StorageInputs<'_>, redis: &Value, args: &[String]) -> Result<String> {
-        let mut arguments = vec![
-            "--distribution".into(),
-            json_io::text(&redis["distribution"], "Redis distribution")?.into(),
-            "--exec".into(),
-        ];
-        arguments.extend_from_slice(args);
-        let program = json_io::text(&redis["wsl"]["path"], "Redis WSL 工具")?.into();
-        kernel::observe(
-            context,
-            self.transport,
-            program,
-            arguments,
-            "target-redis-kernel",
-        )
-        .map(|output| output.trim().to_owned())
-    }
-
     fn redis(&self, context: &StorageInputs<'_>, redis: &Value, parts: &[&str]) -> Result<Value> {
-        let mut client = super::super::redis::Client::authenticated(context, redis)?;
-        client.command(parts)
+        redis_layout::require_windows(redis)?;
+        super::super::redis::Client::authenticated(context, redis)?.command(parts)
     }
 
     fn redis_window<R>(
@@ -79,9 +57,7 @@ impl<T: Transport> StorageObserver for SystemObserver<'_, T> {
         redis: &Value,
         read: impl FnOnce(&mut dyn FnMut(&[&str]) -> Result<Value>) -> Result<R>,
     ) -> Result<R> {
-        if redis["platform"] != "windows" {
-            return read(&mut |parts| self.redis(context, redis, parts));
-        }
+        redis_layout::require_windows(redis)?;
         #[cfg(windows)]
         {
             let mut client = super::super::redis::Client::authenticated(context, redis)?;
@@ -89,7 +65,10 @@ impl<T: Transport> StorageObserver for SystemObserver<'_, T> {
             super::super::execution::combine(result, client.recheck_windows_peer())
         }
         #[cfg(not(windows))]
-        Err("Windows Redis 读取窗口只能在本机 Windows 核验".into())
+        {
+            let _ = (context, read);
+            Err("Windows Redis 读取窗口只能在本机 Windows 核验".into())
+        }
     }
 }
 
@@ -116,10 +95,6 @@ mod tests {
             unreachable!()
         }
 
-        fn wsl(&self, _: &StorageInputs<'_>, _: &Value, _: &[String]) -> Result<String> {
-            unreachable!()
-        }
-
         fn redis(&self, _: &StorageInputs<'_>, _: &Value, parts: &[&str]) -> Result<Value> {
             self.0.set(self.0.get() + 1);
             Ok(json!(parts))
@@ -142,5 +117,25 @@ mod tests {
         let legacy = observer.redis_window(&inputs, &Value::Null, read).unwrap();
         assert_eq!(legacy, json!(["INFO", "server"]));
         assert_eq!(observer.0.get(), 1);
+    }
+    #[test]
+    fn live_observer_rejects_historical_redis_before_connecting() {
+        let inputs = StorageInputs {
+            backend: Path::new("."),
+            request: &Value::Null,
+            environment: &Default::default(),
+            observation_dir: Path::new("."),
+        };
+        let legacy = json!({"wsl": {"path": "missing-wsl.exe"}, "distribution": "legacy"});
+        let error = SystemObserver
+            .redis_window(&inputs, &legacy, |_| -> Result<Value> {
+                panic!("不应打开旧 Redis 连接")
+            })
+            .unwrap_err();
+        assert_eq!(error.to_string(), redis_layout::WINDOWS_REQUIRED);
+        let error = SystemObserver
+            .redis(&inputs, &legacy, &["INFO", "server"])
+            .unwrap_err();
+        assert_eq!(error.to_string(), redis_layout::WINDOWS_REQUIRED);
     }
 }

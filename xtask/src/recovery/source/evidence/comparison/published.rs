@@ -1,30 +1,104 @@
 //! 唯一已发布导出的历史、意图、封存摘要与安全身份投影。
-use super::{common, digest, document, generation, path};
+use super::{common, digest, document, generation};
 use crate::{
     Result,
     recovery::{
-        clone::native::{cache, lifecycle::state},
+        clone::native::{lifecycle::state, seed::arm_input::history::Active},
         source::evidence::running,
     },
 };
 use serde_json::{Value, json};
 use std::path::Path;
 
+pub(in crate::recovery) struct Verified {
+    pub(in crate::recovery) identity: Value,
+    pub(in crate::recovery) source: Value,
+    pub(in crate::recovery) state: Value,
+}
+
+impl Verified {
+    pub(in crate::recovery) fn check_live(&self, backend: &Path) -> Result<()> {
+        use crate::recovery::clone::native::resources::common::require_closed_port;
+
+        let saved = common::bound_file(backend, &self.state, "共享导出原账本")?;
+        let run = saved.parent().ok_or("共享导出原账本缺少运行目录")?;
+        let state = state::load(run, true)?;
+        let predecessor = running::history::predecessor_live(backend, run, &state)?;
+        if generation::resolve(backend, &predecessor, &state)? != self.source {
+            return Err("共享导出的实际存储或已停止来源代次变化".into());
+        }
+        let request = &self.source["request"];
+        let runtime = common::read_bound(backend, &request["runtime"], "共享导出原运行绑定")?;
+        require_closed_port(document::text(
+            &request["source"]["api_url"],
+            "来源 API 端点",
+        )?)?;
+        require_closed_port(document::text(
+            &runtime["worker_ready_url"],
+            "来源 Worker 端点",
+        )?)?;
+        self.check(backend)
+    }
+
+    pub(in crate::recovery) fn check(&self, backend: &Path) -> Result<()> {
+        for (descriptor, label) in [
+            (&self.identity["result"], "共享导出发布"),
+            (&self.identity["review_successor"], "共享导出审阅关系"),
+            (&self.state, "共享导出原账本"),
+        ] {
+            common::bound_file(backend, descriptor, label)?;
+        }
+        Ok(())
+    }
+}
+
 pub(super) fn identity(backend: &Path, descriptor: &Value) -> Result<Value> {
-    let value = common::read_bound(backend, descriptor, "共享导出发布")?;
-    let initial = cache::binding::source::load(backend, &value["review_successor"])?;
-    let run = path(&initial["directory"])?;
-    let state = state::load(&run, true)?;
-    let source = running::history::predecessor(backend, &run, &state)?;
+    Ok(verified(backend, descriptor, None)?.identity)
+}
+
+/// 从原外层发布唯一定位账本，再由原重绑定及代次权威验证同一关系。
+pub(in crate::recovery) fn verified(
+    backend: &Path,
+    descriptor: &Value,
+    successor: Option<&Value>,
+) -> Result<Verified> {
+    verified_for_arm(backend, descriptor, successor, None)
+}
+
+pub(super) fn verified_for_arm(
+    backend: &Path,
+    descriptor: &Value,
+    successor: Option<&Value>,
+    arm: Option<&Active<'_>>,
+) -> Result<Verified> {
+    let file = common::bound_file(backend, descriptor, "共享导出发布")?;
+    let value = document::read(&file)?;
+    if successor.is_some_and(|expected| &value["review_successor"] != expected) {
+        return Err("arm 选择的审阅关系不同于共享导出登记".into());
+    }
+    let run = file
+        .parent()
+        .filter(|directory| directory.file_name().is_some_and(|name| name == "results"))
+        .and_then(Path::parent)
+        .ok_or("共享导出发布缺少固定结果账本")?;
+    common::local_directory(backend, run, "共享导出原账本")?;
+    let state_binding = common::binding(&run.join("state.json"))?;
+    let state = state::load(run, true)?;
+    let source = running::history::predecessor_for_arm(backend, run, &state, arm)?;
     let source = generation::resolve(backend, &source, &state)?;
-    verify(backend, &run, &state, descriptor, &value, &source)?;
-    let identity = projection(descriptor, &value)?;
+    verify(backend, run, &state, descriptor, &value, &source)?;
+    let verified = Verified {
+        identity: projection(descriptor, &value)?,
+        source,
+        state: state_binding,
+    };
+    verified.check(backend)?;
     if common::read_bound(backend, descriptor, "共享导出发布")? != value
-        || state::load(&run, true)? != state
+        || state::load(run, true)? != state
     {
         return Err("共享导出发布在只读核验期间变化".into());
     }
-    Ok(identity)
+    Ok(verified)
 }
 
 pub(super) fn projection(descriptor: &Value, value: &Value) -> Result<Value> {

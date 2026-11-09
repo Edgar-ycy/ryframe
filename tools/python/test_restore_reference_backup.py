@@ -4,9 +4,8 @@ import copy
 from datetime import datetime, timedelta
 from pathlib import Path
 import sys
-from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import restore_reference as reference
@@ -79,28 +78,6 @@ class BackupBindingTests(unittest.TestCase):
             backup.backup_source(self.backend, self.plan, self.inventory, self.generation_path, self.export_path)
 
 
-    def test_execution_consumes_original_export_inventory_without_editing_it(self):
-        raw = copy.deepcopy(self.exported["inventory"])
-        path = self.write("inventory.json", raw)
-        original = path.read_bytes()
-        args = SimpleNamespace(command="backup", copy_id=None, inventory=path,
-                               source_generation=self.generation_path, source_export_result=self.export_path)
-        with patch.object(reference, "source_snapshot", return_value={"clean": True, "head": raw["source_sha"]}), \
-                patch.object(reference, "backup", return_value={"done": True}) as execute:
-            self.assertEqual(reference.execute(args, self.plan, self.backend, Mock(), self.work), {"done": True})
-        self.assertEqual(execute.call_args.args[3], self.inventory)
-        self.assertEqual(path.read_bytes(), original)
-
-    def test_hand_edited_inventory_is_rejected_before_any_backup_resource_call(self):
-        path = self.write("inventory.json", self.inventory)
-        args = SimpleNamespace(command="backup", copy_id=None, inventory=path,
-                               source_generation=self.generation_path, source_export_result=self.export_path)
-        with patch.object(reference, "source_snapshot") as source, patch.object(reference, "backup") as execute, \
-                self.assertRaisesRegex(ValueError, "不能手工补写"):
-            reference.execute(args, self.plan, self.backend, Mock(), self.work)
-        source.assert_not_called()
-        execute.assert_not_called()
-
     def test_different_generation_and_inventory_before_stop_fail_closed(self):
         self.source["source_generation"] = {"different": "generation"}
         with self.assertRaisesRegex(ValueError, "运行代次"):
@@ -110,53 +87,6 @@ class BackupBindingTests(unittest.TestCase):
         self.exported["inventory"]["quiesced_at"] = self.runtime["verified_at"]
         with self.assertRaisesRegex(ValueError, "时间顺序"):
             self.verify()
-
-    def test_unpublished_export_is_rejected_before_external_backup_or_output(self):
-        tools = Mock()
-
-        def reject_unpublished(operation, _arguments):
-            self.assertEqual(operation, "comparison-source-export")
-            raise ValueError("未发布")
-
-        with patch.object(backup, "_native", side_effect=reject_unpublished), \
-                self.assertRaisesRegex(ValueError, "未发布"):
-            reference.backup(self.plan, tools, self.work, self.inventory, self.backend,
-                             self.generation_path, self.export_path)
-        self.assertEqual(tools.mock_calls, [])
-        self.assertFalse((self.work / "backup").exists())
-
-    def test_backup_publishes_manifest_binding_and_refuses_changed_export(self):
-        tools = Mock()
-        tools.dump.side_effect = lambda _db, _tables, path: path.write_text("fixture")
-        inputs = self.verify()
-        with patch.object(reference, "backup_source", return_value=inputs), \
-                patch.object(reference, "require_stopped"), patch.object(reference, "verify_artifacts"):
-            result = reference.backup(self.plan, tools, self.work, self.inventory, self.backend,
-                                      self.generation_path, self.export_path)
-        backup.validate_backup_result(result)
-        self.assertEqual(result["source_export"], self.identity)
-        self.assertEqual(result["manifest"], self.descriptor(self.work / "backup/manifest.json"))
-        self.assertEqual(result["reference_plan"], self.plan)
-        for change in (lambda value: value.update(extra=True), lambda value: value.pop("source_export"),
-                       lambda value: value.update(format_version=True), lambda value: value.update(format_version=1)):
-            invalid = copy.deepcopy(result)
-            change(invalid)
-            with self.assertRaises(ValueError):
-                backup.validate_backup_result(invalid)
-
-    def test_source_generation_drift_after_copy_cannot_publish_manifest(self):
-        tools = Mock()
-        tools.dump.side_effect = lambda _db, _tables, path: path.write_text("fixture")
-        inputs = self.verify()
-        changed = {**inputs, "source_generation": {"changed": True}}
-        with patch.object(reference, "backup_source", side_effect=[inputs, changed]), \
-                patch.object(reference, "require_stopped"), patch.object(reference, "verify_artifacts"), \
-                self.assertRaisesRegex(ValueError, "来源绑定被替换"):
-            reference.backup(self.plan, tools, self.work, self.inventory, self.backend,
-                             self.generation_path, self.export_path)
-        self.assertFalse((self.work / "backup/manifest.json").exists())
-        self.assertTrue((self.work / "backup/databases").is_dir())
-
 
 if __name__ == "__main__":
     unittest.main()

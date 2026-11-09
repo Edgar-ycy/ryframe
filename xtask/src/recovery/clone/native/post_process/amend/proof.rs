@@ -14,6 +14,7 @@ use std::{collections::BTreeSet, path::Path};
 
 pub(super) fn capture(
     backend: &Path,
+    product: &Path,
     run: &Path,
     saved: &Value,
     previous: &seed::history::Post,
@@ -50,7 +51,14 @@ pub(super) fn capture(
     {
         return Err("原失败诊断不属于最新原生启动控制器".into());
     }
-    let history = producer(backend, previous, &runtime, &owner)?;
+    let history = producer(
+        backend,
+        product,
+        previous,
+        &runtime,
+        &handoff_value["runtime"],
+        &owner,
+    )?;
     let api = common::binding(&previous.runtime.join("api.json"))?;
     stop_archive(
         backend,
@@ -289,11 +297,18 @@ fn stop_archive(
 
 fn producer(
     backend: &Path,
+    product: &Path,
     previous: &seed::history::Post,
     runtime: &Value,
+    runtime_binding: &Value,
     owner: &Value,
 ) -> Result<Value> {
-    let history = seed::source_registration::lineage::runtime::collect(backend, &previous.runtime)?;
+    let history = seed::source_registration::lineage::runtime::collect_bound(
+        backend,
+        product,
+        &previous.runtime,
+        runtime_binding,
+    )?;
     let generations = document::array(&history["generations"], "完整原生生产者代次")?;
     if generations.len() != 1 {
         return Err("旧API准备仅接受唯一实际启动代次；完整历史存在其他生产者，保留现场".into());

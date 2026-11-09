@@ -1,8 +1,12 @@
 //! 清理错误只输出固定操作、类型与系统码；原错误文本不进入协议。
-use super::diagnostic::{Diagnostic, primitive_detail};
+use super::diagnostic::Diagnostic;
+#[cfg(test)]
+use super::diagnostic::primitive_detail;
 use crate::Result;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 use std::{error::Error, fmt};
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -17,22 +21,26 @@ pub(super) enum Operation {
     PublishPartial,
 }
 
+#[cfg(test)]
 #[derive(Debug)]
 struct Context {
     operation: Operation,
     error: Box<dyn Error>,
 }
+#[cfg(test)]
 impl fmt::Display for Context {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "缓存清理操作 {:?} 未完成", self.operation)
     }
 }
+#[cfg(test)]
 impl Error for Context {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         Some(self.error.as_ref())
     }
 }
 
+#[cfg(test)]
 pub(super) fn context(operation: Operation, error: Box<dyn Error>) -> Box<dyn Error> {
     Box::new(Context { operation, error })
 }
@@ -62,6 +70,7 @@ struct Detail {
     exit_code: Value,
 }
 
+#[cfg(test)]
 pub(super) fn capture(error: &(dyn Error + 'static)) -> Value {
     let (operation, error) = error
         .downcast_ref::<Context>()

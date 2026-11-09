@@ -95,6 +95,15 @@ fn scrub_environment(command: &mut Command) {
 
 pub(crate) fn run_hidden_if_requested() -> Option<i32> {
     let args = std::env::args_os().skip(1).collect::<Vec<_>>();
+    if args
+        .first()
+        .is_some_and(|value| value == super::provenance::MARKER)
+    {
+        return Some(super::provenance::child(
+            args.len(),
+            std::io::stdin().lock(),
+        ));
+    }
     if args.first().is_none_or(|value| value != MARKER) {
         return None;
     }

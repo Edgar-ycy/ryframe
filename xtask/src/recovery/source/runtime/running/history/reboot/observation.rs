@@ -2,20 +2,24 @@
 use super::{CLOSE, completed, host, ready, stops};
 use crate::{
     Result,
+    cli::CloneSide,
     recovery::{
         clone::native::{
             json as document,
             lifecycle::{lock, state, status},
-            resources::common,
+            resources::{common, storage::registered},
             seed::generation::coordinator,
             target_verify::authority,
         },
-        fixture_control::artifact::runtime,
+        fixture_control::{artifact::runtime, services::lifecycle::readonly::process},
         source::evidence::{binding, running::roles},
     },
 };
 use serde_json::{Value, json};
-use std::path::Path;
+use std::{
+    net::{Ipv4Addr, Ipv6Addr},
+    path::Path,
+};
 
 pub(in crate::recovery::source::evidence) fn request(args: &Value) -> Result<Value> {
     document::exact(args, &["backend", "directory"], "重启观察参数")?;
@@ -69,7 +73,8 @@ pub(super) fn read(backend: &Path, run: &Path, attempts: &[Value], start: &Value
     let urls = endpoints(&contract)?;
     let (role_facts, mut blockers) =
         role_facts(&directory, &facts["intent"], &contract, &urls, boot)?;
-    let (storage, storage_blockers) = storage(&facts["request"], boot)?;
+    let (storage, storage_blockers) =
+        observe_storage(backend, run, attempts, start, &facts["request"], boot)?;
     blockers.extend(storage_blockers);
     if runtime::verify_configuration(&execution, &directory)?.receipt != contract.receipt {
         return Err("重启观察期间绑定配置变化；保留现场，禁止重放".into());
@@ -78,6 +83,11 @@ pub(super) fn read(backend: &Path, run: &Path, attempts: &[Value], start: &Value
         || failed_prefix(backend, &output.join("verification"))? != prefix
     {
         return Err("重启观察期间原请求、意图或失败前缀变化；保留现场，禁止重放".into());
+    }
+    if storage["replacement"].is_object()
+        && observe_storage(backend, run, attempts, start, &facts["request"], boot)?.0 != storage
+    {
+        return Err("重启观察期间后继存储登记或实际监听变化；保留现场，禁止重放".into());
     }
     for binding in &bindings {
         common::bound_file(backend, binding, "重启观察前后绑定")?;
@@ -428,26 +438,105 @@ fn ports(urls: &[&str]) -> Vec<Value> {
         .collect()
 }
 
-fn storage(request: &Value, boot: u64) -> Result<(Value, Vec<String>)> {
-    let storage = &request["current_storage"];
-    let identity = &storage["storage"]["identity"];
+fn observe_storage(
+    backend: &Path,
+    run: &Path,
+    attempts: &[Value],
+    start: &Value,
+    request: &Value,
+    boot: u64,
+) -> Result<(Value, Vec<String>)> {
+    let original = &request["current_storage"];
+    let identity = &original["storage"]["identity"];
     let exited = host::exited(identity, boot)?;
-    let ports = ports(&[
-        document::text(&storage["api_url"], "旧存储 API")?,
-        document::text(&storage["console_url"], "旧存储 Console")?,
+    let mut ports = ports(&[
+        document::text(&original["api_url"], "旧存储 API")?,
+        document::text(&original["console_url"], "旧存储 Console")?,
     ]);
+    let mut replacement = None;
+    if exited
+        && ports.iter().any(|row| row["closed"] != true)
+        && let Some(registered) =
+            replacement_storage(backend, run, attempts, start, original, boot)?
+    {
+        for row in ports.iter_mut().filter(|row| row["closed"] != true) {
+            let url = document::text(&row["url"], "原存储端点")?;
+            let (port, _) = common::endpoint(url)?;
+            let identity = &registered["storage"]["identity"];
+            // IPv6 通配监听也可能占用原 IPv4 端点，必须排除其他进程。
+            if matches!(
+                process::start_listener_at(identity, Ipv4Addr::LOCALHOST.into(), port),
+                Ok(true)
+            ) && process::start_listener_at(identity, Ipv6Addr::LOCALHOST.into(), port).is_ok()
+            {
+                *row = json!({"url":url,"closed":false,"registered_replacement":true});
+            }
+        }
+        if ports
+            .iter()
+            .any(|row| row["registered_replacement"] == true)
+        {
+            replacement = Some(registered);
+        }
+    }
+
     let mut blockers = Vec::new();
     if !exited {
         blockers.push("对象存储代次无法证明已随主机重启退出".into());
     }
-    if ports.iter().any(|v| v["closed"] != true) {
+    if ports
+        .iter()
+        .any(|row| row["closed"] != true && row["registered_replacement"] != true)
+    {
         blockers.push("对象存储端点没有明确关闭".into());
     }
-    Ok((
-        json!({"attempt":storage["attempt"],"identity":identity,"exited":exited,
-        "request":storage["request"],"ports":ports}),
-        blockers,
-    ))
+    let mut value = json!({"attempt":original["attempt"],"identity":identity,"exited":exited,
+        "request":original["request"],"ports":ports});
+    if let Some(replacement) = replacement {
+        value["replacement"] = replacement;
+    }
+    Ok((value, blockers))
+}
+
+fn replacement_storage(
+    backend: &Path,
+    run: &Path,
+    attempts: &[Value],
+    start: &Value,
+    original: &Value,
+    boot: u64,
+) -> Result<Option<Value>> {
+    let number = start["number"].as_u64().ok_or("原 START 序号无效")?;
+    let before = number.checked_add(3).ok_or("重启段序号溢出")?;
+    let find_passed = |offset, stage: &str, mode: &str| {
+        attempts.iter().find(|row| {
+            row["number"].as_u64() == Some(before - offset)
+                && row["stage"] == stage
+                && row["mode"] == mode
+                && row["status"] == "passed"
+                && row["error_type"].is_null()
+        })
+    };
+    let (Some(closed), Some(restarted)) = (
+        find_passed(2, "seed-runtime", CLOSE),
+        find_passed(1, "storage-target", "restart"),
+    ) else {
+        return Ok(None);
+    };
+    super::closure(backend, run, closed, start)?;
+    let current = registered::registered(backend, run, CloneSide::Target, Some(before))?
+        .ok_or("相邻存储重启缺少已登记的后继代次")?;
+    if current["attempt"] != restarted["number"]
+        || current["restart_result"] != restarted["result"]
+        || ["request", "api_url", "console_url", "data_directory"]
+            .into_iter()
+            .any(|field| current[field] != original[field])
+    {
+        return Err("相邻存储重启没有绑定原请求、目录、端点及精确成功结果".into());
+    }
+    let identity = common::validate_process_identity(&current["storage"]["identity"])?;
+    let created = document::text(&identity["started"], "后继存储进程创建时刻")?.parse::<u64>()?;
+    Ok((created > boot).then_some(current))
 }
 
 pub(super) fn require_closed(observed: &Value) -> Result<()> {

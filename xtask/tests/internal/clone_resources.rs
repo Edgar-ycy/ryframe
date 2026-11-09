@@ -131,7 +131,7 @@ fn target_storage_restart_binds_original_external_executable() {
             .status
             .success()
     );
-    let mut linked = request.clone();
+    let mut linked = request;
     linked["executable"]["path"] = json!(linked_directory.join("rustfs.exe"));
     linked["previous"]["identity"]["executable"] = linked["executable"]["path"].clone();
     let error = check(&linked).err().unwrap().to_string();

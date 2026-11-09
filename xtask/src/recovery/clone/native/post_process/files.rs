@@ -10,7 +10,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub(super) fn absent(path: &Path) -> Result<()> {
+pub(in crate::recovery::clone::native) fn absent(path: &Path) -> Result<()> {
     match fs::symlink_metadata(path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error.into()),
@@ -77,7 +77,10 @@ pub(super) fn publish(backend: &Path, path: &Path, value: &Value) -> Result<()> 
     Ok(())
 }
 
-pub(super) fn combine<T>(primary: Result<T>, checked: Result<()>) -> Result<T> {
+pub(in crate::recovery::clone::native) fn combine<T>(
+    primary: Result<T>,
+    checked: Result<()>,
+) -> Result<T> {
     match (primary, checked) {
         (Ok(value), Ok(())) => Ok(value),
         (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),

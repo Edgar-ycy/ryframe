@@ -1,4 +1,4 @@
-use super::{close, rebind_receipt, result, transition};
+use super::{close, parse_snapshot, rebind_receipt, result, transition};
 use serde_json::{Value, json};
 use std::path::Path;
 
@@ -6,6 +6,23 @@ fn snapshot() -> Value {
     json!({"database_time":"2026-09-05T00:00:00.000000Z",
         "active":close::ACTIVE.iter().map(|key| (key.to_string(),json!(0))).collect::<serde_json::Map<_,_>>(),
         "terminal_non_success":close::TERMINAL.iter().map(|key| (key.to_string(),json!(0))).collect::<serde_json::Map<_,_>>()})
+}
+
+#[test]
+fn drain_mysql_snapshot_requires_one_complete_json_row_and_preserves_counts() {
+    let mut expected = snapshot();
+    expected["active"]["background_job_attempt"] = json!(3);
+    expected["terminal_non_success"]["schedule_target_unavailable"] = json!(2);
+    let raw = expected.to_string();
+    assert_eq!(parse_snapshot(&raw).unwrap(), expected);
+    assert!(parse_snapshot(&format!("{raw}\n{raw}")).is_err());
+    let duplicate = raw.replacen(
+        "\"background_job_attempt\":3",
+        "\"background_job_attempt\":0,\"background_job_attempt\":3",
+        1,
+    );
+    assert_ne!(duplicate, raw);
+    assert!(parse_snapshot(&duplicate).is_err());
 }
 
 #[test]

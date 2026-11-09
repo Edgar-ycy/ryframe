@@ -5,6 +5,63 @@ use serde_json::json;
 use super::{command, inspection, lock, protocol};
 
 #[test]
+fn seed_recovery_derives_identity_lock_only_from_the_registered_identity_producer() {
+    use super::super::{digest, json as document, resources::common};
+    let (_temporary, backend, run) = formal_fixture();
+    let plan_file = run.join("identity-plan.json");
+    let mut plan = json!({"format_version":1,"kind":"devex-identities"});
+    let semantic = digest::plan_hash(&plan).unwrap();
+    plan["plan_sha256"] = json!(semantic);
+    document::write_new(&plan_file, &plan).unwrap();
+    let binding = common::binding(&plan_file).unwrap();
+    assert_ne!(binding["sha256"], semantic);
+    let identities = run.join("seed-runtime/identities");
+    let request = json!({"identity_state":identities,"identity_plan":binding});
+    let process = json!({"identity_lock_owner":"owner","identity":{"pid":123}});
+    for mode in ["identities-apply", "identities-verify"] {
+        let attempt = json!({"stage":"seed-runtime","mode":mode});
+        let lock =
+            protocol::identity_lock_request(&backend, &run, &attempt, &request, &process).unwrap();
+        assert_eq!(
+            lock,
+            json!({"backend":backend,"identity_state":identities,"identity":{"pid":123},
+                "owner_token":"owner","plan_sha256":semantic})
+        );
+        protocol::release_identity_lock(&backend, &run, &lock).unwrap();
+        assert!(!identities.exists());
+    }
+    for (stage, mode) in [("seed-runtime", "quotas-apply"), ("post-copy", "schedules")] {
+        let attempt = json!({"stage":stage,"mode":mode});
+        assert!(
+            protocol::identity_lock_request(&backend, &run, &attempt, &request, &process)
+                .unwrap()
+                .is_null()
+        );
+    }
+}
+
+#[test]
+fn failed_unpublished_seed_registration_allows_explicit_resume_only_without_producer_evidence() {
+    use super::super::lifecycle::state;
+    let (_temporary, backend, run) = formal_fixture();
+    let (number, _) = state::begin(&run, "seed-runtime", "register", &json!({})).unwrap();
+    state::finish(&run, number, None, Some("StageError")).unwrap();
+    let original = fs::read(run.join("state.json")).unwrap();
+    super::require_quiet(&backend, &run, None).unwrap();
+    let evidence = run
+        .join("seed-runtime")
+        .join(format!("attempt-{number:04}"));
+    fs::create_dir_all(&evidence).unwrap();
+    fs::write(
+        evidence.join("session.stderr.log"),
+        b"unknown process evidence",
+    )
+    .unwrap();
+    assert!(super::require_quiet(&backend, &run, None).is_err());
+    assert_eq!(fs::read(run.join("state.json")).unwrap(), original);
+}
+
+#[test]
 fn formal_fixed_request_modes_refuse_python_dispatch_and_bad_options_without_stage_writes() {
     use crate::{
         cli::{CloneCommand, PostCopyOperation, PostCopyOptions},
@@ -17,18 +74,27 @@ fn formal_fixed_request_modes_refuse_python_dispatch_and_bad_options_without_sta
         PostCopyOperation::Register,
         PostCopyOperation::Prepare,
         PostCopyOperation::Amend,
+        PostCopyOperation::Schedules,
+        PostCopyOperation::Reconcile,
+        PostCopyOperation::Verify,
+        PostCopyOperation::RecoverSession,
     ] {
         let options = PostCopyOptions {
             run_dir: run.clone(),
             operation,
-            request: if operation == PostCopyOperation::Prepare {
+            request: if matches!(
+                operation,
+                PostCopyOperation::Prepare
+                    | PostCopyOperation::Schedules
+                    | PostCopyOperation::Reconcile
+                    | PostCopyOperation::Verify
+            ) {
                 Some(input.clone())
             } else {
                 None
             },
             producer_binding: None,
         };
-        assert!(super::entry::selected(&options));
         assert!(
             clone::protocol(&CloneCommand::PostCopy(options.clone()), &backend)
                 .unwrap_err()
@@ -39,10 +105,10 @@ fn formal_fixed_request_modes_refuse_python_dispatch_and_bad_options_without_sta
             .unwrap_err()
             .to_string();
         assert!(
-            error.contains(if operation == PostCopyOperation::Prepare {
-                "prepare不能替换登记请求"
-            } else {
-                "需要显式请求文件"
+            error.contains(match operation {
+                PostCopyOperation::Register | PostCopyOperation::Amend => "需要显式请求文件",
+                PostCopyOperation::RecoverSession => "回收需要明确生产者收据描述文件",
+                _ => "此复制后阶段沿用已登记请求",
             }),
             "{error}"
         );

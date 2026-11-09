@@ -435,6 +435,16 @@ fn backup_and_restore_inputs_reject_sub_microsecond_timestamps() {
     let mut precise = plan();
     precise.fault_at -= Duration::microseconds(123);
     assert!(validate_restore_plan(&backup, &precise, current).is_ok());
+    let mut boundary = plan();
+    boundary.fault_at = backup.manifest.captured_at + Duration::hours(24);
+    let later = boundary.fault_at + Duration::seconds(1);
+    validate_restore_plan(&backup, &boundary, later).unwrap();
+    boundary.fault_at += Duration::microseconds(1);
+    assert!(matches!(
+        validate_restore_plan(&backup, &boundary, later),
+        Err(AppError::Validation(message)) if message.contains("24 小时")
+    ));
+
     let mut restore = plan();
     restore.fault_at += Duration::nanoseconds(1);
     assert!(matches!(

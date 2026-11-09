@@ -195,37 +195,42 @@ pub(crate) fn configuration_value(
 }
 
 pub(crate) fn runtime_configuration(
-    root: &Path,
-    environment: &std::collections::BTreeMap<String, String>,
+    coordinator: &Path,
+    execution: &Path,
+    environment: &BTreeMap<String, String>,
     runtime: &Value,
     role: &str,
-) -> Result<(Value, std::collections::BTreeMap<String, Value>)> {
-    if *environment != BTreeMap::from([("APP_ENV".into(), "test".into())]) {
-        return Err("源导出只允许 APP_ENV=test；其他配置必须绑定 TOML 文件".into());
-    }
+) -> Result<(Value, BTreeMap<String, Value>)> {
+    use super::super::{
+        resources::common,
+        seed::runtime_model,
+        target_verify::input::request_configuration::{
+            canonical_path, configuration_files, configuration_identity,
+        },
+    };
+
+    runtime_model::validate_api_environment(coordinator, environment)?;
     let declared = runtime
         .get(format!("{role}_config_dir"))
         .ok_or("源运行收据缺少角色配置目录")?;
-    let (directory, files) =
-        super::super::target_verify::input::request_configuration::configuration_files(
-            root,
-            environment,
-            Some(declared),
-        )?;
-    let sha = super::super::target_verify::input::request_configuration::configuration_identity(
-        &directory, &files,
-    )?;
+    let path = Path::new(documents::text(declared, "源角色配置目录")?);
+    let root = if coordinator != execution
+        && path.is_absolute()
+        && !canonical_path(path)?.starts_with(canonical_path(execution)?)
+    {
+        common::local_directory(coordinator, path, "协调根的已登记源角色配置目录")?;
+        coordinator
+    } else {
+        execution
+    };
+    let (directory, files) = configuration_files(root, environment, Some(declared))?;
+    let sha = configuration_identity(&directory, &files)?;
     if runtime[format!("{role}_configuration_sha256")].as_str() != Some(sha.as_str()) {
         return Err("源 TOML 配置与运行收据摘要不同；请核对绑定文件".into());
     }
-    let table = crate::rate_limit::load_app_table(root, Some(&directory), "test")
+    let table = crate::rate_limit::load_app_table(execution, Some(&directory), "test")
         .map_err(|_| "源 TOML 配置无法加载；请检查所选环境文件与字段类型")?;
-    if super::super::target_verify::input::request_configuration::configuration_files(
-        root,
-        environment,
-        Some(declared),
-    )? != (directory, files.clone())
-    {
+    if configuration_files(root, environment, Some(declared))? != (directory, files.clone()) {
         return Err("源 TOML 配置在读取期间变化".into());
     }
     Ok((serde_json::to_value(table)?, files))

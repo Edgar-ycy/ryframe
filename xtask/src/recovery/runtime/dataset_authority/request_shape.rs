@@ -97,7 +97,7 @@ fn configuration(value: &Value) -> Result<()> {
     Ok(())
 }
 
-fn authority(value: &Value) -> Result<()> {
+pub(in crate::recovery::runtime) fn authority(value: &Value) -> Result<()> {
     strict::exact(
         value,
         &[

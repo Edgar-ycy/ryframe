@@ -11,6 +11,9 @@ use crate::recovery::clone::native::{
     digest, json as document, lifecycle::state, resources::common,
 };
 
+#[path = "capacity/orchestration.rs"]
+mod orchestration;
+
 #[derive(Clone, Copy)]
 enum Mode {
     ReadOnly,

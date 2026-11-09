@@ -54,7 +54,8 @@ class BinaryBindingTests(unittest.TestCase):
             yield source, history, target
 
     def test_registered_roles_exclude_object_cli_and_payload(self):
-        with self.verified_requests() as (source, history, target):
+        with self.verified_requests() as (source, history, target), \
+                patch("rate_limit_tool.tool_binding", return_value=None):
             values = run.copy_binary_bindings(self.backend, self.value)
         source.assert_called_once_with(self.backend, self.source)
         history.assert_called_once_with(self.backend, Path(self.value["initialized"]["path"]))
@@ -63,6 +64,10 @@ class BinaryBindingTests(unittest.TestCase):
         self.assertEqual({Path(item["path"]).stem for item in values}, {
             "mysql", "mysqldump", "node", "api", "worker", "reset", "migrate", "tenant-data", "rustfs", "wsl"})
         self.assertTrue(all(set(item) == {"path", "sha256"} for item in values))
+        coordinator = self.binary("coordinator")
+        installed = {**coordinator, "format_version": 1, "kind": "ryframe-native-rate-limit-tool", "bytes": 17}
+        with self.verified_requests(), patch("rate_limit_tool.tool_binding", return_value=installed):
+            self.assertEqual(run.copy_binary_bindings(self.backend, self.value), values + [coordinator])
 
     def test_wrong_build_kind_missing_role_and_changed_binding_are_rejected(self):
         for kind, roles in (("other", ("api", "worker")), ("restore-backend-build", ("api",))):

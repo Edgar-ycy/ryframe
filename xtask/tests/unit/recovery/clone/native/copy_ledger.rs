@@ -78,6 +78,18 @@ impl Fixture {
     fn read(&self) -> Result<Value> {
         inspect(&self.backend, &self.root, &self.plan, &self.generation)
     }
+
+    fn assert_ineligible_completion(&self, receipt: &str) {
+        let paths = ["events.ndjson", "head.json", receipt].map(|name| self.root.join(name));
+        let [journal, head, receipt] = paths.each_ref().map(|path| fs::read(path).unwrap());
+        let verified = verify_journal(&journal, &head, &self.plan, &self.generation).unwrap();
+        assert!(require_complete(&verified.projection).is_err());
+        assert!(self.read().is_err());
+        assert_eq!(
+            paths.map(|path| fs::read(path).unwrap()),
+            [journal, head, receipt]
+        );
+    }
 }
 
 #[test]
@@ -157,13 +169,7 @@ fn forged_completion_cannot_skip_the_original_finish_eligibility_checks() {
     let mut receipt = document::read(&path).unwrap();
     receipt["steps"] = json!(0);
     fixture.write("complete-session-example.json", &receipt);
-    assert!(
-        fixture
-            .read()
-            .unwrap_err()
-            .to_string()
-            .contains("原发布条件")
-    );
+    fixture.assert_ineligible_completion("complete-session-example.json");
     let mut fixture = Fixture::new();
     fixture
         .events
@@ -177,11 +183,5 @@ fn forged_completion_cannot_skip_the_original_finish_eligibility_checks() {
     receipt["session"] = json!("session-later");
     receipt["journal_sha256"] = head["sha256"].clone();
     fixture.write("complete-session-later.json", &receipt);
-    assert!(
-        fixture
-            .read()
-            .unwrap_err()
-            .to_string()
-            .contains("原发布条件")
-    );
+    fixture.assert_ineligible_completion("complete-session-later.json");
 }

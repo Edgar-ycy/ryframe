@@ -11,7 +11,7 @@ use super::super::json as json_io;
 use crate::Result;
 
 #[path = "inventory_history.rs"]
-pub(super) mod inventory_history;
+pub(in crate::recovery) mod inventory_history;
 
 const MARKER: &str = "__target-evidence";
 const MAX_BYTES: u64 = 1024 * 1024;
@@ -60,7 +60,7 @@ pub(crate) fn run_hidden_if_requested() -> Option<i32> {
 }
 
 const DIAGNOSTICS: &[&str] = &[
-    super::storage::kernel::OBSERVATION_ERROR,
+    super::storage::redis_layout::WINDOWS_REQUIRED,
     super::database::model::TABLE_SET_ERROR,
     super::evidence_reset::MANIFEST_VERSION_ERROR,
     "reset 报告或账本不属于当前精确 plan",
@@ -391,7 +391,7 @@ fn dispatch(backend: &Path, target: &Path, operation: &str, value: &Value) -> Re
                 .ok_or("初始化锁标志必须为布尔值")?,
         ),
         "migration-resume-confirmed" => Ok(
-            json!({"confirmed":super::resume_confirmed::confirmed(backend,target,&value["initialized"])}),
+            json!({"confirmed":super::resume_confirmed::confirmed(backend,target,&value["initialized"],None)}),
         ),
         "creation-evidence" => {
             super::evidence_creation::creation(backend, target, &value["request"])
@@ -403,6 +403,7 @@ fn dispatch(backend: &Path, target: &Path, operation: &str, value: &Value) -> Re
                     target,
                     &value["request"],
                     &value["original"],
+                    None,
                 )
             } else {
                 super::evidence_reset::aggregate(
@@ -475,7 +476,7 @@ fn reset_completed(backend: &Path, target: &Path) -> Result<Value> {
     let prepared = json_io::read(&paths[1])?;
     let initialized = json_io::read(&paths[2])?;
     let result =
-        super::evidence_reset::history(backend, target, &request, &prepared["generation"])?;
+        super::evidence_reset::history(backend, target, &request, &prepared["generation"], None)?;
     let completed = &result["completed"];
     if initialized["status"] != "fresh_target_initialized"
         || initialized["generation"] != prepared["generation"]

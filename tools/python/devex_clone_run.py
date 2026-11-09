@@ -101,7 +101,7 @@ def _overlap(first: Path, second: Path) -> bool:
     return first == second or first.is_relative_to(second) or second.is_relative_to(first)
 
 
-def _capture_target_storage_run(backend: Path, historical: dict, *, live: bool) -> dict:
+def _legacy_target_storage_run(backend: Path, historical: dict, *, live: bool) -> dict:
     exact(historical, HISTORICAL_STORAGE_RUN_FIELDS)
     directory = local_path(backend, historical["path"])
     if linked(directory) or not directory.is_dir():
@@ -117,6 +117,20 @@ def _capture_target_storage_run(backend: Path, historical: dict, *, live: bool) 
     cache = registered_cache_binding(backend, directory)
     return {"path": str(directory), "manifest": copy.deepcopy(historical["manifest"]),
             "storage": storage, "cache": cache}
+
+
+def _capture_target_storage_run(backend: Path, registration: dict, historical: dict,
+                                expected: dict | None, *, live: bool) -> dict:
+    from devex_clone_target_binding import fixture_arm_storage
+
+    storage = fixture_arm_storage(backend, registration, expected, active=live)
+    if storage is None:
+        if expected is not None:
+            exact(expected, TARGET_STORAGE_RUN_FIELDS)
+        storage = _legacy_target_storage_run(backend, historical, live=live)
+    if expected is not None and storage != expected:
+        raise ValueError("seed_to_arm 外部目标存储代次发生变化")
+    return storage
 
 
 def _target_snapshot(backend: Path, registration_descriptor: dict,
@@ -163,12 +177,10 @@ def target_lifecycle_binding(backend: Path, value: dict, *, live_storage: bool) 
     )
     if registration["environment"] != value["target_environment"]:
         raise ValueError("arm 目标环境不属于 fresh-target registration")
-    storage = _capture_target_storage_run(backend, registration["storage_run"], live=live_storage)
-    expected = value.get("target_storage_run")
-    if expected is not None:
-        exact(expected, TARGET_STORAGE_RUN_FIELDS)
-        if expected != storage:
-            raise ValueError("seed_to_arm target_storage_run 不属于 fresh 初始化使用的固定代次")
+    storage = _capture_target_storage_run(
+        backend, value["target_registration"], registration["storage_run"],
+        value.get("target_storage_run"), live=live_storage,
+    )
     return {"registration": registration, "initialized": initialized, "target": request,
             "target_storage_run": storage}
 
@@ -178,14 +190,13 @@ def target_storage_run(backend: Path, value: dict, *, live: bool = True) -> Path
     if value["copy_stage"] != "seed_to_arm":
         return None
     descriptor = value["target_storage_run"]
-    exact(descriptor, TARGET_STORAGE_RUN_FIELDS)
-    directory = local_path(backend, descriptor["path"])
-    registration = read_json(bound_file(backend, value["target_registration"]))
+    registration_binding = value["target_registration"]
+    registration = read_json(bound_file(backend, registration_binding))
     exact(registration, TARGET_REGISTRATION_FIELDS)
-    historical = registration["storage_run"]
-    if _capture_target_storage_run(backend, historical, live=live) != descriptor:
-        raise ValueError("seed_to_arm 外部目标存储代次发生变化")
-    return directory
+    storage = _capture_target_storage_run(
+        backend, registration_binding, registration["storage_run"], descriptor, live=live,
+    )
+    return local_path(backend, storage["path"])
 
 
 def target_fixture_storage_run(backend: Path, initialized_descriptor: dict, *,
@@ -313,15 +324,6 @@ def cleanup_inputs(backend: Path, directory: Path, side: str) -> tuple[dict, Env
     return value, Environments(private["environment"], private["environment"])
 
 
-def recover_copy(backend: Path, directory: Path, owner: dict) -> dict:
-    from devex_clone_copy_locks import recover_copy_locks
-
-    with run_lock(directory):
-        value = registered_manifest(backend, directory)
-        return recover_copy_locks(backend, local_path(backend, value["copy_directory"]), owner,
-                                  source_export=export_binding(backend, directory, value), initialized=value["initialized"])
-
-
 def environments(backend: Path, value: dict) -> Environments:
     result = {}
     for side in ("source", "target"):
@@ -423,9 +425,10 @@ def export_binding(backend: Path, directory: Path, value: dict) -> dict:
 
 
 def copy_binary_bindings(backend: Path, value: dict) -> list[dict]:
-    """仅从已绑定请求、初始化历史和构建收据收集明确二进制；业务文件不进入保护集合。"""
+    """从既有协调器、请求、初始化历史和构建收据收集明确二进制。"""
     from devex_clone_source_proof import validate_request
     from devex_clone_target_binding import execution_binary_bindings
+    from rate_limit_tool import tool_binding
 
     source = read_json(bound_file(backend, value["source_request"]))
     validate_request(backend, source)
@@ -440,6 +443,9 @@ def copy_binary_bindings(backend: Path, value: dict) -> list[dict]:
         bindings.extend({"path": item["executable"], "sha256": item["sha256"]}
                         for item in build["artifacts"].values())
     bindings.extend(execution_binary_bindings(backend, target))
+    coordinator = tool_binding()
+    if coordinator is not None:
+        bindings.append({key: coordinator[key] for key in ("path", "sha256")})
     return bindings
 
 
@@ -529,13 +535,13 @@ def require_target_copy(backend: Path, directory: Path, value: dict, roles: tupl
     ledger = CloneLedger(backend, output / "ledger", saved["plan_sha256"], saved["generation_sha256"])
     observed = ledger.inspect()
     from devex_clone import verify_plan_result
-    from devex_clone_transfer import TransferSteps
+    from devex_clone_transfer import copy_step_ids
 
     verified = verify_plan_result(backend, str(output / "plan.json"))
     plan = verified.plan
     no_writes = (observed["status"] == "partial" and not observed["steps"] and not plan["objects"]
                  and result["unchanged_databases"] == len(plan["databases"])
-                 and set(result["unchanged_database_images"]) == {TransferSteps.db_step(item) for item in plan["databases"]})
+                 and set(result["unchanged_database_images"]) == set(copy_step_ids(plan["databases"], [])["databases"]))
     if (not (observed["status"] == "ledger_evidence_complete" or no_writes)
             or result["plan_sha256"] != saved["plan_sha256"]
             or result["plan_sha256"] != plan["plan_sha256"]
@@ -559,15 +565,16 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
         raise ValueError("登记、准备和环境修订必须使用原生持锁正式入口")
     if stage in {"export", "target-verify"}:
         raise ValueError("导出和目标复核必须使用原生 Rust 入口")
+    if stage == "seed-runtime" and mode == "arm-input":
+        raise ValueError("ARM 输入签发必须使用 Rust 正式入口")
 
     # 停止只依据已登记运行产物及内核身份，不能被后来源码变化阻挡。
     session_cleanup = stage in {"post-copy", "seed-runtime"} and mode == "recover-session"
-    seed_cleanup = stage == "seed-runtime" and mode in {"stop", "recover", "source-generation-recover"}
+    seed_cleanup = stage == "seed-runtime" and mode == "source-generation-recover"
     cleanup = session_cleanup or seed_cleanup or (stage.startswith("runtime-") and mode in {"stop", "recover"})
     evidence_handoff = stage == "seed-runtime" and mode in {
-        "arm-input", "source-generation-start", "source-generation-stop", "source-generation-recover",
+        "source-generation-start", "source-generation-stop", "source-generation-recover",
         "source-generation-reboot-close",
-        "source-export", "source-export-reconcile",
     }
     if session_cleanup or seed_cleanup or evidence_handoff:
         value, environment = registered_manifest(backend, directory), None
@@ -596,10 +603,6 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
                     from devex_clone_seed_generation_reboot import preflight as reboot_preflight
 
                     reboot_preflight(backend, directory, seed_request)
-                if stage == "seed-runtime" and mode in {"source-export", "source-export-reconcile"}:
-                    from devex_clone_seed_export import preflight
-
-                    preflight(directory, mode)
                 try:
                     sources = current_execution_source(backend)
                 except Exception as error:

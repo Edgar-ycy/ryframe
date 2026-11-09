@@ -31,6 +31,15 @@ pub(super) const TOOL_FILES: &[&str] = &[
 
 pub(super) struct Built {
     pub(super) result: Value,
+    verification: Verification,
+}
+
+enum Verification {
+    Current(Box<Current>),
+    B0(Box<frontend_build::b0::Proof>),
+}
+
+struct Current {
     proof: frontend_build::Proof,
     tools: std::path::PathBuf,
     inventory: inventory::Inventory,
@@ -38,6 +47,15 @@ pub(super) struct Built {
 }
 impl Built {
     pub(super) fn verify(&self) -> Result<()> {
+        match &self.verification {
+            Verification::Current(current) => current.verify(),
+            Verification::B0(proof) => proof.verify(),
+        }
+    }
+}
+
+impl Current {
+    fn verify(&self) -> Result<()> {
         if inventory::capture(&self.tools)? != self.inventory {
             return Err("前端构建工具来源在后续构建窗口发生漂移".into());
         }
@@ -48,6 +66,28 @@ impl Built {
         }
         self.proof.verify()
     }
+}
+
+pub(super) fn run_b0(root: &Path, expected: &str) -> Result<Built> {
+    let root = source::repository(root)?;
+    if expected != frontend_build::b0::HEAD {
+        return Err("登记的 B0 适配仅允许原始固定前端提交".into());
+    }
+    let receipt = root.join("dist/.vite/restore-build.json");
+    let (action, proof) = match std::fs::symlink_metadata(&receipt) {
+        Ok(_) => (
+            "verified",
+            frontend_build::b0::validate(&root, None, expected)?,
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            ("built", frontend_build::b0::build(&root)?)
+        }
+        Err(error) => return Err(error.into()),
+    };
+    Ok(Built {
+        result: json!({"frontend_source":root,"frontend_receipt":receipt,"frontend_action":action}),
+        verification: Verification::B0(Box::new(proof)),
+    })
 }
 
 pub(super) fn run(
@@ -119,9 +159,11 @@ pub(super) fn run(
     proof.verify()?;
     Ok(Built {
         result: json!({"frontend_source":root,"frontend_receipt":receipt,"frontend_action":if absent {"built"} else {"verified"}}),
-        proof,
-        tools,
-        inventory: tools_before,
-        files,
+        verification: Verification::Current(Box::new(Current {
+            proof,
+            tools,
+            inventory: tools_before,
+            files,
+        })),
     })
 }

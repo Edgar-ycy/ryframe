@@ -33,7 +33,7 @@ mod producer;
 #[path = "runtime/ready.rs"]
 mod ready;
 #[path = "evidence/reference.rs"]
-mod reference;
+pub(in crate::recovery) mod reference;
 #[path = "evidence/reference_workflow/mod.rs"]
 pub(crate) mod reference_workflow;
 #[path = "runtime/resources.rs"]
@@ -50,8 +50,13 @@ mod stopped;
 #[path = "../../../tests/unit/recovery/source/evidence/tests.rs"]
 mod tests;
 
+pub(in crate::recovery) use images::saved_object_captures;
+pub(in crate::recovery) use images::{inspect_object, object_capture_result};
 pub(crate) use ready::policy::cache_transaction::cleanup as cleanup_source_cache;
 pub(crate) use running::history::cache_port::dispatch as cache_history;
+pub(in crate::recovery) use running::history::reboot::{
+    reboot_close, reboot_process_exited, reboot_status,
+};
 
 pub(crate) fn validate_copy_api_environment(args: &Value) -> Result<Value> {
     environment::copy_api(args)
@@ -147,6 +152,9 @@ fn require_write_authorization(request: &Value) -> Result<()> {
 fn dispatch(request: &Value) -> Result<Value> {
     let args = &request["arguments"];
     match request["operation"].as_str() {
+        Some("restore-business-proof") => {
+            crate::recovery::runtime::dataset_authority::business::request(args)
+        }
         Some("restore-dataset-authority") => {
             crate::recovery::runtime::dataset_authority::request(args)
         }
@@ -164,6 +172,10 @@ fn dispatch(request: &Value) -> Result<Value> {
         Some("source-runtime-stopped") => stopped::request(args),
         Some("copy-schema-catalog") => schema_catalog(args),
         Some("copy-database-observation") => database_observation(args),
+        Some("copy-saved-object-captures") => saved_object_captures(args),
+        Some("copy-source-generation") => {
+            crate::recovery::clone::native::export::proof::copy::request(args)
+        }
         Some("copy-side-inventory-capture") => {
             crate::recovery::clone::native::target_verify::database::protocol::request(args)
         }

@@ -33,7 +33,6 @@ pub(super) trait Port {
     ) -> Result<String> {
         self.command(program, args, log)
     }
-    fn ready(&mut self, url: &str) -> Result<bool>;
     fn sleep(&mut self, duration: Duration) -> Result<()>;
     fn storage(&mut self, table: &Value) -> Result<()>;
     fn databases(&mut self, frozen: &crate::ci::databases::snapshot::Frozen) -> Result<()>;

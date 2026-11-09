@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from devex_clone_source_proof import require_closed_port
-from restore_build import repository, validate_new_output, write_new
+from restore_build import repository
 from restore_reference_plan import validate_plan
 from restore_runtime_evidence import (
     HEX_40,
@@ -261,50 +261,6 @@ def verify_registration(
     return value, facts, (*documents, *inputs)
 
 
-def register_runtime(
-    backend: Path,
-    reference_path: Path,
-    target_path: Path,
-    output_path: Path,
-    *,
-    target_verifier=None,
-) -> dict:
-    backend = repository(backend, "恢复运行登记后端")
-    facts, inputs = registration_inputs(
-        backend, reference_path, target_path, target_verifier=target_verifier
-    )
-    observation = _observation(facts)
-    output = validate_new_output(output_path, backend)
-    runtime = Path(facts["runtime_directory"])
-    if output.is_relative_to(runtime):
-        raise ValueError("恢复运行登记不能写入需要证明为空的目标运行目录")
-    control = runtime_control_directory(backend)
-    operation = "register:" + facts["target_plan"]["sha256"]
-    with controller_lock(control, operation, REGISTRATION_LOCK):
-        repeated, repeated_inputs = registration_inputs(
-            backend, reference_path, target_path, target_verifier=target_verifier
-        )
-        if repeated != facts or _observation(repeated) != observation:
-            raise ValueError("取得 ownership 控制锁前恢复目标或零进程状态发生变化")
-        value = {
-            "format_version": 1,
-            "kind": "restore-runtime-registration",
-            "reference_plan": facts["reference_plan"],
-            "target_plan": facts["target_plan"],
-            "observation": observation,
-            "remote_writes": 0,
-        }
-        write_new(output, value, backend)
-        verified, current, documents = verify_registration(
-            backend, output, facts["target_plan"], target_verifier=target_verifier
-        )
-        if verified != value or current != facts:
-            raise ValueError("恢复运行登记写入后的绑定核验不一致")
-        for document in (*inputs, *repeated_inputs, *documents):
-            document.assert_unchanged()
-    return {"status": "runtime_registered_not_started", "registration": _descriptor(read_json_document(output))}
-
-
 def _recheck_context(
     backend: Path,
     registration_path: Path,
@@ -400,7 +356,3 @@ def registered_stopped_runtime(
             )
         finally:
             active = False
-
-
-def execute(args, backend: Path) -> dict:
-    return register_runtime(backend, args.plan, args.target_plan, args.output)

@@ -101,7 +101,7 @@ pub(super) fn detach_platform(args: &Value) -> Result<Value> {
     if let Some(environment) = &environment {
         environment.inherited()?;
     }
-    let pid = crate::process::spawn_detached(&executable, &[entry, &input])?;
+    let pid = crate::process::windows_detach::spawn_detached(&executable, &[entry, &input])?;
     Ok(json!(pid))
 }
 #[cfg(unix)]

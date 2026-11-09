@@ -3,6 +3,45 @@ use std::fs;
 use super::*;
 
 #[test]
+fn seed_bootstrap_requires_the_same_file_and_registered_bytes() {
+    let backend = portable_path(&crate::workspace::root_dir().canonicalize().unwrap());
+    let local = backend.join(".local-tests");
+    fs::create_dir_all(&local).unwrap();
+    let directory = tempfile::tempdir_in(local).unwrap();
+    let bootstrap = directory.path().join("bootstrap.json");
+    fs::write(&bootstrap, b"{}").unwrap();
+    let recorded = common::binding(&bootstrap).unwrap();
+    let selected = file_binding(&bootstrap, "fixture").unwrap();
+    require_seed_bootstrap(&backend, &selected, &recorded).unwrap();
+
+    #[cfg(windows)]
+    {
+        let mixed = PathBuf::from(
+            bootstrap
+                .to_str()
+                .unwrap()
+                .replace(".local-tests\\", ".local-tests/"),
+        );
+        let mixed = file_binding(&mixed, "fixture").unwrap();
+        assert_ne!(mixed["path"], recorded["path"]);
+        require_seed_bootstrap(&backend, &mixed, &recorded).unwrap();
+    }
+
+    let copy = directory.path().join("copy.json");
+    fs::copy(&bootstrap, &copy).unwrap();
+    let copy = file_binding(&copy, "fixture").unwrap();
+    assert!(require_seed_bootstrap(&backend, &copy, &recorded).is_err());
+
+    let mut stale = selected;
+    stale["sha256"] = json!("0".repeat(64));
+    assert!(require_seed_bootstrap(&backend, &stale, &recorded).is_err());
+
+    fs::write(&bootstrap, b"[]").unwrap();
+    let changed = file_binding(&bootstrap, "fixture").unwrap();
+    assert!(require_seed_bootstrap(&backend, &changed, &recorded).is_err());
+}
+
+#[test]
 fn fresh_request_keeps_legacy_projection_and_rejects_different_rustfs_tool() {
     let backend = portable_path(&crate::workspace::root_dir().canonicalize().unwrap());
     let local = backend.join(".local-tests");

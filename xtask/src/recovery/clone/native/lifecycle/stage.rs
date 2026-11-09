@@ -5,7 +5,6 @@ use serde_json::{Value, json};
 
 use super::super::export;
 use super::{
-    super::json as json_io,
     lock::{ProcessGuard, RunLock},
     manifest, source, state,
 };
@@ -13,7 +12,6 @@ use crate::{
     Result,
     cli::CloneStage,
     local_test_path::{LocalTestPathKind, validate_local_test_path},
-    process,
 };
 
 pub(crate) struct StageRequest<'a> {
@@ -27,10 +25,6 @@ pub(crate) struct StageRequest<'a> {
 pub(crate) trait StageRunner {
     fn preflight(&self, request: &StageRequest<'_>) -> Result<()>;
     fn execute(&self, request: &StageRequest<'_>) -> Result<Value>;
-}
-
-pub(crate) struct PythonRunner {
-    backend: PathBuf,
 }
 
 pub(crate) struct ExportRunner {
@@ -52,28 +46,6 @@ impl StageRunner for ExportRunner {
 
     fn execute(&self, request: &StageRequest<'_>) -> Result<Value> {
         export::execute(&self.backend, request)
-    }
-}
-
-impl PythonRunner {
-    pub(crate) fn new(backend: &Path) -> Self {
-        Self {
-            backend: backend.to_path_buf(),
-        }
-    }
-}
-
-impl StageRunner for PythonRunner {
-    fn preflight(&self, request: &StageRequest<'_>) -> Result<()> {
-        let value = invoke(&self.backend, request, "preflight")?;
-        if value.get("status").and_then(Value::as_str) != Some("stage_operation_preflight_ready") {
-            return Err("阶段预检未返回受控就绪结果".into());
-        }
-        Ok(())
-    }
-
-    fn execute(&self, request: &StageRequest<'_>) -> Result<Value> {
-        invoke(&self.backend, request, "run")
     }
 }
 
@@ -117,6 +89,11 @@ pub(crate) fn run_named(
     let execution = (|| {
         if stage_name == "cache-target"
             || stage_name == "post-copy" && matches!(mode, "register" | "prepare" | "amend")
+            || stage_name == "seed-runtime"
+                && matches!(
+                    mode,
+                    "source-export" | "source-export-reconcile" | "source-generation-reboot-close"
+                )
         {
             runner.preflight(&request)?;
         }
@@ -327,56 +304,13 @@ fn stage_manifest(
     mode: &str,
 ) -> Result<manifest::Manifest> {
     let path = run.join("manifest.json");
-    if state::resource_cleanup(stage, mode) {
+    if state::resource_cleanup(stage, mode)
+        || stage == "seed-runtime" && mode == "source-generation-reboot-close"
+    {
         manifest::registered(backend, &path)
     } else {
         manifest::load(backend, &path)
     }
-}
-
-pub(crate) fn invoke(backend: &Path, request: &StageRequest<'_>, operation: &str) -> Result<Value> {
-    let payload = protocol(request, operation)?;
-    let output = process::command_output_with_input(
-        backend,
-        "python",
-        &["-B", "tools/python/devex_clone.py", "--private-stdin"],
-        payload.as_bytes(),
-    )
-    .map_err(|error| -> String { format!("阶段资源编排子进程失败：{}", error) })?;
-    let value = json_io::parse_fragment(output.trim(), "阶段资源编排输出")?;
-    if !value.is_object() {
-        return Err("阶段资源编排输出必须为对象".into());
-    }
-    Ok(value)
-}
-
-pub(crate) fn protocol(request: &StageRequest<'_>, operation: &str) -> Result<String> {
-    let attempt = request.attempt;
-    if !matches!(operation, "preflight" | "run")
-        || (operation == "run") != attempt.is_some()
-        || attempt == Some(0)
-    {
-        return Err("阶段资源编排 operation 与 attempt 不匹配".into());
-    }
-    let value = json!({
-        "format_version": 1,
-        "kind": "ryframe-xtask-recovery-clone-stage",
-        "native_tool": crate::check::python_suite::native_tool_binding()?,
-        "request": {
-            "backend_dir": path_text(request.backend, "后端目录")?,
-            "run_dir": path_text(request.run_dir, "运行目录")?,
-            "stage": request.stage,
-            "mode": request.mode,
-            "operation": operation,
-            "attempt": attempt,
-            "write": operation == "run",
-        },
-    });
-    let payload = serde_json::to_string(&value)?;
-    if payload.len() > 32 * 1024 || payload.contains(['\r', '\n', '\0']) {
-        return Err("阶段资源编排私有协议过长或包含换行/NUL".into());
-    }
-    Ok(payload)
 }
 
 pub(crate) fn failure_type(error: &(dyn std::error::Error + 'static)) -> String {
@@ -432,9 +366,4 @@ fn safe_diagnostic(error: &(dyn std::error::Error + 'static)) -> Option<String> 
         return Some(error.to_string());
     }
     error.source().and_then(safe_diagnostic)
-}
-
-fn path_text<'a>(path: &'a Path, label: &str) -> Result<&'a str> {
-    path.to_str()
-        .ok_or_else(|| format!("{label}必须为 UTF-8").into())
 }

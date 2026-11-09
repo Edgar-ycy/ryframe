@@ -61,16 +61,21 @@ impl Context {
     }
     /// 复制后只读观察复用同一来源模型；不授予重新导出或来源登记资格。
     pub(crate) fn for_copy(backend: &Path, run: &Path, output: &Path) -> Result<Self> {
-        let loaded = manifest::load(backend, &run.join("manifest.json"))?;
-        let request_path = manifest::bound_file(
-            backend,
-            &loaded.value["source_request"],
-            "复制来源请求",
-            true,
-        )?;
+        let manifest = manifest::load(backend, &run.join("manifest.json"))?.value;
+        Self::from_copy_manifest(backend, run, output, manifest)
+    }
+
+    pub(super) fn from_copy_manifest(
+        backend: &Path,
+        run: &Path,
+        output: &Path,
+        manifest: Value,
+    ) -> Result<Self> {
+        let request_path =
+            manifest::bound_file(backend, &manifest["source_request"], "复制来源请求", true)?;
         let request = json_io::read(&request_path)?;
         validate_request(backend, &request)?;
-        let environment = load_environment(backend, &loaded.value["source_environment"])?;
+        let environment = load_environment(backend, &manifest["source_environment"])?;
         let execution_backend = execution_backend(backend, &request)?;
         let object_identity = super::super::s3::app_configuration::public_configuration(
             backend,
@@ -82,7 +87,7 @@ impl Context {
             output_dir: output.to_owned(),
             mode: "copy-observation".into(),
             attempt: 0,
-            manifest: loaded.value,
+            manifest,
             request,
             object_identity,
             request_path,
@@ -150,6 +155,28 @@ impl Context {
         source_environment_binding: &Value,
     ) -> Result<Self> {
         let before = registration_attempt(run, attempt)?;
+        let context = Self::from_bound_seed(
+            backend,
+            run,
+            attempt,
+            "source-register",
+            source_request_binding,
+            source_environment_binding,
+        )?;
+        if registration_attempt(run, attempt)? != before {
+            return Err("来源登记上下文读取期间阶段状态变化".into());
+        }
+        Ok(context)
+    }
+
+    pub(crate) fn from_bound_seed(
+        backend: &Path,
+        run: &Path,
+        attempt: u64,
+        mode: &str,
+        source_request_binding: &Value,
+        source_environment_binding: &Value,
+    ) -> Result<Self> {
         let manifest_path = run.join("manifest.json");
         let loaded = manifest::load(backend, &manifest_path)?;
         if loaded.value.get("copy_stage").and_then(Value::as_str) != Some("source_to_seed") {
@@ -160,10 +187,7 @@ impl Context {
         let request = json_io::read(&request_path)?;
         validate_request(backend, &request)?;
         let environment = load_environment(backend, source_environment_binding)?;
-        if environment.len() != 1 || environment.get("APP_ENV").map(String::as_str) != Some("test")
-        {
-            return Err("来源登记环境必须仅包含 APP_ENV=test".into());
-        }
+        super::super::seed::runtime_model::validate_api_environment(backend, &environment)?;
         let execution_backend = execution_backend(backend, &request)?;
         let object_identity = super::super::s3::app_configuration::public_configuration(
             backend,
@@ -172,17 +196,14 @@ impl Context {
         manifest::bound_file(backend, source_request_binding, "派生源请求", true)?;
         manifest::bound_file(backend, source_environment_binding, "来源环境", true)?;
         let after = manifest::load(backend, &manifest_path)?;
-        if after.digest != loaded.digest
-            || after.value != loaded.value
-            || registration_attempt(run, attempt)? != before
-        {
-            return Err("来源登记上下文读取期间清单或阶段状态变化".into());
+        if after.digest != loaded.digest || after.value != loaded.value {
+            return Err("派生来源上下文读取期间清单变化".into());
         }
         Ok(Self {
             backend: backend.to_path_buf(),
             run_dir: run.to_path_buf(),
             output_dir: run.join(format!("e{attempt:04}")),
-            mode: "source-register".into(),
+            mode: mode.into(),
             attempt,
             manifest: loaded.value,
             request,
@@ -455,7 +476,7 @@ fn local_path(backend: &Path, value: &str, kind: LocalTestPathKind) -> Result<Pa
         .map_err(|error| format!("源导出本地路径无效：{error}").into())
 }
 
-fn validate_name(value: &str) -> Result<&str> {
+pub(super) fn validate_name(value: &str) -> Result<&str> {
     if Regex::new(r"^[a-z0-9][a-z0-9_-]{2,47}$")?.is_match(value) {
         Ok(value)
     } else {

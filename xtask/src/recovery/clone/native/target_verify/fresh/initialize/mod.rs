@@ -99,7 +99,7 @@ fn run<T: Transport>(
             run: active,
         };
         let observe_generation = |publish| resources.generation_owned(Some(&owner), publish);
-        let observer = super::super::storage::SystemObserver::new(transport);
+        let observer = super::super::storage::SystemObserver;
         let window = Window {
             registration,
             inputs,

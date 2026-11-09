@@ -133,6 +133,11 @@ pub(crate) fn validate_inputs(backend: &Path, stage: &StageRequest<'_>) -> Resul
     Ok(())
 }
 
+pub(super) fn validate_live_inputs(backend: &Path, stage: &StageRequest<'_>) -> Result<()> {
+    let inputs = read_inputs(backend, stage)?;
+    super::storage::redis_layout::require_windows(&inputs.request["storage"]["redis"])
+}
+
 fn read_inputs(backend: &Path, stage: &StageRequest<'_>) -> Result<Inputs> {
     if stage.stage != "target-verify" || stage.mode != "run" {
         return Err("target-verify 只支持首次 run，不接受 reconcile 或 resume".into());

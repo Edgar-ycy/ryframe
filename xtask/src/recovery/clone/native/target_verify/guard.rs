@@ -1,9 +1,15 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::Mutex,
 };
 
-use super::super::{digest, lifecycle::lock::ProcessGuard, resources::common};
+use super::super::{
+    copy_owner::{Owner, Role},
+    digest,
+    lifecycle::lock::ProcessGuard,
+    resources::common,
+};
 use crate::{
     Result,
     local_test_path::{LocalTestPathKind, validate_absolute_path, validate_local_test_path},
@@ -27,7 +33,7 @@ struct FrozenEntry {
     directory: bool,
     identity: Identity,
     sha256: Option<String>,
-    handle: Handle,
+    handle: Mutex<Handle>,
 }
 
 impl FrozenEntry {
@@ -49,7 +55,7 @@ impl FrozenEntry {
             directory,
             identity: before,
             sha256,
-            handle,
+            handle: Mutex::new(handle),
         };
         entry.check()?;
         Ok(entry)
@@ -66,7 +72,8 @@ impl FrozenEntry {
     }
 
     fn check_identity(&self) -> Result<()> {
-        if handle_identity(&self.handle, self.directory)? != self.identity
+        let handle = self.handle.lock().map_err(|_| "目标保护句柄检查被中断")?;
+        if handle_identity(&handle, self.directory)? != self.identity
             || path_identity(&self.path, self.directory)? != self.identity
         {
             return Err("目标输入的内核身份、链接数量或文件内容发生变化".into());
@@ -115,42 +122,116 @@ pub(crate) struct Generation {
     lock: Option<FrozenEntry>,
     guard_file: FrozenEntry,
     process: ProcessGuard,
+    copy: Option<CopyLock>,
+}
+
+struct CopyLock {
+    owner: Owner,
+    record: serde_json::Value,
+    receipt: Option<FrozenEntry>,
 }
 
 impl Generation {
     pub(crate) fn acquire(backend: &Path, target: &Path) -> Result<Self> {
+        Self::acquire_inner(backend, target, None)
+    }
+
+    pub(in crate::recovery::clone::native) fn acquire_copy(owner: Owner) -> Result<Self> {
+        let backend = owner.ledger_binding().0.to_path_buf();
+        let target = owner
+            .lock_path(Role::Target)
+            .parent()
+            .ok_or("复制锁缺少固定目标目录")?
+            .to_path_buf();
+        Self::acquire_inner(&backend, &target, Some(owner))
+    }
+
+    fn acquire_inner(backend: &Path, target: &Path, owner: Option<Owner>) -> Result<Self> {
         validate_local_test_path(target, backend, LocalTestPathKind::ExistingDirectory)?;
         let root = FrozenEntry::open(target, true, false)?;
         let lock_path = target.join("initialize.lock");
         absent_lock(&lock_path)?;
-        let process = ProcessGuard::acquire_named(target, "copy-target.guard")?;
-        let guard_file = FrozenEntry::open(&target.join("copy-target.guard"), false, true)?;
+        let guard_name = Role::Target.guard_name();
+        let process = ProcessGuard::acquire_named(target, guard_name)?;
+        let guard_file = FrozenEntry::open(&target.join(guard_name), false, true)?;
         if guard_file.identity.links != 1 {
             return Err("目标控制互斥文件不能存在额外硬链接".into());
         }
         absent_lock(&lock_path)?;
-        fs::create_dir(&lock_path)?;
+        let copy = match owner {
+            Some(owner) => {
+                let record = owner.claim_lock(Role::Target, &process)?;
+                let receipt = FrozenEntry::open(&lock_path.join("owner.json"), false, false)?;
+                Some(CopyLock {
+                    owner,
+                    record,
+                    receipt: Some(receipt),
+                })
+            }
+            None => {
+                fs::create_dir(&lock_path)?;
+                None
+            }
+        };
         let lock = FrozenEntry::open(&lock_path, true, false)?;
         let generation = Self {
             root,
             lock: Some(lock),
             guard_file,
             process,
+            copy,
         };
         generation.check()?;
         Ok(generation)
+    }
+
+    pub(in crate::recovery::clone::native) fn copy_session(
+        &self,
+    ) -> Result<(&Owner, &ProcessGuard, &serde_json::Value)> {
+        self.check()?;
+        let copy = self.copy.as_ref().ok_or("当前目标锁没有登记复制会话")?;
+        Ok((&copy.owner, &self.process, &copy.record))
+    }
+
+    pub(super) fn carries_copy_owner(&self) -> bool {
+        self.copy.is_some()
     }
 
     pub(crate) fn check(&self) -> Result<()> {
         self.root.check()?;
         self.guard_file.check()?;
         self.process.check()?;
-        self.lock.as_ref().ok_or("目标初始化目录锁已释放")?.check()
+        self.lock
+            .as_ref()
+            .ok_or("目标初始化目录锁已释放")?
+            .check()?;
+        self.check_copy_lock()
+    }
+
+    fn check_copy_lock(&self) -> Result<()> {
+        if let Some(copy) = &self.copy {
+            copy.receipt
+                .as_ref()
+                .ok_or("复制锁持有人保护已释放")?
+                .check()?;
+            copy.owner
+                .check_live_lock(Role::Target, &self.process, &copy.record)?;
+        }
+        Ok(())
     }
 
     pub(crate) fn protects(&self, target: &Path) -> Result<()> {
         if self.root.path != target {
             return Err("初始化持有者不属于当前目标目录".into());
+        }
+        self.check()
+    }
+
+    pub(in crate::recovery::clone::native) fn check_initialization_lock(&self) -> Result<()> {
+        self.check()?;
+        let lock = self.lock.as_ref().ok_or("目标初始化目录锁已释放")?;
+        if self.copy.is_some() || fs::read_dir(&lock.path)?.next().transpose()?.is_some() {
+            return Err("目标初始化锁含未知成员或属于复制控制器".into());
         }
         self.check()
     }
@@ -161,8 +242,9 @@ impl Generation {
         // Windows 目录保护句柄不共享删除权限，目标根和初始化锁不能在本代次中被替换。
         // 阶段边界仍调用 check 完整核对所有内核身份。
         #[cfg(not(windows))]
-        self.check()?;
-        Ok(())
+        return self.check();
+        #[cfg(windows)]
+        self.check_copy_lock()
     }
 
     pub(crate) fn finish<T>(self, result: Result<T>) -> Result<T> {
@@ -179,10 +261,15 @@ impl Generation {
             let lock = self.lock.take().ok_or("目标初始化目录锁已释放")?;
             let path = lock.path.clone();
             drop(lock);
-            fs::remove_dir(path)?;
-            self.root.check()?;
-            self.guard_file.check()?;
-            self.process.check()
+            match &mut self.copy {
+                Some(copy) => {
+                    drop(copy.receipt.take().ok_or("复制锁持有人保护已释放")?);
+                    copy.owner
+                        .release_lock(Role::Target, &self.process, &copy.record)?;
+                }
+                None => fs::remove_dir(path)?,
+            }
+            self.after_unlock()
         })();
         match (result, released) {
             (Ok(value), Ok(())) => {
@@ -210,7 +297,13 @@ impl Generation {
         }
         self.root.check()?;
         self.guard_file.check()?;
-        self.process.check()
+        self.process.check()?;
+        if let Some(copy) = &self.copy
+            && copy.owner.verify_lock(Role::Target)?.is_some()
+        {
+            return Err("登记目标锁尚未释放，不能发布复制结果".into());
+        }
+        Ok(())
     }
 }
 

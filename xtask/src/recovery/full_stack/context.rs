@@ -2,10 +2,17 @@ use crate::{
     Result,
     ci::databases::snapshot::Frozen,
     local_test_path::{LocalTestPathKind, validate_absolute_path},
-    recovery::clone::native::json as documents,
+    recovery::{
+        clone::native::json as documents,
+        fixture_control::{artifact::runtime, portable_path},
+    },
 };
 use serde_json::{Value, json};
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    io::ErrorKind,
+    path::{Path, PathBuf},
+};
 
 pub(crate) struct Context {
     pub root: PathBuf,
@@ -63,6 +70,46 @@ impl Context {
         crate::rate_limit::load_app_table(&self.root, Some(&self.output.join("config")), "test")
             .map_err(|_| "无法读取已绑定全栈配置，不回显配置行".into())
             .and_then(|table| Ok(serde_json::to_value(table)?))
+    }
+
+    pub(super) fn register_runtime(&self) -> Result<Value> {
+        validate_absolute_path(&self.output, LocalTestPathKind::ExistingDirectory)?;
+        let present = |name| -> Result<bool> {
+            let path = self.output.join(name);
+            match fs::symlink_metadata(&path) {
+                Ok(_) => {
+                    validate_absolute_path(&path, LocalTestPathKind::ExistingFile)?;
+                    Ok(true)
+                }
+                Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+                Err(error) => Err(format!("无法核验全栈收据 {name}：{error}").into()),
+            }
+        };
+        let runtime_present = present("runtime.json")?;
+        if runtime_present != present("runtime-evidence.json")? {
+            return Err("全栈运行登记只存在一份收据；保留现场，禁止补写或自动重放".into());
+        }
+        validate_absolute_path(
+            &self.output.join("source-pair.json"),
+            LocalTestPathKind::ExistingFile,
+        )?;
+        let selected = |name| -> Result<PathBuf> {
+            let path = self.output.join(name);
+            validate_absolute_path(&path, LocalTestPathKind::ExistingDirectory)?;
+            Ok(portable_path(&fs::canonicalize(path)?))
+        };
+        let api = selected("config")?;
+        let worker = selected("worker-config")?;
+        if !runtime_present {
+            return runtime::register(&self.root, &self.output, &api, &worker);
+        }
+        let receipt = runtime::verify(&self.root, &self.output)?.receipt;
+        if receipt["api_config_dir"].as_str().map(Path::new) != Some(api.as_path())
+            || receipt["worker_config_dir"].as_str().map(Path::new) != Some(worker.as_path())
+        {
+            return Err("全栈运行收据未绑定当前选定的 API 与 Worker 配置目录；保留现场".into());
+        }
+        Ok(receipt)
     }
 
     pub fn api_url(&self) -> Result<String> {

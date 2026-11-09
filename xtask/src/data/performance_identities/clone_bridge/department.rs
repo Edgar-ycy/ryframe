@@ -73,7 +73,7 @@ impl Controller {
         let name = department_name(&plan)?;
         let receipt = json!({
             "scope_id":plan["environment"]["scope_id"],
-            "tenant_ids":targets.keys().cloned().collect::<Vec<_>>(),
+            "tenant_ids":request["tenant_ids"],
             "department_name":name,
             "template_principals":principals,
         });

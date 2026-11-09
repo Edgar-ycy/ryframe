@@ -232,9 +232,9 @@ class ExternalTools:
                    "--skip-column-names", "--binary-mode", "--default-character-set=utf8mb4"]
         return command, self.mysql_environment()
 
-    def mysql(self, database: dict, sql: str) -> str:
+    def mysql(self, database: dict, sql: str | bytes) -> str:
         command, environment = self._mysql_command(database)
-        result = self.execute(command, data=sql.encode(), env=environment)
+        result = self.execute(command, data=sql.encode() if isinstance(sql, str) else sql, env=environment)
         return result.stdout.decode("utf-8").strip()
 
     @staticmethod
@@ -465,14 +465,20 @@ class ExternalTools:
         normalize_dump(raw, output, set(tables))
         raw.unlink()
 
-    def restore_database(self, database: dict, tables: list[str], source: Path) -> None:
-        validate_dump(source, set(tables))
+    def restore_database(self, database: dict, tables: list[str], source: Path, expected: dict) -> None:
+        validated = validate_dump(source, set(tables))
+        if type(expected.get("bytes")) is not int or validated != expected:
+            raise ValueError("已核验 SQL 转储与原备份产物绑定不同")
+        with open(filesystem_path(source), "rb") as stream:
+            payload = stream.read(expected["bytes"] + 1)
+        observed = {"bytes": len(payload), "sha256": hashlib.sha256(payload).hexdigest()}
+        if observed != expected:
+            raise ValueError("SQL 转储在核验后发生变化，拒绝提交")
         # 初始化后的目标种子与业务数据由该备份替换；ownership 与登记表不在 tables 中。
-        sql = "SET SESSION FOREIGN_KEY_CHECKS=0; SET SESSION time_zone='+00:00'; "
-        sql += "SET SESSION SQL_MODE='NO_AUTO_VALUE_ON_ZERO'; START TRANSACTION;\n"
-        sql += "\n".join(f"DELETE FROM `{identifier(table)}`;" for table in tables) + "\n"
-        sql += source.read_text(encoding="utf-8") + "\nCOMMIT;\n"
-        self.mysql(database, sql)
+        prefix = "SET SESSION FOREIGN_KEY_CHECKS=0; SET SESSION time_zone='+00:00'; "
+        prefix += "SET SESSION SQL_MODE='NO_AUTO_VALUE_ON_ZERO'; START TRANSACTION;\n"
+        prefix += "\n".join(f"DELETE FROM `{identifier(table)}`;" for table in tables) + "\n"
+        self.mysql(database, b"".join((prefix.encode(), payload, b"\nCOMMIT;\n")))
 
 
 def normalize_dump(raw: Path, output: Path, tables: set[str]) -> None:
@@ -483,12 +489,12 @@ def normalize_dump(raw: Path, output: Path, tables: set[str]) -> None:
     ))
 
 
-def validate_dump(path: Path, tables: set[str]) -> None:
-    native_response(*native_invoke(
+def validate_dump(path: Path, tables: set[str]) -> dict:
+    return native_response(*native_invoke(
         "__source-evidence", {"operation": "reference-sql-dump", "write": False,
             "arguments": {"path": str(path), "tables": sorted(tables)}},
         subprocess.run, may_write=False,
-    ))
+    ))[0]["value"]
 
 
 def object_index(root: Path, objects: dict, artifacts: list[dict]) -> dict:

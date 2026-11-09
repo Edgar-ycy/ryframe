@@ -5,7 +5,7 @@ use crate::{
     recovery::clone::native::{
         cache, json as document,
         resources::{common, storage::registered},
-        seed::protocol::guards,
+        seed::{arm_input::history::Active, protocol::guards},
     },
 };
 use serde_json::{Value, json};
@@ -45,14 +45,65 @@ pub(in crate::recovery::source::evidence) fn predecessor(
     run: &Path,
     state: &Value,
 ) -> Result<Value> {
+    predecessor_for_arm(backend, run, state, None)
+}
+
+pub(in crate::recovery::source::evidence) fn predecessor_for_arm(
+    backend: &Path,
+    run: &Path,
+    state: &Value,
+    arm: Option<&Active<'_>>,
+) -> Result<Value> {
+    predecessor_bound(backend, run, state, false, arm)
+}
+
+pub(in crate::recovery::source::evidence) fn predecessor_live(
+    backend: &Path,
+    run: &Path,
+    state: &Value,
+) -> Result<Value> {
+    let source = predecessor_bound(backend, run, state, true, None)?;
+    guards::rebind::live::quiet(
+        backend,
+        &json!({"registration":source["registration"],"request":source["request"]}),
+    )?;
+    Ok(source)
+}
+
+fn predecessor_bound(
+    backend: &Path,
+    run: &Path,
+    state: &Value,
+    live: bool,
+    arm: Option<&Active<'_>>,
+) -> Result<Value> {
     let selected = super::facts::model("select-rebind", json!({"attempts":state["attempts"]}))?;
     let result = common::read_bound(backend, &selected["record"]["result"], "来源重绑定结果")?;
-    let mut source = cache::binding::source::load(backend, &result["review_successor"])?;
+    let source = cache::binding::source::load(backend, &result["review_successor"])?;
     if source["directory"] != json!(run) {
         return Err("源运行代次不属于同一原复制账本".into());
     }
-    let descriptor = &result["source_registration"];
-    let history = resolution::inspect(backend, run, state, descriptor)?;
+    resolve_published_storage(
+        backend,
+        run,
+        state,
+        &result["source_registration"],
+        source,
+        live,
+        arm,
+    )
+}
+
+pub(in crate::recovery::source::evidence) fn resolve_published_storage(
+    backend: &Path,
+    run: &Path,
+    state: &Value,
+    descriptor: &Value,
+    mut source: Value,
+    live: bool,
+    arm: Option<&Active<'_>>,
+) -> Result<Value> {
+    let history = resolution::inspect(backend, run, state, descriptor, arm)?;
     let selected = model(
         "resolve-plan",
         json!({"attempts":state["attempts"],"later":history["later"]}),
@@ -71,11 +122,16 @@ pub(in crate::recovery::source::evidence) fn predecessor(
     } else {
         json!({"storage":history["segment"]["storage"],"phase":history["segment"]["phase"]})
     };
-    let effective = model(
-        "resolve-storage",
-        json!({"original":original,"rebound":rebound,
-        "registered":registered,"segment":segment,"live":false,"current":null}),
-    )?;
+    let mut args = json!({"original":original,"rebound":rebound,
+        "registered":registered,"segment":segment,"live":false,"current":null});
+    let effective = model("resolve-storage", args.clone())?;
+    if live {
+        args["live"] = json!(true);
+        args["current"] = effective["effective"].clone();
+        model("resolve-storage", args.clone())?;
+        args["current"] = json!(registered::current(backend, run, CloneSide::Target)?);
+        model("resolve-storage", args)?;
+    }
     source["storage"]["storage"] = effective["effective"].clone();
     source["source_rebind"] = receipt;
     Ok(source)

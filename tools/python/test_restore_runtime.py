@@ -151,10 +151,12 @@ class RestoreRuntimeTests(unittest.TestCase):
                 self.root / f"{role}.json",
                 {"format_version": 1, "role": role, "scope_id": authority["scope_id"], "identity": identity},
             )
+        frontend_program = self.root / "registered-frontend.exe"
+        frontend_program.write_bytes(b"fixture native frontend")
         frontend_identity = {
             "pid": 44,
             "started": "created-frontend",
-            "executable": str(Path(sys.executable).resolve()),
+            "executable": str(frontend_program),
         }
         self.identities[frontend_identity["pid"]] = frontend_identity
         self.write_json(

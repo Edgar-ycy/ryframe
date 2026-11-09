@@ -86,7 +86,7 @@ class MonitoringAuthorityTests(unittest.TestCase):
         }
         launch_request.update(
             {
-                "format_version": 1,
+                "format_version": 2,
                 "kind": "restore-runtime-launch-request",
                 "environment": {
                     "document": {"path": "C:/evidence/environment.json", "bytes": 2, "sha256": "e" * 64},

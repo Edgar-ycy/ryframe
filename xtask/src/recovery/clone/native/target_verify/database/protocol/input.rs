@@ -85,7 +85,11 @@ impl Inputs {
         };
         model::databases(&context)?;
         common::bound_file(evidence, &args["maintenance"], "库存维护构建")?;
-        super::super::binding::source_configuration(&context, Some(&args["configuration"]))?;
+        super::super::binding::source_configuration(
+            &context,
+            Some(&args["configuration"]),
+            self.side,
+        )?;
         if args["configuration"] != plan[self.side.as_str()]["s3"]["configuration"] {
             return Err("库存配置必须与所选侧的原文件配置绑定一致".into());
         }

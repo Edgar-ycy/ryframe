@@ -13,8 +13,10 @@ use std::{
     time::Duration,
 };
 
+pub(super) const QUOTA_PHASE: &str = "quota";
+
 pub(super) fn inspect(plan: &Value, phase: &str) -> Result<(Value, PathBuf)> {
-    if !matches!(phase, "apply" | "verify") {
+    if !matches!(phase, "apply" | "verify" | QUOTA_PHASE) {
         return Err("身份环境检查阶段无效".into());
     }
     let backend = Path::new(text(&plan["environment"], "backend_dir")?);
@@ -211,9 +213,16 @@ pub(super) fn quota(row: &Value, group: &Value, environment: &Value, phase: &str
     let users = row["users"].as_u64().ok_or("实际用户计数无效")?;
     let roles = row["roles"].as_u64().ok_or("实际角色计数无效")?;
     let role_max = row["max_roles"].as_u64().ok_or("实际角色配额无效")?;
+    let current_maximum = row["max_users"].as_u64();
+    let limits_match = if phase == QUOTA_PHASE {
+        // 配额流程自己对照真实前像与计划目标，仅在已确认的应用阶段增加配额。
+        current_maximum.is_some_and(|value| value > 0)
+    } else {
+        current_maximum == Some(maximum)
+    };
     if row["tenant_id"] != group["tenant_id"]
         || row["status"] != "enabled"
-        || row["max_users"].as_u64() != Some(maximum)
+        || !limits_match
         || maximum
             .checked_sub(users)
             .is_none_or(|space| space < required)

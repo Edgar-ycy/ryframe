@@ -25,6 +25,9 @@ const UUID: &str = "11111111-1111-1111-1111-111111111111";
 #[path = "target_config_contract.rs"]
 mod config_contract;
 
+#[path = "target_relationship_contract.rs"]
+mod relationship_contract;
+
 struct Fixture {
     backend: PathBuf,
     local: PathBuf,

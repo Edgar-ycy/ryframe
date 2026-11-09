@@ -84,6 +84,9 @@ def history(directory: Path, state: dict, descriptor: dict, *, current: int | No
 
             if not reconciles_failed_export(directory, state, action["origin"], current, descriptor):
                 raise ValueError("seed 发布后存在失败或未收尾阶段")
+        elif kind == "arm-prefix":
+            guard("arm-prefix-history", {"run": str(directory), "record": action["record"], "source": descriptor},
+                  backend=root, label="已发布 ARM 失败前缀")
         else:
             raise ValueError("seed 重绑定模型返回未知证明任务")
     return planned["later"]

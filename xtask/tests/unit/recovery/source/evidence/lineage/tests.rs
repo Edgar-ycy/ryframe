@@ -524,6 +524,31 @@ fn same_database_names_on_different_servers_are_distinct_and_aliases_cannot_dupl
 }
 
 #[test]
+fn full_business_inventory_can_have_no_probe_without_changing_the_business_mapping() {
+    let f = Fixture::new();
+    let mut copy = f.args["copy_plan"].clone();
+    let mut image = f.args["verified_image"].clone();
+    let historical = projection::objects(&f.dataset, &copy, &image).unwrap();
+    let probe = copy["objects"].as_array_mut().unwrap().pop().unwrap();
+    let key = probe["target_key"].as_str().unwrap();
+    assert_eq!(historical["verified_objects"], 257);
+    assert_eq!(historical["probe"]["target_key"], key);
+    assert_eq!(historical["probe"]["sha256"], probe["artifact"]["sha256"]);
+    assert!(projection::objects(&f.dataset, &copy, &image).is_err());
+    image["image"]["objects"]["uploads"]
+        .as_object_mut()
+        .unwrap()
+        .remove(key)
+        .unwrap();
+    let current = projection::objects(&f.dataset, &copy, &image).unwrap();
+    assert_eq!(current["verified_objects"], 256);
+    assert_eq!(current["probe"], Value::Null);
+    for field in ["business_objects", "business_bytes", "mapping_sha256"] {
+        assert_eq!(current[field], historical[field]);
+    }
+}
+
+#[test]
 fn a_second_fully_planned_probe_is_rejected_even_when_the_complete_inventory_matches() {
     let f = Fixture::new();
     let mut copy = f.args["copy_plan"].clone();

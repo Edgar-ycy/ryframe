@@ -3,10 +3,12 @@ use super::clone::native::source;
 use crate::Result;
 use serde_json::{Value, json};
 use std::{fmt, path::Path};
+#[path = "frontend_build/b0.rs"]
+pub(crate) mod b0;
 #[path = "frontend_build/configuration.rs"]
 mod configuration;
 #[path = "frontend_build/files.rs"]
-mod files;
+pub(super) mod files;
 #[path = "frontend_build/model.rs"]
 mod model;
 #[path = "frontend_build/protocol.rs"]
@@ -151,6 +153,17 @@ pub(crate) fn recovery_request(arguments: &Value) -> Result<Value> {
         "validate" => {
             let inventory = (!arguments["inventory"].is_null()).then_some(&arguments["inventory"]);
             let proof = validate(root, inventory, expected)?;
+            proof.verify()?;
+            Ok(json!({"inventory":proof.inventory,"receipt":proof.receipt}))
+        }
+        "receipt-b0" => {
+            b0::receipt(&arguments["value"])?;
+            Ok(arguments["value"].clone())
+        }
+        "validate-b0" => {
+            let head = expected.ok_or_else(|| fail("B0 核验缺少原始精确提交"))?;
+            let inventory = (!arguments["inventory"].is_null()).then_some(&arguments["inventory"]);
+            let proof = b0::validate(root, inventory, head)?;
             proof.verify()?;
             Ok(json!({"inventory":proof.inventory,"receipt":proof.receipt}))
         }

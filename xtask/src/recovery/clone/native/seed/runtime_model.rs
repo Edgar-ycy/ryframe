@@ -7,6 +7,7 @@ use crate::{
 };
 use serde_json::{Value, json};
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -46,16 +47,15 @@ pub(crate) fn inputs(backend: &Path, run: &Path) -> Result<Inputs> {
     if result["status"] != "seed_runtime_prepared" || result["handoff"] != handoff_binding {
         return Err("seed runtime 尚未通过外层准备收尾".into());
     }
-    let private = common::read_bound(
-        backend,
-        &post.request["api_environment"],
-        "seed API 环境登记",
-    )?;
-    document::exact(&private, &["environment"], "seed API 环境登记")?;
-    let environment = private["environment"].clone();
-    if environment != json!({"APP_ENV":"test"}) {
-        return Err("seed API 环境只能选择 APP_ENV=test，其他配置必须使用绑定文件".into());
+    if handoff["api_environment"] != post.request["api_environment"] {
+        return Err("seed 运行环境不同于已登记原 API 环境".into());
     }
+    let manifest = common::read_bound(
+        backend,
+        &registered.value["run_manifest"],
+        "seed 原运行清单",
+    )?;
+    let environment = api_environment(backend, &manifest, &post)?;
     registered.assert_unchanged(backend, true)?;
     if common::binding(&handoff_path)? != handoff_binding || state::load(run, false)? != saved {
         return Err("seed 运行交接或阶段结果在读取期间变化".into());
@@ -65,6 +65,43 @@ pub(crate) fn inputs(backend: &Path, run: &Path) -> Result<Inputs> {
         handoff,
         environment,
     })
+}
+
+pub(in crate::recovery::clone::native) fn api_environment(
+    backend: &Path,
+    manifest: &Value,
+    post: &history::Post,
+) -> Result<Value> {
+    let initial = common::environment(backend, &manifest["target_environment"])?;
+    let api = common::environment(backend, &post.request["api_environment"])?;
+    let value = serde_json::to_value(&api)?;
+    crate::recovery::source::evidence::validate_copy_api_environment(
+        &json!({"initial":initial,"api":value}),
+    )?;
+    validate_api_environment(backend, &api)?;
+    Ok(value)
+}
+
+/// 只接受固定应用选择和已配对的私有操作系统临时目录。
+pub(in crate::recovery::clone::native) fn validate_api_environment(
+    backend: &Path,
+    environment: &BTreeMap<String, String>,
+) -> Result<()> {
+    if environment.get("APP_ENV").map(String::as_str) != Some("test")
+        || environment
+            .keys()
+            .any(|key| !matches!(key.as_str(), "APP_ENV" | "TEMP" | "TMP"))
+    {
+        return Err("seed 来源环境只接受 APP_ENV=test 和原登记的 TEMP/TMP".into());
+    }
+    match (environment.get("TEMP"), environment.get("TMP")) {
+        (None, None) => Ok(()),
+        (Some(temp), Some(tmp)) if temp == tmp && !temp.contains(['\r', '\n']) => {
+            common::local_directory(backend, Path::new(temp), "seed 原登记临时目录")?;
+            Ok(())
+        }
+        _ => Err("seed TEMP/TMP 必须属于同一原登记临时目录".into()),
+    }
 }
 
 pub(crate) fn stopped(runtime: &Path, handoff: &Value) -> Result<Value> {

@@ -351,6 +351,37 @@ fn quota_requires_active_exact_limits_placement_and_current_capacity() {
 }
 
 #[test]
+fn quota_bridge_observes_different_limits_while_identity_keeps_exact_limits() {
+    use super::inspection::{QUOTA_PHASE, quota};
+
+    let fixture = Fixture::new();
+    let environment = &fixture.plan["environment"];
+    let group = &fixture.plan["groups"][1];
+    let before = json!({
+        "tenant_id":group["tenant_id"],"status":"enabled","max_users":900,
+        "users":1,"roles":1,"max_roles":10,"target_key":"shared","placement_state":"active",
+    });
+    quota(&before, group, environment, QUOTA_PHASE).unwrap();
+    assert!(quota(&before, group, environment, "verify").is_err());
+    assert!(quota(&before, group, environment, "apply").is_err());
+    for (field, value) in [
+        ("tenant_id", json!("unregistered")),
+        ("status", json!("disabled")),
+        ("max_users", json!(0)),
+        ("max_users", json!("900")),
+        ("users", json!(1001)),
+        ("roles", json!("1")),
+        ("max_roles", json!("10")),
+        ("target_key", json!("other")),
+        ("placement_state", json!("maintenance")),
+    ] {
+        let mut invalid = before.clone();
+        invalid[field] = value;
+        assert!(quota(&invalid, group, environment, QUOTA_PHASE).is_err());
+    }
+}
+
+#[test]
 fn another_plans_started_ledger_is_preserved_without_any_state_rewrite() {
     let mut fixture = Fixture::new();
     fs::create_dir(fixture.root()).unwrap();

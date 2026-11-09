@@ -467,6 +467,19 @@ def predecessor_request_binding(backend: Path, request: dict, predecessor: dict)
     return result["review"], result["selected"]
 
 
+def review_successor_binding(backend: Path, descriptor: dict) -> dict:
+    return _native("review-successor", backend, descriptor=descriptor)
+
+
+def fixture_arm_storage(backend: Path, registration: dict, binding: dict | None,
+                        *, active: bool) -> dict | None:
+    result = _native("fixture-arm-storage", backend, registration=registration,
+                     binding=binding, active=active)
+    if set(result) != {"binding"} or (result["binding"] is not None and not isinstance(result["binding"], dict)):
+        raise ValueError("原生 arm 夹具存储响应无效；保留现场，不重放")
+    return result["binding"]
+
+
 def execution_backend(backend: Path, request: dict) -> tuple[Path, dict]:
     """由同一原生权威核验当前、生成或独立发布执行来源。"""
     result = _native("execution-backend", backend, request=request)

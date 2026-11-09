@@ -26,6 +26,8 @@ use std::path::{Path, PathBuf};
 
 #[path = "observation/recovery.rs"]
 mod recovery;
+#[path = "observation/retirement.rs"]
+pub(super) mod retirement;
 
 pub(super) struct Runner<'a> {
     pub options: &'a CloneRuntimeOptions,
@@ -41,11 +43,10 @@ impl StageRunner for Runner<'_> {
         {
             return Err("已监督API控制必须绑定当前固定target操作".into());
         }
-        super::guard::absent(&request.run_dir.join("seed-runtime.json"))?;
         if self.options.roles != [CloneRole::Api] {
             return Err("复制后交接只允许API，Worker必须保持停止".into());
         }
-        Ok(())
+        retirement::preflight(request.backend, request.run_dir)
     }
 
     fn execute(&self, request: &StageRequest<'_>) -> Result<Value> {
@@ -83,6 +84,7 @@ pub(super) struct Frame {
     environment: Value,
     state: Value,
     cleanup: bool,
+    retirement: Option<retirement::Retirement>,
     protected: Inputs,
     roles: Vec<(PathBuf, Option<Value>)>,
 }
@@ -129,6 +131,11 @@ impl Frame {
                 .filter(|(_, binding)| binding.is_some())
                 .map(|(path, _)| path.clone()),
         );
+        let retirement =
+            retirement::Retirement::load(request.backend, request.run_dir, &post, &saved)?;
+        if let Some(retirement) = &retirement {
+            files.extend(retirement.paths(request.backend)?);
+        }
         let protected = Inputs::open(files)?;
         let runtime = registration::cleanup_runtime(request.backend, request.run_dir, &post)?;
         let product = crate::recovery::clone::native::post_process::runtime::product_root(
@@ -145,6 +152,7 @@ impl Frame {
             environment,
             state: saved,
             cleanup,
+            retirement,
             protected,
             roles,
         };
@@ -154,6 +162,11 @@ impl Frame {
 
     pub fn check(&self) -> Result<()> {
         self.protected.check()?;
+        if let Some(retirement) = &self.retirement {
+            retirement.check(&self.backend)?;
+        } else {
+            super::guard::absent(&self.run.join("seed-runtime.json"))?;
+        }
         if role_files(&self.backend, &self.post.runtime)? != self.roles {
             return Err("API或Worker角色收据、完整树或原缺失事实在观察期间变化".into());
         }
@@ -213,13 +226,20 @@ impl Frame {
 
     fn worker_stopped(&self) -> Result<()> {
         self.check()?;
-        legacy_lock_only(&self.backend, &self.post.runtime)?;
-        let worker = controller::observe_bound(
-            Role::Worker,
-            &self.product,
-            &self.post.runtime,
-            &self.environment,
-        )?;
+        let worker = match legacy_lock_only(&self.backend, &self.post.runtime)? {
+            Some(owner) => controller::observe_worker_under_outer_lock(
+                &self.product,
+                &self.post.runtime,
+                &self.environment,
+                &owner,
+            )?,
+            None => controller::observe_bound(
+                Role::Worker,
+                &self.product,
+                &self.post.runtime,
+                &self.environment,
+            )?,
+        };
         if worker["state"] != "stopped" {
             return Err("复制后Worker完整树仍运行，不能控制固定API交接".into());
         }
@@ -279,10 +299,10 @@ fn role_files(backend: &Path, directory: &Path) -> Result<Vec<(PathBuf, Option<V
     .collect()
 }
 
-fn legacy_lock_only(backend: &Path, directory: &Path) -> Result<()> {
+fn legacy_lock_only(backend: &Path, directory: &Path) -> Result<Option<Value>> {
     let path = directory.join("worker-control.lock");
     match std::fs::symlink_metadata(&path) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
         Ok(_) => {}
     }
@@ -296,7 +316,7 @@ fn legacy_lock_only(backend: &Path, directory: &Path) -> Result<()> {
         return Err("Worker或未知控制器尚有未完成操作，不能推定Worker完整树已停止".into());
     }
     recovery::same_runtime(backend, &owner["runtime_directory"], directory)?;
-    Ok(())
+    Ok(Some(owner))
 }
 
 fn stop(frame: &Frame) -> Result<Value> {
@@ -310,10 +330,16 @@ fn stop(frame: &Frame) -> Result<Value> {
             frame.worker_stopped()?;
             // 历史不是停止权限；失败保留至完整树关闭后报告，不能阻止显式回收原登记API。
             let history =
-                super::history::closing(&frame.backend, &frame.post.runtime).and_then(|history| {
-                    frame.history_identity(&history)?;
-                    Ok(history)
-                });
+                super::history::closing(&frame.backend, &frame.product, &frame.post.runtime)
+                    .and_then(|history| {
+                        frame.history_identity(&history)?;
+                        Ok(history)
+                    });
+            let history = if frame.retirement.is_some() {
+                Ok(history?)
+            } else {
+                history
+            };
             lock.check(&frame.backend)?;
             let result = match controller::control_bound(
                 Role::Api,
@@ -346,12 +372,14 @@ fn stop(frame: &Frame) -> Result<Value> {
                         &history,
                     )?;
                     frame.check()?;
-                    Ok(
-                        json!({"format_version":1,"kind":"devex-clone-runtime-control","operation":"stop",
+                    let mut value = json!({"format_version":1,"kind":"devex-clone-runtime-control","operation":"stop",
                 "scope_id":frame.runtime["scope_id"],"runtime_directory":frame.post.runtime,
                 "processes":{"api":process(&after)},
-                "producer_history":if history.binding.is_some(){json!(frame.post.runtime.join("producer-history.json"))}else{Value::Null}}),
-                    )
+                "producer_history":if history.binding.is_some(){json!(frame.post.runtime.join("producer-history.json"))}else{Value::Null}});
+                    if let Some(retirement) = &frame.retirement {
+                        value["seed_retirement"] = retirement.evidence();
+                    }
+                    Ok(value)
                 })(),
             )
         })(),

@@ -1,4 +1,4 @@
-//! 重启段只消费现有收尾和登记证据；不签发收尾、不启动或停止任何资源。
+//! 源代次重启观察、证据收尾和后继授权。只读取已登记资源并签发本地证据。
 use super::{completed, stops};
 use crate::recovery::source::evidence::ready;
 use crate::{
@@ -11,11 +11,24 @@ use crate::{
 };
 use serde_json::{Value, json};
 use std::path::Path;
+#[path = "reboot/build.rs"]
+mod build;
+#[path = "reboot/close.rs"]
+mod close;
 #[path = "reboot/host.rs"]
 mod host;
 #[path = "reboot/observation.rs"]
 mod observation;
+#[path = "reboot/status.rs"]
+mod status;
+pub(in crate::recovery) use close::run as reboot_close;
 pub(in crate::recovery::source::evidence) use observation::request;
+pub(in crate::recovery) use status::run as reboot_status;
+use status::{Sample, sample};
+
+pub(in crate::recovery) fn reboot_process_exited(identity: &Value, boot: u64) -> Result<bool> {
+    host::exited(identity, boot)
+}
 
 const CLOSE: &str = "source-generation-reboot-close";
 
@@ -245,7 +258,8 @@ fn closure(backend: &Path, run: &Path, record: &Value, start: &Value) -> Result<
     {
         return Err("主机重启收尾收据的状态、计数或声明增量无效".into());
     }
-    closure_contract(backend, run, start, &result, &value)?;
+    let before = record["number"].as_u64().ok_or("重启收尾序号无效")?;
+    closure_contract(backend, run, start, &result, &value, before)?;
     common::bound_file(backend, &record["result"], "重启收尾阶段后像")?;
     common::bound_file(backend, &result["closure"], "重启收尾内容后像")?;
     Ok(json!({"binding":result["closure"],"result":record["result"],"receipt":value}))
@@ -258,11 +272,12 @@ fn closure_contract(
     start: &Value,
     result: &Value,
     value: &Value,
+    before: u64,
 ) -> Result<()> {
-    let generations = document::array(&value["cache"]["generations"], "重启收尾缓存代次")?;
-    if generations.is_empty() || generations.iter().any(|row| row["state"] != "stopped") {
-        return Err("主机重启收尾收据没有记录已完成退出的缓存代次".into());
+    if start["number"].as_u64().and_then(|n| n.checked_add(1)) != Some(before) {
+        return Err("重启收尾必须紧邻原 START".into());
     }
+    verify_cache(backend, run, &value["cache"], &value["reboot"], before)?;
     let original = stops::result(backend, run, start)?;
     if start["status"] != "passed"
         || value["start"] != start["result"]
@@ -291,5 +306,68 @@ fn closure_contract(
         }
     }
     common::bound_file(backend, &value["request"], "重启收尾原请求")?;
+    Ok(())
+}
+
+fn verify_cache(
+    backend: &Path,
+    run: &Path,
+    cache: &Value,
+    reboot: &Value,
+    before: u64,
+) -> Result<()> {
+    let generations = document::array(&cache["generations"], "重启收尾缓存代次")?;
+    if generations.is_empty() {
+        return Err("主机重启收尾没有记录缓存代次退出证据".into());
+    }
+    if generations.iter().any(|row| {
+        ["runtime", "supervisor", "process", "proof"]
+            .iter()
+            .any(|field| row.get(field).is_some())
+    }) {
+        return cache::reboot::verify_recorded(
+            backend,
+            run,
+            cache,
+            host::verify_recorded(reboot)?,
+            before,
+        );
+    }
+    // 旧 Linux 收据只核对原字段与账本，不能作为当前 Windows 观察来源。
+    document::exact(
+        cache,
+        &["status", "request", "generations"],
+        "历史缓存退出证据",
+    )?;
+    if cache["status"] != "cache_status" {
+        return Err("历史缓存退出证据状态无效".into());
+    }
+    common::bound_file(backend, &cache["request"], "历史缓存原登记")?;
+    for row in generations {
+        document::exact(
+            row,
+            &[
+                "attempt",
+                "state",
+                "linux_alive",
+                "recorded_boot_id",
+                "current_boot_id",
+                "boot_id_changed",
+            ],
+            "历史缓存退出代次",
+        )?;
+        if row["state"] != "stopped"
+            || row["linux_alive"] != false
+            || row["boot_id_changed"] != true
+            || row["attempt"]
+                .as_u64()
+                .is_none_or(|attempt| attempt == 0 || attempt >= before)
+            || row["recorded_boot_id"].as_str().is_none_or(str::is_empty)
+            || row["current_boot_id"].as_str().is_none_or(str::is_empty)
+            || row["recorded_boot_id"] == row["current_boot_id"]
+        {
+            return Err("历史重启收尾缺少原缓存代次明确退出证据".into());
+        }
+    }
     Ok(())
 }

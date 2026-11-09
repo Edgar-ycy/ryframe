@@ -4,18 +4,28 @@ import io
 import json
 import os
 import queue
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
+import re
 import subprocess
 import threading
 import unittest
 from workspace_directory import WorkspaceDirectory
 from unittest.mock import Mock, patch
 
+import devex_clone_cache as cache
 import devex_clone_cache_process as process
 import devex_clone_cache_native as native
 
 
 BOOT = "5a81dc04-9e9a-416b-8eab-1b059bddf489"
+
+
+def linux_path(value):
+    path = PureWindowsPath(value)
+    if (not path.is_absolute() or not re.fullmatch(r"[A-Za-z]:", path.drive)
+            or ".." in path.parts or any(":" in part for part in path.parts[1:])):
+        raise ValueError("历史收据只映射已登记 Windows 盘符绝对路径")
+    return "/mnt/" + path.drive[0].lower() + "/" + "/".join(path.parts[1:])
 
 
 class CacheNativeTransportTests(unittest.TestCase):
@@ -80,6 +90,20 @@ class CacheNativeTransportTests(unittest.TestCase):
                         self.assertIs(failures[0], primary)
                     else:
                         callback.assert_not_called()
+
+    def test_retired_stream_callbacks_reject_before_native_or_redis_dispatch(self):
+        backend = Path(__file__).resolve().parents[2]
+        directory = backend / ".local-tests" / "retired-cache-callback"
+        arguments = {"request": {}, "private": {}, "output": str(directory / "process"),
+                     "guard": {}, "runtime": {}}
+        with (patch.object(native, "invoke") as invoke, patch.object(native, "exchange") as exchange,
+              patch.object(cache, "transport") as transport):
+            for operation in ("start", "observe", "stop"):
+                with self.subTest(operation=operation), self.assertRaisesRegex(ValueError, "未知缓存资源端口"):
+                    cache._port(backend, directory, operation, arguments)
+            invoke.assert_not_called()
+            exchange.assert_not_called()
+            transport.assert_not_called()
 
     def test_credentials_only_travel_in_stdin_and_ambient_secrets_are_removed(self):
         response = subprocess.CompletedProcess([], 0, b'{"ok":true,"result":null}', b'')
@@ -161,7 +185,7 @@ class CacheNativeTransportTests(unittest.TestCase):
                     run.assert_called_once()
 
 
-@unittest.skipUnless(os.name == "nt", "WSL Redis 进程测试仅在 Windows runner 执行")
+@unittest.skipUnless(os.name == "nt", "历史 Redis 收据绑定需要 Windows 路径")
 class CacheProcessTests(unittest.TestCase):
     def setUp(self):
         self.backend = next(path for path in Path(__file__).resolve().parents if (path / "Cargo.toml").is_file())
@@ -194,13 +218,13 @@ class CacheProcessTests(unittest.TestCase):
         for key, name in (("cache", "cache.py"), ("process", "full_stack_process.py")):
             path = helpers / name
             path.write_bytes(b"historical receipt fixture\n")
-            frozen[key] = {**process.bound(path), "path": process.linux_path(str(path))}
+            frozen[key] = {**process.bound(path), "path": linux_path(str(path))}
         process.write(self.output / "launch-request.json", {
             "format_version": 1, "request": self.request, "request_sha256": process.canonical(self.request),
-            "windows_output": str(self.output), "linux_output": process.linux_path(str(self.output)), "helpers": frozen})
+            "windows_output": str(self.output), "linux_output": linux_path(str(self.output)), "helpers": frozen})
         arguments = [self.request["wsl"]["path"], "--distribution", self.request["distribution"], "--exec",
                      self.request["python"]["path"], frozen["cache"]["path"], "serve", "--request",
-                     process.linux_path(str(self.output / "launch-request.json")), "--sha256",
+                     linux_path(str(self.output / "launch-request.json")), "--sha256",
                      process.bound(self.output / "launch-request.json")["sha256"]]
         process.write(self.output / "intent.json", {"request_sha256": process.canonical(self.request),
                       "arguments": arguments, "launch": process.bound(self.output / "launch-request.json")})
@@ -210,9 +234,9 @@ class CacheProcessTests(unittest.TestCase):
         launcher = {"pid": 400, "started": "70", "executable": self.request["wsl"]["path"]}
         process.write(self.output / "launcher.json", {"identity": launcher, "intent": process.bound(self.output / "intent.json")})
         process.write(self.output / "linux-intent.json", {"request_sha256": process.canonical(self.request),
-                      "arguments": [self.request["launcher"], process.linux_path(self.request["configuration"]["path"])], "supervisor": {}})
+                      "arguments": [self.request["launcher"], linux_path(self.request["configuration"]["path"])], "supervisor": {}})
         process.write(self.output / "linux-process.json", {"request_sha256": process.canonical(self.request), "identity": self.identity,
-                      "intent": {**process.bound(self.output / "linux-intent.json"), "path": process.linux_path(str(self.output / "linux-intent.json"))}})
+                      "intent": {**process.bound(self.output / "linux-intent.json"), "path": linux_path(str(self.output / "linux-intent.json"))}})
         return process.inspect_start(self.request, self.output)
 
     def test_original_files_directory_and_exact_fields(self):
@@ -295,11 +319,11 @@ class CacheProcessTests(unittest.TestCase):
         Path(self.request["wsl"]["path"]).write_bytes(b"reviewed successor WSL")
         before = {path: path.read_bytes() for path in self.output.rglob("*") if path.is_file()}
         self.assertEqual(process.inspect_start(self.request, self.output), runtime)
-        for operation in (lambda: process.validate(self.request),
-                          lambda: process.stop(self.backend, self.request, {}, runtime, self.output),
-                          lambda: process.observe(self.backend, self.request, {}, runtime)):
+        with self.assertRaises(ValueError):
+            process.validate(self.request)
+        for operation, extra in (("stop", {"output": str(self.output)}), ("observe", {})):
             with self.subTest(operation=operation), self.assertRaises(ValueError):
-                operation()
+                native.invoke(operation, request=self.request, runtime=runtime, **extra)
         self.assertEqual(before, {path: path.read_bytes() for path in self.output.rglob("*") if path.is_file()})
 
     def test_other_request_or_launcher_identity_is_rejected(self):

@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import restore_reference as reference
 import restore_reference_execution as execution
+from restore_runtime_evidence import read_json_document
 
 
 def guards(test):
@@ -13,7 +14,7 @@ def guards(test):
     test.before_hook = test.checkpoint_hook = test.image_error = None
 
     def registration(_backend, path, descriptor):
-        document = reference.read_json_document(path)
+        document = read_json_document(path)
         if document.value != {"target_plan": descriptor}:
             raise ValueError("登记替身与目标计划不同")
         return document.value, {}, (document,)
@@ -56,7 +57,7 @@ def guards(test):
                 test.before_hook()
             path = self.work / (phase + "-image.json")
             reference.write_json(path, {"phase": phase, "matches_expected": test.image_error is None})
-            self.bindings[phase] = reference.document_binding(reference.read_json_document(path))
+            self.bindings[phase] = reference.document_binding(read_json_document(path))
             if test.image_error:
                 raise ValueError(test.image_error)
             return self.bindings[phase]

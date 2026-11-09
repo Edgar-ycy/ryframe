@@ -14,9 +14,10 @@ pub(super) fn generation(
     descriptor: &Value,
     output: &Path,
     frozen: &Value,
+    observe_tools: bool,
 ) -> Result<(Value, Value)> {
     if frozen.is_null() {
-        successor::generation(context, request, output, &Value::Null, true)
+        successor::generation(context, request, output, &Value::Null, observe_tools)
     } else {
         successor::frozen_generation(context, request, descriptor, output, frozen)
     }
@@ -27,6 +28,17 @@ pub(super) fn starts(
     descriptor: &Value,
     before: Option<u64>,
     frozen: &Value,
+) -> Result<Vec<Generation>> {
+    starts_with_tools(context, request, descriptor, before, frozen, true)
+}
+
+pub(super) fn starts_with_tools(
+    context: &mut Context<'_>,
+    request: &Value,
+    descriptor: &Value,
+    before: Option<u64>,
+    frozen: &Value,
+    observe_tools: bool,
 ) -> Result<Vec<Generation>> {
     let mut result: Vec<Generation> = Vec::new();
     for attempt in context.records(true)? {
@@ -44,7 +56,8 @@ pub(super) fn starts(
             }
             continue;
         }
-        let (process, tools) = generation(context, request, descriptor, &output, frozen)?;
+        let (process, tools) =
+            generation(context, request, descriptor, &output, frozen, observe_tools)?;
         let mut expected = json!({"request":descriptor,"controller":context.controller(&attempt)?,"attempt":attempt["number"],"process_request_sha256":digest::plan_hash(&process)?,"output":output.join("process")});
         if !tools.is_null() {
             expected["tools"] = tools;
@@ -52,7 +65,14 @@ pub(super) fn starts(
             for (earlier, earlier_output, earlier_runtime) in &result {
                 let file = output.join(format!("predecessor-{:04}.json", number(earlier)?));
                 let proof = doc::read(&file)?;
-                let (old, _) = generation(context, request, descriptor, earlier_output, frozen)?;
+                let (old, _) = generation(
+                    context,
+                    request,
+                    descriptor,
+                    earlier_output,
+                    frozen,
+                    observe_tools,
+                )?;
                 doc::exact(
                     &proof,
                     &["process_sha256", "runtime_sha256", "observation"],
@@ -191,7 +211,14 @@ pub(super) fn registered(context: &mut Context<'_>, p: &Value) -> Result<Value> 
         &p["frozen"],
     )?;
     let (_, process_output, base) = created.last().ok_or("可用缓存缺少实际创建记录")?;
-    let (actual, _) = generation(context, &request, &descriptor, process_output, &p["frozen"])?;
+    let (actual, _) = generation(
+        context,
+        &request,
+        &descriptor,
+        process_output,
+        &p["frozen"],
+        true,
+    )?;
     if actual != process {
         return Err(rejected("缓存发布的工具与实际启动代次不同"));
     }

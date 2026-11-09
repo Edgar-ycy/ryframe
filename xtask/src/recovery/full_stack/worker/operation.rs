@@ -42,6 +42,11 @@ fn publish(directory: &Path, path: &Path, value: &Value, replace: bool) -> Resul
 }
 
 pub(super) fn read(path: &Path) -> Result<Value> {
+    check_receipt_file(path)?;
+    json::read(path)
+}
+
+pub(super) fn check_receipt_file(path: &Path) -> Result<()> {
     let metadata = fs::symlink_metadata(path)?;
     if metadata.len() == 0
         || metadata.len() > 4 * 1024 * 1024
@@ -49,10 +54,10 @@ pub(super) fn read(path: &Path) -> Result<Value> {
     {
         return Err("角色 收据大小无效或经过硬链接".into());
     }
-    json::read(path)
+    Ok(())
 }
 
-const FILES: &[&str] = &[
+pub(super) const FILES: &[&str] = &[
     "owner.json",
     "request.json",
     "candidate.json",
@@ -170,9 +175,34 @@ impl Operation {
             &reservation.directory,
             runtime,
             timeout,
-            Some(reservation),
+            Some(ClaimBinding::Start(reservation)),
         )
     }
+    pub(super) fn claim_recorded_stop(
+        role: Role,
+        backend: &Path,
+        directory: &Path,
+        runtime: &Value,
+        timeout: f64,
+        id: &str,
+    ) -> Result<Self> {
+        if !matches!(role, Role::Api | Role::Worker)
+            || !documents::hex(&json!(id), 32)
+            || directory.join(role.archive()).join(id).try_exists()?
+        {
+            return Err("预留停止编号无效或已归档，禁止执行".into());
+        }
+        Self::claim_inner(
+            role,
+            "stop",
+            backend,
+            directory,
+            runtime,
+            timeout,
+            Some(ClaimBinding::Stop(id)),
+        )
+    }
+
     fn claim_inner(
         role: Role,
         action: &str,
@@ -180,14 +210,14 @@ impl Operation {
         directory: &Path,
         runtime: &Value,
         timeout: f64,
-        reservation: Option<&super::start::Reservation>,
+        binding: Option<ClaimBinding<'_>>,
     ) -> Result<Self> {
         let source = json!(source(directory)?);
-        let id = json!(
-            reservation
-                .map(|v| v.id().to_owned())
-                .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string())
-        );
+        let id = match &binding {
+            Some(ClaimBinding::Start(reservation)) => json!(reservation.id()),
+            Some(ClaimBinding::Stop(id)) => json!(id),
+            None => json!(uuid::Uuid::new_v4().simple().to_string()),
+        };
         let identity = super::process::current()?;
         let mut owner = common(&role.kind("owner"), &id, directory, &source);
         owner["identity"] = identity.clone();
@@ -197,7 +227,7 @@ impl Operation {
         if role == Role::Frontend {
             request["request_binding"] = runtime["request_binding"].clone();
         }
-        if let Some(reservation) = reservation {
+        if let Some(ClaimBinding::Start(reservation)) = binding {
             request["environment_binding"] = reservation.binding().clone();
             reservation.verify()?;
         }
@@ -389,4 +419,9 @@ impl Operation {
         fs::rename(&self.path, target)?;
         Ok(result)
     }
+}
+
+enum ClaimBinding<'a> {
+    Start(&'a super::start::Reservation),
+    Stop(&'a str),
 }

@@ -43,6 +43,7 @@ pub(crate) fn history(
     target: &Path,
     request: &Value,
     original: &Value,
+    owner: Option<&super::guard::Generation>,
 ) -> Result<Value> {
     let terminal = read(backend, &target.join("initialized.json"))?;
     let legacy = terminal["status"] == "fresh_target_initialized"
@@ -60,8 +61,7 @@ pub(crate) fn history(
         super::resume_model::INITIALIZED,
         "旧 reset 完整终态",
     )?;
-    let locked = target.join("initialize.lock").try_exists()?;
-    let tree = super::published::tree::initialized(backend, target, locked)?;
+    let tree = super::published::tree::initialized(backend, target, owner)?;
     check(
         !target.join("reset-configuration.json").try_exists()?
             && terminal["generation"] == *original
@@ -107,7 +107,7 @@ pub(crate) fn history(
     )?;
     protected.check()?;
     check(
-        super::published::tree::initialized(backend, target, locked)? == tree,
+        super::published::tree::initialized(backend, target, owner)? == tree,
         "旧 reset 完整历史树在读取期间变化",
     )?;
     Ok(result)
@@ -118,8 +118,9 @@ pub(crate) fn history_request(
     target: &Path,
     request: &Value,
     original: &Value,
+    owner: Option<&super::guard::Generation>,
 ) -> Result<Value> {
-    if history(backend, target, request, original)?
+    if history(backend, target, request, original, owner)?
         .get("configuration")
         .is_none()
     {

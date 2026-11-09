@@ -147,7 +147,7 @@ fn published_auxiliary_paths_protect_the_real_manifest_and_original_fixture() {
         initialized_path: receipt.clone(),
         initialized_binding: json!({}),
         initialized: json!({}),
-        request_path: receipt.clone(),
+        request_path: receipt,
         request,
         environment: Default::default(),
         observation_dir: workspace.clone(),
@@ -450,4 +450,103 @@ fn native_authority_rejects_actual_config_start_history_and_changes_during_obser
     );
     assert_eq!(fs::read(extra).unwrap(), b"retain");
     assert!(!fixture.target.join("initialize.lock").exists());
+}
+
+fn register_arm_manifest(fixture: &crate::target_verify_fixture::Fixture) -> Value {
+    let registration_path = fixture.local.join("registration.json");
+    let registration = json_io::read(&registration_path).unwrap();
+    let storage = &registration["storage_run"];
+    let run = Path::new(storage["path"].as_str().unwrap());
+    // 这里验证登记权威，独立存储绑定只需满足清单的静态证据契约。
+    let evidence = (0..10)
+        .map(|index| {
+            let path = run.join(format!("arm-authority-{index}.json"));
+            fs::write(
+                &path,
+                serde_json::to_vec(&json!({"fixture":index})).unwrap(),
+            )
+            .unwrap();
+            bound(&path)
+        })
+        .collect::<Vec<_>>();
+    let path = fixture.run.join("manifest.json");
+    let mut manifest = json_io::read(&path).unwrap();
+    manifest["copy_stage"] = json!("seed_to_arm");
+    manifest["source_registration"] = manifest["source_request"].clone();
+    manifest["target_registration"] = bound(&registration_path);
+    manifest["target_initialized_files"] = bound(&fixture.local.join("initialized-files.json"));
+    manifest["target_environment"] = registration["environment"].clone();
+    manifest["target_storage_run"] = json!({
+        "path":storage["path"],"manifest":storage["manifest"],
+        "storage":{"request":evidence[0],"storage":{"identity":{"pid":1},"sha256":"a".repeat(64),
+            "process_receipt":evidence[1],"launch_receipt":evidence[2]},"attempt":1,
+            "data_directory":run.join("objects"),"api_url":"http://127.0.0.1:29000",
+            "console_url":"http://127.0.0.1:29001","restart_result":evidence[3]},
+        "cache":{"request":evidence[4],"runtime":evidence[5],"redis":{"pid":2},
+            "owner":evidence[6],"controller":evidence[7],"attempt":2,
+            "ready":evidence[8],"restart_result":evidence[9]}
+    });
+    json_io::write_replace(&path, &manifest).unwrap();
+    manifest
+}
+
+fn rejected_arm_authority(fixture: &crate::target_verify_fixture::Fixture, reason: &str) {
+    let mut observations = 0;
+    let error = observed_authority(fixture, &mut |_| {
+        observations += 1;
+        Ok(())
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains(reason), "{error}");
+    assert_eq!(observations, 0);
+}
+
+#[test]
+fn native_arm_authority_binds_the_initialized_workspace_and_requires_the_actual_arm_side() {
+    use crate::target_verify_fixture::{Fixture as PublishedFixture, snapshot};
+
+    let fixture = PublishedFixture::for_arm_authority();
+    let manifest = register_arm_manifest(&fixture);
+    let manifest_path = fixture.run.join("manifest.json");
+    let before = snapshot(&fixture.local);
+    let mut observations = 0;
+    let value = observed_authority(&fixture, &mut |_| {
+        observations += 1;
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(observations, 3);
+    assert_eq!(fixture.request["side"], "base");
+    assert_eq!(
+        value["initialized_files"],
+        manifest["target_initialized_files"]
+    );
+    assert_eq!(value["remote_writes"], 0);
+    authority::validate(&fixture.backend, &fixture.run, &value).unwrap();
+    assert_eq!(snapshot(&fixture.local), before);
+    let external = Path::new(manifest["target_storage_run"]["path"].as_str().unwrap());
+    assert!(!external.join("run.lock").exists());
+
+    for (field, name) in [
+        ("target_registration", "registration.json"),
+        ("target_initialized_files", "initialized-files.json"),
+    ] {
+        let foreign = fixture.local.join(format!("foreign-{name}"));
+        fs::copy(fixture.local.join(name), &foreign).unwrap();
+        let mut changed = manifest.clone();
+        changed[field] = bound(&foreign);
+        json_io::write_replace(&manifest_path, &changed).unwrap();
+        rejected_arm_authority(&fixture, "未绑定初始化工作区的原登记和文件谱系");
+        assert!(authority::validate(&fixture.backend, &fixture.run, &value).is_err());
+    }
+
+    let mut changed = manifest;
+    changed["target_environment"] = bound(&fixture.local.join("target-environment.json"));
+    json_io::write_replace(&manifest_path, &changed).unwrap();
+    rejected_arm_authority(&fixture, "目标原登记、环境、请求或文件谱系不同");
+    assert!(authority::validate(&fixture.backend, &fixture.run, &value).is_err());
+
+    let seed = PublishedFixture::for_status();
+    register_arm_manifest(&seed);
+    rejected_arm_authority(&seed, "只接受实际 base 或 candidate 请求");
 }

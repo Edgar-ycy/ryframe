@@ -1,4 +1,5 @@
 //! 本 producer 的读取窗口；原生读取端口只登记实际消费的文件，不猜测 JSON 中的路径。
+use super::super::{REGISTRATION_GUARD, REGISTRATION_LOCK, bind::ownership::Owner};
 use crate::{Result, recovery::monitoring::execution::ProtectedInputs};
 use std::{
     cell::{Cell, RefCell},
@@ -18,6 +19,7 @@ pub(crate) fn is_active() -> bool {
 
 #[derive(Default)]
 struct ReadSet {
+    track_directories: bool,
     files: BTreeMap<PathBuf, ProtectedInputs>,
     directories: BTreeMap<PathBuf, Directory>,
     absent: BTreeSet<PathBuf>,
@@ -30,18 +32,30 @@ struct Directory {
     identity: (u64, u64),
 }
 
-pub(super) struct Window {
+pub(in crate::recovery) struct Window {
     _thread_bound: std::marker::PhantomData<std::rc::Rc<()>>,
 }
 
 impl Window {
-    pub(super) fn begin() -> Result<Self> {
+    pub(in crate::recovery) fn begin() -> Result<Self> {
+        Self::open(true)
+    }
+
+    pub(in crate::recovery) fn direct() -> Result<Self> {
+        // 直接运行核验只绑定已读取文件。配置、产物和 Git 各自重验其实际集合。
+        Self::open(false)
+    }
+
+    fn open(track_directories: bool) -> Result<Self> {
         ACTIVE.with(|slot| {
             let mut slot = slot.borrow_mut();
             if is_active() {
                 return Err("恢复静态读取窗口不能嵌套".into());
             }
-            *slot = Some(ReadSet::default());
+            *slot = Some(ReadSet {
+                track_directories,
+                ..ReadSet::default()
+            });
             WINDOW_ACTIVE.set(true);
             Ok(Self {
                 _thread_bound: std::marker::PhantomData,
@@ -49,8 +63,22 @@ impl Window {
         })
     }
 
-    pub(super) fn finish<T>(&self, result: Result<T>) -> Result<T> {
-        let checked = with_set(|set| {
+    pub(in crate::recovery) fn finish<T>(&self, result: Result<T>) -> Result<T> {
+        finish(result, self.check_inputs(None))
+    }
+
+    pub(in crate::recovery::runtime) fn finish_runtime_owner<T>(
+        &self,
+        owner: &Owner,
+        result: Result<T>,
+    ) -> Result<T> {
+        let checked = owner.check().and_then(|()| self.check_inputs(Some(owner)));
+        finish(result, checked)
+    }
+
+    fn check_inputs(&self, owner: Option<&Owner>) -> Result<()> {
+        let control = owner.map(Owner::control_directory).transpose()?;
+        with_set(|set| {
             for (root, expected) in &set.sources {
                 if crate::recovery::clone::native::source::capture(root)? != *expected {
                     return Err("恢复静态核验期间 Git 来源、索引或完整文件集合漂移".into());
@@ -59,8 +87,27 @@ impl Window {
             for guard in set.files.values() {
                 guard.assert_unchanged()?;
             }
+            let mut control_paths = Vec::new();
             for (path, expected) in &set.directories {
-                if names(path)? != *expected {
+                let actual = names(path)?;
+                let unchanged = if let Some(control) = control
+                    && path
+                        .file_name()
+                        .zip(control.file_name())
+                        .is_some_and(|(left, right)| {
+                            left.to_string_lossy()
+                                .eq_ignore_ascii_case(&right.to_string_lossy())
+                        })
+                    && super::commands::same_path(path, control)?
+                {
+                    let mut names = expected.names.clone();
+                    names.extend([REGISTRATION_GUARD.into(), REGISTRATION_LOCK.into()]);
+                    control_paths.push(path.clone());
+                    actual.identity == expected.identity && actual.names == names
+                } else {
+                    actual == *expected
+                };
+                if !unchanged {
                     return Err("恢复静态核验期间输入目录成员漂移".into());
                 }
             }
@@ -69,15 +116,25 @@ impl Window {
                     return Err("恢复静态核验期间原缺省配置出现".into());
                 }
             }
-            Ok(())
-        });
-        match (result, checked) {
-            (Ok(value), Ok(())) => Ok(value),
-            (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
-            (Err(error), Err(after)) => {
-                Err(format!("{error}；输入集合后验同时失败：{after}").into())
+            if let Some(owner) = owner {
+                owner.check()?;
+                // 内核 guard 在释放 owner 后继续存在，外层窗口保留它的成员预期。
+                for path in control_paths {
+                    if let Some(expected) = set.directories.get_mut(&path) {
+                        expected.names.insert(REGISTRATION_GUARD.into());
+                    }
+                }
             }
-        }
+            Ok(())
+        })
+    }
+}
+
+fn finish<T>(result: Result<T>, checked: Result<()>) -> Result<T> {
+    match (result, checked) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+        (Err(error), Err(after)) => Err(format!("{error}；输入集合后验同时失败：{after}").into()),
     }
 }
 
@@ -170,6 +227,9 @@ pub(crate) fn tool_settings(backend: &Path) -> Result<()> {
 }
 
 fn remember_directory(set: &mut ReadSet, path: &Path) -> Result<()> {
+    if !set.track_directories {
+        return Ok(());
+    }
     if let std::collections::btree_map::Entry::Vacant(entry) =
         set.directories.entry(path.to_owned())
     {

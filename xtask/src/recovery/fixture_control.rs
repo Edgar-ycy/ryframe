@@ -1,8 +1,7 @@
 use std::{
     fs,
-    io::{Seek, SeekFrom, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Command,
 };
 
 use regex::Regex;
@@ -10,9 +9,11 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     Result,
-    cli::{FIXTURE_CONTROL_PROTOCOL_KIND, FIXTURE_CONTROL_USAGE, FixtureControlCommand},
+    cli::{
+        FIXTURE_CONTROL_USAGE, FixtureControlCommand, FixtureEnvironmentCommand,
+        FixtureServiceOperation, FixtureServicesCommand, FixtureSuccessorCommand,
+    },
     local_test_path::{LocalTestPathKind, validate_local_test_path},
-    process::run_with_stdin,
     recovery::clone::native::{
         digest,
         json::{self as native_json, exact, text},
@@ -50,209 +51,76 @@ pub(crate) mod services;
 #[path = "fixture_control/source_pair.rs"]
 pub(crate) mod source_pair;
 #[path = "fixture_control/successor.rs"]
-mod successor;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PrivateFixtureControlInvocation {
-    pub(crate) script: &'static str,
-    pub(crate) protocol: String,
-}
+pub(crate) mod successor;
 
 pub(super) fn run(command: &FixtureControlCommand, root: &Path) -> Result<()> {
-    if command.is_help() {
+    if command.operation() == "help" {
         println!("{FIXTURE_CONTROL_USAGE}");
         return Ok(());
     }
     match command {
-        FixtureControlCommand::Environment(crate::cli::FixtureEnvironmentCommand::Review {
-            review,
-            output,
-        }) => {
-            return print_json(&environment::review::run(root, review, &output.output)?);
+        FixtureControlCommand::Environment(command) => match command {
+            FixtureEnvironmentCommand::Review { review, output } => {
+                print_json(&environment::review::run(root, review, &output.output)?)
+            }
+            FixtureEnvironmentCommand::Plan(inputs) => {
+                print_json(&environment::run_plan(root, inputs)?)
+            }
+            FixtureEnvironmentCommand::Prepare { .. } => {
+                print_json(&environment::prepare::run(root, command)?)
+            }
+            FixtureEnvironmentCommand::RotateSecrets { .. }
+            | FixtureEnvironmentCommand::BootstrapSecrets { .. } => {
+                print_json(&environment::secrets::run(root, command)?)
+            }
+            FixtureEnvironmentCommand::Help => unreachable!("已输出夹具帮助"),
+        },
+        FixtureControlCommand::Successor(command) => match command {
+            FixtureSuccessorCommand::Relationship(options) => {
+                print_json(&successor::publish_relationship(root, options)?)
+            }
+            FixtureSuccessorCommand::GenerationRequest(options) => print_json(
+                &crate::recovery::source::evidence::generation_request::run(root, options)?,
+            ),
+            FixtureSuccessorCommand::ArmRequest(options) => {
+                print_json(&successor::arm::run(root, options)?)
+            }
+            FixtureSuccessorCommand::Help => unreachable!("已输出夹具帮助"),
+        },
+        FixtureControlCommand::Services(services) => {
+            let FixtureServicesCommand::Run(options) = services else {
+                unreachable!("已输出夹具帮助");
+            };
+            services::fields(services, root)?;
+            let operation = options.operation.as_str();
+            let result = match options.operation {
+                FixtureServiceOperation::Rustfs
+                | FixtureServiceOperation::Redis
+                | FixtureServiceOperation::Buckets => {
+                    services::initial::run(root, &options.review, &options.environment, operation)?
+                }
+                FixtureServiceOperation::Status
+                | FixtureServiceOperation::Close
+                | FixtureServiceOperation::Reconcile
+                | FixtureServiceOperation::Recover
+                | FixtureServiceOperation::Restart => services::lifecycle::execute(
+                    root,
+                    operation,
+                    &options.review,
+                    &options.environment,
+                    options.owner_binding.as_deref(),
+                    command.writes(),
+                )?,
+            };
+            print_json(&result)
         }
-        FixtureControlCommand::Environment(crate::cli::FixtureEnvironmentCommand::Plan(inputs)) => {
-            return print_json(&environment::run_plan(root, inputs)?);
-        }
-        FixtureControlCommand::Environment(
-            command @ crate::cli::FixtureEnvironmentCommand::Prepare { .. },
-        ) => {
-            return print_json(&environment::prepare::run(root, command)?);
-        }
-        FixtureControlCommand::Environment(command) if environment::secrets::handles(command) => {
-            return print_json(&environment::secrets::run(root, command)?);
-        }
-        FixtureControlCommand::Successor(
-            crate::cli::FixtureSuccessorCommand::GenerationRequest(options),
-        ) => {
-            return print_json(&crate::recovery::source::evidence::generation_request::run(
-                root, options,
-            )?);
-        }
-        FixtureControlCommand::SourcePair(command) => return source_pair::run(command, root),
-        FixtureControlCommand::Dataset(command) => return dataset::run(command, root),
-        FixtureControlCommand::Review(command) => return review::run(command, root),
-        FixtureControlCommand::Artifact(command) => return artifact::run(command, root),
-        FixtureControlCommand::Services(crate::cli::FixtureServicesCommand::Run(options))
-            if matches!(options.operation.as_str(), "rustfs" | "redis" | "buckets") =>
-        {
-            services::fields(
-                &crate::cli::FixtureServicesCommand::Run(options.clone()),
-                root,
-            )?;
-            return print_json(&services::initial::run(
-                root,
-                &options.review,
-                &options.environment,
-                options.operation.as_str(),
-            )?);
-        }
-        FixtureControlCommand::Services(crate::cli::FixtureServicesCommand::Run(options))
-            if matches!(
-                options.operation,
-                crate::cli::FixtureServiceOperation::Status
-                    | crate::cli::FixtureServiceOperation::Close
-                    | crate::cli::FixtureServiceOperation::Recover
-                    | crate::cli::FixtureServiceOperation::Reconcile
-                    | crate::cli::FixtureServiceOperation::Restart
-            ) =>
-        {
-            services::fields(
-                &crate::cli::FixtureServicesCommand::Run(options.clone()),
-                root,
-            )?;
-            let value = services::lifecycle::execute(
-                root,
-                options.operation.as_str(),
-                &options.review,
-                &options.environment,
-                options.owner_binding.as_deref(),
-                !matches!(
-                    options.operation,
-                    crate::cli::FixtureServiceOperation::Status
-                ),
-            )?;
-            return print_json(&value);
-        }
-        FixtureControlCommand::Request(command) => {
-            return print_json(&request::run(root, command)?);
-        }
-        FixtureControlCommand::Retention(command) => return retention::run(command, root),
-        _ => {}
+        FixtureControlCommand::Artifact(command) => artifact::run(command, root),
+        FixtureControlCommand::Dataset(command) => dataset::run(command, root),
+        FixtureControlCommand::Request(command) => print_json(&request::run(root, command)?),
+        FixtureControlCommand::Retention(command) => retention::run(command, root),
+        FixtureControlCommand::Review(command) => review::run(command, root),
+        FixtureControlCommand::SourcePair(command) => source_pair::run(command, root),
     }
-    let invocation = private_invocation_at(command, root)?;
-    let mut input = tempfile::tempfile()?;
-    input.write_all(invocation.protocol.as_bytes())?;
-    input.seek(SeekFrom::Start(0))?;
-    run_with_stdin(
-        root,
-        "python",
-        &["-B", invocation.script],
-        Stdio::from(input),
-    )
-}
-
-pub(crate) fn private_invocation_at(
-    command: &FixtureControlCommand,
-    root: &Path,
-) -> Result<PrivateFixtureControlInvocation> {
-    if matches!(command, FixtureControlCommand::Services(crate::cli::FixtureServicesCommand::Run(options))
-        if matches!(options.operation.as_str(), "rustfs" | "redis" | "buckets"))
-    {
-        return Err("首代服务由 Rust 原生执行，不生成 Python 请求".into());
-    }
-    if matches!(
-        command,
-        FixtureControlCommand::Environment(crate::cli::FixtureEnvironmentCommand::Prepare { .. })
-    ) {
-        return Err("环境准备由 Rust 原生执行，不生成 Python 请求".into());
-    }
-    if command.is_help() {
-        return Err("fixture 控制帮助不启动私有阶段程序".into());
-    }
-    if matches!(command, FixtureControlCommand::Environment(command)
-        if environment::secrets::handles(command))
-    {
-        return Err("秘密文件操作由 Rust 原生执行，不生成 Python 请求".into());
-    }
-    if matches!(
-        command,
-        FixtureControlCommand::SourcePair(_)
-            | FixtureControlCommand::Review(_)
-            | FixtureControlCommand::Artifact(_)
-            | FixtureControlCommand::Retention(_)
-            | FixtureControlCommand::Dataset(_)
-            | FixtureControlCommand::Request(_)
-    ) {
-        return Err("该夹具操作由 Rust 原生实现".into());
-    }
-    if matches!(command, FixtureControlCommand::Services(crate::cli::FixtureServicesCommand::Run(options))
-        if matches!(options.operation, crate::cli::FixtureServiceOperation::Status
-            | crate::cli::FixtureServiceOperation::Close
-            | crate::cli::FixtureServiceOperation::Recover | crate::cli::FixtureServiceOperation::Reconcile
-            | crate::cli::FixtureServiceOperation::Restart))
-    {
-        return Err("该服务生命周期由 Rust 原生执行，不生成 Python 编排请求".into());
-    }
-    let (script, fields) = match command {
-        FixtureControlCommand::Artifact(_) => unreachable!("原生导出物理验收已提前返回"),
-        FixtureControlCommand::Dataset(_) => unreachable!("原生数据工厂已提前返回"),
-        FixtureControlCommand::Environment(_) => {
-            return Err("环境操作由 Rust 原生执行，不生成 Python 请求".into());
-        }
-        FixtureControlCommand::Retention(_) => unreachable!("原生保留期验收已提前返回"),
-        FixtureControlCommand::Review(_) => unreachable!("原生审阅续签已提前返回"),
-        FixtureControlCommand::Request(_) => unreachable!("原生目标请求已提前返回"),
-        FixtureControlCommand::SourcePair(_) => unreachable!("原生来源组合已提前返回"),
-        FixtureControlCommand::Successor(command) => (
-            "tools/python/reference_fixture_successor.py",
-            successor::fields(command, root)?,
-        ),
-        FixtureControlCommand::Services(command) => (
-            "tools/python/reference_fixture_services.py",
-            services::fields(command, root)?,
-        ),
-    };
-    let mut protocol = Map::from_iter([
-        (
-            "backend_dir".to_owned(),
-            Value::String(path_text(root, "后端目录")?.to_owned()),
-        ),
-        (
-            "domain".to_owned(),
-            Value::String(command.domain().to_owned()),
-        ),
-        ("format_version".to_owned(), Value::from(1)),
-        (
-            "kind".to_owned(),
-            Value::String(FIXTURE_CONTROL_PROTOCOL_KIND.to_owned()),
-        ),
-        (
-            "operation".to_owned(),
-            Value::String(command.operation().to_owned()),
-        ),
-        ("write".to_owned(), Value::Bool(command.writes())),
-    ]);
-    for (name, value) in fields {
-        if protocol.insert(name.clone(), value).is_some() {
-            return Err(format!("fixture 控制私有协议字段重复：{name}").into());
-        }
-    }
-    if matches!(
-        command,
-        FixtureControlCommand::Services(_)
-            | FixtureControlCommand::Environment(_)
-            | FixtureControlCommand::Successor(_)
-    ) {
-        let binding = crate::check::python_suite::native_tool_binding()?;
-        protocol.insert(
-            "native_tool".to_owned(),
-            Value::String(serde_json::to_string(&binding)?),
-        );
-    }
-    Ok(PrivateFixtureControlInvocation {
-        script,
-        protocol: serialize_protocol(Value::Object(protocol))?,
-    })
 }
 
 fn validate_path(value: &Path, root: &Path, kind: LocalTestPathKind, label: &str) -> Result<()> {
@@ -305,14 +173,6 @@ fn insert_optional_path(
         insert_path(fields, name, value, root, kind)?;
     }
     Ok(())
-}
-
-fn serialize_protocol(protocol: Value) -> Result<String> {
-    let serialized = serde_json::to_string(&protocol)?;
-    if serialized.contains(['\n', '\r', '\0']) {
-        return Err("fixture 控制私有协议不能包含换行符或 NUL".into());
-    }
-    Ok(serialized)
 }
 
 pub(super) fn read_json(path: &Path, label: &str, limit: u64) -> Result<Value> {

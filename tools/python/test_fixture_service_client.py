@@ -89,8 +89,7 @@ class FixtureServiceClientTests(unittest.TestCase):
 
     def test_services_entry_installs_explicit_coordinator_binding_before_dispatch(self):
         import reference_fixture_services as services
-        for operation, status in (("rustfs", "rustfs_started"), ("redis", "redis_started"),
-                                  ("buckets", "fixture_buckets_ready")):
+        for operation, status in (("rustfs", "rustfs_started"), ("buckets", "fixture_buckets_ready")):
             arguments = [operation, "--backend-dir", str(client.ROOT), "--review", "review.json",
                          "--environment", "bootstrap.json", "--write", "--native-tool", "bound-tool"]
 

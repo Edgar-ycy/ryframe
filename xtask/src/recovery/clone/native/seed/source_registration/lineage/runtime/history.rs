@@ -35,6 +35,7 @@ pub(super) fn collect(
     runtime: &Path,
     contract: &Value,
     value: &Value,
+    pending: Option<(&str, &str)>,
 ) -> Result<History> {
     documents::exact(
         value,
@@ -59,6 +60,11 @@ pub(super) fn collect(
     {
         return Err("生产者历史与明确runtime不一致".into());
     }
+    let pending = pending.filter(|(role, token)| {
+        events.last().is_some_and(|event| {
+            event["event"] == "start-intent" && event["role"] == *role && event["token"] == *token
+        })
+    });
     let mut machine = Machine::default();
     let mut previous_time = String::new();
     for (sequence, event) in events.iter().enumerate() {
@@ -73,17 +79,23 @@ pub(super) fn collect(
         }
         previous_time = time;
         match kind {
-            "start-intent" => machine.intent(backend, runtime, contract, event)?,
+            "start-intent" => {
+                let future_log = pending
+                    .is_some_and(|(role, token)| event["role"] == role && event["token"] == token);
+                machine.intent(backend, runtime, contract, event, future_log)?;
+            }
             "started" => machine.started(contract, event)?,
             "start-failed" => machine.failed(event)?,
             _ => machine.close(contract, event)?,
         }
     }
-    if machine
-        .intents
-        .values()
-        .any(|intent| intent.started.is_none() && !intent.failed)
-    {
+    if machine.intents.iter().any(|(token, intent)| {
+        intent.started.is_none()
+            && !intent.failed
+            && !pending.is_some_and(|(role, allowed)| {
+                allowed == token.as_str() && role == intent.role.as_str()
+            })
+    }) {
         return Err("生产者启动意图没有started或start-failed收据".into());
     }
     Ok(machine.history)
@@ -116,6 +128,7 @@ impl Machine {
         runtime: &Path,
         receipt: &Value,
         event: &Value,
+        future_log: bool,
     ) -> Result<()> {
         let token = documents::text(&event["token"], "启动token")?;
         let role = documents::text(&event["role"], "启动角色")?;
@@ -131,7 +144,13 @@ impl Machine {
             return Err("生产者启动意图与runtime产物或配置不一致".into());
         }
         contract::ready_url(&event["ready_url"], false)?;
-        regular(&runtime.join(log), runtime, true)?;
+        let log_path = runtime.join(log);
+        let not_created = future_log
+            && std::fs::symlink_metadata(&log_path)
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound);
+        if !not_created {
+            regular(&log_path, runtime, true)?;
+        }
         self.intents.insert(
             token.to_owned(),
             Intent {

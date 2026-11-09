@@ -12,14 +12,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub(super) struct Inputs {
+pub(in crate::recovery::runtime) struct Inputs {
     backend: PathBuf,
     documents: BTreeMap<PathBuf, Document>,
     guards: Vec<ProtectedInputs>,
 }
 
 impl Inputs {
-    pub(super) fn new(backend: &Path) -> Self {
+    pub(in crate::recovery::runtime) fn new(backend: &Path) -> Self {
         Self {
             backend: backend.to_owned(),
             documents: BTreeMap::new(),
@@ -27,12 +27,12 @@ impl Inputs {
         }
     }
 
-    pub(super) fn protect(&mut self, path: &Path) -> Result<()> {
+    pub(in crate::recovery::runtime) fn protect(&mut self, path: &Path) -> Result<()> {
         self.guards.push(ProtectedInputs::open([path.to_owned()])?);
         Ok(())
     }
 
-    pub(super) fn read(&mut self, path: &Path) -> Result<Document> {
+    pub(in crate::recovery::runtime) fn read(&mut self, path: &Path) -> Result<Document> {
         if let Some(document) = self.documents.get(path) {
             document.assert_unchanged()?;
             return Ok(document.clone());
@@ -61,7 +61,7 @@ impl Inputs {
         Ok(document)
     }
 
-    pub(super) fn bound(&mut self, descriptor: &Value) -> Result<Document> {
+    pub(in crate::recovery::runtime) fn bound(&mut self, descriptor: &Value) -> Result<Document> {
         let binding = document::binding_shape(descriptor, "恢复静态权威绑定")?;
         crate::local_test_path::validate_local_test_path(
             &binding.path,
@@ -75,7 +75,7 @@ impl Inputs {
         Ok(document)
     }
 
-    pub(super) fn finish<T>(&self, result: Result<T>) -> Result<T> {
+    pub(in crate::recovery::runtime) fn finish<T>(&self, result: Result<T>) -> Result<T> {
         let checked: Result<()> = (|| {
             for document in self.documents.values() {
                 document.assert_unchanged()?;

@@ -1,14 +1,28 @@
 use super::{
     super::{digest, json as document, resources::common},
     model,
+    native_tool::NativeTool,
 };
 use crate::Result;
+use serde::Deserialize;
 use serde_json::{Value, json};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-pub(super) fn command(request: &Value, output: &Path, action: &str) -> Result<Vec<String>> {
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyLaunch {
+    format_version: u8,
+    request: Value,
+    request_sha256: String,
+    windows_output: String,
+    #[serde(rename = "linux_output")]
+    _linux_output: PathBuf,
+    native_tool: NativeTool,
+}
+
+pub(super) fn historical_arguments(request: &Value, output: &Path) -> Result<Vec<String>> {
     if request["format_version"] == 2 {
-        return super::native_tool::from_request(request)?.arguments(request, output, action);
+        return super::native_tool::from_request(request)?.historical_arguments(request, output);
     }
     let payload = document::read(&output.join("launch-request.json"))?;
     Ok(vec![
@@ -18,7 +32,7 @@ pub(super) fn command(request: &Value, output: &Path, action: &str) -> Result<Ve
         "--exec".into(),
         document::text(&request["python"]["path"], "Linux 解释器")?.into(),
         document::text(&payload["helpers"]["cache"]["path"], "冻结缓存辅助工具")?.into(),
-        action.into(),
+        "serve".into(),
         "--request".into(),
         model::linux_path(document::text(
             &common::binding(&output.join("launch-request.json"))?["path"],
@@ -32,21 +46,26 @@ pub(super) fn command(request: &Value, output: &Path, action: &str) -> Result<Ve
 fn frozen(request: &Value, output: &Path) -> Result<Value> {
     model::plain(output)?;
     let payload = document::read(&output.join("launch-request.json"))?;
-    if payload["request"] != *request
-        || payload["request_sha256"] != digest::plan_hash(request)?
-        || payload["windows_output"] != output.to_str().ok_or("缓存输出路径不是UTF-8")?
-    {
-        return Err("Redis 冻结运行不属于明确请求及输出目录".into());
-    }
+    let output_path = output.to_str().ok_or("缓存输出路径不是UTF-8")?;
+    let request_sha256 = digest::plan_hash(request)?;
     if request["format_version"] == 2 {
-        let launch: super::linux_write::Launch = serde_json::from_value(payload.clone())?;
+        let launch: LegacyLaunch = serde_json::from_value(payload.clone())?;
         if launch.format_version != 2
+            || launch.request != *request
+            || launch.request_sha256 != request_sha256
+            || launch.windows_output != output_path
             || serde_json::to_value(&launch.native_tool)? != request["native_tool"]
         {
-            return Err("缓存原生 launch 工具绑定不同".into());
+            return Err("缓存原生 launch 请求、路径或工具绑定不同".into());
         }
         launch.native_tool.validate()?;
         return Ok(payload);
+    }
+    if payload["request"] != *request
+        || payload["request_sha256"] != request_sha256
+        || payload["windows_output"] != output_path
+    {
+        return Err("Redis 冻结运行不属于明确请求及输出目录".into());
     }
     document::exact(&payload["helpers"], &["cache", "process"], "缓存冻结工具")?;
     for value in payload["helpers"].as_object().unwrap().values() {
@@ -93,7 +112,7 @@ pub(super) fn inspect(request: &Value, output: &Path) -> Result<Value> {
     let payload = frozen(request, output)?;
     if document::read(&output.join("intent.json"))?
         != json!({
-            "request_sha256":digest::plan_hash(request)?, "arguments":command(request, output, "serve")?,
+            "request_sha256":digest::plan_hash(request)?, "arguments":historical_arguments(request, output)?,
             "launch":common::binding(&output.join("launch-request.json"))?,
         })
     {

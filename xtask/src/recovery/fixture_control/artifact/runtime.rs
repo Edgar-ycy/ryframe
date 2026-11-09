@@ -2,9 +2,15 @@ use super::super::{exact_object, file_binding, read_json, text_field};
 use crate::{
     Result,
     local_test_path::{LocalTestPathKind, validate_absolute_path},
+    recovery::clone::native::target_verify::input::request_configuration::{
+        canonical_path, configuration_identity, python_configuration_hash,
+    },
 };
 use serde_json::{Value, json};
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 pub(crate) struct Binding {
     pub receipt: Value,
@@ -70,7 +76,7 @@ fn contract_inputs(root: &Path, directory: &Path, api: &Path, worker: &Path) -> 
         .ok_or("运行配置 jobs.health_port 无效")?;
     let receipt = json!({"format_version":1,"backend_root":root,"scope_id":scope,
         "api_config_dir":api,"worker_config_dir":worker,"api_configuration_sha256":digests[0],
-        "worker_configuration_sha256":digests[1],"configuration_sha256":hash(&json!(digests))?,
+        "worker_configuration_sha256":digests[1],"configuration_sha256":python_configuration_hash(&json!(digests))?,
         "worker_ready_url":format!("http://127.0.0.1:{port}/readyz"),"artifacts":artifacts});
     validate_tables(&receipt, tables)?;
     verify_binaries(directory, &receipt)?;
@@ -91,23 +97,28 @@ pub(in crate::recovery) fn register(
 ) -> Result<Value> {
     use crate::recovery::{clone::native::json::write_new, full_stack::provenance};
     let source = provenance::current(root, directory)?;
-    let build = read_json(
-        &directory.join("build-evidence.json"),
-        "全栈构建证据",
-        4 * 1024 * 1024,
-    )?;
-    if source.is_null() || source != build["source"] {
+    if source.is_null() {
         return Err("运行登记来源与当前完整构建证据不匹配".into());
     }
-    let receipt = contract_inputs(root, directory, api, worker)?;
-    write_new(&directory.join("runtime.json"), &receipt)?;
+    let runtime_path = directory.join("runtime.json");
+    let evidence_path = directory.join("runtime-evidence.json");
+    for path in [&runtime_path, &evidence_path] {
+        validate_absolute_path(path, LocalTestPathKind::OutputFile)?;
+    }
+    let (receipt, build_binding) =
+        super::source::verify_build_observed(root, directory, |recorded, build_binding| {
+            if *recorded != source {
+                return Err("运行登记来源与当前完整构建证据不匹配".into());
+            }
+            Ok((
+                contract_inputs(root, directory, api, worker)?,
+                build_binding.clone(),
+            ))
+        })?;
+    write_new(&runtime_path, &receipt)?;
     write_new(
-        &directory.join("runtime-evidence.json"),
-        &json!({
-            "format_version":1,"kind":"full-stack-runtime","source":source,
-            "build_evidence":file_binding(&directory.join("build-evidence.json"), "构建证据")?,
-            "runtime":file_binding(&directory.join("runtime.json"), "运行收据")?
-        }),
+        &evidence_path,
+        &super::source::runtime_evidence(directory, &source, &build_binding)?,
     )?;
     let actual = verify(root, directory)?.receipt;
     if actual != receipt {
@@ -168,7 +179,7 @@ pub(crate) fn verify_configuration(root: &Path, directory: &Path) -> Result<Bind
     }
     if receipt["api_configuration_sha256"] != digests[0]
         || receipt["worker_configuration_sha256"] != digests[1]
-        || receipt["configuration_sha256"] != hash(&json!(digests))?
+        || receipt["configuration_sha256"] != python_configuration_hash(&json!(digests))?
     {
         return Err("全栈运行收据与绑定文件配置摘要不匹配".into());
     }
@@ -276,60 +287,14 @@ fn verify_binaries(directory: &Path, receipt: &Value) -> Result<()> {
 }
 
 pub(in crate::recovery) fn configuration_digest(path: &Path) -> Result<String> {
-    let mut files = serde_json::Map::new();
+    let mut files = BTreeMap::new();
     for name in ["app.toml", "app.test.toml"] {
         let file = path.join(name);
         if name == "app.toml" && !file.exists() {
             continue;
         }
         validate_absolute_path(&file, LocalTestPathKind::ExistingFile)?;
-        files.insert(
-            name.into(),
-            file_binding(&file, "绑定配置")?["sha256"].clone(),
-        );
+        files.insert(name.to_owned(), file_binding(&file, "绑定配置")?);
     }
-    hash(&json!({"environment":{"APP_ENV":"test"}, "config_directory":path, "files":files}))
-}
-
-// 现有运行收据使用 Python 默认 JSON 空格和 ASCII 转义；保留该字节契约。
-pub(super) fn hash(value: &Value) -> Result<String> {
-    Ok(crate::devex::runtime_native::artifacts::sha(
-        encode(value)?.as_bytes(),
-    ))
-}
-fn encode(value: &Value) -> Result<String> {
-    Ok(match value {
-        Value::Object(fields) => format!(
-            "{{{}}}",
-            fields
-                .iter()
-                .map(|(key, value)| Ok(format!("{}: {}", encode(&json!(key))?, encode(value)?)))
-                .collect::<Result<Vec<_>>>()?
-                .join(", ")
-        ),
-        Value::Array(values) => format!(
-            "[{}]",
-            values
-                .iter()
-                .map(encode)
-                .collect::<Result<Vec<_>>>()?
-                .join(", ")
-        ),
-        Value::String(_) => {
-            let encoded = serde_json::to_string(value)?;
-            let mut output = String::new();
-            for character in encoded.chars() {
-                if character.is_ascii() {
-                    output.push(character);
-                } else {
-                    for unit in character.encode_utf16(&mut [0; 2]) {
-                        use std::fmt::Write;
-                        write!(output, "\\u{unit:04x}")?;
-                    }
-                }
-            }
-            output
-        }
-        value => serde_json::to_string(value)?,
-    })
+    configuration_identity(&canonical_path(path)?, &files)
 }

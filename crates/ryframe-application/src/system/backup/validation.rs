@@ -235,7 +235,7 @@ pub fn validate_restore_plan(
     require(
         plan.fault_at >= backup.manifest.captured_at
             && plan.fault_at <= now
-            && (plan.fault_at - backup.manifest.captured_at).num_seconds() <= 86_400,
+            && plan.fault_at - backup.manifest.captured_at <= Duration::hours(24),
         "备份恢复点不满足故障前 24 小时目标",
     )?;
     require(hex(&plan.frontend_sha, 40), "恢复验收需要精确前端 SHA")?;

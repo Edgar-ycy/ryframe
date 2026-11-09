@@ -195,6 +195,9 @@ impl<T: Transport, F: Fn() -> Result<()>> Capture<'_, T, F> {
             let path = self.directory.join(&name);
             let port = evidence::Port {
                 configuration: self.source.and_then(|source| source.configuration),
+                side: self
+                    .source
+                    .map_or(crate::cli::CloneSide::Target, |source| source.side),
                 context: self.context,
                 transport: self.transport,
                 checkpoint: self.checkpoint,
@@ -228,6 +231,9 @@ impl<T: Transport, F: Fn() -> Result<()>> Capture<'_, T, F> {
     fn owners(&mut self, database: &Value) -> Result<Vec<Value>> {
         let port = evidence::Port {
             configuration: self.source.and_then(|source| source.configuration),
+            side: self
+                .source
+                .map_or(crate::cli::CloneSide::Target, |source| source.side),
             context: self.context,
             transport: self.transport,
             checkpoint: self.checkpoint,
@@ -249,6 +255,9 @@ impl<T: Transport, F: Fn() -> Result<()>> Capture<'_, T, F> {
             let db = &databases[key];
             let port = evidence::Port {
                 configuration: self.source.and_then(|source| source.configuration),
+                side: self
+                    .source
+                    .map_or(crate::cli::CloneSide::Target, |source| source.side),
                 context: self.context,
                 transport: self.transport,
                 checkpoint: self.checkpoint,

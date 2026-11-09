@@ -87,6 +87,7 @@ impl Registration {
             Some(self.storage.as_path())
         };
         let request = common::read_bound(&self.backend, &self.value["request"], "fresh 请求")?;
+        super::super::storage::redis_layout::require_windows(&request["storage"]["redis"])?;
         crate::recovery::fixture_control::review::reconciled::validate_request(
             &self.backend,
             &request,

@@ -4,11 +4,9 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use serde_json::Value;
-
 use super::{
     cli::{CheckCommand, Command, RecoveryCommand, RuntimeCommand, SourceCommand, parse},
-    recovery::{runtime, source},
+    recovery::source,
     workspace::root_dir,
 };
 
@@ -124,11 +122,9 @@ fn parses_runtime_build_registration_and_start_into_typed_requests() {
         build_output.to_str().unwrap(),
         "--write",
     ]));
-    let RecoveryCommand::Runtime(command @ RuntimeCommand::Build(_)) = parsed_recovery(build)
-    else {
+    let RecoveryCommand::Runtime(RuntimeCommand::Build(_)) = parsed_recovery(build) else {
         panic!("Build没有解析为原生请求")
     };
-    assert!(runtime::private_invocation_at(&command, &root_dir(), &fixture.directory).is_err());
     assert!(!build_output.exists());
 
     let mut register = fixture.runtime_prefix("register");
@@ -145,10 +141,13 @@ fn parses_runtime_build_registration_and_start_into_typed_requests() {
             .unwrap(),
         "--write",
     ]));
-    assert!(matches!(
-        parsed_recovery(register),
-        RecoveryCommand::Runtime(RuntimeCommand::Register(_))
-    ));
+    let mut without_write = register.clone();
+    without_write.pop();
+    assert!(parse(without_write).is_err());
+    let RecoveryCommand::Runtime(RuntimeCommand::Register(_)) = parsed_recovery(register) else {
+        panic!("Register没有解析为原生请求")
+    };
+    assert!(!fixture.directory.join("new-registration.json").exists());
 
     let mut start = fixture.runtime_prefix("start");
     start.extend(fixture.control_arguments());
@@ -173,24 +172,33 @@ fn parses_runtime_control_and_receipt_operations_into_typed_requests() {
     let fixture = Fixture::new();
     let mut status = fixture.runtime_prefix("status");
     status.extend(fixture.control_arguments());
-    assert!(matches!(
-        parsed_recovery(status),
-        RecoveryCommand::Runtime(RuntimeCommand::Status(_))
-    ));
+    let mut with_write = status.clone();
+    with_write.push("--write".into());
+    assert!(parse(with_write).is_err());
+    let RecoveryCommand::Runtime(RuntimeCommand::Status(_)) = parsed_recovery(status) else {
+        panic!("Status没有解析为原生只读请求")
+    };
 
-    for operation in ["stop", "recover"] {
-        let mut arguments = fixture.runtime_prefix(operation);
-        arguments.extend(fixture.control_arguments());
-        arguments.extend(strings(&["--generation", "2"]));
-        if operation == "recover" {
-            arguments.extend(vec!["--owner".into(), text(&fixture.files.owner)]);
-        }
-        arguments.push("--write".into());
-        assert!(matches!(
-            parsed_recovery(arguments),
-            RecoveryCommand::Runtime(RuntimeCommand::Stop(_) | RuntimeCommand::Recover(_))
-        ));
-    }
+    let mut stop = fixture.runtime_prefix("stop");
+    stop.extend(fixture.control_arguments());
+    stop.extend(strings(&["--generation", "2"]));
+    assert!(parse(stop.clone()).is_err());
+    stop.push("--write".into());
+    let RecoveryCommand::Runtime(RuntimeCommand::Stop(_)) = parsed_recovery(stop) else {
+        panic!("Stop 没有解析为原生写请求")
+    };
+
+    let mut recover = fixture.runtime_prefix("recover");
+    recover.extend(fixture.control_arguments());
+    recover.extend(strings(&["--generation", "2"]));
+    recover.extend(vec![
+        "--owner".into(),
+        text(&fixture.files.owner),
+        "--write".into(),
+    ]);
+    let RecoveryCommand::Runtime(RuntimeCommand::Recover(_)) = parsed_recovery(recover) else {
+        panic!("Recover 没有解析为原生写请求")
+    };
 
     let mut bind = fixture.runtime_prefix("bind");
     bind.extend(fixture.source_arguments());
@@ -222,37 +230,6 @@ fn parses_runtime_control_and_receipt_operations_into_typed_requests() {
         parsed_recovery(verify),
         RecoveryCommand::Runtime(RuntimeCommand::Verify(_))
     ));
-}
-
-#[test]
-fn runtime_private_protocol_is_exact_and_contains_no_forwarded_argv() {
-    let fixture = Fixture::new();
-    let mut arguments = fixture.runtime_prefix("start");
-    arguments.extend(fixture.control_arguments());
-    arguments.extend(fixture.source_arguments());
-    arguments.extend(vec![
-        "--build-receipt".into(),
-        text(&fixture.files.build),
-        "--bindings".into(),
-        text(&fixture.files.bindings),
-        "--timeout".into(),
-        "7.25".into(),
-        "--write".into(),
-    ]);
-    let RecoveryCommand::Runtime(command) = parsed_recovery(arguments) else {
-        panic!()
-    };
-    let invocation =
-        runtime::private_invocation_at(&command, &root_dir(), &fixture.directory).unwrap();
-    assert_eq!(invocation.script, "tools/python/restore_runtime.py");
-    assert!(!invocation.protocol.contains(['\n', '\r', '\0']));
-    let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
-    assert_eq!(protocol["format_version"], 1);
-    assert_eq!(protocol["kind"], "ryframe-xtask-restore-runtime");
-    assert_eq!(protocol["operation"], "start");
-    assert_eq!(protocol["write"], true);
-    assert_eq!(protocol["timeout"], 7.25);
-    assert!(protocol.get("frontend_dir").is_none());
 }
 
 #[test]

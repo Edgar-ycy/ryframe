@@ -1,4 +1,4 @@
-//! Runtime 保留受管协议；来源验证与比较的失败请求由原生入口只读拒绝。
+//! 公开恢复控制与来源验证由原生入口拒绝无效请求并保留现场。
 
 use std::{
     fs,
@@ -45,6 +45,42 @@ Path(__file__).with_name("Python 环境.json").write_text("ambient-hook-executed
             directory,
         }
     }
+
+    fn runtime_arguments(&self, operation: &str) -> Vec<String> {
+        vec![
+            "check".into(),
+            "recovery".into(),
+            "runtime".into(),
+            operation.into(),
+            "--runtime-registration".into(),
+            self.registration.to_string_lossy().into_owned(),
+            "--target-plan".into(),
+            self.target.to_string_lossy().into_owned(),
+        ]
+    }
+
+    fn entries(&self) -> std::collections::BTreeMap<PathBuf, Option<Vec<u8>>> {
+        fs::read_dir(&self.directory)
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                let path = entry.path();
+                let kind = entry.file_type().unwrap();
+                let bytes = if kind.is_dir() {
+                    None
+                } else {
+                    assert!(kind.is_file(), "{}", path.display());
+                    Some(fs::read(&path).unwrap())
+                };
+                (path, bytes)
+            })
+            .collect()
+    }
+
+    fn assert_no_python_hook(&self) {
+        assert!(!self.capture.exists());
+        assert!(!self.directory.join("__pycache__").exists());
+    }
 }
 
 impl Drop for Fixture {
@@ -80,43 +116,127 @@ fn invoke_with_conflicting_python_environment(arguments: &[String], fixture: &Fi
         .unwrap()
 }
 
-fn assert_private_dispatch(result: Output, script: &str, hidden_paths: &[&Path]) {
-    assert_eq!(result.status.code(), Some(1));
+fn assert_native_registration_rejected(operation: &str, result: Output) {
     let stdout = String::from_utf8(result.stdout).unwrap();
     let stderr = String::from_utf8(result.stderr).unwrap();
-    assert!(stdout.contains(script), "{stdout}");
-    for path in hidden_paths {
-        assert!(!stdout.contains(path.to_str().unwrap()), "{stdout}");
-    }
-    assert!(!stderr.contains("protocol_error"), "{stderr}");
+    assert_eq!(result.status.code(), Some(1), "{operation}: {stderr}");
+    assert!(stdout.is_empty(), "{operation}: {stdout}");
+    assert_eq!(
+        stderr.trim_end(),
+        "任务失败：恢复运行登记字段缺失或包含未知字段",
+        "{operation}: {stderr}"
+    );
 }
 
 #[test]
-fn runtime_status_uses_managed_file_and_rejects_ambient_python_hooks() {
+fn runtime_status_and_recover_reject_invalid_registration_without_python_or_file_changes() {
     let fixture = Fixture::new();
-    let arguments = vec![
-        "check".into(),
-        "recovery".into(),
-        "runtime".into(),
-        "status".into(),
-        "--runtime-registration".into(),
-        fixture.registration.to_string_lossy().into_owned(),
-        "--target-plan".into(),
-        fixture.target.to_string_lossy().into_owned(),
-    ];
+    let owner = fixture.directory.join("隔离 owner.json");
+    let owner_bytes = b"{\"isolated_owner\":true}\n";
+    fs::write(&owner, owner_bytes).unwrap();
+    let before = fixture.entries();
+
+    for operation in ["status", "recover"] {
+        let mut arguments = fixture.runtime_arguments(operation);
+        if operation == "recover" {
+            arguments.extend([
+                "--generation".into(),
+                "1".into(),
+                "--owner".into(),
+                owner.to_string_lossy().into_owned(),
+                "--write".into(),
+            ]);
+        }
+        let result = invoke_with_conflicting_python_environment(&arguments, &fixture);
+        assert_native_registration_rejected(operation, result);
+        assert_eq!(fs::read(&owner).unwrap(), owner_bytes);
+        fixture.assert_no_python_hook();
+        assert_eq!(fixture.entries(), before);
+    }
+}
+
+#[test]
+fn runtime_start_rejects_invalid_registration_without_python_or_file_changes() {
+    let fixture = Fixture::new();
+    let backend = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let frontend = fixture.directory.join("前端 来源");
+    fs::create_dir(&frontend).unwrap();
+    let build = write(&fixture.directory, "后端 构建.json");
+    let bindings = write(&fixture.directory, "数据 绑定.json");
+    let mut arguments = fixture.runtime_arguments("start");
+    arguments.extend([
+        "--source-backend".into(),
+        backend.to_string_lossy().into_owned(),
+        "--source-frontend".into(),
+        frontend.to_string_lossy().into_owned(),
+        "--build-receipt".into(),
+        build.to_string_lossy().into_owned(),
+        "--bindings".into(),
+        bindings.to_string_lossy().into_owned(),
+        "--write".into(),
+    ]);
+
+    let before = fixture.entries();
+    assert!(fs::read_dir(&frontend).unwrap().next().is_none());
     let result = invoke_with_conflicting_python_environment(&arguments, &fixture);
-    let stdout = String::from_utf8(result.stdout.clone()).unwrap();
+    assert_native_registration_rejected("start", result);
+    fixture.assert_no_python_hook();
+    assert_eq!(fixture.entries(), before);
+    assert!(fs::read_dir(&frontend).unwrap().next().is_none());
+}
+
+#[test]
+fn runtime_bind_rejects_invalid_launch_without_python_or_file_changes() {
+    let fixture = Fixture::new();
+    let backend = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let frontend = fixture.directory.join("前端 来源");
+    fs::create_dir(&frontend).unwrap();
+    let build = write(&fixture.directory, "后端 构建.json");
+    let launch = write(&fixture.directory, "启动 收据.json");
+    let bindings = write(&fixture.directory, "数据 绑定.json");
+    let output = fixture.directory.join("新 运行收据.json");
+    let mut arguments = [
+        "check",
+        "recovery",
+        "runtime",
+        "bind",
+        "--source-backend",
+        backend.to_str().unwrap(),
+        "--source-frontend",
+        frontend.to_str().unwrap(),
+        "--build-receipt",
+        build.to_str().unwrap(),
+        "--launch-receipt",
+        launch.to_str().unwrap(),
+        "--bindings",
+        bindings.to_str().unwrap(),
+        "--output",
+        output.to_str().unwrap(),
+    ]
+    .map(str::to_owned)
+    .to_vec();
+
+    let before = fixture.entries();
+    let denied = invoke_with_conflicting_python_environment(&arguments, &fixture);
+    assert_eq!(denied.status.code(), Some(2));
+    assert!(denied.stdout.is_empty());
     assert!(
-        stdout.contains("-X utf8 -E -s -B tools/python/restore_runtime.py"),
-        "{stdout}"
+        String::from_utf8(denied.stderr)
+            .unwrap()
+            .contains("--write")
     );
-    assert_private_dispatch(
-        result,
-        "tools/python/restore_runtime.py",
-        &[&fixture.registration, &fixture.target],
+
+    arguments.push("--write".into());
+    let invalid = invoke_with_conflicting_python_environment(&arguments, &fixture);
+    assert_eq!(invalid.status.code(), Some(1));
+    assert!(invalid.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(invalid.stderr).unwrap().trim_end(),
+        "任务失败：恢复静态权威路径必须为字符串"
     );
-    assert!(!fixture.capture.exists());
-    assert!(!fixture.directory.join("__pycache__").exists());
+    fixture.assert_no_python_hook();
+    assert_eq!(fixture.entries(), before);
+    assert!(fs::read_dir(frontend).unwrap().next().is_none());
 }
 
 #[test]

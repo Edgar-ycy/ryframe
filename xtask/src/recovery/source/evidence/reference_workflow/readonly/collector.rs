@@ -1,10 +1,13 @@
 use super::{Result, binding::Inputs, native, text};
 use native::{
-    export::transport::{CommandOutput, CommandSpec, Transport},
+    export::{
+        database::dump_arguments,
+        transport::{CommandOutput, CommandSpec, StdoutTarget, Transport},
+    },
     target_verify::database::evidence::{self, stdout::VerifiedStdout},
 };
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, time::Duration};
+use std::{collections::BTreeMap, fs, path::Path, time::Duration};
 
 pub(super) struct Collector<'a, T> {
     pub(super) inputs: &'a Inputs,
@@ -88,6 +91,46 @@ impl<T: Transport> Collector<'_, T> {
         response(&output)
     }
 
+    pub(super) fn dump(&self, db: &Value, tables: &[&str], output: &Path) -> Result<()> {
+        self.inputs.unchanged()?;
+        let defaults = Path::new(text(&db["defaults_file"])?);
+        super::defaults::validate(defaults)?;
+        let raw = output.with_extension("raw.sql");
+        let args = dump_arguments(defaults, text(&db["database"])?, tables.iter().copied());
+        let mut spec = self.spec(args, None, StdoutTarget::File(raw.clone()))?;
+        spec.program = text(&self.inputs.plan["tools"]["mysqldump"]["path"])?.into();
+        spec.label = "参考数据库转储".into();
+        let result = self.transport.run(spec);
+        let failure = match &result {
+            Ok(result) if result.status.success() => None,
+            Ok(result) => Some(("CommandFailed", result.status.code())),
+            Err(_) => Some(("CommandError", None)),
+        };
+        if let Some((kind, code)) = failure {
+            let key = text(&db["key"])?;
+            let report = self
+                .inputs
+                .work
+                .join(format!("backup-mysqldump-{key}.json"));
+            native::json::write_new(
+                &report,
+                &json!({"format_version":1,"kind":"reference-backup-mysqldump-failure",
+                    "target_key":key,"returncode":code,"error_type":kind,"raw_output":raw}),
+            )?;
+        }
+        self.inputs.unchanged()?;
+        let output_status = result.map_err(|_| "参考数据库转储执行失败；保留原始输出")?;
+        if !output_status.status.success() {
+            return Err("参考数据库转储返回非零状态；保留原始输出，不自动重试".into());
+        }
+        super::super::super::reference::request(
+            "reference-sql-normalize",
+            &json!({"raw":raw,"output":output,"tables":tables}),
+        )?;
+        fs::remove_file(raw)?;
+        Ok(())
+    }
+
     fn spec(
         &self,
         args: Vec<String>,
@@ -95,7 +138,10 @@ impl<T: Transport> Collector<'_, T> {
         stdout: native::export::transport::StdoutTarget,
     ) -> Result<CommandSpec> {
         let mut environment = std::env::vars().collect::<BTreeMap<_, _>>();
-        environment.remove("MYSQL_PWD");
+        environment.retain(|key, _| {
+            !key.eq_ignore_ascii_case("MYSQL_PWD")
+                && !key.eq_ignore_ascii_case("MYSQL_TEST_LOGIN_FILE")
+        });
         environment.insert(
             "MYSQL_TEST_LOGIN_FILE".into(),
             self.inputs

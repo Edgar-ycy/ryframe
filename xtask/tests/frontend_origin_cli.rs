@@ -313,7 +313,7 @@ fn verify_sources_uses_compiled_root_and_snapshot_without_writing_checkout() {
             0
         )
     );
-    let mut wrong_root = request.clone();
+    let mut wrong_root = request;
     // 同名同字节 fixture 也不得冒充编译根；不修改正在验证的真实 checkout。
     for source in description["sources"].as_array().unwrap() {
         let relative = source["path"].as_str().unwrap();

@@ -15,6 +15,7 @@ import devex_clone_model as model
 import devex_clone_rows as sql_rows
 from devex_clone_source import export_source
 from devex_clone_source_fixture import SourceFixture
+from devex_clone_capture import capture_result, read_json, verify_capture
 from restore_build import file_digest
 from restore_reference_io import COPY_METADATA_FIELDS, ExternalTools
 from restore_reference_plan import BUCKETS, plan_hash
@@ -158,8 +159,78 @@ class ExportVerificationTests(unittest.TestCase):
         self.assertFalse(result["export"]["source_snapshot"]["clean"])
         self.assertFalse(result["export"]["dump_semantic_digest_verified"])
         self.assertEqual(set(result["captures"]), BUCKETS)
+        self.assertEqual({bucket for bucket, captures in result["captures"].items() if not captures},
+                         BUCKETS - {"uploads"})
         self.assertTrue(result["proof_files"])
         self.assertFalse(any(Path(name).suffix == ".sql" or Path(name).name == "object.bin" for name in result["proof_files"]))
+
+    def test_saved_native_capture_matches_python_null_header_evidence_and_rejects_body_drift(self):
+        entry = next(bucket["entries"][0] for bucket in self.export["objects"] if bucket["bucket"] == "uploads")
+        receipt = self.fixture.output / entry["capture"]["file"]
+        directory = receipt.parent
+        original = read_json(receipt)
+        head = read_json(directory / "head-before.json")
+        get = read_json(directory / "get.json")
+        self.assertNotIn("CacheControl", head)
+        get["CacheControl"] = None
+        (directory / "get.json").write_text(json.dumps(get), encoding="utf-8")
+        expected = original["expected"]
+        capture = capture_result(read_json(directory / "intent.json"), head, get,
+                                 read_json(directory / "head-after.json"), expected,
+                                 original["ownership_before"], original["ownership_after"])
+        receipt.write_text(json.dumps(capture), encoding="utf-8")
+        entry["capture"].update(file_digest(receipt))
+        entry["get_header_consistent"] = False
+        self.save_export()
+        old = verify_capture(self.tools, "source", "uploads", entry["key"], directory,
+                             expected=expected, max_bytes=original["max_bytes"],
+                             transport="rust-s3-sigv4")["capture"]
+        bound = verify.bound_export(self.fixture.backend, self.binding)
+        captures, logical, proofs = verify.verify_captures(self.fixture.backend, self.binding, *bound)
+        self.assertEqual(captures["uploads"][entry["key"]], old)
+        self.assertEqual(old["get_header_differences"], [{"field": "CacheControl", "head_present": False,
+            "head_value": None, "get_present": True, "get_value": None}])
+        self.assertEqual(logical["uploads", "system/file.txt"], entry["artifact"])
+        self.assertEqual(proofs, {str(directory / name): file_digest(directory / name)
+                                  for name in verify.capture_proof_names()})
+
+        native_capture = verify.saved_capture_sha256
+        for name in ("capture.json", "head-before.diagnostic.json"):
+            proof = directory / name
+            original_proof = proof.read_bytes()
+
+            def replace_after_native(*args):
+                checked = native_capture(*args)
+                replacement = proof.with_suffix(".replacement")
+                replacement.write_bytes(original_proof + b"\n")
+                replacement.replace(proof)
+                return checked
+
+            try:
+                with self.subTest(name=name), patch.object(verify, "saved_capture_sha256", side_effect=replace_after_native):
+                    with self.assertRaisesRegex(ValueError, "源原始小型证据已变化"):
+                        self.load()
+            finally:
+                proof.write_bytes(original_proof)
+
+        diagnostic = directory / "head-before.diagnostic.json"
+        original_diagnostic = diagnostic.read_bytes()
+
+        def remove_after_native(*args):
+            checked = native_capture(*args)
+            diagnostic.unlink()
+            return checked
+
+        try:
+            with patch.object(verify, "saved_capture_sha256", side_effect=remove_after_native):
+                with self.assertRaisesRegex(ValueError, "采集证据文件缺失"):
+                    self.load()
+        finally:
+            diagnostic.write_bytes(original_diagnostic)
+        body = directory / "object.bin"
+        body.write_bytes(body.read_bytes() + b"drift")
+        with self.assertRaisesRegex(ValueError, "对象实际载荷大小"):
+            verify.verify_captures(self.fixture.backend, self.binding, *bound)
 
     def test_full_export_parses_each_dump_once_and_keeps_narrow_tenant_preread(self):
         with patch.object(export, "rows", wraps=export.rows) as full, \

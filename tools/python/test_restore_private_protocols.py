@@ -117,23 +117,37 @@ class RestorePrivateProtocolTests(unittest.TestCase):
     def test_runtime_file_protocol_preserves_stdin_and_ignores_ambient_protocol(self):
         with WorkspaceDirectory(dir=ROOT / ".local-tests/python-unit") as directory:
             path = Path(directory) / "请求 file.json"
-            envelope = {"request": runtime_protocol("status"), "native_tool": json.dumps(tool_binding())}
+            arguments = ["--request-file", str(path)]
+            start = runtime_protocol("start")
+            envelope = {"request": start, "native_tool": json.dumps(tool_binding())}
             path.write_text(json.dumps(envelope), encoding="utf-8")
             with patch.dict(os.environ, {"RYFRAME_RESTORE_RUNTIME_PROTOCOL": "retired"}), patch.object(
                 sys, "stdin", object()
             ) as input_stream, patch.object(restore_runtime, "install_binding") as install:
-                request = restore_runtime.private_protocol_request(["--request-file", str(path)])
-                self.assertEqual(request.operation, "status")
+                request = restore_runtime.private_protocol_request(arguments)
+                self.assertEqual(request.operation, "start")
                 self.assertIs(sys.stdin, input_stream)
                 install.assert_called_once_with(envelope["native_tool"])
-            for args in ([], ["--request-file", str(path), "extra"], ["--environment", str(path)]):
+
+                recover = runtime_protocol("recover")
+                decoded = restore_runtime.decode_request(json.dumps(recover))
+                self.assertEqual(decoded.operation, "recover")
+                self.assertIs(decoded.namespace().write, True)
+                path.write_text(json.dumps({**envelope, "request": recover}), encoding="utf-8")
+                install.reset_mock()
+                with self.assertRaises(restore_runtime.RuntimeProtocolError):
+                    restore_runtime.private_protocol_request(arguments)
+                install.assert_not_called()
+                self.assertIs(sys.stdin, input_stream)
+
+            for args in ([], [*arguments, "extra"], ["--environment", str(path)]):
                 with self.assertRaises(ValueError):
                     restore_runtime.private_protocol_request(args)
             for raw in ("{}", "x" * (restore_runtime.PROTOCOL_MAX_BYTES + 1),
-                        json.dumps({**runtime_protocol("status"), "environment": {}})):
+                        json.dumps({**envelope, "request": {**start, "environment": {}}})):
                 path.write_text(raw, encoding="utf-8")
                 with self.assertRaises(ValueError):
-                    restore_runtime.private_protocol_request(["--request-file", str(path)])
+                    restore_runtime.private_protocol_request(arguments)
 
     def test_direct_script_argv_is_rejected_with_parameter_exit_code(self):
         result = subprocess.run(
@@ -150,13 +164,17 @@ class RestorePrivateProtocolTests(unittest.TestCase):
         self.assertNotIn(str(ROOT), result.stderr)
 
     def test_business_failure_preserves_the_task_exit_code_and_diagnostic(self):
-        runtime = runtime_protocol("status")
-        runtime["runtime_registration"] = str(
-            ROOT / ".local-tests" / f"missing-runtime-{os.getpid()}.json"
-        )
+        runtime = runtime_protocol("start")
         with WorkspaceDirectory(dir=ROOT / ".local-tests/python-unit") as directory:
-            path = Path(directory) / "request.json"
-            path.write_text(json.dumps({"request": runtime, "native_tool": json.dumps(tool_binding())}), encoding="utf-8")
+            root = Path(directory)
+            target = root / "target-plan.json"
+            target.write_text("{}", encoding="utf-8")
+            registration = root / "missing-runtime-registration.json"
+            runtime["target_plan"] = str(target)
+            runtime["runtime_registration"] = str(registration)
+            path = root / "私有请求.json"
+            envelope = {"request": runtime, "native_tool": json.dumps(tool_binding())}
+            path.write_text(json.dumps(envelope), encoding="utf-8")
             result = subprocess.run(
                 [sys.executable, "-X", "utf8", "-B", str(ROOT / "tools/python/restore_runtime.py"),
                  "--request-file", str(path)],
@@ -165,7 +183,12 @@ class RestorePrivateProtocolTests(unittest.TestCase):
                 text=True, encoding="utf-8", check=False,
             )
         self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(result.stdout, "")
         self.assertIn("Traceback", result.stderr)
+        self.assertIn("FileNotFoundError", result.stderr)
+        self.assertIn(registration.name, result.stderr)
+        self.assertNotIn(path.name, result.stderr)
+        self.assertNotIn("protocol_error", result.stderr)
 
 
 class NativeBindingEntrypointProcesses(unittest.TestCase):
@@ -200,19 +223,13 @@ runpy.run_path(sys.argv[0],run_name='__main__')
                 def envelope(value):
                     result = {key:item for key,item in value.items() if key != "native_tool"}
                     if binding is not None:
-                        result["native_tool"] = json.dumps(binding) if "domain" in result else binding
+                        result["native_tool"] = binding
                     return json.dumps(result)
                 tool_args = [] if binding is None else ["--native-tool", json.dumps(binding)]
                 cases = [
                     ("restore_reference.py", [*tool_args,"--stdin"], json.dumps({"format_version":1,
                         "kind":"ryframe-xtask-recovery-reference","request":{"backend_dir":str(ROOT),
                         "format_version":1,"operation":"check-existing","plan":str(evidence),"side":"source","write":False}})),
-                    ("reference_fixture_successor.py", [], envelope({"format_version":1,
-                        "kind":"ryframe-reference-fixture-control","domain":"successor","operation":"relationship",
-                        "backend_dir":str(ROOT),"write":True,"source_result":str(evidence),
-                        "predecessor_review":str(evidence),"predecessor_request":str(evidence),
-                        "successor_review":str(evidence),"seed_request":str(evidence),"base_request":str(evidence),
-                        "candidate_request":str(evidence),"id":"binding-test","output":str(root / "output.json")})),
                     ("restore_monitoring_authority.py", [], envelope(monitoring)),
                     ("devex_provenance.py", [], envelope({})),
                 ]
@@ -230,18 +247,10 @@ runpy.run_path(sys.argv[0],run_name='__main__')
                         self.assertNotIn("SyntaxError", result.stderr)
                         audit = 'NATIVE_BINDING_AUDIT={"subprocesses": 0}'
                         diagnostic = result.stderr.replace(audit + "\n", "").strip()
-                        digest_error = ("持有保护句柄前二进制摘要与登记不符" if os.name == "nt"
-                            else "限流工具字节或摘要与当前协调器绑定不同")
                         if script == "devex_provenance.py":
                             self.assertEqual(result.returncode, 1)
                             self.assertEqual(json.loads(result.stdout), {"ok": False, "stage": "bindings"})
                             self.assertEqual(diagnostic, "")
-                        elif script == "reference_fixture_successor.py":
-                            self.assertEqual(result.returncode, 2 if binding is None else 1)
-                            self.assertEqual(diagnostic,
-                                "reference_fixture_control_protocol_error：私有控制请求无效。" if binding is None else
-                                "reference_fixture_successor_failed：ValueError: " + digest_error
-                                + "；请核对原账本和失败证据，不自动重放。")
                         else:
                             code, expected = diagnostics[script]
                             self.assertEqual(result.returncode, code)

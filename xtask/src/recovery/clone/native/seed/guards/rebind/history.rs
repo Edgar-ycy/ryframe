@@ -256,6 +256,10 @@ impl Machine {
             actions.push(json!({"kind":"export-reconcile", "origin":origin}));
             return None;
         }
+        if op == ("seed-runtime", "arm-input") && row["status"] == "failed" {
+            actions.push(json!({"kind":"arm-prefix", "record":row}));
+            return None;
+        }
         Some(reject("seed 发布后存在失败或未收尾阶段"))
     }
 

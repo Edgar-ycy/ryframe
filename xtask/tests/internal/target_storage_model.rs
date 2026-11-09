@@ -3,15 +3,12 @@ use std::{
     collections::BTreeMap,
     fs,
     path::Path,
-    process::ExitStatus,
 };
 
 use serde_json::{Value, json};
 
 use crate::recovery::clone::native::{
-    digest,
-    export::transport::{CommandOutput, CommandSpec, Transport},
-    json as json_io,
+    digest, json as json_io,
     resources::common,
     target_verify::{
         input::TargetContext,
@@ -333,70 +330,14 @@ fn redis_configuration_reads_all_eight_fields_and_rejects_each_drift() {
     }
 }
 
-struct FakeTransport {
-    output: String,
-    calls: RefCell<Vec<String>>,
-    environments: RefCell<Vec<BTreeMap<String, String>>>,
-    failure: bool,
-}
-
-impl Transport for FakeTransport {
-    fn s3(
-        &self,
-        _: crate::recovery::clone::native::s3::Request,
-    ) -> crate::Result<serde_json::Value> {
-        panic!("该测试不允许对象存储调用")
-    }
-
-    fn run(&self, spec: CommandSpec) -> crate::Result<CommandOutput> {
-        self.calls.borrow_mut().push(spec.label.clone());
-        self.environments
-            .borrow_mut()
-            .push(spec.environment.clone());
-        assert!(spec.stdin.is_none());
-        #[cfg(windows)]
-        let status = {
-            use std::os::windows::process::ExitStatusExt;
-            ExitStatus::from_raw(u32::from(self.failure))
-        };
-        #[cfg(unix)]
-        let status = {
-            use std::os::unix::process::ExitStatusExt;
-            ExitStatus::from_raw(i32::from(self.failure) << 8)
-        };
-        Ok(CommandOutput {
-            status,
-            stdout: self.output.as_bytes().to_vec(),
-            stderr: b"private-command-failure-body".to_vec(),
-        })
-    }
-}
-
 #[test]
-fn kernel_transport_is_read_only_and_does_not_expose_command_failure_body() {
+fn fixed_observations_only_inherit_system_environment_fields() {
     let mut fixture = Fixture::new();
     fixture
         .context
         .environment
         .insert("path".into(), "bound-path".into());
-    let transport = FakeTransport {
-        output: "fixed output".into(),
-        calls: RefCell::new(Vec::new()),
-        environments: RefCell::new(Vec::new()),
-        failure: false,
-    };
-    let value = kernel::observe(
-        &fixture.context.storage_inputs(),
-        &transport,
-        "fixed-tool".into(),
-        vec!["fixed-arg".into()],
-        "storage-test",
-    )
-    .unwrap();
-    assert_eq!(value, "fixed output");
-    assert_eq!(transport.calls.borrow().as_slice(), &["storage-test"]);
-    let environments = transport.environments.borrow();
-    let actual = &environments[0];
+    let actual = fixture.context.storage_inputs().command_environment();
     assert_eq!(actual["path"], "bound-path");
     assert_eq!(
         actual
@@ -435,25 +376,7 @@ fn kernel_transport_is_read_only_and_does_not_expose_command_failure_body() {
             .filter(|key| key.to_ascii_uppercase().starts_with("APP_"))
             .all(|key| fixture.context.environment.contains_key(key))
     );
-    let failed = FakeTransport {
-        output: "private-command-failure-body".into(),
-        calls: RefCell::new(Vec::new()),
-        environments: RefCell::new(Vec::new()),
-        failure: true,
-    };
-    let error = kernel::observe(
-        &fixture.context.storage_inputs(),
-        &failed,
-        "fixed-tool".into(),
-        Vec::new(),
-        "storage-test",
-    )
-    .unwrap_err()
-    .to_string();
-    assert!(!error.contains("private-command-failure-body"));
-    assert_eq!(error, kernel::OBSERVATION_ERROR);
 }
-
 #[test]
 fn rustfs_fake_observer_checks_arguments_and_publishes_only_digest_evidence() {
     let fixture = Fixture::new();

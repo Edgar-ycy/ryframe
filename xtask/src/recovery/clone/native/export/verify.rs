@@ -1,4 +1,8 @@
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    io::ErrorKind,
+    path::{Path, PathBuf},
+};
 
 use serde_json::{Value, json};
 
@@ -6,9 +10,12 @@ use super::super::{
     digest,
     json::{self as json_io, exact},
     lifecycle::manifest,
+    target_verify::guard::Inputs,
 };
 use super::{database, input::Context, inventory, proof};
 use crate::Result;
+
+pub(crate) mod frozen;
 
 pub(crate) fn binding(context: &Context, descriptor: &Value) -> Result<Value> {
     let binding = manifest::validate_binding_shape(descriptor, "源导出绑定")?;
@@ -48,7 +55,14 @@ fn validate_export(context: &Context, value: &Value, path: &Path) -> Result<()> 
             .and_then(Value::as_str)
             .ok_or("源导出缺少证据根目录")?,
     );
-    let root = validate_shape(context, value, path, &artifact_root)?;
+    let root = validate_shape(
+        &context.backend,
+        &context.request,
+        &context.request_path,
+        value,
+        path,
+        &artifact_root,
+    )?;
     validate_evidence(context, root, &artifact_root)?;
     let models = database::models(context)?;
     validate_export_databases(context, root, &artifact_root, &models)?;
@@ -57,7 +71,9 @@ fn validate_export(context: &Context, value: &Value, path: &Path) -> Result<()> 
 }
 
 fn validate_shape<'a>(
-    context: &Context,
+    backend: &Path,
+    request: &Value,
+    request_path: &Path,
     value: &'a Value,
     path: &Path,
     artifact_root: &Path,
@@ -94,11 +110,10 @@ fn validate_shape<'a>(
         || root.get("kind").and_then(Value::as_str) != Some("devex-clone-source-export")
         || root.get("status").and_then(Value::as_str) != Some("source_export_captured")
         || artifact_root != path.parent().unwrap_or(Path::new("."))
-        || root.get("scope_id") != context.source().get("scope_id")
-        || root.get("id") != context.request.get("id")
-        || root.get("worktree_fingerprint") != context.request.get("worktree_fingerprint")
-        || root.get("source")
-            != super::input::public_request(&context.backend, &context.request)?.get("source")
+        || root.get("scope_id") != request["source"].get("scope_id")
+        || root.get("id") != request.get("id")
+        || root.get("worktree_fingerprint") != request.get("worktree_fingerprint")
+        || root.get("source") != super::input::public_request(backend, request)?.get("source")
         || root.get("remote_writes").and_then(Value::as_u64) != Some(0)
         || root.get("clone_verified").and_then(Value::as_bool) != Some(false)
         || root.get("restore_qualified").and_then(Value::as_bool) != Some(false)
@@ -114,12 +129,95 @@ fn validate_shape<'a>(
     {
         return Err("源导出类型、目录、scope 或实际验证状态不符".into());
     }
-    let request = root.get("request").ok_or("源导出缺少原请求绑定")?;
-    let request_path = manifest::bound_file(&context.backend, request, "源导出原请求", true)?;
-    if request_path != context.request_path {
+    let binding = root.get("request").ok_or("源导出缺少原请求绑定")?;
+    if manifest::bound_file(backend, binding, "源导出原请求", true)? != request_path {
         return Err("源导出与外部原请求不同".into());
     }
     Ok(root)
+}
+
+/// 只建立已保存对象的权威输入窗口，不加载执行环境或复核其他阶段。
+pub(crate) struct SavedObjectInputs {
+    pub(crate) root: PathBuf,
+    pub(crate) export: Value,
+    pub(crate) request: Value,
+    pub(crate) inventory: Value,
+    held: Inputs,
+}
+
+impl SavedObjectInputs {
+    pub(crate) fn load(backend: &Path, descriptor: &Value) -> Result<Self> {
+        let path = manifest::bound_file(backend, descriptor, "已保存对象的原导出", true)?;
+        if path.file_name().and_then(|name| name.to_str()) != Some("export.json") {
+            return Err("已保存对象必须绑定正式 export.json".into());
+        }
+        let root = path.parent().ok_or("源导出缺少证据目录")?.to_owned();
+        reject_failure(&root)?;
+        let export = json_io::read(&path)?;
+        let request_path = manifest::bound_file(backend, &export["request"], "源导出原请求", true)?;
+        let inventory_path = super::evidence::bound_relative(
+            &root,
+            &export["evidence"]["inventory-before"],
+            "inventory-before.json",
+        )?;
+        let public_request_path =
+            super::evidence::bound_relative(&root, &export["evidence"]["request"], "request.json")?;
+        let held = Inputs::open([
+            path.clone(),
+            request_path.clone(),
+            inventory_path.clone(),
+            public_request_path.clone(),
+        ])?;
+        manifest::bound_file(backend, descriptor, "已保存对象的原导出", true)?;
+        if json_io::read(&path)? != export {
+            return Err("已保存对象的导出收据在建立保护时变化".into());
+        }
+        let request = json_io::read(&request_path)?;
+        super::input::validate_request(backend, &request)?;
+        validate_shape(
+            backend,
+            &request,
+            &request_path,
+            &export,
+            &path,
+            Path::new(json_io::text(&export["artifact_root"], "源导出证据根")?),
+        )?;
+        if json_io::read(&public_request_path)? != super::input::public_request(backend, &request)?
+        {
+            return Err("源请求公开投影与已绑定的原请求不一致".into());
+        }
+        let inventory = json_io::read(&inventory_path)?;
+        super::inventory_validate::objects(
+            json_io::object(&inventory, "已绑定来源库存")?,
+            json_io::text(&export["scope_id"], "来源 scope")?,
+        )?;
+        for (name, file) in [
+            ("inventory-before", "inventory-before.json"),
+            ("request", "request.json"),
+        ] {
+            super::evidence::bound_relative(&root, &export["evidence"][name], file)?;
+        }
+        Ok(Self {
+            root,
+            export,
+            request,
+            inventory,
+            held,
+        })
+    }
+
+    pub(crate) fn check(&self) -> Result<()> {
+        self.held.check()?;
+        reject_failure(&self.root)
+    }
+}
+
+fn reject_failure(root: &Path) -> Result<()> {
+    match fs::symlink_metadata(root.join("failure.json")) {
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+        Ok(_) => Err("源证据包含失败标记，不能使用残留成功文件".into()),
+    }
 }
 
 fn validate_evidence(

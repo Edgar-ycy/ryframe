@@ -21,7 +21,7 @@ mod control;
 mod diagnostic;
 pub(crate) use diagnostic::diagnostic;
 mod guard;
-mod history;
+pub(in crate::recovery::clone::native) mod history;
 mod input;
 pub(crate) mod locks;
 mod observation;

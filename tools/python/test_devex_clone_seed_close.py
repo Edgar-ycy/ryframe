@@ -17,9 +17,58 @@ from rate_limit_client import ROOT
 from restore_reference_plan import plan_hash
 
 
+ACTIVE_FIELDS = (
+    "background_job_status",
+    "background_job_lease",
+    "background_job_completion",
+    "background_job_attempt",
+    "outbox_event_status",
+    "outbox_event_lease",
+    "export_job_status",
+    "export_job_request",
+    "export_job_delete",
+    "user_import_job",
+    "enabled_schedule",
+    "schedule_execution",
+    "config_bundle",
+    "config_transfer",
+    "retention_run",
+    "password_reset",
+    "tenant_operation_lease",
+    "tenant_data_migration",
+    "tenant_data_migration_item",
+    "file_upload",
+    "tenant_status",
+)
+
+TERMINAL_FIELDS = (
+    "background_job_dead",
+    "background_job_attempt_failed",
+    "background_job_attempt_dead",
+    "background_job_attempt_deferred",
+    "background_job_attempt_lease_expired",
+    "outbox_event_dead",
+    "export_job_failed",
+    "export_job_cancelled",
+    "export_job_expired",
+    "user_import_partial",
+    "user_import_failed",
+    "user_import_cancelled",
+    "schedule_skipped_misfire",
+    "schedule_skipped_concurrency",
+    "schedule_target_unavailable",
+    "schedule_invalid_configuration",
+    "config_bundle_failed",
+    "config_bundle_expired",
+    "config_transfer_failed",
+    "retention_run_failed",
+    "password_reset_expired",
+)
+
+
 def snapshot(*, active=None, terminal=None, moment="2026-09-05T00:00:00.000000Z"):
-    active_counts = {key: 0 for key in close.ACTIVE_QUERIES}
-    terminal_counts = {key: 0 for key in close.TERMINAL_QUERIES}
+    active_counts = {key: 0 for key in ACTIVE_FIELDS}
+    terminal_counts = {key: 0 for key in TERMINAL_FIELDS}
     active_counts.update(active or {})
     terminal_counts.update(terminal or {})
     return {"database_time": moment, "active": active_counts,
@@ -53,23 +102,24 @@ class Clock:
 
 
 class SnapshotTests(unittest.TestCase):
-    def test_snapshot_parser_uses_formal_native_binding_and_rejects_duplicate_keys(self):
-        value = snapshot(terminal={"outbox_event_dead": 2})
-        self.assertEqual(close.parse_snapshot(json.dumps(value)), value)
-        with self.assertRaisesRegex(ValueError, "重复字段"):
-            close.parse_snapshot('{"active":{},"active":{}}')
-
-    def test_fixed_query_covers_validate_state_tables_and_is_read_only(self):
-        for table in (
-            "sys_background_job", "sys_background_job_attempt", "sys_outbox_event", "sys_export_job",
-            "sys_user_import_job", "sys_job_schedule", "sys_job_schedule_execution",
-            "sys_tenant_config_bundle", "sys_tenant_config_transfer", "sys_data_retention_run",
-            "password_reset_requests", "sys_tenant_operation_lease", "sys_tenant_data_migration",
-            "sys_tenant_data_migration_item", "sys_file", "sys_tenant",
-        ):
-            self.assertIn(table, close.DRAIN_SQL)
-        self.assertTrue(close.DRAIN_SQL.startswith("SELECT JSON_OBJECT("))
-        self.assertNotRegex(close.DRAIN_SQL.upper(), r"\b(UPDATE|DELETE|INSERT|ALTER|DROP|TRUNCATE)\b")
+    def test_drain_observation_binds_current_close_attempt_to_the_target_lock(self):
+        directory = Path("run")
+        context = SimpleNamespace(backend=ROOT, directory_root=directory, owned_lock_identity=419)
+        value = snapshot()
+        handoff = {"sha256": "1" * 64}
+        with patch.object(close, "load_state", return_value={"attempts": [{"number": 12}]}), \
+                patch.object(close, "binding", return_value=handoff) as bind, \
+                patch("devex_clone_seed.invoke_seed_tool", return_value={"snapshot": value}) as invoke:
+            self.assertEqual(close.observe_snapshot(context), value)
+            bind.assert_called_once_with(directory / "seed-runtime/runtime/handoff.json")
+            invoke.assert_called_once_with(ROOT, "__seed-runtime-control", {
+                "format_version": 1, "kind": "ryframe-seed-runtime-control", "run_dir": str(directory),
+                "attempt": 12, "operation": "drain", "roles": ["worker"], "handoff": handoff,
+                "target_lock_inode": 419,
+            }, timeout=180)
+            invoke.return_value = {"snapshot": value, "runtime": {}}
+            with self.assertRaisesRegex(ValueError, "排空读取结果无效"):
+                close.observe_snapshot(context)
 
     def test_stability_resets_after_active_snapshot_and_requires_elapsed_interval(self):
         busy = snapshot(active={"outbox_event_status": 1})
@@ -138,6 +188,13 @@ class CloseTests(unittest.TestCase):
         return {"format_version": 1, "kind": "devex-clone-runtime-control", "operation": operation,
                 "scope_id": self.handoff["scope_id"], "runtime_directory": str(self.runtime),
                 "processes": processes, "producer_history": str(self.runtime / "producer-history.json")}
+
+    def test_native_close_stop_is_bound_to_current_attempt_and_one_role(self):
+        number, _ = self.begin_attempt()
+        with patch("devex_clone_seed_runtime.pair_control", return_value={"runtime": self.worker_stop, "authority": None}) as control:
+            result = close._control(self.private, self.backend, self.runtime, "stop", ("worker",), self.handoff)
+        self.assertEqual(result, self.worker_stop)
+        control.assert_called_once_with(self.backend, self.runtime, "stop", ("worker",), self.handoff, number)
 
     @property
     def running(self):

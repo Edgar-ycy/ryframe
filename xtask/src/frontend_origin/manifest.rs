@@ -1,14 +1,14 @@
 //! 两端共用完整相对来源清单；跨 OS 摘要不包含根路径或 inode。
-#[cfg(target_os = "linux")]
-use super::source_guard;
 use super::sources;
 use crate::{
     Result,
-    recovery::clone::native::{digest, json as document, source},
+    recovery::clone::native::{digest, json as document},
 };
 use serde_json::{Value, json};
+#[cfg(test)]
 use std::path::Path;
 
+#[cfg(test)]
 pub(crate) fn capture(root: &Path) -> Result<Value> {
     let paths = sources::discover(root)?;
     let entries = super::scan::ordered(&paths, |relative| {
@@ -50,31 +50,6 @@ pub(crate) fn hex_digest(value: &str, size: usize) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-}
-
-#[cfg(target_os = "linux")]
-pub(crate) fn verify_compiled(root: &Path, entries: &Value) -> Result<()> {
-    let input = serde_json::to_vec(&json!({"format_version":1,"root":root,"sources":entries}))?;
-    source_guard::execute(&mut input.as_slice())
-        .map(|_| ())
-        .map_err(|_| "Linux 观察器编译根或完整编译来源不匹配".into())
-}
-
-pub(crate) fn git_source(root: &Path, commit: &str) -> Result<source::Inventory> {
-    if !root.is_absolute()
-        || !hex_digest(commit, 40)
-        || digest::linked_path(&root.join(".git"))?.contains(&true)
-        || !std::fs::symlink_metadata(root.join(".git"))?.is_dir()
-        || root.join(".git/objects/info/alternates").try_exists()?
-        || root.join(".git/commondir").try_exists()?
-    {
-        return Err("Linux 观察器来源必须是无 alternates 的独立普通 Git clone".into());
-    }
-    let observed = source::capture(root)?;
-    if !observed.source.snapshot.clean || observed.source.snapshot.head != commit {
-        return Err("Linux 观察器来源 HEAD 或 clean 状态不匹配".into());
-    }
-    Ok(observed)
 }
 
 #[cfg(test)]

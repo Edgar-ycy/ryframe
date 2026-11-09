@@ -14,13 +14,36 @@ pub(super) fn reference(
     launch: &Value,
     target: &Document,
 ) -> Result<Document> {
-    let binding = &launch["request"]["registration"];
+    let registration = inputs.bound(&launch["request"]["registration"]["registration"])?;
+    read_reference(inputs, launch, target, &registration)
+}
+
+pub(in crate::recovery::runtime) fn read_reference(
+    inputs: &mut Inputs,
+    launch: &Value,
+    target: &Document,
+    registration: &Document,
+) -> Result<Document> {
+    read_binding(
+        inputs,
+        &launch["request"]["registration"],
+        target,
+        registration,
+    )
+}
+
+pub(in crate::recovery::runtime) fn read_binding(
+    inputs: &mut Inputs,
+    binding: &Value,
+    target: &Document,
+    registration: &Document,
+) -> Result<Document> {
     strict::exact(binding, &["registration", "target_plan"], "恢复登记绑定")?;
     check(
-        binding["target_plan"] == document::binding(target),
-        "恢复代次未绑定显式目标计划",
+        binding["target_plan"] == document::binding(target)
+            && binding["registration"] == document::binding(registration),
+        "恢复代次未绑定显式登记和目标计划",
     )?;
-    let registration = inputs.bound(&binding["registration"])?;
     let value = &registration.value;
     strict::exact(
         value,

@@ -20,6 +20,7 @@ impl SourceProjection {
         let root = export::input::execution_backend(backend, &request.value)?;
         let environment = BTreeMap::from([("APP_ENV".into(), "test".into())]);
         let (_table, files) = s3::app_configuration::runtime_configuration(
+            backend,
             &root,
             &environment,
             &runtime.value,
@@ -29,7 +30,7 @@ impl SourceProjection {
             .as_str()
             .ok_or("源运行收据缺少 API 配置目录")?;
         let mut source = request.value["source"].clone();
-        source["s3"] = source_project(&root, Path::new(directory), &source["s3"])?;
+        source["s3"] = source_project(backend, Path::new(directory), &source["s3"])?;
         let tools = reference_tools(&request.value)?;
         runtime.assert_unchanged()?;
         request.assert_unchanged()?;
@@ -219,19 +220,26 @@ mod tests {
         )
         .unwrap();
         let runtime = json!({"api_config_dir":directory,"api_configuration_sha256":request_configuration::configuration_identity(&selected, &files).unwrap()});
-        s3::app_configuration::runtime_configuration(&root, &environment, &runtime, "api").unwrap();
+        s3::app_configuration::runtime_configuration(&root, &root, &environment, &runtime, "api")
+            .unwrap();
         for field in ["api_config_dir", "api_configuration_sha256"] {
             let mut missing = runtime.clone();
             missing.as_object_mut().unwrap().remove(field);
             assert!(
-                s3::app_configuration::runtime_configuration(&root, &environment, &missing, "api")
-                    .is_err()
+                s3::app_configuration::runtime_configuration(
+                    &root,
+                    &root,
+                    &environment,
+                    &missing,
+                    "api"
+                )
+                .is_err()
             );
         }
         let mut wrong = runtime;
         wrong["api_config_dir"] = json!(root.join(".local-tests"));
         assert!(
-            s3::app_configuration::runtime_configuration(&root, &environment, &wrong, "api")
+            s3::app_configuration::runtime_configuration(&root, &root, &environment, &wrong, "api")
                 .is_err()
         );
     }

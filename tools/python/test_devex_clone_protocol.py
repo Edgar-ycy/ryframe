@@ -71,9 +71,8 @@ class CloneProtocolTests(unittest.TestCase):
             ("stage", {"run_dir": str(self.run), "stage": "copy", "mode": "resume"}, True),
             ("runtime", {"run_dir": str(self.run), "side": "target", "operation": "status", "roles": ["api"]}, False),
             ("recover", {"run_dir": str(self.run), "owner_binding": str(self.file)}, True),
-            ("recover-copy", {"run_dir": str(self.run), "owner_binding": str(self.file)}, True),
             ("post-copy", {"run_dir": str(self.run), "operation": "verify", "request": None, "producer_binding": None}, True),
-            ("seed-runtime", {"run_dir": str(self.run), "operation": "status", "request": None, "producer_binding": None}, False),
+            ("seed-runtime", {"run_dir": str(self.run), "operation": "close", "request": None, "producer_binding": None}, True),
         ]
         for command, options, write in cases:
             with self.subTest(command=command):
@@ -91,7 +90,6 @@ class CloneProtocolTests(unittest.TestCase):
             ("post-copy", {"operation": "schedules"}, "business-write"),
             ("seed-runtime", {"operation": "quotas-reconcile"}, "evidence-write"),
             ("seed-runtime", {"operation": "departments-reconcile"}, "evidence-write"),
-            ("seed-runtime", {"operation": "recover"}, "evidence-write"),
         ]
         for command, options, expected in cases:
             with self.subTest(command=command, options=options):
@@ -116,7 +114,7 @@ class CloneProtocolTests(unittest.TestCase):
             "register", "quotas-plan", "quotas-apply", "quotas-reconcile",
             "departments-plan", "departments-apply", "departments-reconcile",
             "departments-verify", "identities-apply", "identities-verify", "prepare",
-            "start", "close", "arm-input", "stop", "status", "recover", "recover-session",
+            "close", "arm-input", "recover-session",
         }
         for operation in seed_operations:
             cases.append(("seed-runtime", {
@@ -143,6 +141,11 @@ class CloneProtocolTests(unittest.TestCase):
             json.dumps(self.payload("seed-runtime", {"run_dir": str(self.run), "operation": "source-export", "request": None, "producer_binding": None}, True)),
             json.dumps(self.payload("stage", {"run_dir": str(self.run), "stage": "target-verify", "mode": "resume"}, True)),
         ]
+        for operation in ("status", "start", "stop", "recover"):
+            invalid.append(json.dumps(self.payload("seed-runtime", {
+                "run_dir": str(self.run), "operation": operation,
+                "request": None, "producer_binding": None,
+            }, operation != "status")))
         invalid.extend(
             json.dumps(self.payload("post-copy", {
                 "run_dir": str(self.run), "operation": operation,

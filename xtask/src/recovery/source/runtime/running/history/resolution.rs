@@ -6,7 +6,10 @@ use crate::{
         cache, json as document,
         lifecycle::{identity, lock, state},
         resources::common,
-        seed::rebind::{Controller, Phase, classify},
+        seed::{
+            arm_input::history as arm_history,
+            rebind::{Controller, Phase, classify},
+        },
     },
 };
 use serde_json::{Value, json};
@@ -17,10 +20,11 @@ pub(super) fn inspect(
     run: &Path,
     saved: &Value,
     descriptor: &Value,
+    arm: Option<&arm_history::Active<'_>>,
 ) -> Result<Value> {
     let attempts = state::attempts(saved)?;
     let current = model("active-read", json!({"attempts":attempts}))?["current"].clone();
-    inspect_current(backend, run, saved, descriptor, &current, false)
+    inspect_current(backend, run, saved, descriptor, &current, false, arm)
 }
 
 // 明确 attempt 只能由已核对原 RunLock 与当前账本的正式控制器提供。
@@ -38,6 +42,7 @@ pub(in crate::recovery::source::evidence) fn source_rebind(
                 descriptor,
                 &json!(controller.number()),
                 false,
+                None,
             ),
         )
     })
@@ -50,6 +55,7 @@ pub(super) fn inspect_current(
     descriptor: &Value,
     current: &Value,
     cache_recovery: bool,
+    arm: Option<&arm_history::Active<'_>>,
 ) -> Result<Value> {
     let attempts = state::attempts(saved)?;
     let archive = prelaunch::closed(backend, run, attempts)?;
@@ -107,6 +113,7 @@ pub(super) fn inspect_current(
         saved,
         descriptor,
         current,
+        arm,
     };
     for action in document::array(&planned["actions"], "完整历史证明任务")? {
         consume(&context, &archive, action, &mut proofs)?;
@@ -120,6 +127,7 @@ struct History<'a> {
     saved: &'a Value,
     descriptor: &'a Value,
     current: &'a Value,
+    arm: Option<&'a arm_history::Active<'a>>,
 }
 
 fn consume(
@@ -134,6 +142,7 @@ fn consume(
         saved,
         descriptor,
         current,
+        arm,
     } = *context;
     let frozen = &archive["receipt"]["review_successor"];
     match document::text(&action["kind"], "历史证明类型")? {
@@ -180,6 +189,9 @@ fn consume(
                 return Err("seed 发布后存在失败或未收尾阶段".into());
             }
         }
+        "arm-prefix" => {
+            arm_history::prove(backend, run, saved, &action["record"], descriptor, arm)?
+        }
         _ => return Err("重绑定模型返回未知证明任务".into()),
     }
     Ok(())
@@ -223,6 +235,7 @@ mod tests {
             Path::new("absent"),
             &saved,
             &Value::Null,
+            None,
         )
         .unwrap_err();
         assert!(error.to_string().contains("未收尾写入或控制动作"));

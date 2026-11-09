@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use serde_json::{Value, json};
 
 use super::{exact, inputs, native, path, text, unlinked};
@@ -11,7 +11,8 @@ pub(super) fn manifest(args: &Value) -> Result<Value> {
     super::inventory_shape(plan, inventory)?;
     inputs::inventory::validate(plan, inventory)?;
     let captured = DateTime::parse_from_rfc3339(text(&inventory["captured_at"])?)?;
-    let completed = Utc::now();
+    let completed = DateTime::from_timestamp_micros(Utc::now().timestamp_micros())
+        .ok_or("备份完成时间超出范围")?;
     if captured > completed {
         return Err("备份采集时间不能晚于备份完成时间".into());
     }
@@ -20,8 +21,13 @@ pub(super) fn manifest(args: &Value) -> Result<Value> {
         .ok_or("备份保留时间溢出")?;
     let mut value = inventory.clone();
     value["id"] = plan["id"].clone();
-    value["completed_at"] = json!(completed.to_rfc3339());
-    value["retention_until"] = json!(retention.to_rfc3339());
+    // 采用产品 BackupManifest 序列化的 UTC 格式，保持备份与数据库登记值相同。
+    value["completed_at"] = json!(completed.to_rfc3339_opts(SecondsFormat::AutoSi, true));
+    value["retention_until"] = json!(
+        retention
+            .to_utc()
+            .to_rfc3339_opts(SecondsFormat::AutoSi, true)
+    );
     value["artifacts"] = args["artifacts"].clone();
     let root = path(&args["root"])?;
     unlinked(root)?;
@@ -167,17 +173,19 @@ pub(super) fn dataset_result(args: &Value) -> Result<Value> {
     Ok(Value::Object(result))
 }
 
-pub(super) fn backup_inventory(args: &Value) -> Result<Value> {
-    exact(args, &["plan", "inventory", "source"])?;
-    let mut inventory = native::json::object(&args["inventory"], "共享导出原始库存")?.clone();
+pub(super) fn backup_inventory(
+    plan: &Value,
+    raw: &Value,
+    source: impl FnOnce() -> Result<Value>,
+) -> Result<Value> {
+    let mut inventory = native::json::object(raw, "共享导出原始库存")?.clone();
     if inventory.contains_key("id") {
         return Err("backup必须直接消费共享导出的原始库存，不能手工补写id".into());
     }
-    if args["source"]["clean"].as_bool() != Some(true)
-        || args["source"]["head"] != inventory["source_sha"]
-    {
+    let source = source()?;
+    if source["clean"].as_bool() != Some(true) || source["head"] != inventory["source_sha"] {
         return Err("正式备份协调器必须是共享导出库存source_sha对应的干净工作树".into());
     }
-    inventory.insert("id".into(), args["plan"]["id"].clone());
+    inventory.insert("id".into(), plan["id"].clone());
     Ok(Value::Object(inventory))
 }

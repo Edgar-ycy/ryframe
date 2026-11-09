@@ -39,7 +39,7 @@ pub(in crate::recovery::clone::native::cache) fn run(
     let timeout = Duration::from_secs(request["timeout_seconds"].as_u64().ok_or("缓存超时无效")?);
     let deadline = Deadline::new(Instant::now(), timeout);
     let executable = bound_path(&launch.coordinator, "path")?;
-    let pid = crate::process::spawn_detached(&executable, &launch.arguments()?)?;
+    let pid = crate::process::windows_detach::spawn_detached(&executable, &launch.arguments()?)?;
     let result = (|| {
         let supervisor =
             common::process_identity(pid)?.ok_or("Windows Redis 监督器创建身份缺失")?;

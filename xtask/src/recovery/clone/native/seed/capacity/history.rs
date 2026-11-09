@@ -19,8 +19,12 @@ const EDITABLE: &[&str] = &[
     "max_requests_per_min",
 ];
 
-fn intent(reads: &mut Reads<'_>, run: &Path, item: &Value, attempt: &Path) -> Result<()> {
-    let value = reads.read(&attempt.join("intent.json"))?;
+pub(super) fn intent_value(
+    reads: &mut Reads<'_>,
+    run: &Path,
+    item: &Value,
+    attempt: &Path,
+) -> Result<Value> {
     let tenant = document::object(&item["after"]["tenant"], "配额完整后像")?;
     let body = EDITABLE
         .iter()
@@ -31,9 +35,21 @@ fn intent(reads: &mut Reads<'_>, run: &Path, item: &Value, attempt: &Path) -> Re
             ))
         })
         .collect::<Result<serde_json::Map<_, _>>>()?;
-    let expected = json!({"plan":reads.binding(&run.join("seed-runtime/quota-plan.json"))?,
+    Ok(
+        json!({"plan":reads.binding(&run.join("seed-runtime/quota-plan.json"))?,
         "target":item["target"],"before":reads.binding(&attempt.join("before.json"))?,
-        "body":body,"operation":"put_platform_tenants_by_tenant_id","automatic_retry":false});
+        "body":body,"operation":"put_platform_tenants_by_tenant_id","automatic_retry":false}),
+    )
+}
+
+pub(super) fn intent(
+    reads: &mut Reads<'_>,
+    run: &Path,
+    item: &Value,
+    attempt: &Path,
+) -> Result<()> {
+    let value = reads.read(&attempt.join("intent.json"))?;
+    let expected = intent_value(reads, run, item, attempt)?;
     if value != expected
         || model::classification(item, &reads.bound(&value["before"])?)? != "before"
     {
@@ -129,7 +145,7 @@ pub(super) fn confirmation(
     Ok(post)
 }
 
-fn evidence_name(name: &str, path: &Path) -> bool {
+pub(super) fn evidence_name(name: &str, path: &Path) -> bool {
     let Some(file) = path.file_name().and_then(|name| name.to_str()) else {
         return false;
     };

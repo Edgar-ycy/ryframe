@@ -1,11 +1,12 @@
 //! 重建三侧 successor 的全部绑定与碰撞投影，不接受收据自身摘要作为来源证明。
 use super::*;
+use crate::recovery::clone::native::lifecycle::manifest;
 use std::{collections::BTreeSet, path::PathBuf};
 
 const SIDES: [&str; 3] = ["seed", "base", "candidate"];
 
-pub(super) fn load(backend: &Path, descriptor: &Value) -> Result<Value> {
-    let value = common::read_bound(backend, descriptor, "seed review successor")?;
+pub(in crate::recovery) fn load(backend: &Path, descriptor: &Value) -> Result<Value> {
+    let value = document::read(&bound(backend, descriptor, "seed review successor")?)?;
     document::exact(
         &value,
         &[
@@ -25,54 +26,106 @@ pub(super) fn load(backend: &Path, descriptor: &Value) -> Result<Value> {
         ],
         "seed review successor",
     )?;
-    input::name(document::text(&value["id"], "successor ID")?)?;
-    let mut unhashed = value.clone();
-    unhashed
-        .as_object_mut()
-        .ok_or("successor 不是对象")?
-        .remove("relationship_sha256");
     if value["format_version"].as_u64() != Some(1)
         || value["kind"] != "devex-clone-seed-review-successor"
         || value["remote_writes"].as_u64() != Some(0)
         || value["restore_qualified"] != false
-        || digest::plan_hash(&unhashed)? != value["relationship_sha256"]
     {
-        return Err("seed review successor 结构或关系摘要无效".into());
+        return Err("seed review successor 结构无效".into());
     }
-    let source = common::read_bound(backend, &value["source_result"], "successor 来源结果")?;
+    if build(backend, &value)? != value {
+        return Err("seed review successor 与当前绑定输入或关系摘要不一致".into());
+    }
+    bound(backend, descriptor, "seed review successor")?;
+    Ok(value)
+}
+
+fn bound(backend: &Path, descriptor: &Value, label: &str) -> Result<PathBuf> {
+    let path = common::bound_file(backend, descriptor, label)?;
+    // 旧发布者用 Path 的规范拼写生成描述，不能改写同一文件的路径后重签关系。
+    let normalized = path.components().collect::<PathBuf>();
+    if descriptor["path"] != manifest::path_text(&normalized, label)? {
+        return Err("successor 文件路径与原绑定不一致".into());
+    }
+    Ok(path)
+}
+
+pub(in crate::recovery) fn canonical_binding(backend: &Path, path: &Path) -> Result<Value> {
+    let path = common::common_file(backend, path, "successor 输入文件")?;
+    let file = common::binding(&path.components().collect::<PathBuf>())?;
+    let value = document::read(&bound(backend, &file, "successor 输入文件")?)?;
+    let mut descriptor = file;
+    descriptor["canonical_sha256"] = json!(digest::plan_hash(&value)?);
+    Ok(descriptor)
+}
+
+pub(in crate::recovery) fn build(backend: &Path, inputs: &Value) -> Result<Value> {
+    input::name(document::text(&inputs["id"], "successor ID")?)?;
+    let source = document::read(&bound(
+        backend,
+        &inputs["source_result"],
+        "successor 来源结果",
+    )?)?;
     qualified(&source)?;
-    if source["status"] != "seed_source_registered"
-        || source["registration"] != value["source_registration"]
-    {
-        return Err("successor 来源结果与内层登记不一致".into());
+    if source["status"] != "seed_source_registered" {
+        return Err("successor 来源结果尚未登记".into());
     }
-    let registration = common::read_bound(backend, &source["registration"], "successor 来源登记")?;
+    let registration = document::read(&bound(
+        backend,
+        &source["registration"],
+        "successor 来源登记",
+    )?)?;
     if registration["kind"] != "devex-clone-seed-source-registration" {
         return Err("successor 来源登记类型无效".into());
     }
-    let previous = canonical(backend, &value["predecessor_review"])?;
+    let previous = read_canonical(backend, &inputs["predecessor_review"])?;
     predecessor(backend, &previous)?;
-    let target = canonical(backend, &value["predecessor_request"])?;
-    target_verify::binding_request::validate(backend, &target, &value["predecessor_review"])?;
+    let target = read_canonical(backend, &inputs["predecessor_request"])?;
+    target_verify::binding_request::validate(backend, &target, &inputs["predecessor_review"])?;
     if target["side"] != "seed" {
         return Err("successor 历史请求必须属于 seed 侧".into());
     }
-    let current = canonical(backend, &value["successor_review"])?;
+    let current = read_canonical(backend, &inputs["successor_review"])?;
     ready(backend, &current, true)?;
-    requests(backend, &value)?;
-    if projection(&previous, &current)? != value["collision_projection"] {
-        return Err("successor 碰撞投影不同于完整输入重建结果".into());
-    }
+    requests(backend, inputs)?;
+    let collision_projection = projection(&previous, &current)?;
     // 各输入绑定最后再次读取，不能在检查不同侧时替换早先已经校验的文件。
     for field in [
         "predecessor_review",
         "predecessor_request",
         "successor_review",
     ] {
-        canonical(backend, &value[field])?;
+        read_canonical(backend, &inputs[field])?;
     }
-    common::bound_file(backend, descriptor, "seed review successor")?;
+    for side in SIDES {
+        read_canonical(backend, &inputs["requests"][side])?;
+    }
+    common::bound_file(backend, &inputs["source_result"], "successor 来源结果")?;
+    common::bound_file(backend, &source["registration"], "successor 来源登记")?;
+    let mut value = json!({
+        "format_version":1, "kind":"devex-clone-seed-review-successor",
+        "id":inputs["id"], "source_result":inputs["source_result"],
+        "source_registration":source["registration"], "predecessor_review":inputs["predecessor_review"],
+        "predecessor_request":inputs["predecessor_request"], "successor_review":inputs["successor_review"],
+        "requests":inputs["requests"], "collision_projection":collision_projection,
+        "remote_writes":0, "restore_qualified":false,
+    });
+    value["relationship_sha256"] = json!(digest::plan_hash(&value)?);
     Ok(value)
+}
+
+fn read_canonical(backend: &Path, descriptor: &Value) -> Result<Value> {
+    // 保持四字段证据中的完整原路径，而其字节与规范摘要仍由共同读侧校验。
+    let path = Path::new(document::text(&descriptor["path"], "successor 规范输入")?);
+    if descriptor["path"]
+        != manifest::path_text(
+            &path.components().collect::<PathBuf>(),
+            "successor 规范输入",
+        )?
+    {
+        return Err("successor 文件路径与原绑定不一致".into());
+    }
+    canonical(backend, descriptor)
 }
 
 fn pending(review: &Value) -> Result<()> {
@@ -94,7 +147,7 @@ fn predecessor(backend: &Path, review: &Value) -> Result<()> {
 
 fn ready(backend: &Path, review: &Value, require_pending_parent: bool) -> Result<()> {
     let descriptor = &review["preflight"]["supersedes"];
-    let previous = common::read_bound(backend, descriptor, "successor preflight 前驱")?;
+    let previous = document::read(&bound(backend, descriptor, "successor preflight 前驱")?)?;
     if require_pending_parent {
         pending(&previous)?;
     }
@@ -153,7 +206,7 @@ fn requests(backend: &Path, value: &Value) -> Result<()> {
     let mut generations = BTreeSet::new();
     let mut ids = BTreeSet::new();
     for side in SIDES {
-        let request = canonical(backend, &value["requests"][side])?;
+        let request = read_canonical(backend, &value["requests"][side])?;
         target_verify::published::request_binding(backend, &request)?;
         if request["side"] != side || request["review"] != value["successor_review"] {
             return Err("successor 三侧请求未绑定同一 ready review 的对应侧".into());
@@ -310,12 +363,49 @@ fn socket(value: &Value, redis: bool) -> Result<String> {
         return Err("successor Redis 端点必须是明确 loopback".into());
     }
     let port = if redis {
-        url.port()
+        url.port().ok_or("碰撞端点没有端口")?
     } else {
-        url.port_or_known_default()
-    }
-    .ok_or("碰撞端点没有端口")?;
+        http_port(text, &url, &host)?
+    };
     Ok(format!("{host}:{port}"))
+}
+
+fn http_port(text: &str, url: &url::Url, host: &str) -> Result<u16> {
+    let message = "successor HTTP 端点必须是明确的本机 loopback";
+    let literal = match host {
+        "127.0.0.1" => "127.0.0.1",
+        "::1" => "[::1]",
+        _ => return Err(message.into()),
+    };
+    let default = match url.scheme() {
+        "http" => 80,
+        "https" => 443,
+        _ => return Err(message.into()),
+    };
+    // URL 的浏览器语义会重写简写 IP 与反斜线；原审阅只接受明确的回环主机。
+    let text = text.replace(['\r', '\n', '\t'], "");
+    let authority = text
+        .split_once("://")
+        .ok_or(message)?
+        .1
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or_default();
+    let authority = authority.rsplit('@').next().unwrap_or_default();
+    let literal_port = authority
+        .strip_prefix(literal)
+        .and_then(|tail| tail.strip_prefix(':'))
+        .is_some_and(|port| port.bytes().all(|byte| byte.is_ascii_digit()));
+    if (authority != literal && !literal_port)
+        || !url.username().is_empty()
+        || [url.password(), url.query(), url.fragment()]
+            .into_iter()
+            .flatten()
+            .any(|value| !value.is_empty())
+    {
+        return Err(message.into());
+    }
+    Ok(url.port().filter(|port| *port != 0).unwrap_or(default))
 }
 
 fn path_key(value: &str) -> PathBuf {

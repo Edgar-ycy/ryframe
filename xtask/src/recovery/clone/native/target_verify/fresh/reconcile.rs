@@ -104,7 +104,7 @@ fn run<T: Transport>(
         run: active,
     };
     let observe_generation = |publish| resources.generation_owned(Some(&owner), publish);
-    let observer = SystemObserver::new(transport);
+    let observer = SystemObserver;
     let result = cleanup(&Window {
         registration,
         inputs,

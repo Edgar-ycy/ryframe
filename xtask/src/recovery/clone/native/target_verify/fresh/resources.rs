@@ -5,18 +5,18 @@ use super::super::super::{
 use super::super::{
     authority,
     input::{request, request_physical},
-    storage::{self, StorageInputs, StorageObserver, SystemObserver},
+    storage::{self, StorageInputs, SystemObserver},
 };
 use super::{receipts, selection};
 use crate::Result;
 use serde_json::{Value, json};
 use std::path::Path;
 
-pub(super) struct Resources<'a, T> {
-    pub(super) inputs: StorageInputs<'a>,
-    pub(super) transport: &'a T,
-    pub(super) scope: &'a Scope,
-    pub(super) run: Option<&'a Path>,
+pub(in crate::recovery::clone::native) struct Resources<'a, T> {
+    pub(in crate::recovery::clone::native) inputs: StorageInputs<'a>,
+    pub(in crate::recovery::clone::native) transport: &'a T,
+    pub(in crate::recovery::clone::native) scope: &'a Scope,
+    pub(in crate::recovery::clone::native) run: Option<&'a Path>,
 }
 
 impl<T: Transport> Resources<'_, T> {
@@ -24,11 +24,12 @@ impl<T: Transport> Resources<'_, T> {
         Ok(self.generation_owned(None, true)?.0)
     }
 
-    pub(super) fn generation_owned(
+    pub(in crate::recovery::clone::native) fn generation_owned(
         &self,
         owner: Option<&super::super::guard::Generation>,
         publish: bool,
     ) -> Result<(Value, selection::Selected, Option<Value>)> {
+        storage::redis_layout::require_windows(&self.inputs.request["storage"]["redis"])?;
         let mut generation = authority::generation::observe(
             self.inputs.backend,
             self.inputs.request,
@@ -46,14 +47,9 @@ impl<T: Transport> Resources<'_, T> {
             &Value::Object(descriptor),
             "fresh 审阅计划",
         )?;
-        let observer = Observer {
-            transport: self.transport,
-        };
+        let observer = SystemObserver;
         let redis = &selected.value["redis"];
-        let windows = redis["platform"] == "windows";
-        if !publish && !windows {
-            return Err("无收据守卫仅支持 Windows Redis 连接窗口".into());
-        }
+        storage::redis_layout::require_windows(redis)?;
         let rustfs = storage::rustfs::inspect(
             &self.inputs,
             &review,
@@ -65,7 +61,7 @@ impl<T: Transport> Resources<'_, T> {
             storage::rustfs::publish(&self.inputs, &rustfs)?;
         }
         storage::redis_layout::verify(&self.inputs, &review, redis, &observer)?;
-        if publish && windows {
+        if publish {
             let path = self.inputs.observation_dir.join(format!(
                 "redis-windows-{}.json",
                 uuid::Uuid::new_v4().simple()
@@ -81,18 +77,14 @@ impl<T: Transport> Resources<'_, T> {
     }
 
     pub(super) fn absence(&self, redis: &Value) -> Result<Value> {
+        storage::redis_layout::require_windows(redis)?;
         let databases = document::array(&self.inputs.request["target"]["databases"], "fresh 四库")?
             .iter()
             .map(|db| database_absence(&self.inputs, self.transport, db))
             .collect::<Result<Vec<_>>>()?;
         let objects = super::objects::absence(&self.inputs, self.transport)?;
-        let redis = super::super::redis::absence_with_observer(
-            &self.inputs,
-            redis,
-            &Observer {
-                transport: self.transport,
-            },
-        )?;
+        let redis =
+            super::super::redis::absence_with_observer(&self.inputs, redis, &SystemObserver)?;
         Ok(json!({"databases":databases,"objects":objects,"redis":redis}))
     }
 }
@@ -158,51 +150,4 @@ pub(super) fn mysql(
     }
     request::external_file(&inputs.request["tools"]["mysql"])?;
     Ok(raw)
-}
-
-struct Observer<'a, T> {
-    transport: &'a T,
-}
-
-impl<T: Transport> StorageObserver for Observer<'_, T> {
-    fn process_identity(&self, pid: u32) -> Result<Option<Value>> {
-        common::process_identity(pid)
-    }
-    fn arguments(&self, inputs: &StorageInputs<'_>, identity: &Value) -> Result<Vec<String>> {
-        SystemObserver::new(self.transport).arguments(inputs, identity)
-    }
-    fn listener(&self, inputs: &StorageInputs<'_>, identity: &Value, url: &str) -> Result<()> {
-        SystemObserver::new(self.transport).listener(inputs, identity, url)
-    }
-    fn wsl(&self, inputs: &StorageInputs<'_>, redis: &Value, args: &[String]) -> Result<String> {
-        let program = request::external_file(&redis["wsl"])?;
-        let mut arguments = vec![
-            "--distribution".into(),
-            document::text(&redis["distribution"], "Redis 发行版")?.into(),
-            "--exec".into(),
-        ];
-        arguments.extend_from_slice(args);
-        let result = receipts::command(
-            inputs,
-            self.transport,
-            program,
-            arguments,
-            None,
-            "redis-kernel",
-        )?;
-        request::external_file(&redis["wsl"])?;
-        Ok(result.trim().to_owned())
-    }
-    fn redis(&self, inputs: &StorageInputs<'_>, redis: &Value, parts: &[&str]) -> Result<Value> {
-        SystemObserver::new(self.transport).redis(inputs, redis, parts)
-    }
-
-    fn redis_window<R>(
-        &self,
-        inputs: &StorageInputs<'_>,
-        redis: &Value,
-        read: impl FnOnce(&mut dyn FnMut(&[&str]) -> Result<Value>) -> Result<R>,
-    ) -> Result<R> {
-        SystemObserver::new(self.transport).redis_window(inputs, redis, read)
-    }
 }

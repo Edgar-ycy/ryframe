@@ -256,7 +256,7 @@ impl Fixture {
             self.write(
                 "intent.json",
                 json!({"request_sha256":digest::plan_hash(&self.request).unwrap(),
-                "arguments":evidence::command(&self.request,&self.output,"serve").unwrap(),
+                "arguments":evidence::historical_arguments(&self.request,&self.output).unwrap(),
                 "launch":common::binding(&self.output.join("launch-request.json")).unwrap()}),
             );
             return;
@@ -272,7 +272,7 @@ impl Fixture {
             sources[key] = binding;
         }
         self.write("launch-request.json",json!({"format_version":1,"request":self.request,"request_sha256":digest::plan_hash(&self.request).unwrap(),"windows_output":self.output,"helpers":sources}));
-        self.write("intent.json",json!({"request_sha256":digest::plan_hash(&self.request).unwrap(),"arguments":evidence::command(&self.request,&self.output,"serve").unwrap(),"launch":common::binding(&self.output.join("launch-request.json")).unwrap()}));
+        self.write("intent.json",json!({"request_sha256":digest::plan_hash(&self.request).unwrap(),"arguments":evidence::historical_arguments(&self.request,&self.output).unwrap(),"launch":common::binding(&self.output.join("launch-request.json")).unwrap()}));
     }
     fn recorded(&self) -> Value {
         self.intent();
@@ -344,7 +344,7 @@ fn frozen_receipts_bind_generation_tools_directory_and_fail_unknown_launches() {
     )
     .unwrap_err()
     .to_string();
-    assert!(error.contains("launcher 仍存活"));
+    assert!(error.contains("历史 WSL Redis 代次仅供证据核验"));
     assert_eq!(
         std::fs::read(partial.output.join("partial.json")).unwrap(),
         before
@@ -353,40 +353,68 @@ fn frozen_receipts_bind_generation_tools_directory_and_fail_unknown_launches() {
 
 #[cfg(windows)]
 #[test]
-fn control_rechecks_frozen_receipts_before_single_call_and_never_retries() {
-    use std::os::windows::process::ExitStatusExt;
+fn historical_cache_receipts_remain_readable_but_all_live_operations_refuse_them() {
+    let backend = crate::workspace::root_dir();
     let fixture = Fixture::native();
     let runtime = fixture.recorded();
-    let mut calls = 0;
-    let failure = process::call_with(&fixture.request, &runtime, "stop", |args, input| {
-        calls += 1;
-        assert!(args.iter().all(|arg| !arg.contains("bound-private-value")));
-        assert_eq!(
-            serde_json::from_slice::<Value>(input).unwrap(),
-            runtime["linux_identity"]
-        );
-        Ok(std::process::Output {
-            status: std::process::ExitStatus::from_raw(17),
-            stdout: vec![],
-            stderr: b"private password".to_vec(),
-        })
-    })
-    .unwrap_err();
-    assert_eq!(calls, 1);
-    assert!(!failure.to_string().contains("private password"));
-    let mut wrong = runtime.clone();
-    wrong["linux_identity"]["started"] = json!("999");
-    assert!(
-        process::call_with(&fixture.request, &wrong, "stop", |_, _| panic!(
-            "错误代次不得调用"
-        ))
-        .is_err()
+    let frozen = evidence::inspect(&fixture.request, &fixture.output).unwrap();
+    let supplied = fixture.output.join("supplied-cache-request.json");
+    std::fs::write(
+        &supplied,
+        serde_json::to_vec(&json!({"process":fixture.request})).unwrap(),
+    )
+    .unwrap();
+    let before = std::fs::read_dir(&fixture.output).unwrap().count();
+    let start = super::host_start::start(
+        &backend,
+        &fixture.request,
+        &Value::Null,
+        &fixture.output,
+        || panic!("旧代次不得调用启动守卫"),
     );
-    assert!(
-        process::call_with(&fixture.request, &runtime, "serve", |_, _| panic!(
-            "不得隐式创建进程"
-        ))
-        .is_err()
+    let stop = super::host_control::stop_guarded(
+        &backend,
+        &fixture.request,
+        &runtime,
+        &fixture.output,
+        || panic!("旧代次不得调用停止守卫"),
+    );
+    let call = |operation, arguments| {
+        let payload = json!({"format_version": 1, "kind": "ryframe-cache-process",
+            "operation": operation, "arguments": arguments});
+        super::execute(&backend, &serde_json::to_vec(&payload).unwrap())
+    };
+    for result in [
+        start,
+        stop,
+        super::stage::require_live_request(&backend, &fixture.output, Some(&supplied))
+            .map(|()| Value::Null),
+        super::host_control::observe(&backend, &fixture.request, &runtime),
+        super::readonly::port(
+            &backend,
+            "predecessor",
+            &json!({
+                "request": fixture.request, "runtime": runtime, "effective": fixture.request,
+            }),
+        ),
+        call("facts", json!({"request": fixture.request})),
+        call(
+            "call",
+            json!({"request": fixture.request, "runtime": runtime, "action": "stop"}),
+        ),
+    ] {
+        let error = result.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("历史 WSL Redis 代次仅供证据核验")
+        );
+        assert!(!error.to_string().contains("bound-private-value"));
+    }
+    assert_eq!(std::fs::read_dir(&fixture.output).unwrap().count(), before);
+    assert_eq!(
+        evidence::inspect(&fixture.request, &fixture.output).unwrap(),
+        frozen
     );
 }
 

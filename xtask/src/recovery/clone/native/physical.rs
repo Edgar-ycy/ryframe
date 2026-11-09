@@ -5,6 +5,8 @@ use serde_json::Value;
 use super::sql::{Row, SqlValue};
 use crate::Result;
 
+pub(super) mod frozen;
+
 pub(crate) fn reject_row(
     row: &Row,
     forbidden: &[String],
@@ -55,11 +57,12 @@ fn inspect_json(
         Value::Object(values) => {
             for (key, value) in values {
                 inspect_text(key, forbidden, logical, allow_logical)?;
-                let physical = matches!(
-                    key.as_str(),
-                    "scope" | "scope_id" | "storage_scope" | "object_scope" | "redis_namespace"
-                );
-                inspect_json(value, forbidden, logical, allow_logical && !physical)?;
+                inspect_json(
+                    value,
+                    forbidden,
+                    logical,
+                    allow_logical && !is_physical_key(key),
+                )?;
             }
             Ok(())
         }
@@ -86,6 +89,13 @@ fn inspect_text(
     } else {
         Ok(())
     }
+}
+
+fn is_physical_key(key: &str) -> bool {
+    matches!(
+        key,
+        "scope" | "scope_id" | "storage_scope" | "object_scope" | "redis_namespace"
+    )
 }
 
 fn replace_logical(value: &str, tenant: &str) -> String {

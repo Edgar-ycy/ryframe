@@ -11,7 +11,8 @@ use support::*;
 fn api_survives_controller_exit_and_stops_its_complete_role_tree() {
     let fixture = Fixture::with_role("tree", Role::Api);
     let runtime = read(fixture.run.join("runtime.json"));
-    let started = fixture.ok("start");
+    let started = fixture.ok("start-strict");
+    assert_eq!(started["operation"], "start");
     let id = started["operation_id"].as_str().unwrap();
     let archive = fixture.archive(&started["operation_id"]);
     let owner = read(archive.join("owner.json"));
@@ -62,11 +63,20 @@ fn api_survives_controller_exit_and_stops_its_complete_role_tree() {
         .unwrap()
         .parse()
         .unwrap();
-    let stopped = fixture.ok("stop");
+    let stopped = fixture.ok("stop-strict");
+    assert_eq!(stopped["operation"], "stop");
     assert_eq!(stopped["state"], "stopped");
     assert!(stopped["identity"].is_null());
+    assert!(!fixture.control("start-strict", 5.0).0);
+    assert_eq!(fixture.tree(), tree);
     assert_eq!(fixture.ok("status")["state"], "stopped");
-    let proof = read(fixture.run.join(format!("api-members-{id}-stopped.json")));
+    let proof_path = fixture.run.join(format!("api-members-{id}-stopped.json"));
+    let proof_bytes = fs::read(&proof_path).unwrap();
+    let verified = fixture.ok("stop-strict");
+    assert_eq!(verified["state"], "stopped");
+    assert!(verified["identity"].is_null());
+    assert_eq!(fs::read(&proof_path).unwrap(), proof_bytes);
+    let proof = read(proof_path);
     assert_eq!(proof["role"], "api");
     assert_eq!(proof["scope_id"], runtime["scope_id"]);
     assert_eq!(proof["supervisor"], tree["supervisor"]);

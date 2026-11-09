@@ -156,7 +156,7 @@ class ServiceContextTests(unittest.TestCase):
     def test_cli_requires_explicit_write_for_first_generation(self):
         common = ["--backend-dir", str(self.backend), "--review", str(self.review), "--environment", str(self.bootstrap),
                   "--native-tool", json.dumps(tool_binding())]
-        for args in (("rustfs",), ("redis",), ("buckets",),
+        for args in (("rustfs",), ("buckets",),
                      ("rustfs", "--write", "--owner-binding", "owner.json")):
             with self.subTest(args=args), patch("sys.stderr", new_callable=io.StringIO), \
                     self.assertRaises(SystemExit) as error:
@@ -164,12 +164,13 @@ class ServiceContextTests(unittest.TestCase):
             self.assertEqual(error.exception.code, 2)
 
 
-    def test_cli_rejects_duplicate_and_abbreviated_options_before_reading_inputs(self):
+    def test_cli_rejects_retired_operation_and_invalid_options_before_reading_inputs(self):
         common = ["--backend-dir", str(self.backend), "--review", str(self.review), "--environment", str(self.bootstrap),
                   "--native-tool", json.dumps(tool_binding())]
         before = self.snapshot()
-        invalid = [("rustfs", "--write", "--review", "other"), ("redis", "--write", "--environment=other"),
-                   ("buckets", "--write", "--write"), ("rustfs", "--write", "--rev", "other")]
+        invalid = [("redis", "--write"), ("rustfs", "--write", "--review", "other"),
+                   ("buckets", "--write", "--environment=other"), ("buckets", "--write", "--write"),
+                   ("rustfs", "--write", "--rev", "other")]
         for args in invalid:
             with self.subTest(args=args), patch("sys.stderr", new_callable=io.StringIO), \
                     patch.object(cli, "document") as read, \

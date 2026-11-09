@@ -81,6 +81,7 @@ pub(super) fn successor(
     source: &Value,
     effective: &Value,
     observe_files: bool,
+    reboot: bool,
 ) -> Result<Value> {
     request::run(
         "request-head",
@@ -106,13 +107,16 @@ pub(super) fn successor(
         "original":original,"selected":binding["selected"]}),
     )?;
     let private = environment(backend, value, original)?;
-    process(
-        backend,
-        value,
-        &binding["review"],
-        Some(effective),
-        observe_files,
-    )?;
+    let review = &binding["review"];
+    if reboot {
+        super::super::require_windows(&value["process"])?;
+        #[cfg(windows)]
+        windows_process(backend, value, review, Some(effective), true)?;
+        #[cfg(not(windows))]
+        return Err("原缓存重启前驱只能在本机 Windows 核验".into());
+    } else {
+        process(backend, value, review, Some(effective), observe_files)?;
+    }
     Ok(private)
 }
 
@@ -125,7 +129,7 @@ pub(super) fn process(
 ) -> Result<()> {
     if value["process"]["format_version"] == 3 {
         #[cfg(windows)]
-        return windows_process(backend, value, review, effective);
+        return windows_process(backend, value, review, effective, false);
         #[cfg(not(windows))]
         return Err("Windows Redis 原代次只能在本机 Windows 核验".into());
     }
@@ -173,6 +177,7 @@ fn windows_process(
     value: &Value,
     review: &Value,
     effective: Option<&Value>,
+    reboot: bool,
 ) -> Result<()> {
     use crate::recovery::monitoring::execution::ProtectedInputs;
 
@@ -211,8 +216,11 @@ fn windows_process(
         if runtime_path != output.join("runtime.json") {
             return Err("Windows Redis 原进程引用必须指向其完整 runtime.json".into());
         }
-        let previous_request =
-            super::super::windows::predecessor_request(backend, &runtime_path, &runtime)?;
+        let previous_request = if reboot {
+            super::super::windows::predecessor_reboot(backend, &runtime_path, &runtime)?
+        } else {
+            super::super::windows::predecessor_request(backend, &runtime_path, &runtime)?
+        };
         request::windows_process(
             value,
             review,

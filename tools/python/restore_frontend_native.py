@@ -9,6 +9,18 @@ import subprocess
 from rate_limit_tool import install_binding, tool_binding
 
 ROOT = Path(__file__).resolve().parents[2]
+B0_HEAD = "0087ea2ecf62530d042b9e52f5c950fb34c66d78"
+B0_KIND = "restore-legacy-b0-frontend-build"
+B0_BACKEND_ADAPTER = "legacy-stable-readiness-b0-v1"
+
+
+def b0_runtime_source(source: dict) -> bool:
+    return (
+        source["frontend_sha"] == B0_HEAD
+        and source["backend_adapter_contract"] == B0_BACKEND_ADAPTER
+        and source["backend_product_sha"] == "815c5eafb09d4b493319d255fb7ab88ddd02c8b6"
+        and source["backend_execution_sha"] == "c05114bcdf5c369cd74087db6317ce3c8f89bee8"
+    )
 
 
 def request(action: str, root: Path = ROOT, value=None, *, expected_head=None, inventory=None):

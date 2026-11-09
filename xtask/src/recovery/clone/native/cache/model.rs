@@ -48,11 +48,7 @@ pub(super) fn password(value: &Value) -> Result<&str> {
         .ok_or_else(|| "Redis password 必须是配置文件中的非空 UTF-8 文本，不含 NUL".into())
 }
 
-pub(in crate::recovery) fn render_configuration(
-    directory_argument: &str,
-    port: u16,
-    password: &str,
-) -> String {
+pub(crate) fn render_configuration(directory_argument: &str, port: u16, password: &str) -> String {
     format!(
         "bind 127.0.0.1\nport {port}\ndir {directory_argument}\ndatabases 1\nprotected-mode yes\nsave \"\"\nappendonly no\ndaemonize no\nrequirepass {}\n",
         quoted(password)
@@ -118,7 +114,7 @@ pub(super) fn shape(request: &Value) -> Result<()> {
     if request["format_version"] == 2 {
         super::native_tool::from_request(request)?;
     } else {
-        // 已登记 v1 证据仍可只读核验；所有原生写入口另行强制 v2。
+        // 已登记 v1 证据仍可只读核验；本机生命周期入口单独要求 v3。
         document::exact(request, FIELDS, "Redis 历史进程请求")?;
         legacy_interpreter(request)?;
     }
@@ -320,7 +316,7 @@ pub(super) fn linux_path(value: &str) -> Result<String> {
     ))
 }
 
-pub(in crate::recovery) fn cygwin_path(value: &str) -> Result<String> {
+pub(crate) fn cygwin_path(value: &str) -> Result<String> {
     const INVALID: &str = "Windows Redis 路径必须是无点跳转的盘符绝对路径";
     let (drive, rest) = value.split_at_checked(3).ok_or(INVALID)?;
     let drive = drive.as_bytes();

@@ -1,4 +1,4 @@
-//! 三模式共享同一持锁事实窗口；登记输入不是新的配置或来源权威。
+//! 复制后与 seed 共享同一持锁事实窗口，沿用原复制和来源证据。
 use crate::{
     Result,
     recovery::clone::native::{
@@ -23,6 +23,7 @@ pub(super) struct Context<'a> {
     pub backend: &'a Path,
     pub run: &'a Path,
     pub number: u64,
+    pub stage: &'a str,
     pub mode: &'a str,
     pub owner: &'a Generation,
     pub scope: &'a Scope,
@@ -59,7 +60,7 @@ impl<'a> Context<'a> {
         let number = request.attempt.ok_or("复制后阶段序号缺失")?;
         let manifest = document::read(&run.join("manifest.json"))?;
         let saved = state::load(run, true)?;
-        controller(backend, run, number, &saved, request.mode)?;
+        controller(backend, run, number, &saved, request.stage, request.mode)?;
         let Registered {
             post,
             active,
@@ -77,7 +78,7 @@ impl<'a> Context<'a> {
         )?;
         let session = document::read(&copy.join("session.json"))?;
         let ledger = inspect(backend, &copy, &session)?;
-        let base = run.join("post-copy");
+        let base = run.join(request.stage);
         if !base.try_exists()? {
             std::fs::create_dir(&base)?;
         }
@@ -85,11 +86,8 @@ impl<'a> Context<'a> {
         let output = base.join(format!("attempt-{number:04}"));
         common::ensure_new_directory(backend, &output, "复制后只读核验目录")?;
         let source = export::input::Context::for_copy(backend, run, &output)?;
-        let proof = source.verify_copy_export(&session["source_export"])?;
-        let source_generation = export::proof::generation_in(&source, scope)?;
-        if source_generation != proof["generation"] {
-            return Err("原来源代次不同于完整复制来源".into());
-        }
+        let (source_generation, proof_files) =
+            source_proof(request.stage, &source, scope, &session["source_export"])?;
         let runtime_tree = if request.mode == "amend" {
             Some(target_verify::tree::snapshot(backend, &post.runtime, true)?)
         } else {
@@ -99,7 +97,7 @@ impl<'a> Context<'a> {
             request,
             &copy,
             &post,
-            &proof,
+            &proof_files,
             &target,
             &source.request,
             &manifest,
@@ -108,6 +106,7 @@ impl<'a> Context<'a> {
             backend,
             run,
             number,
+            stage: request.stage,
             mode: request.mode,
             owner,
             scope,
@@ -149,7 +148,14 @@ impl<'a> Context<'a> {
         {
             return Err("复制后完整阶段、清单或账本在持锁期间变化".into());
         }
-        controller(self.backend, self.run, self.number, &self.state, self.mode)?;
+        controller(
+            self.backend,
+            self.run,
+            self.number,
+            &self.state,
+            self.stage,
+            self.mode,
+        )?;
         let initialized =
             common::bound_file(self.backend, &self.manifest["initialized"], "初始化后像")?;
         if target_verify::published::owned_history(self.backend, &initialized, self.owner)?
@@ -260,10 +266,43 @@ fn inspect(backend: &Path, copy: &Path, session: &Value) -> Result<Value> {
     )
 }
 
-fn controller(backend: &Path, run: &Path, number: u64, saved: &Value, mode: &str) -> Result<()> {
+fn source_proof(
+    stage: &str,
+    source: &export::input::Context,
+    scope: &Scope,
+    binding: &Value,
+) -> Result<(Value, Value)> {
+    if stage == "seed-runtime" {
+        // seed 的目标变更只消费冻结原导出，不要求原源的 API/Worker 仍处于停机窗口。
+        let saved = export::frozen::verify(&source.backend, binding)?;
+        if saved.request != source.request {
+            return Err("seed 的原导出不属于本次复制的固定来源请求".into());
+        }
+        saved.check_proofs(&source.backend, binding)?;
+        return Ok((saved.generation, saved.proof_files));
+    }
+    let proof = source.verify_copy_export(binding)?;
+    let observed = export::proof::generation_in(source, scope)?;
+    if observed != proof["generation"] {
+        return Err("原来源代次不同于完整复制来源".into());
+    }
+    Ok((observed, proof["proof_files"].clone()))
+}
+
+fn controller(
+    backend: &Path,
+    run: &Path,
+    number: u64,
+    saved: &Value,
+    stage: &str,
+    mode: &str,
+) -> Result<()> {
+    if !matches!(stage, "post-copy" | "seed-runtime") {
+        return Err("未知受控复制后或 seed 阶段".into());
+    }
     let row = state::attempts(saved)?.last().ok_or("当前复制后阶段缺失")?;
     if row["number"].as_u64() != Some(number)
-        || row["stage"] != "post-copy"
+        || row["stage"] != stage
         || row["mode"] != mode
         || row["status"] != "running"
     {
@@ -382,7 +421,7 @@ fn protected(
     request: &StageRequest<'_>,
     copy: &Path,
     post: &seed::history::Post,
-    proof: &Value,
+    proof_files: &Value,
     target: &Value,
     source: &Value,
     manifest: &Value,
@@ -408,7 +447,8 @@ fn protected(
     for value in [&post.request, &post.descriptor, target, source, manifest] {
         super::files::bindings(backend, value, &mut paths)?;
     }
-    for (path, _) in document::object(&proof["proof_files"], "原来源完整证明文件")? {
+    let proof_files = document::object(proof_files, "原来源完整证明文件")?;
+    for path in proof_files.keys() {
         paths.insert(common::common_file(
             backend,
             Path::new(path),
@@ -465,5 +505,13 @@ fn protected(
             }
         }
     }
-    Inputs::open(paths)
+    let held = Inputs::open(paths)?;
+    for (path, expected) in proof_files {
+        let actual = common::binding(Path::new(path))?;
+        if actual["bytes"] != expected["bytes"] || actual["sha256"] != expected["sha256"] {
+            return Err("原来源证明在取得保护前字节发生变化".into());
+        }
+    }
+    held.check()?;
+    Ok(held)
 }

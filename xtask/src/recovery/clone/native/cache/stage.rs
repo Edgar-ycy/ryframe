@@ -74,20 +74,7 @@ impl Context<'_> {
         Ok(descriptor)
     }
     pub fn registration(&self) -> Result<(Value, Value)> {
-        let root = self.directory.join(STAGE);
-        common::local_directory(self.backend, &root, "缓存登记目录")?;
-        let value = doc::read(&root.join("registration.json"))?;
-        doc::exact(&value, &["request", "manifest"], "缓存登记")?;
-        if value["manifest"] != common::binding(&self.directory.join("manifest.json"))?
-            || path(&value["request"]["path"])? != root.join("request.json")
-        {
-            return Err(rejected("缓存登记不属于固定运行"));
-        }
-        let request = common::read_bound(self.backend, &value["request"], "缓存请求")?;
-        if request["manifest"] != value["manifest"] || request["side"] != "target" {
-            return Err(rejected("缓存请求不属于原目标"));
-        }
-        Ok((request, value["request"].clone()))
+        registration(self.backend, &self.directory)
     }
     pub fn validate(&mut self, request: &Value, lock: &Value) -> Result<Value> {
         self.call(
@@ -123,6 +110,44 @@ impl Context<'_> {
         Ok((request, binding))
     }
 }
+fn registration(backend: &Path, directory: &Path) -> Result<(Value, Value)> {
+    let root = directory.join(STAGE);
+    common::local_directory(backend, &root, "缓存登记目录")?;
+    let value = doc::read(&root.join("registration.json"))?;
+    doc::exact(&value, &["request", "manifest"], "缓存登记")?;
+    if value["manifest"] != common::binding(&directory.join("manifest.json"))?
+        || path(&value["request"]["path"])? != root.join("request.json")
+    {
+        return Err(rejected("缓存登记不属于固定运行"));
+    }
+    let request = common::read_bound(backend, &value["request"], "缓存请求")?;
+    if request["manifest"] != value["manifest"] || request["side"] != "target" {
+        return Err(rejected("缓存请求不属于原目标"));
+    }
+    Ok((request, value["request"].clone()))
+}
+
+pub(super) fn require_live_request(
+    backend: &Path,
+    directory: &Path,
+    supplied: Option<&Path>,
+) -> Result<()> {
+    if directory
+        .join(STAGE)
+        .join("registration.json")
+        .try_exists()?
+    {
+        let (request, _) = registration(backend, directory)?;
+        return super::require_windows(&request["process"]);
+    }
+    if let Some(supplied) = supplied {
+        let file = common::common_file(backend, supplied, "缓存阶段输入")?;
+        let request = doc::read(&file)?;
+        super::require_windows(&request["process"])?;
+    }
+    Ok(())
+}
+
 pub(super) fn path(value: &Value) -> Result<PathBuf> {
     Ok(PathBuf::from(doc::text(value, "缓存路径")?))
 }
@@ -173,6 +198,46 @@ pub(super) fn dispatch(backend: &Path, args: &Value, runtime: &mut dyn Runtime) 
                 p["before"].as_u64(),
                 &p["frozen"]
             )?))
+        }
+        "reboot-starts" => {
+            doc::exact(
+                p,
+                &["request", "descriptor", "before"],
+                "重启原缓存创建参数",
+            )?;
+            super::require_windows(&p["request"]["process"])?;
+            if context.registration()? != (p["request"].clone(), p["descriptor"].clone()) {
+                return Err(rejected("重启原缓存创建必须使用同一冻结登记"));
+            }
+            let before = if p["before"].is_null() {
+                None
+            } else {
+                Some(number(&json!({"number":p["before"]}))?)
+            };
+            Ok(json!(history::starts_with_tools(
+                &mut context,
+                &p["request"],
+                &p["descriptor"],
+                before,
+                &Value::Null,
+                false,
+            )?))
+        }
+        "reboot-generation" => {
+            doc::exact(p, &["request", "output"], "重启原缓存代次参数")?;
+            let (request, _) = context.registration()?;
+            super::require_windows(&request["process"])?;
+            if request != p["request"] {
+                return Err(rejected("重启原缓存代次必须使用同一冻结登记"));
+            }
+            let (process, tools) = successor::generation(
+                &mut context,
+                &request,
+                &path(&p["output"])?,
+                &Value::Null,
+                false,
+            )?;
+            Ok(json!([process, tools]))
         }
         "generation" => {
             doc::exact(

@@ -281,60 +281,58 @@ fn init_status_and_stage_preserve_registered_output_shape() {
     );
 }
 
-#[test]
-fn seed_to_arm_manifest_is_registered_by_the_native_state_machine() {
-    let fixture = Fixture::new();
-    let source_registration = fixture.local.join("source-registration.json");
-    let target_registration = fixture.local.join("target-registration.json");
-    let initialized_files = fixture.local.join("initialized-files.json");
-    let storage_run = fixture.local.join("target-storage-run");
-    fs::create_dir(&storage_run).unwrap();
-    let storage_manifest = storage_run.join("manifest.json");
-    for path in [&source_registration, &initialized_files, &storage_manifest] {
-        write_json(path, &json!({"fixture": true}));
-    }
-    super::recovery::clone::native::lifecycle::state::initialize(&storage_run).unwrap();
-    let historical_state = binding(&storage_run.join("state.json"));
-    let storage_attempt = super::recovery::clone::native::lifecycle::state::begin(
-        &storage_run,
+pub(super) fn arm_storage_bindings(storage_run: &Path) -> (Value, Value) {
+    use native::lifecycle::state;
+
+    fs::create_dir(storage_run).unwrap();
+    let manifest = storage_run.join("manifest.json");
+    write_json(&manifest, &json!({"kind":"devex-clone-run","fixture":true}));
+    state::initialize(storage_run).unwrap();
+    let storage_attempt = state::begin(
+        storage_run,
         "storage-target",
         "restart",
-        &json!({"fixture": true}),
+        &json!({"fixture":true}),
     )
     .unwrap()
     .0;
-    super::recovery::clone::native::lifecycle::state::finish(
-        &storage_run,
+    state::finish(
+        storage_run,
         storage_attempt,
-        Some(&json!({"status": "storage_restarted"})),
+        Some(&json!({"status":"storage_restarted"})),
         None,
     )
     .unwrap();
-    write_json(
-        &target_registration,
-        &json!({
-            "storage_run": {
-                "path": storage_run,
-                "manifest": binding(&storage_manifest),
-                "state": historical_state,
-            }
-        }),
-    );
-    let evidence = (0..10)
+    let historical = json!({
+        "path": storage_run,
+        "manifest": binding(&manifest),
+        "state": binding(&storage_run.join("state.json")),
+    });
+    let cache_attempt = state::begin(
+        storage_run,
+        "cache-target",
+        "restart",
+        &json!({"fixture":true}),
+    )
+    .unwrap()
+    .0;
+    state::finish(
+        storage_run,
+        cache_attempt,
+        Some(&json!({"status":"cache_restarted"})),
+        None,
+    )
+    .unwrap();
+    let evidence = (0..8)
         .map(|index| {
-            let path = fixture.local.join(format!("lifecycle-{index}.json"));
-            write_json(&path, &json!({"fixture": index}));
+            let path = storage_run.join(format!("lifecycle-{index}.json"));
+            write_json(&path, &json!({"fixture":index}));
             binding(&path)
         })
         .collect::<Vec<_>>();
-    let mut manifest = read_json(&fixture.manifest);
-    manifest["copy_stage"] = json!("seed_to_arm");
-    manifest["source_registration"] = binding(&source_registration);
-    manifest["target_registration"] = binding(&target_registration);
-    manifest["target_initialized_files"] = binding(&initialized_files);
-    manifest["target_storage_run"] = json!({
+    let effective = json!({
         "path": storage_run,
-        "manifest": binding(&storage_manifest),
+        "manifest": binding(&manifest),
         "storage": {
             "request": evidence[0],
             "storage": {
@@ -343,23 +341,43 @@ fn seed_to_arm_manifest_is_registered_by_the_native_state_machine() {
                 "process_receipt": evidence[1],
                 "launch_receipt": evidence[2],
             },
-            "attempt": 1,
+            "attempt": storage_attempt,
             "data_directory": storage_run.join("data"),
             "api_url": "http://127.0.0.1:1",
             "console_url": "http://127.0.0.1:2",
-            "restart_result": evidence[3],
+            "restart_result": binding(&state::result_path(storage_run, storage_attempt)),
         },
         "cache": {
-            "request": evidence[4],
-            "runtime": evidence[5],
+            "request": evidence[3],
+            "runtime": evidence[4],
             "redis": {"pid": 2},
-            "owner": evidence[6],
-            "controller": evidence[7],
-            "attempt": 1,
-            "ready": evidence[8],
-            "restart_result": evidence[9],
+            "owner": evidence[5],
+            "controller": evidence[6],
+            "attempt": cache_attempt,
+            "ready": evidence[7],
+            "restart_result": binding(&state::result_path(storage_run, cache_attempt)),
         },
     });
+    (historical, effective)
+}
+
+#[test]
+fn seed_to_arm_manifest_is_registered_by_the_native_state_machine() {
+    let fixture = Fixture::new();
+    let source_registration = fixture.local.join("source-registration.json");
+    let target_registration = fixture.local.join("target-registration.json");
+    let initialized_files = fixture.local.join("initialized-files.json");
+    for path in [&source_registration, &initialized_files] {
+        write_json(path, &json!({"fixture": true}));
+    }
+    let (historical, effective) = arm_storage_bindings(&fixture.local.join("target-storage-run"));
+    write_json(&target_registration, &json!({"storage_run":historical}));
+    let mut manifest = read_json(&fixture.manifest);
+    manifest["copy_stage"] = json!("seed_to_arm");
+    manifest["source_registration"] = binding(&source_registration);
+    manifest["target_registration"] = binding(&target_registration);
+    manifest["target_initialized_files"] = binding(&initialized_files);
+    manifest["target_storage_run"] = effective;
     write_json(&fixture.manifest, &manifest);
 
     let registered = fixture.init().unwrap();
@@ -521,9 +539,14 @@ fn revision_numbers_are_monotonic_and_tampering_fails_closed() {
 }
 
 #[test]
-fn cache_cleanup_retains_old_failures_when_historical_result_or_input_is_unavailable() {
+fn cache_and_seed_cleanup_retain_old_failures_when_unrelated_evidence_is_unavailable() {
     use super::recovery::clone::native::lifecycle::state as ledger;
-    for mode in ["stop", "recover"] {
+    for (stage_name, mode) in [
+        ("cache-target", "stop"),
+        ("cache-target", "recover"),
+        ("seed-runtime", "stop"),
+        ("seed-runtime", "recover"),
+    ] {
         let fixture = Fixture::new();
         fixture.init().unwrap();
         let (number, _) = ledger::begin(&fixture.run, "copy", "run", &json!({})).unwrap();
@@ -557,14 +580,8 @@ fn cache_cleanup_retains_old_failures_when_historical_result_or_input_is_unavail
             );
             assert!(!fixture.run.join("unknown-write.txt").exists());
         }
-        let published = stage::run_named(
-            &fixture.backend,
-            &fixture.run,
-            "cache-target",
-            mode,
-            &Success,
-        )
-        .unwrap();
+        let published =
+            stage::run_named(&fixture.backend, &fixture.run, stage_name, mode, &Success).unwrap();
         assert_eq!(published["attempt"], 2);
         let saved = ledger::load(&fixture.run, false).unwrap();
         assert_eq!(saved["attempts"][0], before);
@@ -576,7 +593,7 @@ fn cache_cleanup_retains_old_failures_when_historical_result_or_input_is_unavail
 }
 
 #[test]
-fn cache_cleanup_records_source_capture_failure_without_relaxing_other_stages() {
+fn cache_and_seed_cleanup_record_source_capture_failure_without_relaxing_other_stages() {
     use super::recovery::clone::native::lifecycle::state as ledger;
     let fixture = Fixture::new();
     let backend = fixture.local.join("not-a-git-root");
@@ -610,14 +627,25 @@ fn cache_cleanup_records_source_capture_failure_without_relaxing_other_stages() 
             .is_empty()
     );
     assert!(!run.join("unknown-write.txt").exists());
-    let result = stage::run_named(&backend, &run, "cache-target", "recover", &Success).unwrap();
-    assert_eq!(result["mode"], "recover");
+    for (stage_name, mode) in [
+        ("cache-target", "recover"),
+        ("seed-runtime", "stop"),
+        ("seed-runtime", "recover"),
+    ] {
+        let result = stage::run_named(&backend, &run, stage_name, mode, &Success).unwrap();
+        assert_eq!(result["stage"], stage_name);
+        assert_eq!(result["mode"], mode);
+    }
     let saved = ledger::load(&run, false).unwrap();
-    assert_eq!(
-        saved["attempts"][0]["sources"],
-        json!({"source_capture_error_type":"SourceCaptureError"})
-    );
-    assert_eq!(saved["attempts"][0]["status"], "passed");
+    let attempts = ledger::attempts(&saved).unwrap();
+    assert_eq!(attempts.len(), 3);
+    for attempt in attempts {
+        assert_eq!(
+            attempt["sources"],
+            json!({"source_capture_error_type":"SourceCaptureError"})
+        );
+        assert_eq!(attempt["status"], "passed");
+    }
     assert!(!run.join("run.lock").exists());
 }
 
@@ -741,14 +769,16 @@ fn stage_python_copy_preflight_uses_the_typed_resource_protocol() {
         mode: "run",
         attempt: None,
     };
-    let mut protocol: Value =
-        serde_json::from_str(&stage::protocol(&request, "preflight").unwrap()).unwrap();
+    let mut protocol: Value = serde_json::from_str(
+        &crate::target_stage_protocol::protocol(&request, "preflight").unwrap(),
+    )
+    .unwrap();
     // libtest 不承载原生私有入口；适配夹具显式绑定同次构建的正式 xtask。
     let native = crate::check::python_suite::binding(Path::new(env!("CARGO_BIN_EXE_xtask")))
         .unwrap()
         .unwrap();
     protocol["native_tool"] = serde_json::from_str(&native).unwrap();
-    let output = crate::process::command_output_with_input(
+    let output = crate::process_tests::command_output_with_input(
         &fixture.backend,
         "python",
         &["-B", "tools/python/devex_clone.py", "--private-stdin"],

@@ -35,6 +35,75 @@ pub(super) fn require_unlaunched(
     Ok(())
 }
 
+pub(super) fn unpublished_seed_registration(
+    backend: &Path,
+    run: &Path,
+    attempt: &Value,
+) -> Result<bool> {
+    if attempt["stage"] != "seed-runtime"
+        || attempt["mode"] != "register"
+        || attempt["status"] != "failed"
+    {
+        return Ok(false);
+    }
+    match std::fs::symlink_metadata(run.join("seed-runtime.json")) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let number = attempt["number"].as_u64().ok_or("历史 seed 登记序号无效")?;
+            let output = run
+                .join("seed-runtime")
+                .join(format!("attempt-{number:04}"));
+            crate::local_test_path::validate_local_test_path(
+                &output,
+                backend,
+                crate::local_test_path::LocalTestPathKind::StateDirectory,
+            )?;
+            super::files::absent(&output)?;
+            Ok(true)
+        }
+        Err(error) => Err(error.into()),
+        Ok(_) => Ok(false),
+    }
+}
+
+/// 使用原启动收据解析历史登记，无启动时要求整个生产者证据都不存在。
+pub(in crate::recovery::clone::native) fn inspect_historical(
+    backend: &Path,
+    run: &Path,
+    attempt: &Value,
+) -> Result<Value> {
+    let stage = json_io::text(&attempt["stage"], "历史生产者阶段")?;
+    if !matches!(stage, "post-copy" | "seed-runtime") {
+        return Err("原生生产者历史不属于明确阶段".into());
+    }
+    let number = attempt["number"]
+        .as_u64()
+        .filter(|number| *number > 0)
+        .ok_or("历史生产者 attempt 无效")?;
+    let launch = run
+        .join(stage)
+        .join(format!("attempt-{number:04}/session-launch.json"));
+    match std::fs::symlink_metadata(&launch) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            require_unlaunched(backend, run, stage, number)?;
+            return Ok(Value::Null);
+        }
+        Err(error) => return Err(error.into()),
+        Ok(_) => {}
+    }
+    let before = common::binding(&launch)?;
+    let receipt = common::read_bound(backend, &before, "历史生产者启动收据")?;
+    let descriptor = &receipt["registration"];
+    let request = registration::resolve(backend, run, stage, descriptor, Some(number), true)?;
+    let observed = inspect(&json!({
+        "backend":backend, "run_dir":run, "attempt":attempt,
+        "registration":request, "registration_binding":descriptor
+    }))?;
+    if common::binding(&launch)? != before {
+        return Err("历史生产者启动收据在核验期间变化".into());
+    }
+    Ok(observed)
+}
+
 pub(super) fn inspect(request: &Value) -> Result<Value> {
     let root = json_io::exact(
         request,
@@ -188,6 +257,7 @@ pub(super) fn quiet(request: &Value) -> Result<Value> {
                 attempt["stage"].as_str(),
                 Some("post-copy" | "seed-runtime")
             )
+            || unpublished_seed_registration(&backend, &run, attempt)?
         {
             continue;
         }

@@ -105,7 +105,7 @@ fn closed(state: &mut Projection, event: &Value) -> Result<()> {
     Ok(())
 }
 
-fn image(value: &Value) -> Result<Value> {
+pub(in crate::recovery::clone::native) fn image(value: &Value) -> Result<Value> {
     document::object(value, "账本前后像")?;
     match value["kind"].as_str() {
         Some("database") => {
@@ -160,7 +160,7 @@ fn image(value: &Value) -> Result<Value> {
     Ok(value.clone())
 }
 
-fn image_pair(before: &Value, after: &Value) -> Result<()> {
+pub(in crate::recovery::clone::native) fn image_pair(before: &Value, after: &Value) -> Result<()> {
     image(before)?;
     image(after)?;
     let mut stable = vec!["kind", "resource_sha256"];

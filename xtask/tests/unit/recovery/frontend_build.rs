@@ -26,7 +26,10 @@ fn git(root: &Path, arguments: &[&str]) {
 pub(in crate::recovery) fn fixture() -> tempfile::TempDir {
     let parent = crate::workspace::root_dir().join(".local-tests/frontend-build-unit");
     fs::create_dir_all(&parent).unwrap();
-    let temporary = tempfile::tempdir_in(parent).unwrap();
+    let temporary = tempfile::Builder::new()
+        .prefix("中文 空格-")
+        .tempdir_in(parent)
+        .unwrap();
     let root = temporary.path();
     for directory in ["config", "dist/.vite", ".local-tests/build"] {
         fs::create_dir_all(root.join(directory)).unwrap();

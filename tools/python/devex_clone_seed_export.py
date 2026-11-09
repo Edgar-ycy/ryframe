@@ -1,18 +1,12 @@
-"""同一冻结 seed 只导出一次；两侧继承同一已发布本地产物。"""
+"""两侧与历史重绑定共同核对唯一已发布共享导出。"""
 from __future__ import annotations
 
-import copy
-import os
 from pathlib import Path
 
 from devex_clone_capture import read_json
-from devex_clone_export_recovery import (SUMMARY_FIELDS, _intent, _verified_seal, _verify_candidate, complete_summary,
-                                         prepare_attempt, record_verified)
-from devex_clone_export_verify import verify_source_export
-from process_environment import Environments, configured
+from devex_clone_export_recovery import SUMMARY_FIELDS, _intent, _verified_seal
 from devex_clone_model import exact
 from devex_clone_run_state import binding, load_state
-from devex_clone_source import export_source
 from devex_clone_source_proof import bound_file
 from reference_fixture_successor import published_source
 
@@ -23,6 +17,7 @@ FIELDS = {"status", "origin_attempt", "origin_intent", "source_registration", "s
 
 
 def _source(backend: Path, directory: Path, *, live: bool) -> dict:
+    """既有历史 generation 输入继续读取唯一已发布重绑定。"""
     records = [item for item in load_state(directory)["attempts"]
                if (item["stage"], item["mode"]) == ("seed-runtime", "source-rebind")]
     if len(records) != 1 or records[0]["status"] != "passed":
@@ -32,94 +27,6 @@ def _source(backend: Path, directory: Path, *, live: bool) -> dict:
     if source["directory"] != directory or source.get("source_rebind") != records[0]["result"]:
         raise ValueError("seed 导出来源不属于当前 run 的冻结重绑定")
     return source
-
-
-def _active(directory: Path, number: int, mode: str) -> tuple[dict, list[dict]]:
-    from devex_clone_run import _require_owned_run
-
-    state = load_state(directory)
-    if not state["attempts"]:
-        raise ValueError("seed 导出缺少当前统一阶段")
-    current = state["attempts"][-1]
-    if (current["number"], current["stage"], current["mode"], current["status"]) != (
-            number, "seed-runtime", mode, "running") or mode not in MODES:
-        raise ValueError("seed 导出不是当前登记阶段")
-    _require_owned_run(directory)
-    prior = [item for item in state["attempts"][:-1] if item["stage"] == "seed-runtime" and item["mode"] in MODES]
-    _eligibility(prior, mode)
-    return current, prior
-
-
-def _eligibility(prior: list[dict], mode: str) -> None:
-    if mode == "source-export" and prior:
-        raise ValueError("seed 只允许一次 source-export；失败先 status/recover，再显式 source-export-reconcile")
-    if mode != "source-export-reconcile":
-        return
-    if (not prior or prior[0]["mode"] != "source-export" or prior[0]["status"] != "failed"
-            or any(item["mode"] != "source-export-reconcile" or item["status"] != "failed"
-                   for item in prior[1:])):
-        raise ValueError("source-export-reconcile 只能采用唯一失败原导出；已发布后不得重复采用")
-
-
-def preflight(directory: Path, mode: str) -> None:
-    """在新 attempt 之前拒绝重复导出，避免错误命令污染可采用的失败前缀。"""
-    records = [item for item in load_state(directory)["attempts"]
-               if item["stage"] == "seed-runtime" and item["mode"] in MODES]
-    _eligibility(records, mode)
-    if mode == "source-export-reconcile":
-        candidate = directory / f"e{records[0]['number']:04d}/export.json"
-        if not candidate.is_file():
-            raise ValueError("原失败导出缺少完整 export 候选；保留现场核对，禁止重新读取源")
-
-
-def execute_export(backend: Path, directory: Path, number: int, *, reconcile: bool = False) -> dict:
-    mode = "source-export-reconcile" if reconcile else "source-export"
-    current, prior = _active(directory, number, mode)
-    source = _source(backend, directory, live=True)
-    if source.get("source_generation") is None:
-        raise ValueError("seed export 必须消费已发布 source-generation，不得拼接旧 C52 与独立构建")
-    # source 只供服务读源；target 保留入口控制环境用于源码、工具和最终来源复核。
-    controller = dict(os.environ)
-    service = configured(source["environment"]["environment"], controller)
-    environment = Environments(service, controller)
-    def control_environment():
-        if dict(os.environ) not in (controller, service):
-            raise ValueError("seed 导出控制环境切换前发现未登记的环境变化")
-        return environment.use("target")
-    value = {"source_request": source["source_request"]}
-    storage = source["storage"]["storage"]
-    with control_environment(), environment.use("source"):
-        if reconcile:
-            origin, intent, intent_binding, exported, summary = _verify_candidate(
-                backend, directory, value, number, current["sources"], environment, seed=True,
-                control_environment=control_environment)
-            if intent["source_storage"] != storage:
-                raise ValueError("原 seed export 候选不属于同一冻结存储")
-            origin_number = origin["number"]
-        else:
-            output = prepare_attempt(backend, directory, value, number, current["sources"], storage, seed=True)
-            export_source(backend, bound_file(backend, value["source_request"]), output,
-                          control_environment=control_environment)
-            exported = binding(output / "export.json")
-            verified = verify_source_export(backend, exported)
-            if verified["request"] != source["request"] or verified["export"]["request"] != value["source_request"]:
-                raise ValueError("seed 导出没有绑定冻结来源请求")
-            intent = read_json(directory / f"export-{number:04d}.intent.json")
-            record_verified(directory, number, intent, exported, verified)
-            summary = complete_summary(verified)
-            origin_number, intent_binding = number, binding(directory / f"export-{number:04d}.intent.json")
-    with control_environment():
-        if _source(backend, directory, live=True) != source or _active(directory, number, mode)[0] != current:
-            raise ValueError("seed 导出期间发布来源、存储、生产者或执行阶段变化")
-    result = {"status": "seed_source_export_published", "origin_attempt": origin_number,
-              "origin_intent": intent_binding, "source_registration": source["review_successor"]["source_result"],
-              "source_rebind": source["source_rebind"], "review_successor": source["review_successor_binding"],
-              "source_generation": source["source_generation"],
-              "source_request": value["source_request"], "source_storage": copy.deepcopy(storage),
-              "export": exported, "summary": summary, "remote_writes": 0, "restore_qualified": False}
-    if reconcile and any(item != result for item in _reconcile_results(backend, directory, prior)):
-        raise ValueError("seed export 重试采用结果与先前已写出的只读结果不同")
-    return result
 
 
 def _reconcile_results(backend: Path, directory: Path, records: list[dict]) -> list[dict]:

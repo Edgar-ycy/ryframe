@@ -34,14 +34,14 @@ const PUBLIC_FIELDS: [&str; 12] = [
     "source_environment",
 ];
 
-struct Session<'a> {
-    backend: &'a Path,
-    run: &'a Path,
-    current: u64,
-    manifest: manifest::Manifest,
+pub(super) struct Session<'a> {
+    pub(super) backend: &'a Path,
+    pub(super) run: &'a Path,
+    pub(super) current: u64,
+    pub(super) manifest: manifest::Manifest,
     state: Value,
     state_binding: Value,
-    generation: &'a Generation,
+    pub(super) generation: &'a Generation,
 }
 
 struct Derived {
@@ -105,25 +105,9 @@ fn execute(
 ) -> Result<Value> {
     let session = Session::load(backend, run, current, generation)?;
     let output = publication::output(backend, run, &session.state, current)?;
-    let before = anchors::collect(
-        backend,
-        run,
-        &session.manifest.value,
-        current,
-        coordinator_tool,
-        generation,
-        quiet,
-    )?;
+    let before = anchors::collect(&session, coordinator_tool, scope, quiet)?;
     let first = publish_round(&session, &output, &before, scope)?;
-    let after = anchors::collect(
-        backend,
-        run,
-        &session.manifest.value,
-        current,
-        coordinator_tool,
-        generation,
-        quiet,
-    )?;
+    let after = anchors::collect(&session, coordinator_tool, scope, quiet)?;
     confirm_round(&session, &before, &after, &first, scope)?;
     let registration = registration_document(run, &after.anchors, &first.files)?;
     let binding =

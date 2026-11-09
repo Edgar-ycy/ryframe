@@ -1,8 +1,9 @@
-use std::fs;
+use std::{fs, path::Path};
 
 use serde_json::{Value, json};
 
 use super::cli::{RecoveryInputsCommand, RestoreInputPublication};
+use super::clone_lifecycle_tests::arm_storage_bindings;
 use super::recovery::inputs::{
     backup, bindings, chain, document, product, publish, reference, reference_configuration, run,
     target,
@@ -73,6 +74,58 @@ fn reference_product_and_bindings_native_chains_succeed() {
     assert_eq!(bindings["record"], read_json(&fixture.record));
     assert_eq!(bindings["manifest"]["id"], reference["id"]);
     assert_eq!(bindings["manifest"]["source_sha"], "a".repeat(40));
+}
+
+#[test]
+fn arm_storage_requires_the_registered_run_prefix_and_same_effective_manifest() {
+    let fixture = Fixture::new();
+    let options = fixture.reference_options(None);
+    let result_before = fs::read(&fixture.arm_input).unwrap();
+    let mut result = read_json(&fixture.arm_input);
+    let manifest_path = Path::new(result["manifest"]["path"].as_str().unwrap()).to_owned();
+    let manifest_before = fs::read(&manifest_path).unwrap();
+    let mut manifest = read_json(&manifest_path);
+    let storage = &manifest["target_storage_run"];
+    let state_path = Path::new(storage["path"].as_str().unwrap()).join("state.json");
+    let (_, other) = arm_storage_bindings(&fixture.root.join("other-storage-run"));
+
+    manifest["target_storage_run"] = other.clone();
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+    result["manifest"] = binding(&manifest_path);
+    fs::write(
+        &fixture.arm_input,
+        serde_json::to_vec_pretty(&result).unwrap(),
+    )
+    .unwrap();
+    let mismatch = reference::build(&fixture.backend, &options).unwrap_err();
+    assert_eq!(
+        mismatch.to_string(),
+        "successor arm-input 清单的 target_storage_run 不一致"
+    );
+
+    result["target_storage_run"] = other;
+    fs::write(
+        &fixture.arm_input,
+        serde_json::to_vec_pretty(&result).unwrap(),
+    )
+    .unwrap();
+    let unrelated = reference::build(&fixture.backend, &options).unwrap_err();
+    assert_eq!(
+        unrelated.to_string(),
+        "target_storage_run 不属于 fresh 初始化登记代次"
+    );
+
+    fs::write(&manifest_path, manifest_before).unwrap();
+    fs::write(&fixture.arm_input, result_before).unwrap();
+    let mut state = read_json(&state_path);
+    state["attempts"][0]["sources"]["fixture"] = json!(false);
+    fs::write(&state_path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+    let drift = reference::build(&fixture.backend, &options).unwrap_err();
+    assert_eq!(drift.to_string(), "历史阶段记录不是当前账本的精确追加前缀");
 }
 
 #[test]
@@ -148,6 +201,51 @@ fn invalid_identifier_and_utc_time_are_rejected() {
 }
 
 #[test]
+fn saved_product_plan_rechecks_the_exact_recovery_point() {
+    use super::recovery_inputs_support::{capture_target_plan, write_value};
+    use chrono::{DateTime, Duration, SecondsFormat};
+
+    let fixture = Fixture::new();
+    let mut receipt = read_json(&fixture.backup_receipt);
+    let manifest_path = Path::new(receipt["result"]["manifest"]["path"].as_str().unwrap());
+    let mut manifest = read_json(manifest_path);
+    // 让合成备份的两个边界都早于当前时间，单独检验恢复点时长。
+    let captured = DateTime::parse_from_rfc3339(manifest["captured_at"].as_str().unwrap()).unwrap()
+        - Duration::hours(25);
+    manifest["captured_at"] = json!(captured.to_rfc3339_opts(SecondsFormat::AutoSi, true));
+    manifest["quiesced_at"] = manifest["captured_at"].clone();
+    fs::write(manifest_path, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
+    receipt["result"]["manifest"] = binding(manifest_path);
+    fs::write(
+        &fixture.backup_receipt,
+        serde_json::to_vec_pretty(&receipt).unwrap(),
+    )
+    .unwrap();
+
+    let capture = |path: &Path| {
+        capture_target_plan(
+            &fixture.backend,
+            &fixture.reference_plan,
+            &fixture.backup_receipt,
+            &fixture.comparison_sources,
+            &fixture.arm_input,
+            &fixture.fresh_verify,
+            path,
+        )
+    };
+    let mut product = fixture.product_value.clone();
+    let boundary = captured + Duration::hours(24);
+    product["fault_at"] = json!(boundary.to_rfc3339_opts(SecondsFormat::AutoSi, true));
+    let exact = write_value(&fixture.root, "product-exact-recovery-point.json", &product);
+    assert_eq!(capture(&exact).unwrap()["product_plan"], product);
+
+    let late = boundary + Duration::microseconds(1);
+    product["fault_at"] = json!(late.to_rfc3339_opts(SecondsFormat::AutoSi, true));
+    let late = write_value(&fixture.root, "product-late-recovery-point.json", &product);
+    assert!(capture(&late).unwrap_err().to_string().contains("24 小时"));
+}
+
+#[test]
 fn publication_requires_create_only_file_semantics() {
     let fixture = Fixture::new();
     let target = fixture.root.join("direct-output.json");
@@ -215,6 +313,11 @@ fn publication_preserves_post_write_drift_and_cleans_pending_files() {
     let fixture = Fixture::new();
     let calls = std::cell::Cell::new(0);
     let value = serde_json::json!({"id": "original"});
+    let rejected = publish::finish("reference", Some(&fixture.output), &value, || {
+        Ok(serde_json::json!({"id": "changed before publication"}))
+    });
+    assert!(rejected.unwrap_err().to_string().contains("发布前"));
+    assert!(!fixture.output.exists());
     let result = publish::finish("reference", Some(&fixture.output), &value, || {
         calls.set(calls.get() + 1);
         Ok(if calls.get() == 1 {

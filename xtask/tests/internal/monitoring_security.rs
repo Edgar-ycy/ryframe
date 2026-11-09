@@ -272,6 +272,14 @@ fn preflight_uses_clean_environment_managed_stdin_and_bounded_capture() {
     .unwrap();
     let input = br#"{"scope_id":"stdin-only-scope"}"#;
     let command = preflight::command(&fixture.0).unwrap();
+    assert_eq!(
+        command.get_program(),
+        std::env::current_exe().unwrap().as_os_str()
+    );
+    assert_eq!(
+        command.get_args().collect::<Vec<_>>(),
+        ["__monitoring-preflight"]
+    );
     let environment = command
         .get_envs()
         .map(|(key, value)| {
@@ -283,6 +291,10 @@ fn preflight_uses_clean_environment_managed_stdin_and_bounded_capture() {
         .collect();
     config::validate_environment(&environment).unwrap();
     assert!(!format!("{command:?}").contains("stdin-only-scope"));
+    let mut command = Command::new(&executable);
+    command
+        .env_clear()
+        .envs(config::safe_environment(&local).unwrap());
     let before = fs::read_dir(&local).unwrap().count();
     let output =
         preflight::process::capture(&local, command, input, Duration::from_secs(10)).unwrap();

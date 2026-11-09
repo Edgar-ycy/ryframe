@@ -1,7 +1,7 @@
 use super::super::{configuration, documents};
 use crate::{
     Result,
-    local_test_path::{LocalTestPathKind, validate_local_test_path},
+    local_test_path::{LocalTestPathKind, validate_absolute_path, validate_local_test_path},
 };
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -21,6 +21,16 @@ pub(super) struct Snapshot {
 impl Snapshot {
     pub fn read(root: &Path, path: &Path, maximum: usize, label: &str) -> Result<(Self, Value)> {
         validate_local_test_path(path, root, LocalTestPathKind::ExistingFile)?;
+        Self::capture(path, maximum, label)
+    }
+
+    pub fn openapi(root: &Path) -> Result<(Self, Value)> {
+        let path = root.join("openapi/openapi.json");
+        validate_absolute_path(&path, LocalTestPathKind::ExistingFile)?;
+        Self::capture(&path, 16 * 1024 * 1024, "OpenAPI 契约")
+    }
+
+    fn capture(path: &Path, maximum: usize, label: &str) -> Result<(Self, Value)> {
         let before = fs::metadata(path)?;
         if before.len() > maximum as u64 {
             return Err(format!("{label}超过固定上限").into());
@@ -43,7 +53,11 @@ impl Snapshot {
         ))
     }
     pub fn unchanged(&self, root: &Path) -> Result<()> {
-        validate_local_test_path(&self.path, root, LocalTestPathKind::ExistingFile)?;
+        if self.path == root.join("openapi/openapi.json") {
+            validate_absolute_path(&self.path, LocalTestPathKind::ExistingFile)?;
+        } else {
+            validate_local_test_path(&self.path, root, LocalTestPathKind::ExistingFile)?;
+        }
         if fs::read(&self.path)? != self.bytes {
             return Err("已有数据输入在业务验证期间发生变化".into());
         }

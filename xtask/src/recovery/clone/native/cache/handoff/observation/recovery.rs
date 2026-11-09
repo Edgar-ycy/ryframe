@@ -16,11 +16,19 @@ use std::{
 pub(super) fn run(frame: &Frame) -> Result<Value> {
     let guard = ProcessGuard::acquire_named(&frame.post.runtime, "runtime-control.guard")?;
     let original = Original::load(&frame.backend, &frame.post.runtime)?;
+    let operation = document::text(&original.owner["operation"], "原 API 操作")?;
+    if frame.retirement.is_some() && operation != "stop" {
+        return Err("seed 原 API 退场只回收原停止控制锁".into());
+    }
+    frame.check()?;
     let _ = crate::recovery::full_stack::worker::controller::reconcile_completed_bound(
+        crate::recovery::full_stack::worker::role::Role::Api,
         &frame.product,
         &frame.post.runtime,
         &frame.environment,
         &original.owner["identity"],
+        operation,
+        None,
     )?;
     // 实际完整树可能仍运行；恢复外层控制器锁不代表角色停止或远端写入成功。
     frame.observed()?;

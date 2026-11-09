@@ -14,7 +14,6 @@ use super::{
         FixtureRetentionCommand, FixtureReviewCommand, FixtureServicesCommand,
         FixtureSourcePairCommand, FixtureSuccessorCommand, RecoveryCommand, parse,
     },
-    recovery::fixture_control::private_invocation_at,
     workspace::root_dir,
 };
 
@@ -152,7 +151,6 @@ fn parses_artifact_operations_and_serializes_job_id_as_text() {
         snapshot,
         FixtureControlCommand::Artifact(FixtureArtifactCommand::Snapshot(_))
     ));
-    assert!(private_invocation_at(&snapshot, &root_dir()).is_err());
     let FixtureControlCommand::Artifact(FixtureArtifactCommand::Snapshot(options)) = &snapshot
     else {
         panic!("应为原生快照");
@@ -175,7 +173,6 @@ fn parses_artifact_operations_and_serializes_job_id_as_text() {
         ],
     ))
     .unwrap();
-    assert!(private_invocation_at(&verify, &root_dir()).is_err());
     assert!(matches!(
         verify,
         FixtureControlCommand::Artifact(FixtureArtifactCommand::VerifyDeleted(_))
@@ -230,7 +227,7 @@ fn rejects_invalid_artifact_identifiers_writes_and_path_contracts() {
 }
 
 #[test]
-fn parses_retention_operations_without_python_dispatch() {
+fn parses_retention_operations_and_write_authorization() {
     let fixture = Fixture::new();
     for (operation, expected_write) in [
         ("inspect", false),
@@ -252,7 +249,6 @@ fn parses_retention_operations_without_python_dispatch() {
                 | FixtureControlCommand::Retention(FixtureRetentionCommand::VerifyCleaned(_))
                 | FixtureControlCommand::Retention(FixtureRetentionCommand::ExportBackup(_))
         ));
-        assert!(private_invocation_at(&command, &root_dir()).is_err());
         assert_eq!(command.operation(), operation);
         assert_eq!(command.writes(), expected_write);
     }
@@ -269,7 +265,6 @@ fn parses_retention_operations_without_python_dispatch() {
         command,
         FixtureControlCommand::Retention(FixtureRetentionCommand::HistoricalExpired { .. })
     ));
-    assert!(private_invocation_at(&command, &root_dir()).is_err());
     let FixtureControlCommand::Retention(FixtureRetentionCommand::HistoricalExpired {
         options,
         plan_sha256,
@@ -361,7 +356,6 @@ fn parses_every_environment_operation_into_typed_requests() {
         FixtureControlCommand::Environment(FixtureEnvironmentCommand::Plan(_))
     ));
     assert!(!plan.writes());
-    assert!(private_invocation_at(&plan, &root_dir()).is_err());
     let mut retired = fixture.input_options();
     retired[2] = "--fixture".to_owned();
     assert!(parse_control(command("environment", Some("plan"), retired)).is_err());
@@ -379,7 +373,6 @@ fn parses_every_environment_operation_into_typed_requests() {
         prepare,
         FixtureControlCommand::Environment(FixtureEnvironmentCommand::Prepare { .. })
     ));
-    assert!(private_invocation_at(&prepare, &root_dir()).is_err());
 
     let cases = [
         (
@@ -417,13 +410,12 @@ fn parses_every_environment_operation_into_typed_requests() {
     ];
     for (operation, values) in cases {
         let parsed = parse_control(command("environment", Some(operation), values)).unwrap();
-        assert!(private_invocation_at(&parsed, &root_dir()).is_err());
         assert!(matches!(parsed, FixtureControlCommand::Environment(_)));
     }
 }
 
 #[test]
-fn parses_review_request_and_all_service_operations() {
+fn parses_review_and_fixture_request_operations() {
     let fixture = Fixture::new();
     let review = vec![
         "--template".to_owned(),
@@ -498,8 +490,11 @@ fn parses_review_request_and_all_service_operations() {
         parsed,
         FixtureControlCommand::Request(FixtureRequestCommand::Publish(_))
     ));
-    assert!(private_invocation_at(&parsed, &root_dir()).is_err());
+}
 
+#[test]
+fn parses_all_service_operations() {
+    let fixture = Fixture::new();
     for operation in [
         "rustfs",
         "redis",
@@ -527,12 +522,6 @@ fn parses_review_request_and_all_service_operations() {
             parsed,
             FixtureControlCommand::Services(FixtureServicesCommand::Run(_))
         ));
-        if matches!(
-            operation,
-            "status" | "close" | "reconcile" | "recover" | "restart"
-        ) {
-            assert!(private_invocation_at(&parsed, &root_dir()).is_err());
-        }
     }
 }
 
@@ -563,8 +552,17 @@ fn parses_successor_relationship() {
         text(&fixture.path("relationship.json")),
         "--write".to_owned(),
     ]);
+    assert!(
+        parse_control(command(
+            "successor",
+            Some("relationship"),
+            relationship[..relationship.len() - 1].to_vec()
+        ))
+        .is_err()
+    );
+    let parsed = parse_control(command("successor", Some("relationship"), relationship)).unwrap();
     assert!(matches!(
-        parse_control(command("successor", Some("relationship"), relationship)).unwrap(),
+        parsed,
         FixtureControlCommand::Successor(FixtureSuccessorCommand::Relationship(_))
     ));
 }
@@ -584,7 +582,6 @@ fn parses_successor_generation_preview_and_write_pairs() {
         FixtureControlCommand::Successor(FixtureSuccessorCommand::GenerationRequest(ref value))
             if value.output.is_none()
     ));
-    assert!(private_invocation_at(&planned, &root_dir()).is_err());
     let FixtureControlCommand::Successor(FixtureSuccessorCommand::GenerationRequest(options)) =
         &planned
     else {
@@ -747,10 +744,30 @@ fn parses_successor_arm_request() {
         "--copy-directory".to_owned(),
         text(&fixture.path("copy base")),
     ];
+    let preview = parse_control(command("successor", Some("arm-request"), arm.clone())).unwrap();
     assert!(matches!(
-        parse_control(command("successor", Some("arm-request"), arm)).unwrap(),
-        FixtureControlCommand::Successor(FixtureSuccessorCommand::ArmRequest(_))
+        preview,
+        FixtureControlCommand::Successor(FixtureSuccessorCommand::ArmRequest(ref options))
+            if options.output.is_none()
     ));
+    let output = fixture.path("native-arm-request.json");
+    let mut write = arm.clone();
+    write.push("--write".to_owned());
+    assert!(parse_control(command("successor", Some("arm-request"), write)).is_err());
+    let mut publish = arm;
+    publish.extend(["--output".into(), text(&output)]);
+    assert!(parse_control(command("successor", Some("arm-request"), publish.clone())).is_err());
+    publish.push("--write".into());
+    let parsed = parse_control(command("successor", Some("arm-request"), publish)).unwrap();
+    for command in [preview, parsed] {
+        let error = crate::recovery::run(
+            &RecoveryCommand::FixtureControl(Box::new(command)),
+            &root_dir(),
+        )
+        .unwrap_err();
+        assert_eq!(error.to_string(), "arm 选择的审阅关系不同于共享导出登记");
+        assert!(!output.exists());
+    }
 }
 
 #[test]
@@ -767,7 +784,6 @@ fn source_pair_publish_is_typed_and_native() {
         parsed,
         FixtureControlCommand::SourcePair(FixtureSourcePairCommand::Publish(_))
     ));
-    assert!(private_invocation_at(&parsed, &root_dir()).is_err());
     let mut args = command(
         "source-pair",
         Some("publish-execution"),
@@ -782,7 +798,6 @@ fn source_pair_publish_is_typed_and_native() {
         parsed,
         FixtureControlCommand::SourcePair(FixtureSourcePairCommand::PublishExecution { .. })
     ));
-    assert!(private_invocation_at(&parsed, &root_dir()).is_err());
     args.pop();
     assert!(parse_control(args).is_err());
 }
@@ -831,7 +846,7 @@ fn rejects_ambiguous_write_options_and_invalid_paths_before_dispatch() {
 }
 
 #[test]
-fn rejects_linked_components_before_private_protocol_creation() {
+fn rejects_linked_components_before_dispatch() {
     let fixture = Fixture::new();
     let target = fixture.controlled_dir.join("linked input.json");
     fs::write(&target, b"{}\n").unwrap();

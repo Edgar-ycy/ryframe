@@ -1,19 +1,17 @@
-use super::{
-    super::{digest, json as document},
-    model,
-};
+#[cfg(any(test, windows))]
+use super::super::json as document;
+use super::{super::digest, model};
 use crate::Result;
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(any(test, windows))]
+use serde_json::json;
+#[cfg(any(test, windows))]
 use std::{
     collections::BTreeMap,
     io::{BufRead, BufReader, Read, Write},
     net::{Ipv4Addr, SocketAddrV4, TcpStream},
     time::Duration,
 };
-
-pub(super) fn bounded(backend: &std::path::Path, request: &Value) -> Result<Value> {
-    bounded_call(backend, "facts", json!({"request":request}))
-}
 
 #[cfg(windows)]
 pub(super) fn bounded_windows(
@@ -28,6 +26,7 @@ pub(super) fn bounded_windows(
     )
 }
 
+#[cfg(windows)]
 fn bounded_call(backend: &std::path::Path, operation: &str, arguments: Value) -> Result<Value> {
     // 保留原 facts 单次有界调用的30s期限，防止内联后按每次读写重新计时。
     let input = serde_json::to_vec(&json!({"format_version":1,"kind":"ryframe-cache-process",
@@ -58,6 +57,7 @@ fn bounded_call(backend: &std::path::Path, operation: &str, arguments: Value) ->
     Ok(value["result"].clone())
 }
 
+#[cfg(test)]
 pub(super) fn observe(request: &Value) -> Result<Value> {
     if request["format_version"] == 3 {
         return Err("Windows Redis 事实核验需要登记进程身份".into());
@@ -124,6 +124,7 @@ pub(super) fn shutdown_windows(
     Ok(())
 }
 
+#[cfg(any(test, windows))]
 fn connect(request: &Value) -> Result<TcpStream> {
     let port = request["port"]
         .as_u64()
@@ -139,6 +140,7 @@ fn connect(request: &Value) -> Result<TcpStream> {
     Ok(stream)
 }
 
+#[cfg(any(test, windows))]
 fn read_connection(request: &Value, password: &str, mut stream: &TcpStream) -> Result<Value> {
     let mut reader = BufReader::new(stream);
     let mut send = |parts: &[&str]| -> Result<Value> {
@@ -151,6 +153,7 @@ fn read_connection(request: &Value, password: &str, mut stream: &TcpStream) -> R
     )
 }
 
+#[cfg(any(test, windows))]
 fn write_command(stream: &mut impl Write, parts: &[&str]) -> std::io::Result<()> {
     let mut command = format!("*{}\r\n", parts.len()).into_bytes();
     for part in parts {
@@ -161,6 +164,7 @@ fn write_command(stream: &mut impl Write, parts: &[&str]) -> std::io::Result<()>
     stream.write_all(&command)
 }
 
+#[cfg(any(test, windows))]
 fn read_facts(
     request: &Value,
     password: &str,
@@ -203,7 +207,11 @@ pub(super) fn check(
         })
     } else {
         let pid = identity["pid"].as_u64().ok_or("Redis 内核PID无效")?;
-        facts["process_id"] == pid.to_string()
+        facts["process_id"].as_str().is_some_and(|text| {
+            (text == "0" || !text.starts_with('0'))
+                && text.bytes().all(|byte| byte.is_ascii_digit())
+                && text.parse::<u64>() == Ok(pid)
+        })
     };
     if !pid_matches
         || facts["config_file"] != model::configuration_file(request)?
@@ -217,6 +225,7 @@ pub(super) fn check(
     Ok(())
 }
 
+#[cfg(any(test, windows))]
 pub(super) fn response(reader: &mut impl BufRead, depth: usize) -> Result<Value> {
     if depth > 2 {
         return Err("Redis 响应嵌套过深".into());
@@ -318,5 +327,9 @@ mod tests {
         check(&request, identity, &facts, &run_id).unwrap();
         facts["process_id"] = json!("1457");
         assert!(check(&request, identity, &facts, &run_id).is_err());
+        for process_id in [json!("0200"), json!("+200"), json!(200)] {
+            facts["process_id"] = process_id;
+            assert!(check(&request, identity, &facts, &run_id).is_err());
+        }
     }
 }

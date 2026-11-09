@@ -25,10 +25,7 @@ pub(super) fn run(
             "重启前正常关闭的原服务代次状态变化",
         )?;
     } else {
-        check(
-            !stopped["termination"].is_null(),
-            "重启前原服务代次不是已核对的外部终止状态",
-        )?;
+        check_external_predecessor(context, &history, &stopped)?;
     }
     let _guard = ProcessGuard::acquire(&context.run)?;
     owned(context, |owner| {
@@ -60,6 +57,23 @@ pub(super) fn run(
             },
         )
     })
+}
+
+fn check_external_predecessor(context: &Context, history: &Value, stopped: &Value) -> Result<()> {
+    let termination = &stopped["termination"];
+    check(
+        !termination.is_null(),
+        "重启前原服务代次不是已核对的外部终止状态",
+    )?;
+    let recovered = history::evidence::bound(&context.run, &history["external_recovery"])?;
+    let proof = history::evidence::bound(&context.run, &recovered["evidence"])?;
+    if proof["format_version"] == 2 || termination["evidence"].get("redis_external").is_some() {
+        check(
+            proof["format_version"] == 2 && proof["observation"] == *termination,
+            "重启前 Windows Redis 外部终止证据与已核对的原代次不同",
+        )?;
+    }
+    Ok(())
 }
 
 struct RestartAttempt<'a> {
@@ -268,7 +282,7 @@ fn restart_preserves_the_registered_platform_predecessor_in_each_request() {
             "windows",
             json!({"format_version":3,"previous_identity":null,"previous_run_id":null}),
             json!({"format_version":3,"process":process,"redis":{"run_id":run_id}}),
-            process.clone(),
+            process,
             None,
         ),
         (

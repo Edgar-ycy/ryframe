@@ -1,11 +1,11 @@
-//! 进入残余 Python 原语前先由 Rust 限定操作、字段与本地路径。
+//! 进入服务原语前先由 Rust 限定操作、字段与本地路径。
 use super::*;
 use crate::local_test_path::{LocalTestPathKind, validate_local_test_path};
 
 pub(super) fn validate(backend: &Path, operation: &str, args: &Value) -> Result<()> {
     let fields: &[&str] = match operation {
         "review-successor" => &["previous", "review"],
-        "cache-status" => &["request", "runtime", "effective"],
+        "cache-status" | "cache-external-termination" => &["request", "runtime", "effective"],
         "storage-running" => &["identity", "request"],
         "storage-closed" => &["request"],
         "members-wait" => &["tree"],
@@ -93,4 +93,38 @@ fn unknown_fields_escaped_paths_and_invalid_pid_fail_before_process_launch() {
         assert!(validate(&backend, operation, &args).is_err());
     }
     assert!(validate(&backend, "identity", &json!({"pid":12})).is_ok());
+}
+
+#[cfg(test)]
+#[test]
+fn storage_start_requires_a_bound_local_output_and_context() {
+    let backend = crate::workspace::root_dir();
+    let local = backend.join(".local-tests");
+    std::fs::create_dir_all(&local).unwrap();
+    let run = tempfile::tempdir_in(local).unwrap();
+    let output = run.path().join("storage");
+    std::fs::create_dir(&output).unwrap();
+    let args = json!({
+        "request": {},
+        "private": {},
+        "output": output,
+        "manifest": {},
+        "controller": {},
+        "number": 4,
+        "context": {"backend": backend, "run": run.path()},
+        "running": {}
+    });
+    assert!(validate(&backend, "storage-start", &args).is_ok());
+
+    let mut escaped = args.clone();
+    escaped["output"] = json!(backend);
+    assert!(validate(&backend, "storage-start", &escaped).is_err());
+
+    let mut foreign = args.clone();
+    foreign["context"]["backend"] = json!(backend.parent().unwrap());
+    assert!(validate(&backend, "storage-start", &foreign).is_err());
+
+    let mut escaped_run = args;
+    escaped_run["context"]["run"] = json!(backend);
+    assert!(validate(&backend, "storage-start", &escaped_run).is_err());
 }

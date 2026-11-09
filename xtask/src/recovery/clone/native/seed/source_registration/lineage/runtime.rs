@@ -22,15 +22,44 @@ mod history;
 #[path = "../../../../../../../tests/unit/recovery/clone/native/seed/source_registration/lineage/runtime.rs"]
 mod tests;
 
-pub(crate) fn collect(backend: &Path, runtime: &Path) -> Result<Value> {
+pub(in crate::recovery::clone::native) fn collect_bound(
+    backend: &Path,
+    product: &Path,
+    runtime: &Path,
+    binding: &Value,
+) -> Result<Value> {
+    if common::bound_file(backend, binding, "已发布运行合同")? != runtime.join("runtime.json")
+    {
+        return Err("已发布运行合同不同于固定 runtime 路径".into());
+    }
+    let record = collect_for_product(backend, product, runtime)?;
+    if record["runtime"] != *binding {
+        return Err("生产者历史运行合同不同于发布描述符".into());
+    }
+    common::bound_file(backend, binding, "已发布运行合同后像")?;
+    Ok(record)
+}
+
+pub(in crate::recovery::clone::native) fn collect_for_product(
+    backend: &Path,
+    product: &Path,
+    runtime: &Path,
+) -> Result<Value> {
     let backend = canonical(backend)?;
+    let product = canonical(product)?;
     let runtime = directory(runtime, &backend)?;
     let (mut receipt, runtime_binding) = read_document(&backend, &runtime.join("runtime.json"))?;
-    contract::validate(&backend, &mut receipt)?;
+    if product != backend
+        && crate::recovery::clone::native::post_process::runtime::product_root(&backend, &receipt)?
+            != product
+    {
+        return Err("runtime 历史产品根不同于上游冻结合同".into());
+    }
+    contract::validate(&backend, &product, &mut receipt)?;
     let (events, history_binding) =
         read_document(&backend, &runtime.join("producer-history.json"))?;
-    let state = history::collect(&backend, &runtime, &receipt, &events)?;
-    let roles = role_receipts(&backend, &runtime, &receipt, &state)?;
+    let state = history::collect(&backend, &runtime, &receipt, &events, None)?;
+    let roles = role_receipts(&backend, &runtime, &receipt, &state, None)?;
     for binding in [&runtime_binding, &history_binding] {
         common::bound_file(&backend, binding, "runtime 历史绑定")?;
     }
@@ -41,14 +70,36 @@ pub(crate) fn collect(backend: &Path, runtime: &Path) -> Result<Value> {
     )
 }
 
+/// 写入方只能暂存当前角色的最后一个启动意图，其余事件沿用只读收集器的同一模型。
+pub(in crate::recovery::clone::native) fn validate_history_projection(
+    backend: &Path,
+    runtime: &Path,
+    receipt: &Value,
+    value: &Value,
+    pending: Option<(&str, &str)>,
+    recorded_intent: bool,
+) -> Result<()> {
+    let backend = canonical(backend)?;
+    let runtime = directory(runtime, &backend)?;
+    let state = history::collect(&backend, &runtime, receipt, value, pending)?;
+    // 重读已记意图时，当前角色可能已写进程收据而尚未投影 started。
+    let unprojected = pending.filter(|_| recorded_intent).map(|(role, _)| role);
+    role_receipts(&backend, &runtime, receipt, &state, unprojected)?;
+    Ok(())
+}
+
 fn role_receipts(
     backend: &Path,
     runtime: &Path,
     contract: &Value,
     state: &history::History,
+    unprojected: Option<&str>,
 ) -> Result<Vec<Value>> {
     let mut result = Vec::new();
     for role in ["api", "worker"] {
+        if unprojected == Some(role) {
+            continue;
+        }
         let path = runtime.join(format!("{role}.json"));
         let Some(latest) = state.latest.get(role) else {
             match fs::symlink_metadata(&path) {

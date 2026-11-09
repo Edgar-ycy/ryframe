@@ -4,7 +4,7 @@ use super::*;
 pub(super) fn run(actor: &actor::Actor, encoded: &str) -> Result<()> {
     let monitor = crate::recovery::clone::native::lifecycle::identity::current()?;
     let command = launch::command(actor, "supervise", encoded)?;
-    let mut group = platform::Group::spawn(command)?;
+    let mut group = platform::Group::spawn(command, Duration::from_secs(60))?;
     let supervisor = group.identity().clone();
     let result = observe(actor, &monitor, &supervisor, &mut group);
     // 即使 supervisor 自然退出，也先关闭并确认所有成员，再 reap/释放原监督进程。

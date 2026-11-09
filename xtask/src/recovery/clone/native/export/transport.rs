@@ -68,6 +68,13 @@ impl CommandOutput {
 
 pub(crate) trait Transport {
     fn run(&self, spec: CommandSpec) -> Result<CommandOutput>;
+    /// 私有 SQL 只保留退出状态。模拟传输可以沿用同一受控 run。
+    fn run_private(&self, spec: CommandSpec) -> Result<CommandOutput> {
+        if cfg!(test) {
+            return self.run(spec);
+        }
+        Err("当前传输未提供私有 stdin 执行".into())
+    }
     fn s3(&self, request: super::super::s3::Request) -> Result<serde_json::Value>;
     /// 来源缓存写端口必须由受管实现显式接通；普通测试 transport 不得误连真实 Redis。
     fn source_cache_cleanup(&self, _arguments: &serde_json::Value) -> Result<serde_json::Value> {
@@ -90,9 +97,31 @@ impl Transport for SystemTransport {
     fn s3(&self, request: super::super::s3::Request) -> Result<serde_json::Value> {
         super::super::s3::execute(request)
     }
+    fn run_private(&self, spec: CommandSpec) -> Result<CommandOutput> {
+        if !matches!(spec.stdout, StdoutTarget::Capture) {
+            return Err("私有命令只保留退出状态".into());
+        }
+        let input = spec.stdin.as_deref().ok_or("私有命令缺少 stdin")?;
+        // Windows 使用独占的关闭即删除句柄，名称只在句柄生存期内存在。
+        let mut file = tempfile::tempfile_in(&spec.work_dir)?;
+        file.write_all(input)?;
+        file.flush()?;
+        file.rewind()?;
+        let mut command = prepare_command(&spec)?;
+        command
+            .stdin(std::process::Stdio::from(file))
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        let status = spawn_and_wait(command, &spec, None)?;
+        Ok(CommandOutput {
+            status,
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        })
+    }
+
     fn run(&self, spec: CommandSpec) -> Result<CommandOutput> {
-        let mut command = child_command(&spec.program);
-        configure_environment(&mut command, &spec.environment, std::env::vars_os())?;
+        let mut command = prepare_command(&spec)?;
         fs::create_dir_all(&spec.work_dir).map_err(|error| {
             format!(
                 "无法创建 {} 的临时证据目录 {}：{error}",
@@ -122,28 +151,13 @@ impl Transport for SystemTransport {
         let stdin = create_stdin(&stdin_path, spec.stdin.as_deref())?;
 
         command
-            .args(&spec.args)
-            .current_dir(&spec.cwd)
             .stdin(match stdin {
                 Some(file) => std::process::Stdio::from(file),
                 None => std::process::Stdio::null(),
             })
             .stdout(std::process::Stdio::from(stdout))
             .stderr(std::process::Stdio::from(stderr));
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            command.creation_flags(0x0800_0000);
-        }
-        let group = ChildGroup::new()?;
-        let mut child = group.spawn(command).map_err(|error| {
-            format!(
-                "无法启动 {}（{}）：{error}",
-                spec.label,
-                spec.program.display()
-            )
-        })?;
-        let status = wait_status(&mut child, &spec, &stderr_path)?;
+        let status = spawn_and_wait(command, &spec, Some(&stderr_path))?;
         let stdout_bytes = if captured_stdout.is_some() {
             read_limited(&stdout_path, &spec.label)?
         } else {
@@ -164,6 +178,34 @@ impl Transport for SystemTransport {
             stderr: stderr_bytes,
         })
     }
+}
+
+fn prepare_command(spec: &CommandSpec) -> Result<Command> {
+    let mut command = child_command(&spec.program);
+    configure_environment(&mut command, &spec.environment, std::env::vars_os())?;
+    command.args(&spec.args).current_dir(&spec.cwd);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    Ok(command)
+}
+
+fn spawn_and_wait(
+    command: Command,
+    spec: &CommandSpec,
+    stderr: Option<&Path>,
+) -> Result<ExitStatus> {
+    let group = ChildGroup::new()?;
+    let mut child = group.spawn(command).map_err(|error| {
+        format!(
+            "无法启动 {}（{}）：{error}",
+            spec.label,
+            spec.program.display()
+        )
+    })?;
+    wait_status(&mut child, spec, stderr)
 }
 
 /// 显式字段保持优先；仅 Windows 系统 DLL/Socket 所需的 SystemRoot 可来自 OS。
@@ -199,21 +241,35 @@ pub(crate) fn configure_environment(
     Ok(())
 }
 
-fn wait_status(child: &mut ManagedChild, spec: &CommandSpec, stderr: &Path) -> Result<ExitStatus> {
+fn wait_status(
+    child: &mut ManagedChild,
+    spec: &CommandSpec,
+    stderr: Option<&Path>,
+) -> Result<ExitStatus> {
     let deadline = Instant::now() + spec.timeout;
     loop {
         match child.try_wait()? {
             Some(status) => return Ok(status),
             None if Instant::now() < deadline => thread::sleep(Duration::from_millis(25)),
             None => {
-                let _ = stop_child(child);
-                return Err(format!(
-                    "{} 超过 {} 秒，已回收完整子进程树；诊断保留在 {}",
-                    spec.label,
-                    spec.timeout.as_secs(),
-                    stderr.display()
-                )
-                .into());
+                let stopped = stop_child(child);
+                if let Some(stderr) = stderr {
+                    return Err(format!(
+                        "{} 超过 {} 秒，已回收完整子进程树；诊断保留在 {}",
+                        spec.label,
+                        spec.timeout.as_secs(),
+                        stderr.display()
+                    )
+                    .into());
+                }
+                let state = if stopped.is_ok() {
+                    "已回收子进程树"
+                } else {
+                    "子进程树回收未证实"
+                };
+                return Err(
+                    format!("{} 超过 {} 秒，{state}", spec.label, spec.timeout.as_secs()).into(),
+                );
             }
         }
     }

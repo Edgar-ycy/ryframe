@@ -9,10 +9,8 @@ import uuid
 
 from devex_clone_seed_guards import guard
 from devex_clone_capture import read_json
-from process_environment import Environments
 from devex_clone_run_state import binding, load_state
 from devex_clone_source_proof import bound_file
-from devex_clone_target_resources import Resources
 from full_stack_process import read_process
 from restore_reference_plan import plan_hash
 
@@ -20,71 +18,6 @@ from restore_reference_plan import plan_hash
 DRAIN_TIMEOUT_SECONDS = 15 * 60
 DRAIN_STABLE_SECONDS = 2
 DRAIN_POLL_SECONDS = 1
-
-ACTIVE_QUERIES = {
-    "background_job_status": "SELECT COUNT(*) FROM sys_background_job WHERE status NOT IN ('succeeded','dead')",
-    "background_job_lease": "SELECT COUNT(*) FROM sys_background_job WHERE lease_owner IS NOT NULL OR lease_until IS NOT NULL",
-    "background_job_completion": "SELECT COUNT(*) FROM sys_background_job WHERE completed_at IS NULL",
-    "background_job_attempt": "SELECT COUNT(*) FROM sys_background_job_attempt WHERE "
-        "outcome NOT IN ('succeeded','failed','dead','deferred','lease_expired') OR closed_at IS NULL OR NOT "
-        "((outcome='lease_expired' AND finished_at IS NULL) OR "
-        "(outcome IN ('succeeded','failed','dead','deferred') AND finished_at IS NOT NULL))",
-    "outbox_event_status": "SELECT COUNT(*) FROM sys_outbox_event WHERE status NOT IN ('published','dead')",
-    "outbox_event_lease": "SELECT COUNT(*) FROM sys_outbox_event WHERE lease_owner IS NOT NULL OR lease_until IS NOT NULL",
-    "export_job_status": "SELECT COUNT(*) FROM sys_export_job WHERE status NOT IN ('succeeded','failed','cancelled','expired')",
-    "export_job_request": "SELECT COUNT(*) FROM sys_export_job WHERE active_request_fingerprint IS NOT NULL",
-    "export_job_delete": "SELECT COUNT(*) FROM sys_export_job WHERE delete_pending_at IS NOT NULL",
-    "user_import_job": "SELECT COUNT(*) FROM sys_user_import_job WHERE status NOT IN ('succeeded','partial','failed','cancelled')",
-    "enabled_schedule": "SELECT COUNT(*) FROM sys_job_schedule WHERE del_flag<>'2' AND enabled<>0",
-    "schedule_execution": "SELECT COUNT(*) FROM sys_job_schedule_execution WHERE "
-        "outcome NOT IN ('enqueued','skipped_misfire','skipped_concurrency','target_unavailable','invalid_configuration') "
-        "OR (outcome='enqueued' AND background_job_id IS NULL) "
-        "OR (outcome<>'enqueued' AND background_job_id IS NOT NULL)",
-    "config_bundle": "SELECT COUNT(*) FROM sys_tenant_config_bundle WHERE status NOT IN ('succeeded','failed','expired')",
-    "config_transfer": "SELECT COUNT(*) FROM sys_tenant_config_transfer WHERE "
-        "status NOT IN ('preview_ready','previewed','applied','rolled_back','failed')",
-    "retention_run": "SELECT COUNT(*) FROM sys_data_retention_run WHERE status NOT IN ('succeeded','failed')",
-    "password_reset": "SELECT COUNT(*) FROM password_reset_requests WHERE status NOT IN ('completed','expired')",
-    "tenant_operation_lease": "SELECT COUNT(*) FROM sys_tenant_operation_lease",
-    "tenant_data_migration": "SELECT COUNT(*) FROM sys_tenant_data_migration",
-    "tenant_data_migration_item": "SELECT COUNT(*) FROM sys_tenant_data_migration_item",
-    "file_upload": "SELECT COUNT(*) FROM sys_file WHERE upload_status<>'ready'",
-    "tenant_status": "SELECT COUNT(*) FROM sys_tenant WHERE status NOT IN ('enabled','disabled')",
-}
-
-TERMINAL_QUERIES = {
-    "background_job_dead": "SELECT COUNT(*) FROM sys_background_job WHERE status='dead'",
-    "background_job_attempt_failed": "SELECT COUNT(*) FROM sys_background_job_attempt WHERE outcome='failed'",
-    "background_job_attempt_dead": "SELECT COUNT(*) FROM sys_background_job_attempt WHERE outcome='dead'",
-    "background_job_attempt_deferred": "SELECT COUNT(*) FROM sys_background_job_attempt WHERE outcome='deferred'",
-    "background_job_attempt_lease_expired": "SELECT COUNT(*) FROM sys_background_job_attempt WHERE outcome='lease_expired'",
-    "outbox_event_dead": "SELECT COUNT(*) FROM sys_outbox_event WHERE status='dead'",
-    "export_job_failed": "SELECT COUNT(*) FROM sys_export_job WHERE status='failed'",
-    "export_job_cancelled": "SELECT COUNT(*) FROM sys_export_job WHERE status='cancelled'",
-    "export_job_expired": "SELECT COUNT(*) FROM sys_export_job WHERE status='expired'",
-    "user_import_partial": "SELECT COUNT(*) FROM sys_user_import_job WHERE status='partial'",
-    "user_import_failed": "SELECT COUNT(*) FROM sys_user_import_job WHERE status='failed'",
-    "user_import_cancelled": "SELECT COUNT(*) FROM sys_user_import_job WHERE status='cancelled'",
-    "schedule_skipped_misfire": "SELECT COUNT(*) FROM sys_job_schedule_execution WHERE outcome='skipped_misfire'",
-    "schedule_skipped_concurrency": "SELECT COUNT(*) FROM sys_job_schedule_execution WHERE outcome='skipped_concurrency'",
-    "schedule_target_unavailable": "SELECT COUNT(*) FROM sys_job_schedule_execution WHERE outcome='target_unavailable'",
-    "schedule_invalid_configuration": "SELECT COUNT(*) FROM sys_job_schedule_execution WHERE outcome='invalid_configuration'",
-    "config_bundle_failed": "SELECT COUNT(*) FROM sys_tenant_config_bundle WHERE status='failed'",
-    "config_bundle_expired": "SELECT COUNT(*) FROM sys_tenant_config_bundle WHERE status='expired'",
-    "config_transfer_failed": "SELECT COUNT(*) FROM sys_tenant_config_transfer WHERE status='failed'",
-    "retention_run_failed": "SELECT COUNT(*) FROM sys_data_retention_run WHERE status='failed'",
-    "password_reset_expired": "SELECT COUNT(*) FROM password_reset_requests WHERE status='expired'",
-}
-
-
-def _json_object(fields: dict[str, str]) -> str:
-    return "JSON_OBJECT(" + ",".join(f"'{key}',({query})" for key, query in fields.items()) + ")"
-
-
-DRAIN_SQL = ("SELECT JSON_OBJECT('database_time',"
-             "DATE_FORMAT(UTC_TIMESTAMP(6),'%Y-%m-%dT%H:%i:%s.%fZ'),"
-             f"'active',{_json_object(ACTIVE_QUERIES)},"
-             f"'terminal_non_success',{_json_object(TERMINAL_QUERIES)});")
 
 MISSING_RESULT = object()
 CHECKPOINT_FILES = {
@@ -107,10 +40,6 @@ def validate_snapshot(value: dict) -> dict:
     return guard("snapshot", {"value": value}, label="排空快照")
 
 
-def parse_snapshot(raw: str) -> dict:
-    return guard("parse-snapshot", {"raw": raw}, label="排空快照（含重复字段）")
-
-
 def is_drained(snapshot: dict) -> bool:
     validate_snapshot(snapshot)
     return not any(snapshot["active"].values())
@@ -122,13 +51,19 @@ def snapshot_signature(snapshot: dict) -> tuple:
 
 
 def observe_snapshot(context) -> dict:
-    with context.environments.use("target"):
-        resources = Resources(context.backend, context.target, context.output, context.selected, context.review,
-                              context.run, storage_run=context.resolved_storage_run())
-        databases = [item for item in context.target_config["databases"] if item["key"] == "shared-control"]
-        if len(databases) != 1:
-            raise ValueError("seed 排空只接受唯一 shared-control 数据库")
-        return parse_snapshot(resources.tools.mysql(databases[0], DRAIN_SQL))
+    from devex_clone_seed import invoke_seed_tool
+
+    directory = context.directory_root
+    number = load_state(directory)["attempts"][-1]["number"]
+    result = invoke_seed_tool(context.backend, "__seed-runtime-control", {
+        "format_version": 1, "kind": "ryframe-seed-runtime-control", "run_dir": str(directory),
+        "attempt": number, "operation": "drain", "roles": ["worker"],
+        "handoff": binding(directory / "seed-runtime/runtime/handoff.json"),
+        "target_lock_inode": context.owned_lock_identity,
+    }, timeout=180)
+    if set(result) != {"snapshot"} or not isinstance(result["snapshot"], dict):
+        raise ValueError("seed 原生排空读取结果无效")
+    return result["snapshot"]
 
 
 def validate_identity(value: dict) -> dict:
@@ -224,11 +159,11 @@ def fixed_guard(context, request, runtime: Path, handoff: dict, handoff_binding:
         raise ValueError("close 期间调度确认或无生产者约束发生变化")
 
 
-def _control(private: dict, backend: Path, runtime: Path, operation: str, roles: tuple[str, ...], handoff: dict) -> dict:
-    from devex_clone_runtime import control
+def _control(_private: dict, backend: Path, runtime: Path, operation: str, roles: tuple[str, ...], handoff: dict) -> dict:
+    from devex_clone_seed_runtime import pair_control
 
-    with Environments(private, private).use("target"):
-        return control(backend, runtime, operation, roles, handoff["api_url"])
+    attempt = load_state(runtime.parent.parent)["attempts"][-1]
+    return pair_control(backend, runtime, operation, roles, handoff, attempt["number"])["runtime"]
 
 
 def _drain_evidence(value, worker_identity):

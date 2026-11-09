@@ -86,6 +86,19 @@ fn recorded(observed: u64, uptime: u64) -> Result<Value> {
         "boot_ticks":boot,"boot_time":time}))
 }
 
+pub(super) fn verify_recorded(proof: &Value) -> Result<u64> {
+    let observed = proof["observed_ticks"]
+        .as_u64()
+        .ok_or("历史主机证明缺少采集时刻")?;
+    let uptime = proof["uptime_ticks"]
+        .as_u64()
+        .ok_or("历史主机证明缺少运行时长")?;
+    if recorded(observed, uptime)? != *proof {
+        return Err("历史主机证明的启动刻度或采集来源不一致".into());
+    }
+    checked(observed, uptime)
+}
+
 pub(super) fn fresh(proof: &Value, current: u64) -> Result<()> {
     let observed = proof["observed_ticks"]
         .as_u64()

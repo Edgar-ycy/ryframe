@@ -1,6 +1,7 @@
 //! 直接观察登记进程的参数与监听所有者，不执行脚本或推断其他进程的身份。
 use crate::{Result, recovery::clone::native::resources::common};
 use serde_json::Value;
+use std::net::{IpAddr, Ipv4Addr};
 
 pub(crate) fn arguments(identity: &Value) -> Result<Vec<String>> {
     let pid = pid(identity)?;
@@ -18,13 +19,66 @@ pub(crate) fn require(identity: &Value) -> Result<()> {
 }
 
 pub(crate) fn listener(identity: &Value, url: &str) -> Result<()> {
-    let pid = pid(identity)?;
     let (port, _) = common::endpoint(url)?;
-    require(identity)?;
-    if !platform_listener(pid, port)? {
-        return Err("监听所有者不同于登记内核进程；核对绑定端点与服务进程".into());
+    listener_at(identity, Ipv4Addr::LOCALHOST.into(), port)
+}
+
+pub(crate) fn listener_at(identity: &Value, address: IpAddr, port: u16) -> Result<()> {
+    if !observe_listener(identity, address, port, ListenerMode::AnyOwned)?.owned {
+        return Err(LISTENER_OWNER_ERROR.into());
     }
     require(identity)
+}
+
+/// 已登记身份的监听可以尚未出现；其它所有者或无法确认身份时直接拒绝。
+pub(in crate::recovery) fn start_listener_at(
+    identity: &Value,
+    address: IpAddr,
+    port: u16,
+) -> Result<bool> {
+    let observation = observe_listener(identity, address, port, ListenerMode::Exclusive)?;
+    require(identity)?;
+    if observation.foreign {
+        return Err(LISTENER_OWNER_ERROR.into());
+    }
+    Ok(observation.owned)
+}
+
+const LISTENER_OWNER_ERROR: &str = "监听所有者不同于登记内核进程；核对绑定端点与服务进程";
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ListenerMode {
+    AnyOwned,
+    Exclusive,
+}
+
+#[derive(Default)]
+struct ListenerObservation {
+    owned: bool,
+    foreign: bool,
+}
+
+impl ListenerObservation {
+    fn record(&mut self, owned: bool) {
+        self.owned |= owned;
+        self.foreign |= !owned;
+    }
+}
+
+fn observe_listener(
+    identity: &Value,
+    address: IpAddr,
+    port: u16,
+    mode: ListenerMode,
+) -> Result<ListenerObservation> {
+    if address != IpAddr::V4(Ipv4Addr::LOCALHOST)
+        && address != IpAddr::V6(std::net::Ipv6Addr::LOCALHOST)
+    {
+        return Err("监听核验只接受登记的 IPv4 或 IPv6 回环地址".into());
+    }
+    let pid = pid(identity)?;
+    require(identity)?;
+    platform_listener(pid, address, port, mode)
 }
 
 fn pid(identity: &Value) -> Result<u32> {
@@ -163,10 +217,21 @@ fn windows_listeners(port: u16) -> Result<Vec<WindowsListener>> {
 }
 
 #[cfg(windows)]
-fn platform_listener(pid: u32, port: u16) -> Result<bool> {
-    Ok(windows_listeners(port)?
-        .iter()
-        .any(|row| row.owner == pid && matches!(row.address.as_str(), "127.0.0.1" | "0.0.0.0")))
+fn platform_listener(
+    pid: u32,
+    address: IpAddr,
+    port: u16,
+    _mode: ListenerMode,
+) -> Result<ListenerObservation> {
+    let mut observation = ListenerObservation::default();
+    for row in windows_listeners(port)? {
+        if row.address.parse::<IpAddr>().is_ok_and(|actual| {
+            actual == address || (actual.is_unspecified() && actual.is_ipv4() == address.is_ipv4())
+        }) {
+            observation.record(row.owner == pid);
+        }
+    }
+    Ok(observation)
 }
 
 #[cfg(not(windows))]
@@ -187,7 +252,12 @@ fn platform_arguments(pid: u32) -> Result<Vec<String>> {
 }
 
 #[cfg(not(windows))]
-fn platform_listener(pid: u32, port: u16) -> Result<bool> {
+fn platform_listener(
+    pid: u32,
+    address: IpAddr,
+    port: u16,
+    mode: ListenerMode,
+) -> Result<ListenerObservation> {
     let mut sockets = std::collections::BTreeSet::new();
     for entry in std::fs::read_dir(format!("/proc/{pid}/fd"))? {
         let entry = entry?;
@@ -204,7 +274,16 @@ fn platform_listener(pid: u32, port: u16) -> Result<bool> {
             sockets.insert(inode.to_owned());
         }
     }
-    let table = std::fs::read_to_string(format!("/proc/{pid}/net/tcp"))?;
+    let (protocol, loopback, wildcard) = match address {
+        IpAddr::V4(_) => ("tcp", "0100007F", "00000000"),
+        IpAddr::V6(_) => (
+            "tcp6",
+            "00000000000000000000000001000000",
+            "00000000000000000000000000000000",
+        ),
+    };
+    let table = std::fs::read_to_string(format!("/proc/{pid}/net/{protocol}"))?;
+    let mut observation = ListenerObservation::default();
     for line in table.lines().skip(1) {
         let fields = line.split_whitespace().collect::<Vec<_>>();
         if fields.len() < 10 {
@@ -212,15 +291,14 @@ fn platform_listener(pid: u32, port: u16) -> Result<bool> {
         }
         let (address, actual) = fields[1].split_once(':').ok_or("内核监听地址无效")?;
         let actual = u16::from_str_radix(actual, 16)?;
-        if actual == port
-            && fields[3] == "0A"
-            && matches!(address, "0100007F" | "00000000")
-            && sockets.contains(fields[9])
-        {
-            return Ok(true);
+        if actual == port && fields[3] == "0A" && (address == loopback || address == wildcard) {
+            observation.record(sockets.contains(fields[9]));
+            if observation.owned && mode == ListenerMode::AnyOwned {
+                break;
+            }
         }
     }
-    Ok(false)
+    Ok(observation)
 }
 
 #[cfg(all(test, windows))]

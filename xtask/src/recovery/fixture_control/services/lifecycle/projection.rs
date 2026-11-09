@@ -118,24 +118,13 @@ fn recorded(context: &Context, history: &Value) -> Result<Vec<Value>> {
 
 /// 复用完整登记校验后投影所有已发布代次；不观察旧 PID 活体，不把 latest 当作历史。
 pub(super) fn historical(runtime: &mut dyn Runtime, backend: &Path, run: &Path) -> Result<Value> {
-    let manifest = read(&run.join("manifest.json"))?;
-    let state = state::load(run, true)?;
-    let history = history::validate(run, &state, true, true)?;
-    let (review, bootstrap) = active_inputs(&manifest, &state, &history)?;
-    let value = runtime.call(
-        "context",
-        json!({"review":review["path"],"environment":bootstrap["path"]}),
-    )?;
-    let context = Context::load(backend, value)?;
-    check(
-        context.run == run && context.value["state"] == state,
-        "服务历史读取期间完整账本变化",
-    )?;
+    let (context, _) = current(runtime, backend, run)?;
+    let state = &context.value["state"];
     let services = registered(runtime, &context, true)?;
     let mut result = vec![
         json!({"value":{"rustfs":services["origin"]["storage"],"redis":services["origin"]["redis"]},"runtime":null}),
     ];
-    for attempt in state::attempts(&state)? {
+    for attempt in state::attempts(state)? {
         if attempt["stage"] != "fixture-services"
             || attempt["mode"] != "restart"
             || attempt["status"] != "passed"
@@ -152,4 +141,54 @@ pub(super) fn historical(runtime: &mut dyn Runtime, backend: &Path, run: &Path) 
     }
     context.guard(None)?;
     Ok(json!(result))
+}
+
+/// 活体只读观察必须属于已选完整代次。
+pub(super) fn observe_current(
+    runtime: &mut dyn Runtime,
+    backend: &Path,
+    run: &Path,
+    generation: &Value,
+) -> Result<()> {
+    let (context, history) = current(runtime, backend, run)?;
+    check(
+        history["closed"] == false
+            && history["external_recovery"].is_null()
+            && history["active_generation"] == *generation,
+        "arm 夹具当前代次不可用或与原有效代次不同",
+    )?;
+    let services = registered(runtime, &context, true)?;
+    let observed = super::observe(runtime, &services);
+    let checked = context.guard(None);
+    let observed = match (observed, checked) {
+        (Ok(value), Ok(())) => value,
+        (Err(error), Ok(())) | (Ok(_), Err(error)) => return Err(error),
+        (Err(primary), Err(secondary)) => {
+            return Err(format!("{primary}；arm 夹具原输入复核同时失败：{secondary}").into());
+        }
+    };
+    check(
+        observed["rustfs"] == "running"
+            && observed["redis"] == "running"
+            && observed["termination"].is_null(),
+        "arm 夹具实际服务未保持原运行代次",
+    )?;
+    Ok(())
+}
+
+fn current(runtime: &mut dyn Runtime, backend: &Path, run: &Path) -> Result<(Context, Value)> {
+    let manifest = read(&run.join("manifest.json"))?;
+    let state = state::load(run, true)?;
+    let history = history::validate(run, &state, true, true)?;
+    let (review, bootstrap) = active_inputs(&manifest, &state, &history)?;
+    let value = runtime.call(
+        "context",
+        json!({"review":review["path"],"environment":bootstrap["path"]}),
+    )?;
+    let context = Context::load(backend, value)?;
+    check(
+        context.run == run && context.value["state"] == state,
+        "服务历史读取期间完整账本变化",
+    )?;
+    Ok((context, history))
 }

@@ -125,9 +125,7 @@ fn print_help(command: &MonitoringCommand) -> bool {
                 operation.as_str(),
                 if operation.writes() { " --write" } else { "" }
             );
-            println!(
-                "监控进程、观测与关闭由 Rust xtask 执行；正式恢复来源及存活代次仍复用现有 Python 核验器"
-            );
+            println!("监控进程、观测与关闭由 Rust xtask 执行，预检复核正式恢复来源与存活代次");
             return true;
         }
         MonitoringCommand::Bind(_) | MonitoringCommand::Lifecycle { .. } => return false,
@@ -142,7 +140,7 @@ pub(crate) fn run_hidden_if_requested() -> Option<i32> {
     let command = command.to_string_lossy();
     if !matches!(
         command.as_ref(),
-        "__monitoring-supervisor" | "__monitoring-webhook"
+        "__monitoring-supervisor" | "__monitoring-webhook" | preflight::MARKER
     ) {
         return None;
     }
@@ -156,11 +154,12 @@ pub(crate) fn run_hidden_if_requested() -> Option<i32> {
         "__monitoring-supervisor" if extra.is_none() => {
             supervisor::read_protocol_from_stdin().and_then(|protocol| supervisor::run(&protocol))
         }
+        preflight::MARKER if extra.is_none() => preflight::run_native(),
         "__monitoring-webhook" => extra
             .ok_or_else(|| "监控 webhook 缺少私有协议".into())
             .and_then(|value| webhook::Protocol::decode(&value))
             .and_then(|protocol| webhook::run(&protocol)),
-        "__monitoring-supervisor" => Err("监控内部阶段参数无效".into()),
+        "__monitoring-supervisor" | preflight::MARKER => Err("监控内部阶段参数无效".into()),
         _ => unreachable!("前序匹配保证只处理监控内部命令"),
     };
     Some(match result {

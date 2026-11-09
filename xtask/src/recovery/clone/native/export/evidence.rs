@@ -11,9 +11,18 @@ use crate::Result;
 
 // 集合与既有完整导出复核契约一致；不把 SQL 或对象 payload 加入小型证明摘要。
 pub(super) fn files(context: &Context, export: &Value, root: &Path) -> Result<Value> {
+    frozen_files(&context.backend, context.source(), export, root)
+}
+
+pub(super) fn frozen_files(
+    backend: &Path,
+    source: &Value,
+    export: &Value,
+    root: &Path,
+) -> Result<Value> {
     let mut paths = BTreeSet::new();
     paths.insert(manifest::bound_file(
-        &context.backend,
+        backend,
         &export["request"],
         "原导出请求",
         true,
@@ -32,7 +41,7 @@ pub(super) fn files(context: &Context, export: &Value, root: &Path) -> Result<Va
         paths.insert(digest::safe_file(root, &format!("{name}.json"))?);
     }
     for phase in ["before", "after"] {
-        paths.extend(inventory_files(context, root, phase)?);
+        paths.extend(inventory_files(source, root, phase)?);
     }
     for bucket in json_io::array(&export["objects"], "完整对象桶")? {
         for entry in json_io::array(&bucket["entries"], "完整对象条目")? {
@@ -57,15 +66,14 @@ pub(super) fn files(context: &Context, export: &Value, root: &Path) -> Result<Va
     Ok(Value::Object(files))
 }
 
-fn inventory_files(context: &Context, root: &Path, phase: &str) -> Result<Vec<PathBuf>> {
+fn inventory_files(source: &Value, root: &Path, phase: &str) -> Result<Vec<PathBuf>> {
     let saved = json_io::read(&root.join(format!("inventory-{phase}-targets.json")))?;
     json_io::exact(&saved, &["runtime", "targets"], "逐目标库存证明")?;
     let runtime_name = format!("inventory-{phase}-runtime.json");
     let runtime_path = bound_relative(root, &saved["runtime"], &runtime_name)?;
     let mut paths = vec![runtime_path.clone()];
     let mut targets = Vec::new();
-    let mut expected = context
-        .databases()?
+    let mut expected = json_io::array(&source["databases"], "来源数据库")?
         .iter()
         .map(|database| {
             Ok(format!(
@@ -93,7 +101,7 @@ fn inventory_files(context: &Context, root: &Path, phase: &str) -> Result<Vec<Pa
         targets.push(target);
     }
     if !expected.is_empty()
-        || inventory::complete_selected(&json_io::read(&runtime_path)?, targets, context.source())?
+        || inventory::complete_selected(&json_io::read(&runtime_path)?, targets, source)?
             != json_io::read(&root.join(format!("inventory-{phase}.json")))?
     {
         return Err("完整库存与已绑定的原始逐目标库存不同".into());
@@ -101,7 +109,7 @@ fn inventory_files(context: &Context, root: &Path, phase: &str) -> Result<Vec<Pa
     Ok(paths)
 }
 
-fn bound_relative(root: &Path, descriptor: &Value, expected: &str) -> Result<PathBuf> {
+pub(crate) fn bound_relative(root: &Path, descriptor: &Value, expected: &str) -> Result<PathBuf> {
     json_io::exact(descriptor, &["file", "bytes", "sha256"], "原始库存绑定")?;
     if descriptor["file"] != expected {
         return Err("原始库存文件名不符".into());
@@ -116,7 +124,7 @@ fn bound_relative(root: &Path, descriptor: &Value, expected: &str) -> Result<Pat
     Ok(path)
 }
 
-fn capture_names() -> BTreeSet<String> {
+pub(super) fn capture_names() -> BTreeSet<String> {
     let mut names = BTreeSet::from(["intent.json".into(), "capture.json".into()]);
     for phase in ["head-before", "get", "head-after"] {
         names.insert(format!("{phase}.json"));

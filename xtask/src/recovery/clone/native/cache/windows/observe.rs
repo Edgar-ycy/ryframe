@@ -1,4 +1,4 @@
-//! 只接受完整登记的 Windows Redis 运行或关闭收据。
+//! 核对完整登记的 Windows Redis 运行、正常关闭及外部终止证据。
 use super::{
     BoundLaunch, LAUNCH, ProtectedInputs, bound_path, common, digest, document, exact_arguments,
     failure, model, process, same_path,
@@ -36,6 +36,17 @@ pub(in crate::recovery::clone::native::cache) fn inspect(
     request: &Value,
     output: &Path,
 ) -> Result<Value> {
+    inspect_generation(request, output, false)
+}
+
+pub(in crate::recovery::clone::native::cache) fn inspect_reboot(
+    request: &Value,
+    output: &Path,
+) -> Result<Value> {
+    inspect_generation(request, output, true)
+}
+
+fn inspect_generation(request: &Value, output: &Path, reboot: bool) -> Result<Value> {
     let backend = crate::workspace::root_dir();
     common::local_directory(&backend, output, "Windows Redis 运行目录")?;
     model::shape(request)?;
@@ -46,7 +57,7 @@ pub(in crate::recovery::clone::native::cache) fn inspect(
         return failure_runtime(request, output, false);
     }
     let runtime = document::read(&output.join("runtime.json"))?;
-    let registered = Registered::open(&backend, Some(request), &runtime)?;
+    let registered = Registered::open_generation(&backend, Some(request), &runtime, reboot)?;
     if registered.launch.output != output {
         return Err("Windows Redis 运行收据不属于原观察目录".into());
     }
@@ -58,10 +69,27 @@ pub(in crate::recovery::clone::native::cache) fn predecessor_request(
     runtime_path: &Path,
     runtime: &Value,
 ) -> Result<Value> {
+    predecessor_generation(backend, runtime_path, runtime, false)
+}
+
+pub(in crate::recovery::clone::native::cache) fn predecessor_reboot(
+    backend: &Path,
+    runtime_path: &Path,
+    runtime: &Value,
+) -> Result<Value> {
+    predecessor_generation(backend, runtime_path, runtime, true)
+}
+
+fn predecessor_generation(
+    backend: &Path,
+    runtime_path: &Path,
+    runtime: &Value,
+    reboot: bool,
+) -> Result<Value> {
     if runtime_path != bound_path(runtime, "output")?.join("runtime.json") {
         return Err("Windows Redis 前驱收据不属于登记的运行目录".into());
     }
-    let registered = Registered::open(backend, None, runtime)?;
+    let registered = Registered::open_generation(backend, None, runtime, reboot)?;
     registered.finish(Ok(registered.launch.request.clone()))
 }
 
@@ -148,6 +176,36 @@ pub(in crate::recovery::clone::native::cache) fn status(
     registered.finish(registered.status())
 }
 
+pub(in crate::recovery::clone::native::cache) fn external_termination(
+    backend: &Path,
+    request: &Value,
+    runtime: &Value,
+) -> Result<Value> {
+    let registered = Registered::open(backend, Some(request), runtime)?;
+    registered.finish(registered.external_termination())
+}
+
+pub(in crate::recovery::clone::native::cache) fn reboot_exit(
+    backend: &Path,
+    request: &Value,
+    runtime: &Value,
+) -> Result<Value> {
+    let registered = Registered::open_generation(backend, Some(request), runtime, true)?;
+    let observed = if registered.exited {
+        (|| {
+            if present(&runtime["supervisor"])? || present(&runtime["process"])? {
+                return Err("Windows Redis 重启观察发现原进程仍在运行".into());
+            }
+            registered.check_stopped()?;
+            Ok(json!({"state":"stopped","launcher_alive":false,
+                "windows":{"identity":runtime["process"],"alive":false}}))
+        })()
+    } else {
+        registered.external_termination()
+    };
+    registered.finish(observed)
+}
+
 struct Registered<'a> {
     launch: BoundLaunch,
     runtime: &'a Value,
@@ -158,6 +216,15 @@ struct Registered<'a> {
 
 impl<'a> Registered<'a> {
     fn open(backend: &Path, request: Option<&Value>, runtime: &'a Value) -> Result<Self> {
+        Self::open_generation(backend, request, runtime, false)
+    }
+
+    fn open_generation(
+        backend: &Path,
+        request: Option<&Value>,
+        runtime: &'a Value,
+        reboot: bool,
+    ) -> Result<Self> {
         document::exact(runtime, RUNTIME_FIELDS, "Windows Redis 运行收据")?;
         if runtime["format_version"] != 3 {
             return Err("Windows Redis 运行收据未绑定原请求".into());
@@ -165,7 +232,12 @@ impl<'a> Registered<'a> {
         let output = bound_path(runtime, "output")?;
         common::local_directory(backend, &output, "Windows Redis 运行目录")?;
         let sha = document::text(&runtime["launch"]["sha256"], "Windows Redis 启动摘要")?;
-        let launch = BoundLaunch::load(&output.join(LAUNCH), sha)?;
+        let path = output.join(LAUNCH);
+        let launch = if reboot {
+            BoundLaunch::load_reboot(&path, sha)?
+        } else {
+            BoundLaunch::load(&path, sha)?
+        };
         if launch.output != output
             || std::fs::canonicalize(&launch.backend)? != std::fs::canonicalize(backend)?
             || request.is_some_and(|expected| launch.request != *expected)
@@ -367,16 +439,34 @@ impl<'a> Registered<'a> {
 
     fn check_stopped(&self) -> Result<()> {
         self.check_exit()?;
+        self.check_closed_port()?;
+        if present(&self.runtime["supervisor"])? || present(&self.runtime["process"])? {
+            return Err("Windows Redis 端口核验后发现登记进程仍在运行".into());
+        }
+        Ok(())
+    }
+
+    fn external_termination(&self) -> Result<Value> {
+        let supervisor = &self.runtime["supervisor"];
+        let process = &self.runtime["process"];
+        if !prove_external(self.exited, [supervisor, process], present, || {
+            self.check_closed_port()
+        })? {
+            return Ok(Value::Null);
+        }
+        Ok(json!({"kind":"windows-redis-external-termination",
+            "runtime":common::binding(&self.launch.output.join("runtime.json"))?,
+            "supervisor":supervisor,"process":process,"port":self.launch.request["port"],
+            "normal_job_exit_proof":null}))
+    }
+
+    fn check_closed_port(&self) -> Result<()> {
         let request = &self.launch.request;
         let port = request["port"].as_u64().ok_or("Redis 端口无效")?;
         let url = format!("http://127.0.0.1:{port}");
         authority::require_closed(&url)?;
         host_control::bind_and_close(request)?;
-        authority::require_closed(&url)?;
-        if present(&self.runtime["supervisor"])? || present(&self.runtime["process"])? {
-            return Err("Windows Redis 端口核验后发现登记进程仍在运行".into());
-        }
-        Ok(())
+        authority::require_closed(&url)
     }
 
     fn finish(&self, result: Result<Value>) -> Result<Value> {
@@ -391,6 +481,28 @@ impl<'a> Registered<'a> {
         self.launch_inputs
             .finish(self.receipt_inputs.finish(result))
     }
+}
+
+fn prove_external(
+    exited: bool,
+    identities: [&Value; 2],
+    mut present: impl FnMut(&Value) -> Result<bool>,
+    closed: impl FnOnce() -> Result<()>,
+) -> Result<bool> {
+    if exited {
+        return Ok(false);
+    }
+    let mut require_absent = || -> Result<()> {
+        let [supervisor, process] = identities;
+        if (present(supervisor)?, present(process)?) != (false, false) {
+            return Err("Windows Redis 外部终止要求原监督器和 Redis 进程均已退出".into());
+        }
+        Ok(())
+    };
+    require_absent()?;
+    closed()?;
+    require_absent()?;
+    Ok(true)
 }
 
 fn directory_files(output: &Path) -> Result<Vec<String>> {
@@ -432,4 +544,50 @@ pub(super) fn present(expected: &Value) -> Result<bool> {
         Some(actual) if actual == *expected => Ok(true),
         Some(_) => Err("Windows Redis 登记 PID 已复用，保留现场".into()),
     }
+}
+
+#[cfg(test)]
+#[test]
+fn external_termination_without_job_exit_requires_two_complete_absence_samples() {
+    use std::cell::RefCell;
+
+    let supervisor = json!({"pid":4});
+    let process = json!({"pid":5});
+    let identities = [&supervisor, &process];
+    let events = RefCell::new(Vec::new());
+    assert!(
+        prove_external(
+            false,
+            identities,
+            |identity| {
+                events.borrow_mut().push(identity["pid"].as_u64().unwrap());
+                Ok(false)
+            },
+            || {
+                events.borrow_mut().push(0);
+                Ok(())
+            }
+        )
+        .unwrap()
+    );
+    assert_eq!(events.into_inner(), [4, 5, 0, 4, 5]);
+
+    for changed_sample in 1..=4 {
+        let mut sample = 0;
+        assert!(
+            prove_external(
+                false,
+                identities,
+                |_| {
+                    sample += 1;
+                    Ok(sample == changed_sample)
+                },
+                || Ok(())
+            )
+            .is_err()
+        );
+    }
+    assert!(prove_external(false, identities, |_| Err("身份变化".into()), || Ok(())).is_err());
+    assert!(prove_external(false, identities, |_| Ok(false), || Err("端口占用".into())).is_err());
+    assert!(!prove_external(true, identities, |_| unreachable!(), || unreachable!()).unwrap());
 }

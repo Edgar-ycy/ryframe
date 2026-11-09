@@ -4,6 +4,28 @@
 
 ## [Unreleased]
 
+- The formal copy stage runs initial copy, explicit reconciliation and resume in Rust. It checks the complete before-image and ledger intent before writes, and publishes data completion only after independent checks of the four databases, five buckets and Redis.
+
+- The formal Rust command now recovers copy-controller locks after checking the original process exit, direct-command completion, and ownership of the target and ledger locks. Unknown data writes still require explicit reconciliation.
+
+- Final recovery registration uses the Rust verifier issued by the formal data command to independently check browser business proof, database authority, and the original runtime generation. The binding is valid while the same build source lock is held.
+
+- Reference backup verification checks control and tenant schema fingerprints and tenant placements against the product manifest contract. Generated completion and retention timestamps use the UTC format and microsecond precision accepted by backup registration.
+
+- Formal recovery monitoring preflight uses Rust xtask to verify the frozen export, backup inventory, and registered live generation. The existing subprocess timeout, credential isolation, and probes for all three endpoints are preserved.
+
+- Bind SQL bytes sent to MySQL during restore and copy to the original backup artifact and Rust syntax proof. Reject replacement after validation while retaining original line endings and the single transaction.
+
+- Enforce the 24-hour backup-to-fault limit at microsecond precision in the application and recovery tool. Rereading a saved product plan uses the same time validation as generating it.
+
+- Copy and post-copy share one read-only Rust source-generation check. It reads the source, configuration and build bridges from the registered run manifest and verifies stopped producers and closed ports.
+
+- Generate copy step IDs in plan order through one native batch, preserving existing database and object ledger IDs, the complete step set, and resume verification.
+
+- Verify saved captures across all five buckets in one Rust call during ordinary copy, using the bound source export and inventory. Preserve complete payload, raw response, and ownership proofs. Rust returns a fixed-length digest of the small proofs, and copy verifies their original bytes before use. Record missing and explicitly null optional GET headers separately.
+
+- Publish and revalidate seed successor relationships in Rust. Preserve the original fields, digest, three-side collision checks, and input bindings, and remove the Python publisher.
+
 - Windows RustFS supervision tolerates short-lived Job members that exit during observation. Live members must match the original creation identity and remain in the same Job. Full-tree shutdown proof and startup deadlines are preserved.
 
 - Reuse native registration rules when verifying the frozen post-copy API environment. Preserve `TEMP` and `TMP` when both identify the same existing private directory, and reject environment drift and injected variables.
@@ -18,7 +40,15 @@
 
 - After a failed preflight has been formally reconciled, issue a successor seed request from new execution sources and maintenance artifacts. Keep the original service ledger and physical resources, verify the four schemas and credential bindings, and publish fresh-target requests in Rust.
 
+- Accept the original fresh-target history when reading arm-input for a formal recovery plan. Verify the storage ledger against its pinned manifest and exact state prefix, and require the arm result and copy manifest to use the same effective storage generation.
+
+- Bind successor arms to the fixture service ledger's initial or successfully restarted generation. Separate historical reads from live checks, and reuse the same registered generation and actual RustFS and Redis checks in copy, target verification, and API handoff.
+
 - Fix non-production rebuild preflight rejecting exact schema-level grants. Verify each target's privileges on both the migration and lock-holding connections, with partial revocation, ownership, and write boundaries enforced.
+
+- Preview and exclusively publish successor arm requests in Rust using the existing shared export, full fresh initialization, and storage generation proofs. Verify the formal two-field audit bridge and the bound target execution root's maintenance build jobs, and remove the replaced Python writer.
+
+- Read-only `seed_to_arm` target authority verifies the actual base or candidate request and the same initialized workspace's original registration, environment, and complete file lineage. The execution phase retains its existing external storage lock scope.
 
 - Verify the four source roots before and after the independent backend snapshot comparison in one target-binding window. Reduce duplicate reads during fresh-target request publication while preserving the complete checks and deadline.
 

@@ -109,31 +109,3 @@ pub(crate) enum RuntimeCommand {
     Bind(RuntimeBindOptions),
     Verify(RuntimeVerifyOptions),
 }
-
-impl RuntimeCommand {
-    pub(crate) const fn operation(&self) -> Option<RuntimeOperation> {
-        match self {
-            Self::Help(operation) => *operation,
-            Self::Build(_) => Some(RuntimeOperation::Build),
-            Self::Register(_) => Some(RuntimeOperation::Register),
-            Self::Start(_) => Some(RuntimeOperation::Start),
-            Self::Status(_) => Some(RuntimeOperation::Status),
-            Self::Stop(_) => Some(RuntimeOperation::Stop),
-            Self::Recover(_) => Some(RuntimeOperation::Recover),
-            Self::Bind(_) => Some(RuntimeOperation::Bind),
-            Self::Verify(_) => Some(RuntimeOperation::Verify),
-        }
-    }
-
-    pub(crate) const fn writes(&self) -> bool {
-        matches!(
-            self,
-            Self::Build(_)
-                | Self::Register(_)
-                | Self::Start(_)
-                | Self::Stop(_)
-                | Self::Recover(_)
-                | Self::Bind(_)
-        )
-    }
-}

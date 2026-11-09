@@ -1,6 +1,6 @@
 use std::{
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -44,17 +44,10 @@ impl DataFixture {
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
-        for directory in ["backup", "config", "runner", "output"] {
+        for directory in ["backup", "config", "output"] {
             fs::create_dir_all(root.join(directory)).unwrap();
         }
-        for file in [
-            "manifest.json",
-            "plan.json",
-            "proof.json",
-            "tests.json",
-            "runtime.json",
-            "target.json",
-        ] {
+        for file in ["manifest.json", "plan.json", "proof.json", "target.json"] {
             fs::write(root.join(file), b"{}\n").unwrap();
         }
         Self { root }
@@ -333,6 +326,62 @@ fn rejects_target_keys_outside_the_configured_identity_syntax() {
     }
 }
 
+const RESTORE_ID: &str = "drill-1";
+const RESTORE_PROOF: &str = "restore-drill-1.json";
+const RESTORE_TESTS: &str = "restore-drill-1-tests.json";
+const RESTORE_RUNTIME: &str = "restore-drill-1-runtime.json";
+
+struct RestoreRunner(tempfile::TempDir);
+
+impl RestoreRunner {
+    fn new() -> Self {
+        let backend = super::workspace::root_dir();
+        let directory = tempfile::Builder::new()
+            .prefix("xtask-restore-runner-")
+            .tempdir_in(backend.parent().expect("后端工作树缺少父目录"))
+            .unwrap();
+        let fixture = Self(directory);
+        fs::create_dir_all(fixture.receipt(RESTORE_PROOF).parent().unwrap()).unwrap();
+        for file in [RESTORE_PROOF, RESTORE_TESTS, RESTORE_RUNTIME] {
+            fs::write(fixture.receipt(file), b"{}\n").unwrap();
+        }
+        fixture
+    }
+
+    fn root(&self) -> &Path {
+        self.0.path()
+    }
+
+    fn receipt(&self, filename: &str) -> PathBuf {
+        self.root()
+            .join(".local-tests/playwright-real")
+            .join(filename)
+    }
+
+    fn verify_args(&self, backend: &DataFixture) -> Vec<String> {
+        vec![
+            "data".into(),
+            "restore".into(),
+            "verify".into(),
+            "--id".into(),
+            RESTORE_ID.into(),
+            "--proof".into(),
+            self.receipt(RESTORE_PROOF).to_string_lossy().into_owned(),
+            "--tests-receipt".into(),
+            self.receipt(RESTORE_TESTS).to_string_lossy().into_owned(),
+            "--runtime-receipt".into(),
+            self.receipt(RESTORE_RUNTIME).to_string_lossy().into_owned(),
+            "--target-plan".into(),
+            backend.path("target.json"),
+            "--runner-root".into(),
+            self.root().to_string_lossy().into_owned(),
+            "--restore-config-dir".into(),
+            backend.path("config"),
+            "--write".into(),
+        ]
+    }
+}
+
 #[test]
 fn parses_every_restore_operation_into_typed_requests() {
     let fixture = DataFixture::new();
@@ -341,11 +390,7 @@ fn parses_every_restore_operation_into_typed_requests() {
     let running = fixture.path("output/running.json");
     let backup = fixture.path("backup");
     let data_output = fixture.path("output/data.json");
-    let proof = fixture.path("proof.json");
-    let tests = fixture.path("tests.json");
-    let runtime = fixture.path("runtime.json");
-    let target = fixture.path("target.json");
-    let runner = fixture.path("runner");
+    let runner = RestoreRunner::new();
     assert_eq!(
         command(&[
             "data",
@@ -392,38 +437,59 @@ fn parses_every_restore_operation_into_typed_requests() {
         )))
     );
     assert_eq!(
-        command(&[
-            "data",
-            "restore",
-            "verify",
-            "--id",
-            "drill-1",
-            "--proof",
-            &proof,
-            "--tests-receipt",
-            &tests,
-            "--runtime-receipt",
-            &runtime,
-            "--target-plan",
-            &target,
-            "--runner-root",
-            &runner,
-            "--restore-config-dir",
-            &config,
-            "--write",
-        ]),
+        parse(runner.verify_args(&fixture)).unwrap().command,
         Command::Data(DataCommand::Restore(RestoreCommand::Verify(
             RestoreVerifyOptions {
-                id: "drill-1".into(),
-                proof: proof.into(),
-                tests_receipt: tests.into(),
-                runtime_receipt: runtime.into(),
-                target_plan: target.into(),
-                runner_root: runner.into(),
+                id: RESTORE_ID.into(),
+                proof: runner.receipt(RESTORE_PROOF),
+                tests_receipt: runner.receipt(RESTORE_TESTS),
+                runtime_receipt: runner.receipt(RESTORE_RUNTIME),
+                target_plan: fixture.path("target.json").into(),
+                runner_root: runner.root().to_path_buf(),
                 restore_config_dir: config.into(),
             }
         )))
     );
+}
+
+#[test]
+fn restore_verify_requires_exact_runner_receipts_and_coordinator_plan() {
+    let backend = DataFixture::new();
+    let runner = RestoreRunner::new();
+    let other = RestoreRunner::new();
+    let valid = runner.verify_args(&backend);
+    assert!(parse(valid.clone()).is_ok());
+    let reject = |flag: &str, path: &Path| {
+        let mut args = valid.clone();
+        let index = args.iter().position(|value| value == flag).unwrap();
+        args[index + 1] = path.to_string_lossy().into_owned();
+        rejects_owned(args);
+    };
+
+    reject("--runner-root", other.root());
+    reject("--proof", &other.receipt(RESTORE_PROOF));
+    for (flag, wrong_name) in [
+        ("--proof", "restore-drill-2.json"),
+        ("--tests-receipt", "restore-drill-2-tests.json"),
+        ("--runtime-receipt", "restore-drill-2-runtime.json"),
+    ] {
+        let wrong_id = runner.receipt(wrong_name);
+        fs::write(&wrong_id, b"{}\n").unwrap();
+        reject(flag, &wrong_id);
+    }
+    let wrong_directory = runner.root().join(".local-tests").join(RESTORE_PROOF);
+    fs::write(&wrong_directory, b"{}\n").unwrap();
+    reject("--proof", &wrong_directory);
+
+    reject("--runner-root", Path::new("relative-runner"));
+    reject("--runner-root", &runner.root().join("missing-runner"));
+    reject("--proof", Path::new(RESTORE_PROOF));
+    let runner_target = runner.root().join(".local-tests/target.json");
+    fs::write(&runner_target, b"{}\n").unwrap();
+    reject("--target-plan", &runner_target);
+
+    fs::remove_file(runner.receipt(RESTORE_RUNTIME)).unwrap();
+    rejects_owned(valid);
 }
 
 #[test]

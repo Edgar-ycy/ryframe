@@ -1,13 +1,11 @@
 use std::path::Path;
 
-use serde_json::{Map, Value, json};
-
 use crate::{
     Result,
     cli::{
         LEGACY_B0_ADAPTER_CONTRACT, RUNTIME_USAGE, RuntimeBindOptions, RuntimeBuildOptions,
-        RuntimeCommand, RuntimeControlInputs, RuntimeGenerationOptions, RuntimeRecoverOptions,
-        RuntimeSources, RuntimeStartOptions, RuntimeVerifyOptions,
+        RuntimeCommand, RuntimeControlInputs, RuntimeGenerationOptions, RuntimeSources,
+        RuntimeStartOptions, RuntimeVerifyOptions,
     },
     local_test_path::{LocalTestPathKind, validate_absolute_path, validate_local_test_path},
 };
@@ -15,39 +13,86 @@ use crate::{
 #[path = "runtime/build.rs"]
 pub(in crate::recovery) mod build;
 
+#[path = "runtime/bind.rs"]
+mod bind;
+#[path = "runtime/business_evidence.rs"]
+pub(in crate::recovery) mod business_evidence;
+pub(crate) use business_evidence::restore_evidence_paths;
 #[path = "runtime/dataset_authority/mod.rs"]
 pub(crate) mod dataset_authority;
+#[path = "runtime/frontend_site.rs"]
+pub(crate) mod frontend_site;
 #[path = "runtime/generation/mod.rs"]
 pub(crate) mod generation;
+#[path = "runtime/live_verify.rs"]
+pub(in crate::recovery) mod live_verify;
+#[path = "runtime/performance.rs"]
+pub(crate) mod performance;
 #[path = "runtime/probes.rs"]
 pub(crate) mod probes;
-#[path = "runtime/process.rs"]
-mod process;
 
-const SCRIPT: &str = "tools/python/restore_runtime.py";
-const MAX_PROTOCOL_BYTES: usize = 16 * 1024;
+#[path = "runtime/recover.rs"]
+mod recover;
+#[path = "runtime/registration.rs"]
+mod registration;
+#[path = "runtime/restore_guard.rs"]
+pub(in crate::recovery) mod restore_guard;
+#[path = "runtime/start.rs"]
+pub(crate) mod start;
+#[path = "runtime/status.rs"]
+mod status;
+#[path = "runtime/stop.rs"]
+mod stop;
+#[path = "runtime/verify.rs"]
+mod verify;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PrivateRuntimeInvocation {
-    pub(crate) script: &'static str,
-    pub(crate) protocol: String,
-}
+const REGISTRATION_GUARD: &str = "restore-runtime-registration.guard";
+const REGISTRATION_LOCK: &str = "restore-runtime-registration.lock";
 
 pub(super) fn run(command: &RuntimeCommand, root: &Path, frontend: &Path) -> Result<()> {
-    if let RuntimeCommand::Help(operation) = command {
-        print_help(*operation);
-        return Ok(());
-    }
-    if let RuntimeCommand::Build(options) = command {
-        validate_command(command, root, frontend)?;
-        println!(
-            "{}",
-            serde_json::to_string(&build::run(root, frontend, options)?)?
-        );
-        return Ok(());
-    }
-    let invocation = private_invocation_at(command, root, frontend)?;
-    process::run(root, &invocation)
+    let result = match command {
+        RuntimeCommand::Help(operation) => {
+            print_help(*operation);
+            return Ok(());
+        }
+        RuntimeCommand::Build(options) => {
+            validate_build(options, frontend)?;
+            build::run(root, frontend, options)?
+        }
+        RuntimeCommand::Register(options) => {
+            local(&options.plan, root, LocalTestPathKind::ExistingFile)?;
+            local(&options.target_plan, root, LocalTestPathKind::ExistingFile)?;
+            local(&options.output, root, LocalTestPathKind::OutputFile)?;
+            registration::run(root, options)?
+        }
+        RuntimeCommand::Start(options) => {
+            validate_start(options, root)?;
+            start::run(root, options)?
+        }
+        RuntimeCommand::Status(options) => {
+            validate_control(options, root)?;
+            status::run(root, options)?
+        }
+        RuntimeCommand::Stop(options) => {
+            validate_generation(options, root)?;
+            stop::run(root, options)?
+        }
+        RuntimeCommand::Recover(options) => {
+            validate_generation(&options.generation, root)?;
+            local(&options.owner, root, LocalTestPathKind::ExistingFile)?;
+            recover::run(root, options)?
+        }
+        RuntimeCommand::Bind(options) => {
+            validate_bind(options, root)?;
+            bind::run(root, options)?
+        }
+        RuntimeCommand::Verify(options) => {
+            validate_verify(options, root)?;
+            verify::run(root, options)?
+        }
+    };
+    println!("{}", serde_json::to_string(&result)?);
+    Ok(())
 }
 
 fn print_help(operation: Option<crate::cli::RuntimeOperation>) {
@@ -58,142 +103,7 @@ fn print_help(operation: Option<crate::cli::RuntimeOperation>) {
     }
 }
 
-pub(crate) fn private_invocation_at(
-    command: &RuntimeCommand,
-    root: &Path,
-    frontend: &Path,
-) -> Result<PrivateRuntimeInvocation> {
-    if matches!(command, RuntimeCommand::Help(_)) {
-        return Err("runtime 帮助不启动私有阶段程序".into());
-    }
-    validate_command(command, root, frontend)?;
-    let operation = command.operation().ok_or("runtime 命令缺少明确操作")?;
-    let mut protocol = base_protocol(operation.as_str(), root, command.writes())?;
-    match command {
-        RuntimeCommand::Build(_) => {
-            return Err("普通runtime Build已由Rust执行，不再生成Python请求".into());
-        }
-        RuntimeCommand::Register(options) => {
-            insert_path(&mut protocol, "plan", &options.plan)?;
-            insert_path(&mut protocol, "target_plan", &options.target_plan)?;
-            insert_path(&mut protocol, "output", &options.output)?;
-        }
-        RuntimeCommand::Start(options) => start_protocol(&mut protocol, options)?,
-        RuntimeCommand::Status(control) => control_protocol(&mut protocol, control)?,
-        RuntimeCommand::Stop(options) => generation_protocol(&mut protocol, options)?,
-        RuntimeCommand::Recover(options) => recover_protocol(&mut protocol, options)?,
-        RuntimeCommand::Bind(options) => bind_protocol(&mut protocol, options)?,
-        RuntimeCommand::Verify(options) => verify_protocol(&mut protocol, options)?,
-        RuntimeCommand::Help(_) => unreachable!("帮助已在前面拒绝"),
-    }
-    Ok(PrivateRuntimeInvocation {
-        script: SCRIPT,
-        protocol: serialize(protocol)?,
-    })
-}
-
-fn base_protocol(operation: &str, root: &Path, write: bool) -> Result<Map<String, Value>> {
-    let Value::Object(value) = json!({
-        "backend_dir": path_text(root, "后端目录")?,
-        "format_version": 1,
-        "kind": "ryframe-xtask-restore-runtime",
-        "operation": operation,
-        "write": write,
-    }) else {
-        unreachable!("固定 JSON 对象")
-    };
-    Ok(value)
-}
-
-fn start_protocol(protocol: &mut Map<String, Value>, options: &RuntimeStartOptions) -> Result<()> {
-    control_protocol(protocol, &options.control)?;
-    sources_protocol(protocol, &options.sources)?;
-    insert_path(protocol, "build_receipt", &options.build_receipt)?;
-    insert_path(protocol, "bindings", &options.bindings)?;
-    protocol.insert("timeout".into(), json!(options.timeout.as_secs_f64()));
-    Ok(())
-}
-
-fn generation_protocol(
-    protocol: &mut Map<String, Value>,
-    options: &RuntimeGenerationOptions,
-) -> Result<()> {
-    control_protocol(protocol, &options.control)?;
-    protocol.insert("generation".into(), json!(options.generation));
-    Ok(())
-}
-
-fn recover_protocol(
-    protocol: &mut Map<String, Value>,
-    options: &RuntimeRecoverOptions,
-) -> Result<()> {
-    generation_protocol(protocol, &options.generation)?;
-    insert_path(protocol, "owner", &options.owner)
-}
-
-fn bind_protocol(protocol: &mut Map<String, Value>, options: &RuntimeBindOptions) -> Result<()> {
-    sources_protocol(protocol, &options.sources)?;
-    insert_path(protocol, "build_receipt", &options.build_receipt)?;
-    insert_path(protocol, "launch_receipt", &options.launch_receipt)?;
-    insert_path(protocol, "bindings", &options.bindings)?;
-    insert_path(protocol, "output", &options.output)
-}
-
-fn verify_protocol(
-    protocol: &mut Map<String, Value>,
-    options: &RuntimeVerifyOptions,
-) -> Result<()> {
-    sources_protocol(protocol, &options.sources)?;
-    insert_path(protocol, "bindings", &options.bindings)?;
-    insert_path(protocol, "receipt", &options.receipt)
-}
-
-fn control_protocol(
-    protocol: &mut Map<String, Value>,
-    control: &RuntimeControlInputs,
-) -> Result<()> {
-    insert_path(
-        protocol,
-        "runtime_registration",
-        &control.runtime_registration,
-    )?;
-    insert_path(protocol, "target_plan", &control.target_plan)
-}
-
-fn sources_protocol(protocol: &mut Map<String, Value>, sources: &RuntimeSources) -> Result<()> {
-    insert_path(protocol, "source_backend", &sources.source_backend)?;
-    insert_path(protocol, "source_frontend", &sources.source_frontend)?;
-    if let Some(contract) = &sources.adapter_contract {
-        protocol.insert("adapter_contract".into(), json!(contract));
-    }
-    if let Some(product) = &sources.product_backend {
-        insert_path(protocol, "product_backend", product)?;
-    }
-    Ok(())
-}
-
-fn validate_command(command: &RuntimeCommand, root: &Path, frontend: &Path) -> Result<()> {
-    match command {
-        RuntimeCommand::Build(options) => validate_build(options, root, frontend),
-        RuntimeCommand::Register(options) => {
-            local(&options.plan, root, LocalTestPathKind::ExistingFile)?;
-            local(&options.target_plan, root, LocalTestPathKind::ExistingFile)?;
-            local(&options.output, root, LocalTestPathKind::OutputFile)
-        }
-        RuntimeCommand::Start(options) => validate_start(options, root),
-        RuntimeCommand::Status(control) => validate_control(control, root),
-        RuntimeCommand::Stop(options) => validate_generation(options, root),
-        RuntimeCommand::Recover(options) => {
-            validate_generation(&options.generation, root)?;
-            local(&options.owner, root, LocalTestPathKind::ExistingFile)
-        }
-        RuntimeCommand::Bind(options) => validate_bind(options, root),
-        RuntimeCommand::Verify(options) => validate_verify(options, root),
-        RuntimeCommand::Help(_) => Err("runtime 帮助没有可执行请求".into()),
-    }
-}
-
-fn validate_build(options: &RuntimeBuildOptions, root: &Path, frontend: &Path) -> Result<()> {
+fn validate_build(options: &RuntimeBuildOptions, frontend: &Path) -> Result<()> {
     validate_sources(&options.sources)?;
     external(frontend, LocalTestPathKind::ExistingDirectory)?;
     local(
@@ -203,7 +113,7 @@ fn validate_build(options: &RuntimeBuildOptions, root: &Path, frontend: &Path) -
     )?;
     validate_commit_sha(&options.expected_head, "后端恢复构建提交")?;
     validate_commit_sha(&options.expected_frontend_head, "前端恢复构建提交")?;
-    let _ = root;
+
     Ok(())
 }
 
@@ -303,23 +213,4 @@ fn external(path: &Path, kind: LocalTestPathKind) -> Result<()> {
     validate_absolute_path(path, kind)
         .map(|_| ())
         .map_err(Into::into)
-}
-
-fn insert_path(protocol: &mut Map<String, Value>, name: &str, path: &Path) -> Result<()> {
-    protocol.insert(name.to_owned(), json!(path_text(path, name)?));
-    Ok(())
-}
-
-fn path_text<'a>(path: &'a Path, label: &str) -> Result<&'a str> {
-    path.to_str()
-        .ok_or_else(|| format!("{label} 必须能表示为 UTF-8").into())
-}
-
-fn serialize(protocol: Map<String, Value>) -> Result<String> {
-    let value = serde_json::to_string(&Value::Object(protocol))?;
-    if value.len() > MAX_PROTOCOL_BYTES || value.contains(['\n', '\r', '\0']) {
-        Err("runtime 私有协议过长或包含换行符、NUL".into())
-    } else {
-        Ok(value)
-    }
 }

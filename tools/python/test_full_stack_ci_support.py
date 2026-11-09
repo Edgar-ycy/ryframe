@@ -1,6 +1,4 @@
-"""仅验证底层端口，不启动产品或基础设施服务。"""
-import io
-import json
+"""验证历史配置复用的私有文件传输。"""
 from pathlib import Path
 import sys
 import unittest
@@ -13,25 +11,6 @@ import full_stack_ci_support as support
 
 
 class SupportTests(unittest.TestCase):
-    def test_versions_fields_unknown_operations_and_relative_paths_fail_closed(self):
-        value={'format_version':1,'operation':'unknown','backend':str(Path.cwd()),'directory':str(Path.cwd()),'tool':{},'arguments':{}}
-        with patch('rate_limit_tool.install_binding'):
-            for changed in [{**value,'format_version':True},{**value,'extra':'private-password'},{**value,'backend':'relative'},value]:
-                with self.subTest(changed=changed),self.assertRaises(ValueError):support.execute(changed)
-
-    def test_duplicate_protocol_keys_are_rejected(self):
-        with self.assertRaises(ValueError):json.loads('{"operation":"a","operation":"b"}',object_pairs_hook=support.unique)
-
-    def test_main_never_exposes_private_exception_and_rejects_argv(self):
-        class Input:
-            buffer=io.BytesIO(b'{}')
-        with patch.object(sys,'argv',['support']),patch.object(sys,'stdin',Input()),patch.object(support,'execute',side_effect=ValueError('private-password')),patch('builtins.print') as output:
-            self.assertEqual(support.main(),1)
-        self.assertNotIn('private-password',str(output.call_args))
-        self.assertIn('ValueError',str(output.call_args))
-        with patch.object(sys,'argv',['support','untrusted']),patch('builtins.print'):
-            self.assertEqual(support.main(),2)
-
     def test_file_helpers_only_forward_private_protocol(self):
         with patch.object(support, '_configuration', return_value={'text':'rendered'}) as native:
             self.assertEqual(support.instance_text('secret config', 2), 'rendered')

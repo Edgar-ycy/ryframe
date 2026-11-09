@@ -19,6 +19,7 @@ from devex_clone_tools import verify as verify_tools
 from devex_provenance import verify_source
 from full_stack_process import read_process
 from full_stack_runtime import verify_runtime
+from process_environment import configured
 from rate_limit_client import load_app_table
 from process_sockets import endpoint, verify_windows_port_idle
 from restore_build import file_digest, verify_build_artifacts
@@ -26,6 +27,27 @@ from restore_reference_plan import identifier, plan_hash
 
 REQUEST_FIELDS = {"format_version", "kind", "id", "source", "tools", "backend_build", "maintenance_build",
                   "worktree_fingerprint", "runtime", "processes", "producers_registry", "max_object_bytes"}
+GENERATION_FIELDS = {"source", "worktree_fingerprint", "runtime", "processes", "operator_declared_producers",
+                     "physical_binding", "maintenance", "request_sha256", "external_writers_discovered",
+                     "clone_verified", "restore_qualified"}
+
+
+def copy_source_generation(backend: Path, run_dir: Path, run) -> dict:
+    """只让原生权威从本次正式运行清单重读来源，诊断仅保留摘要。"""
+    def source_runner(command, **kwargs):
+        return run(command, **{**kwargs, "env": configured({}), "digest_output": True})
+
+    result, _ = native_response(*native_invoke(
+        "__source-evidence", {"operation": "copy-source-generation", "write": False,
+            "arguments": {"backend": str(backend), "run_dir": str(run_dir)}},
+        source_runner, may_write=False,
+    ))
+    exact(result, {"value"})
+    value = result["value"]
+    exact(value, GENERATION_FIELDS)
+    if any(value[field] is not False for field in ("external_writers_discovered", "clone_verified", "restore_qualified")):
+        raise ValueError("复制来源代次的核验资格字段无效")
+    return value
 
 
 def public_request(backend: Path, request: dict) -> dict:

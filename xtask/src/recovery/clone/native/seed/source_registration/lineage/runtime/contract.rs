@@ -16,7 +16,7 @@ use crate::{
     },
 };
 
-pub(super) fn validate(backend: &Path, value: &mut Value) -> Result<()> {
+pub(super) fn validate(backend: &Path, product: &Path, value: &mut Value) -> Result<()> {
     documents::exact(
         value,
         &[
@@ -38,7 +38,7 @@ pub(super) fn validate(backend: &Path, value: &mut Value) -> Result<()> {
             &value["backend_root"],
             "后端根",
         )?))?
-            != backend
+            != product
         || !Regex::new(r"^[a-z0-9][a-z0-9-]{2,63}$")?
             .is_match(documents::text(&value["scope_id"], "scope")?)
     {

@@ -33,14 +33,18 @@ fn backend(root: &Path, receipt_path: &Path, inventory: &Value) -> Result<(Value
     Ok((value, binding))
 }
 
-fn frontend(root: &Path, receipt: &Path, inventory: &Value) -> Result<Value> {
+fn frontend(root: &Path, receipt: &Path, inventory: &Value, b0: bool) -> Result<Value> {
     if receipt != root.join("dist/.vite/restore-build.json") {
         return Err("比较前端构建收据必须是同根 dist 内的正式收据".into());
     }
     let binding = common::binding(receipt)?;
     let head = document::text(&inventory["source"]["snapshot"]["head"], "前端精确提交")?;
-    let proof = crate::recovery::frontend_build::validate(root, Some(inventory), Some(head))?;
-    proof.verify()?;
+    use crate::recovery::frontend_build;
+    if b0 {
+        frontend_build::b0::validate(root, Some(inventory), head)?.verify()?;
+    } else {
+        frontend_build::validate(root, Some(inventory), Some(head))?.verify()?;
+    }
     if common::binding(receipt)? != binding {
         return Err("比较前端构建收据在核验期间变化".into());
     }
@@ -74,6 +78,7 @@ pub(super) fn capture(
         &front,
         &path(&args[format!("{prefix}_frontend_build")])?,
         &frontend_inventory,
+        b0,
     )?;
     if b0
         && source::backend_domains(&source::validate_inventory(&product_inventory)?)?["product"]

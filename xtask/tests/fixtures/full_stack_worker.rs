@@ -26,13 +26,9 @@ fn main() {
     );
     let config = Path::new(&args[1]);
     let root = config.parent().unwrap();
-    let (role, host, port) = listener(config);
+    let (started_marker, host, port) = listener(config);
     let mode = fs::read_to_string(root.join("mode")).unwrap();
-    fs::write(
-        root.join(format!("{role}-started")),
-        std::process::id().to_string(),
-    )
-    .unwrap();
+    fs::write(root.join(started_marker), std::process::id().to_string()).unwrap();
     if mode.starts_with("tree") {
         let mut child = Command::new(env::current_exe().unwrap());
         child
@@ -87,11 +83,12 @@ fn main() {
 }
 
 fn listener(config: &Path) -> (&'static str, String, u16) {
-    let (role, section, host, port) = match config.file_name().and_then(|name| name.to_str()) {
-        Some("config") => ("api", "[app]", "host=", "port="),
-        Some("worker-config") => ("worker", "[jobs]", "health_host=", "health_port="),
-        _ => panic!("替身只能使用明确的 API 或 Worker 配置目录"),
-    };
+    let (started_marker, section, host, port) =
+        match config.file_name().and_then(|name| name.to_str()) {
+            Some("config") => ("fixture-api-started", "[app]", "host=", "port="),
+            Some("worker-config") => ("worker-started", "[jobs]", "health_host=", "health_port="),
+            _ => panic!("替身只能使用明确的 API 或 Worker 配置目录"),
+        };
     let text = fs::read_to_string(config.join("app.test.toml")).unwrap();
     let lines = text
         .lines()
@@ -114,5 +111,5 @@ fn listener(config: &Path) -> (&'static str, String, u16) {
         .unwrap()
         .parse()
         .unwrap();
-    (role, host, port)
+    (started_marker, host, port)
 }

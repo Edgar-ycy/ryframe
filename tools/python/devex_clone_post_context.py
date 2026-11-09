@@ -24,7 +24,7 @@ from devex_clone_post import registration, registered, validate_registration, pa
 from devex_clone_post_model import action_input, administrator, full_row_sql, exact_directory
 from devex_clone_post_process import require_quiet
 from devex_clone_run_state import binding
-from devex_clone_source_proof import bound_file, verify_generation, require_closed_port, verify_api_address
+from devex_clone_source_proof import bound_file, copy_source_generation, require_closed_port, verify_api_address
 from devex_clone_target_binding import request_binding, external_file, application_config_directory
 from devex_clone_target_resources import Resources
 from devex_clone_target_evidence import evidence
@@ -251,7 +251,7 @@ class Context:
     def directory(self, label):
         return self.output / (label + '-' + uuid.uuid4().hex)
 
-    def run(self, command, **kwargs):
+    def run(self, command, *, digest_output=False, **kwargs):
         filename = self.directory('command').with_suffix('.json')
         stdout, stderr, code, failure = b'', b'', None, None
         try:
@@ -265,7 +265,7 @@ class Context:
         finally:
             stdout, output_evidence = verification_stdout(kwargs.get("stdout"), stdout)
             redaction = dict(os.environ) | (kwargs.get('env') or {}) | self.redaction
-            private = Path(command[0]).name.lower() in {'powershell.exe', 'pwsh.exe'}
+            private = digest_output or Path(command[0]).name.lower() in {'powershell.exe', 'pwsh.exe'}
             def diagnostic(value):
                 if not private:
                     return redact_object_diagnostic(value, redaction, database_credentials=self.database_credentials)
@@ -277,7 +277,7 @@ class Context:
 
     def source_guard(self, *, complete=False):
         with self.environments.use('source') as environment:
-            if verify_generation(self.backend, self.source['request'], self.run) != self.source['generation']:
+            if copy_source_generation(self.backend, self.directory_root, self.run) != self.source['generation']:
                 raise ValueError('停止的来源代次变化')
             tools = ExternalTools(self.tool_plan, self.output, self.run)
             tools.verify_databases('source')

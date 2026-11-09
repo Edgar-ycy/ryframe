@@ -3,11 +3,8 @@ use std::{collections::BTreeMap, path::Path};
 
 use serde_json::Value;
 
-use super::{StorageInputs, SystemObserver, common, json_io, protocol};
-use crate::{
-    Result,
-    recovery::clone::native::{export::transport::SystemTransport, lifecycle::state},
-};
+use super::{StorageInputs, SystemObserver, common, json_io, protocol, redis_layout};
+use crate::{Result, recovery::clone::native::lifecycle::state};
 
 pub(super) fn initialized(backend: &Path, target: &Path, value: &Value) -> Result<Value> {
     let descriptor = &value["request"];
@@ -21,6 +18,7 @@ pub(super) fn initialized(backend: &Path, target: &Path, value: &Value) -> Resul
         return Err("目标 Redis 运行账本必须是本机目录或 null".into());
     }
     let original = &request["storage"];
+    redis_layout::require_windows(&original["redis"])?;
     let cache = &value["cache_runtime"];
     let before = registration(backend, run.as_deref())?;
     let selected = redis_generation(backend, run.as_deref(), original, cache, before.as_ref())?;
@@ -34,7 +32,7 @@ pub(super) fn initialized(backend: &Path, target: &Path, value: &Value) -> Resul
         environment: &environment,
         observation_dir: target,
     };
-    let observer = SystemObserver::new(&SystemTransport);
+    let observer = SystemObserver;
     let observed =
         super::super::redis::state_with_observer(&inputs, &selected, true, true, &observer);
     let after = (|| {

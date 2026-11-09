@@ -6,7 +6,7 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 /// 只读取显式当前凭据；已有数据验证绝不探测初始化密码。
-pub(super) fn current(
+pub(in crate::recovery) fn current(
     root: &Path,
     dataset: &Value,
     snapshots: &mut Vec<(PathBuf, Vec<u8>)>,

@@ -29,6 +29,7 @@ pub(super) struct Reads<'a> {
     pub(super) backend: &'a Path,
     files: BTreeMap<PathBuf, File>,
     directories: BTreeMap<PathBuf, Option<Directory>>,
+    parents: BTreeMap<PathBuf, (u64, u64)>,
 }
 
 impl<'a> Reads<'a> {
@@ -37,6 +38,7 @@ impl<'a> Reads<'a> {
             backend,
             files: BTreeMap::new(),
             directories: BTreeMap::new(),
+            parents: BTreeMap::new(),
         }
     }
 
@@ -90,7 +92,74 @@ impl<'a> Reads<'a> {
         Ok(children)
     }
 
+    pub(super) fn create_attempt(&mut self, root: &Path, count: usize) -> Result<PathBuf> {
+        let children = self.directories(root)?;
+        if children.len() != count || count >= 9999 {
+            return Err("配额动作目录计数变化或超出四位序号".into());
+        }
+        let previous = self.directories.get(root).ok_or("配额目录缺少前像")?;
+        if previous.is_none() {
+            let parent = root.parent().ok_or("配额动作根缺少父目录")?;
+            let seed = parent.parent().ok_or("配额根缺少 seed 目录")?;
+            common::local_directory(self.backend, seed, "seed 配额目录")?;
+            if !present(parent)? {
+                validate_local_test_path(parent, self.backend, LocalTestPathKind::StateDirectory)?;
+                fs::create_dir(parent)?;
+            }
+            common::local_directory(self.backend, parent, "配额动作根")?;
+            fs::create_dir(root)?;
+        }
+        let before = directory(self.backend, root)?.ok_or("配额动作目录缺失")?;
+        if previous.as_ref().map_or_else(
+            || !before.children.is_empty(),
+            |expected| *expected != before,
+        ) {
+            return Err("配额动作目录在创建前变化".into());
+        }
+        let name = format!("{:04}", count + 1);
+        let path = root.join(&name);
+        fs::create_dir(&path)?;
+        let identity = directory_identity(self.backend, &path)?;
+        let mut expected = before;
+        expected.children.push((name, identity));
+        let after = directory(self.backend, root)?;
+        if after.as_ref() != Some(&expected) {
+            return Err("配额动作目录在创建期间变化，保留证据".into());
+        }
+        self.directories.insert(root.to_path_buf(), after);
+        Ok(path)
+    }
+
+    pub(super) fn write(&mut self, path: &Path, value: &Value) -> Result<Value> {
+        let parent = path.parent().ok_or("配额证据缺少父目录")?;
+        let identity = self.pin_directory(parent)?;
+        validate_local_test_path(path, self.backend, LocalTestPathKind::OutputFile)?;
+        document::write_new(path, value)?;
+        if directory_identity(self.backend, parent)? != identity || self.read(path)? != *value {
+            return Err("配额证据在创建期间变化，保留现场".into());
+        }
+        self.binding(path)
+    }
+
+    pub(super) fn pin_directory(&mut self, path: &Path) -> Result<(u64, u64)> {
+        let identity = directory_identity(self.backend, path)?;
+        if self
+            .parents
+            .get(path)
+            .is_some_and(|previous| *previous != identity)
+        {
+            return Err("配额证据目录身份变化，保留现场".into());
+        }
+        self.parents.insert(path.to_path_buf(), identity);
+        Ok(identity)
+    }
+
     pub(super) fn check(&self) -> Result<()> {
+        for (path, expected) in &self.parents {
+            if directory_identity(self.backend, path)? != *expected {
+                return Err("配额证据目录身份变化，保留现场".into());
+            }
+        }
         for (path, expected) in &self.files {
             if file(self.backend, path)? != *expected {
                 return Err("配额文件绑定或身份变化；保留现场，禁止自动重放".into());
@@ -103,6 +172,19 @@ impl<'a> Reads<'a> {
         }
         Ok(())
     }
+}
+
+pub(super) fn present(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn directory_identity(backend: &Path, path: &Path) -> Result<(u64, u64)> {
+    common::local_directory(backend, path, "配额证据目录")?;
+    common::device_inode_for(path, &fs::symlink_metadata(path)?)
 }
 
 fn file(backend: &Path, path: &Path) -> Result<File> {

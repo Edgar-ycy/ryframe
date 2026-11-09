@@ -59,10 +59,15 @@ pub(super) fn read(backend: &Path, output: &Path, scope: &str) -> Result<Value> 
     Ok(tree)
 }
 
-pub(super) fn members(backend: &Path, tree: &Value, timeout: std::time::Duration) -> Result<Value> {
+pub(super) fn members(
+    backend: &Path,
+    tree: &Value,
+    timeout: std::time::Duration,
+    roles: &[&str],
+) -> Result<Value> {
     let deadline = std::time::Instant::now() + timeout;
     loop {
-        match members_once(backend, tree) {
+        match members_once(backend, tree, roles) {
             Ok(Some(binding)) => return Ok(binding),
             Ok(None) => (),
             Err(error)
@@ -81,12 +86,12 @@ pub(super) fn members(backend: &Path, tree: &Value, timeout: std::time::Duration
     }
 }
 
-fn members_once(backend: &Path, tree: &Value) -> Result<Option<Value>> {
+fn members_once(backend: &Path, tree: &Value, roles: &[&str]) -> Result<Option<Value>> {
     let root = Path::new(document::text(&tree["runtime_directory"], "进程树目录")?);
     common::local_directory(backend, root, "进程树目录")?;
     let role = document::text(&tree["role"], "进程树角色")?;
     let operation = document::text(&tree["operation_id"], "进程树操作")?;
-    if !matches!(role, "rustfs" | "api" | "worker")
+    if !roles.contains(&role)
         || operation.len() != 32
         || !operation
             .bytes()
@@ -127,7 +132,7 @@ fn members_once(backend: &Path, tree: &Value) -> Result<Option<Value>> {
     Ok(Some(binding))
 }
 
-fn validate_members(tree: &Value, proof: &Value) -> Result<()> {
+pub(super) fn validate_members(tree: &Value, proof: &Value) -> Result<()> {
     document::exact(
         proof,
         &[

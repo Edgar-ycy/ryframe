@@ -1,11 +1,16 @@
-use std::{path::Path, process::Command, time::Duration};
+use std::{
+    io::{self, Read},
+    path::{Path, PathBuf},
+    process::Command,
+    time::Duration,
+};
 
 use serde_json::{Value, json};
 
 use crate::{
     Result,
-    local_test_path::{LocalTestPathKind, validate_local_test_path},
-    recovery::clone::native::json as json_io,
+    local_test_path::{LocalTestPathKind, validate_absolute_path, validate_local_test_path},
+    recovery::{clone::native::json as json_io, runtime::dataset_authority::monitoring},
 };
 
 use super::{binding::validate_authority, contract::read_document, execution::ProtectedInputs};
@@ -13,25 +18,65 @@ use super::{binding::validate_authority, contract::read_document, execution::Pro
 #[path = "preflight/process.rs"]
 pub(crate) mod process;
 
+pub(super) const MARKER: &str = "__monitoring-preflight";
+const MAX_PROTOCOL_BYTES: u64 = 16 * 1024;
+
 /// 配置仅通过只读路径协议进入 stdin，预检进程不继承项目或凭据环境。
 pub(crate) fn command(backend: &Path) -> Result<Command> {
-    let executable = crate::process::resolved_executable(backend, "python")?;
-    let mut command = Command::new(executable);
+    let mut command = Command::new(std::env::current_exe()?);
     command
-        .args([
-            "-X",
-            "utf8",
-            "-E",
-            "-s",
-            "-B",
-            "tools/python/restore_monitoring_authority.py",
-        ])
+        .arg(MARKER)
         .current_dir(backend)
         .env_clear()
         .envs(super::config::safe_environment(
             &backend.join(".local-tests"),
         )?);
     Ok(command)
+}
+
+pub(super) fn run_native() -> Result<()> {
+    let mut raw = Vec::new();
+    io::stdin()
+        .take(MAX_PROTOCOL_BYTES + 1)
+        .read_to_end(&mut raw)?;
+    if raw.is_empty() || raw.len() as u64 > MAX_PROTOCOL_BYTES {
+        return Err("监控预检协议为空或超过 16 KiB".into());
+    }
+    let request = json_io::parse_fragment(std::str::from_utf8(&raw)?, "监控预检协议")?;
+    let result = run_protocol(&request)?;
+    println!("{}", serde_json::to_string(&result)?);
+    Ok(())
+}
+
+fn run_protocol(request: &Value) -> Result<Value> {
+    json_io::exact(
+        request,
+        &["format_version", "kind", "backend", "runtime", "target"],
+        "监控预检协议",
+    )?;
+    if request["format_version"].as_u64() != Some(1) || request["kind"] != "monitoring-preflight" {
+        return Err("监控预检协议版本或类型无效".into());
+    }
+    let path = |name| -> Result<PathBuf> {
+        Ok(PathBuf::from(json_io::text(
+            &request[name],
+            "监控预检路径",
+        )?))
+    };
+    let backend = path("backend")?;
+    validate_absolute_path(&backend, LocalTestPathKind::ExistingDirectory)?;
+    if crate::recovery::fixture_control::git_root(&backend, "监控协调后端")? != backend {
+        return Err("监控预检后端必须是实际 Git 工作树根".into());
+    }
+    let runtime = path("runtime")?;
+    let target = path("target")?;
+    for file in [&runtime, &target] {
+        validate_local_test_path(file, &backend, LocalTestPathKind::ExistingFile)?;
+    }
+    // 原预检失败输出不包含上游的配置或过程错误。
+    let authority = monitoring::verify(&backend, &runtime, &target)
+        .map_err(|_| "正式恢复预检的来源或存活代次未获确认")?;
+    validate_authority(&authority)
 }
 
 /// 正式运行的静态来源及存活代次仍复用现有核验器，不能用收据字段校验替代。
@@ -45,12 +90,11 @@ pub(crate) fn verify(backend: &Path, runtime_path: &Path, target_path: &Path) ->
     let protocol = serde_json::to_vec(&json!({
         "format_version": 1,
         "kind": "monitoring-preflight",
-        "native_tool": crate::check::python_suite::native_tool_binding()?,
         "backend": backend,
         "runtime": runtime_path,
         "target": target_path,
     }))?;
-    if protocol.len() > 16 * 1024 {
+    if protocol.len() as u64 > MAX_PROTOCOL_BYTES {
         return Err("监控预检协议超过 16 KiB".into());
     }
     let output = process::capture(

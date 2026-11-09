@@ -16,6 +16,8 @@ use crate::Result;
 #[path = "../../../../../tests/unit/recovery/clone/native/export/producers.rs"]
 mod producer_tests;
 
+pub(crate) mod copy;
+
 pub(crate) fn generation(context: &Context) -> Result<Value> {
     let bindings = array(&context.manifest["build_bridges"], "显式构建来源审计")?;
     let scope = bridge::scope::Scope::load(&context.backend, bindings, &[])?;
@@ -23,6 +25,15 @@ pub(crate) fn generation(context: &Context) -> Result<Value> {
 }
 
 pub(crate) fn generation_in(context: &Context, scope: &bridge::scope::Scope) -> Result<Value> {
+    generation_observed(context, scope, require_closed_runtime_ports, false)
+}
+
+fn generation_observed(
+    context: &Context,
+    scope: &bridge::scope::Scope,
+    require_ports: fn(&str, &str) -> Result<()>,
+    require_producer_names: bool,
+) -> Result<Value> {
     let build_path = manifest::bound_file(
         &context.backend,
         context.request.get("backend_build").unwrap(),
@@ -47,7 +58,7 @@ pub(crate) fn generation_in(context: &Context, scope: &bridge::scope::Scope) -> 
         return Err("源 runtime scope 与请求不一致".into());
     }
     let processes = runtime_processes(context, &build, &runtime)?;
-    let producers = producers(context, &processes)?;
+    let producers = producers(context, &processes, require_producer_names)?;
     let (api_configuration, api_files) = runtime_configuration(context, &runtime, "api")?;
     let (worker_configuration, worker_files) = runtime_configuration(context, &runtime, "worker")?;
     if api_configuration["jobs"]["mode"].as_str() != Some("external")
@@ -66,7 +77,7 @@ pub(crate) fn generation_in(context: &Context, scope: &bridge::scope::Scope) -> 
         .ok_or("源 runtime 缺少 Worker 就绪地址")?;
     verify_api_address(api, &api_configuration)?;
     verify_worker_address(worker, &worker_configuration)?;
-    require_closed_runtime_ports(api, worker)?;
+    require_ports(api, worker)?;
     if runtime_configuration(context, &runtime, "api")?.1 != api_files
         || runtime_configuration(context, &runtime, "worker")?.1 != worker_files
     {
@@ -99,11 +110,10 @@ fn require_closed_runtime_ports(api: &str, worker: &str) -> Result<()> {
 }
 
 fn verify_runtime_contract(context: &Context, path: &Path, expected: &Value) -> Result<()> {
-    if context.environment.len() != 1
-        || context.environment.get("APP_ENV").map(String::as_str) != Some("test")
-    {
-        return Err("源完整运行契约必须仅使用 APP_ENV=test".into());
-    }
+    super::super::seed::runtime_model::validate_api_environment(
+        &context.backend,
+        &context.environment,
+    )?;
     let directory = path.parent().ok_or("源运行收据缺少所在目录")?;
     let actual = crate::recovery::fixture_control::verify_full_stack_runtime(
         &context.execution_backend,
@@ -193,7 +203,11 @@ fn verify_maintenance(
     Ok(receipt)
 }
 
-fn producers(context: &Context, processes: &BTreeMap<String, Value>) -> Result<Vec<Value>> {
+fn producers(
+    context: &Context,
+    processes: &BTreeMap<String, Value>,
+    require_names: bool,
+) -> Result<Vec<Value>> {
     let path = manifest::bound_file(
         &context.backend,
         context.request.get("producers_registry").unwrap(),
@@ -208,6 +222,11 @@ fn producers(context: &Context, processes: &BTreeMap<String, Value>) -> Result<V
         runtime_sha,
         processes,
     )?;
+    if require_names {
+        for producer in &result {
+            super::input::validate_name(text(&producer["name"], "producer 名称")?)?;
+        }
+    }
     for producer in &result {
         super::super::seed::source_registration::quiet::require_stopped(
             &context.backend,
@@ -306,7 +325,7 @@ fn validate_identity<'a>(value: &'a Value, label: &str) -> Result<&'a Value> {
 
 fn physical_binding(context: &Context, runtime: &Value) -> Result<Value> {
     let configuration = super::super::s3::app_configuration::configuration_value(
-        &context.execution_backend,
+        &context.backend,
         Path::new(text(&runtime["api_config_dir"], "源API配置目录")?),
         "test",
     )?;
@@ -328,6 +347,7 @@ fn runtime_configuration(
     role: &str,
 ) -> Result<(Value, BTreeMap<String, Value>)> {
     super::super::s3::app_configuration::runtime_configuration(
+        &context.backend,
         &context.execution_backend,
         &context.environment,
         runtime,
@@ -446,5 +466,70 @@ mod tests {
             .environment
             .insert("APP_APP_PORT".into(), "18210".into());
         assert!(runtime_configuration(&overridden, &runtime, "api").is_err());
+    }
+
+    #[test]
+    fn external_product_uses_coordinator_role_configuration_without_rebinding() {
+        use super::super::super::target_verify::input::request_configuration::{
+            configuration_files, configuration_identity,
+        };
+
+        let fixture = tempfile::tempdir_in(crate::workspace::root_dir()).unwrap();
+        let coordinator = fixture.path().to_path_buf();
+        let local = coordinator.join(".local-tests");
+        let execution = local.join("published/backend");
+        let api = local.join("run/post-copy/runtime-configuration/config");
+        let worker = local.join("run/post-copy/runtime-configuration/worker-config");
+        let private = local.join("private-temp");
+        let environment = BTreeMap::from([
+            ("APP_ENV".to_owned(), "test".to_owned()),
+            ("TEMP".to_owned(), private.to_str().unwrap().to_owned()),
+            ("TMP".to_owned(), private.to_str().unwrap().to_owned()),
+        ]);
+        let selected = "[app]\nhost='127.0.0.1'\nport=18210\n";
+        for directory in [&execution, &api, &worker, &private] {
+            std::fs::create_dir_all(directory).unwrap();
+        }
+        for directory in [&api, &worker] {
+            std::fs::write(directory.join("app.test.toml"), selected).unwrap();
+        }
+        let outside = coordinator.join("unmanaged-config");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("app.test.toml"), selected).unwrap();
+        let contract_sha = |directory: &Path| {
+            let (directory, files) =
+                configuration_files(&coordinator, &environment, Some(&json!(directory))).unwrap();
+            configuration_identity(&directory, &files).unwrap()
+        };
+        let runtime = json!({"backend_root":execution,
+            "api_config_dir":api,"api_configuration_sha256":contract_sha(&api),
+            "worker_config_dir":worker,"worker_configuration_sha256":contract_sha(&worker)});
+        let outside_sha = contract_sha(&outside);
+        let context = Context {
+            backend: coordinator.clone(),
+            run_dir: local.join("run"),
+            output_dir: local.join("run/e0001"),
+            mode: "source-register".into(),
+            attempt: 1,
+            manifest: Value::Null,
+            object_identity: json!({}),
+            request: Value::Null,
+            request_path: local.join("run/request.json"),
+            environment,
+            execution_backend: execution,
+        };
+
+        for role in ["api", "worker"] {
+            let (table, files) = runtime_configuration(&context, &runtime, role).unwrap();
+            assert_eq!(table["app"]["port"], 18210);
+            assert_eq!(files.len(), 1);
+        }
+        std::fs::write(worker.join("app.test.toml"), "[app]\nport=18211\n").unwrap();
+        assert!(runtime_configuration(&context, &runtime, "worker").is_err());
+
+        let mut rebound = runtime;
+        rebound["api_config_dir"] = json!(outside);
+        rebound["api_configuration_sha256"] = json!(outside_sha);
+        assert!(runtime_configuration(&context, &rebound, "api").is_err());
     }
 }

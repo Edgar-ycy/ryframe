@@ -13,7 +13,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import reference_fixture_request as fixture_request
 import reference_fixture_services as fixture_services
 import reference_fixture_source_pair as fixture_source_pair
-import reference_fixture_successor as fixture_successor
 from reference_fixture_control_protocol import (
     FixtureControlProtocolError,
     private_arguments,
@@ -108,15 +107,6 @@ class FixtureControlProtocolTests(unittest.TestCase):
                     argv=[],
                 )
 
-    def test_retired_python_generation_request_cannot_dispatch_a_second_producer(self):
-        receipt = str(Path(self.root) / ".local-tests" / "input.json")
-        raw = self.protocol("successor", "generation-request", False, successor=receipt,
-                            source_backend=self.root, expected_head="a" * 40,
-                            backend_build=receipt, maintenance_build=receipt,
-                            source_environment=receipt, id="source-current")
-        with self.assertRaises(FixtureControlProtocolError):
-            self.arguments("successor", fixture_successor.PROTOCOL_SCHEMAS, raw, positional=True)
-
     def test_reconstructs_exact_operations_for_control_domains(self):
         input_path = str(Path(self.root) / ".local-tests" / "input.json")
         directory = str(Path(self.root) / ".local-tests" / "run")
@@ -147,15 +137,6 @@ class FixtureControlProtocolTests(unittest.TestCase):
             self.arguments("services", fixture_services.PROTOCOL_SCHEMAS, services, positional=True)[0],
             "buckets",
         )
-        successor = self.protocol(
-            "successor", "arm-request", False,
-            successor=input_path, source_export_result=input_path, workspace=directory,
-            id="arm-base", side="base", copy_directory=directory,
-        )
-        self.assertEqual(
-            self.arguments("successor", fixture_successor.PROTOCOL_SCHEMAS, successor, positional=True)[0],
-            "arm-request",
-        )
 
     def test_rejects_duplicate_unknown_wrong_domain_and_ambiguous_write(self):
         path = str(Path(self.root) / ".local-tests" / "input.json")
@@ -170,32 +151,23 @@ class FixtureControlProtocolTests(unittest.TestCase):
             valid.replace('"format_version":1', '"format_version":true'),
         ]
         cases.extend(self.protocol("services", operation, operation != "status", review=path, environment=path)
-                     for operation in ("status", "close", "reconcile", "recover", "restart"))
+                     for operation in ("redis", "status", "close", "reconcile", "recover", "restart"))
         non_text_operation = json.loads(valid)
         non_text_operation["operation"] = []
         cases.append(json.dumps(non_text_operation, separators=(",", ":")))
         for raw in cases:
             with self.subTest(raw=raw), self.assertRaises(FixtureControlProtocolError):
                 self.arguments("services", fixture_services.PROTOCOL_SCHEMAS, raw, positional=True)
-        missing_output = self.protocol(
-            "successor", "arm-request", True, successor=path, source_export_result=path,
-            workspace=self.root, id="source-r24", side="base", copy_directory=self.root,
-        )
-        with self.assertRaisesRegex(FixtureControlProtocolError, "写入授权"):
-            self.arguments(
-                "successor", fixture_successor.PROTOCOL_SCHEMAS,
-                missing_output, positional=True,
-            )
 
     def test_rejects_public_argv_related_environment_and_non_absolute_paths(self):
         path = str(Path(self.root) / ".local-tests" / "input.json")
         raw = self.protocol(
-            "services", "redis", True, review=path, environment=path
+            "services", "rustfs", True, review=path, environment=path
         )
         with self.assertRaisesRegex(FixtureControlProtocolError, "不接受命令行参数"):
             private_arguments(
                 "services", fixture_services.PROTOCOL_SCHEMAS,
-                positional_operation=True, argv=["redis"],
+                positional_operation=True, argv=["rustfs"],
             )
         with self.assertRaisesRegex(FixtureControlProtocolError, "不接受命令行参数"):
             private_arguments(
@@ -203,7 +175,7 @@ class FixtureControlProtocolTests(unittest.TestCase):
                 argv=["unexpected", raw],
             )
         relative = self.protocol(
-            "services", "redis", True, review="relative.json", environment=path
+            "services", "rustfs", True, review="relative.json", environment=path
         )
         with self.assertRaisesRegex(FixtureControlProtocolError, "绝对路径"):
             self.arguments("services", fixture_services.PROTOCOL_SCHEMAS, relative, positional=True)
@@ -211,9 +183,7 @@ class FixtureControlProtocolTests(unittest.TestCase):
 
     def test_all_direct_python_programs_reject_argv_before_business_logic(self):
         scripts = [
-            "full_stack_ci_support.py",
             "reference_fixture_request.py",
-            "reference_fixture_successor.py",
             "reference_fixture_services.py",
             "reference_fixture_source_pair.py",
         ]

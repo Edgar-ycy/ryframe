@@ -10,14 +10,6 @@ mod facts;
 #[path = "secrets/files.rs"]
 mod files;
 
-pub(crate) fn handles(command: &FixtureEnvironmentCommand) -> bool {
-    matches!(
-        command,
-        FixtureEnvironmentCommand::RotateSecrets { .. }
-            | FixtureEnvironmentCommand::BootstrapSecrets { .. }
-    )
-}
-
 pub(crate) fn run(root: &Path, command: &FixtureEnvironmentCommand) -> Result<Value> {
     run_with(root, command, |_| Ok(()))
 }

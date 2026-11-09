@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use crate::{
     Result,
     cli::{FixtureRequestCommand, FixtureRequestOptions},
-    local_test_path::{LocalTestPathKind, validate_local_test_path},
+    local_test_path::{LocalTestPathKind, same_local_test_file, validate_local_test_path},
     recovery::clone::native::{
         digest, json as document,
         resources::common,
@@ -86,10 +86,26 @@ fn load_service(backend: &Path, run: &Path, prepared: &Prepared, side: &str) -> 
         return Err("fresh-target 请求必须绑定本审阅计划的唯一服务账本".into());
     }
     let service = Service::load(backend, run, &prepared.review_path)?;
-    if side == "seed" && service.context["sources"]["bootstrap"] != prepared.binding {
-        return Err("seed 请求必须使用启动首代服务的同一私有环境".into());
+    if side == "seed" {
+        require_seed_bootstrap(
+            backend,
+            &prepared.binding,
+            &service.context["sources"]["bootstrap"],
+        )?;
     }
     Ok(service)
+}
+
+fn require_seed_bootstrap(backend: &Path, selected: &Value, recorded: &Value) -> Result<()> {
+    let recorded_path = common::bound_file(backend, recorded, "原 seed 私有环境")?;
+    let selected_path = Path::new(document::text(&selected["path"], "seed 私有环境路径")?);
+    if !same_local_test_file(backend, selected_path, &recorded_path)?
+        || selected["bytes"] != recorded["bytes"]
+        || selected["sha256"] != recorded["sha256"]
+    {
+        return Err("seed 请求必须使用启动首代服务的同一私有环境".into());
+    }
+    Ok(())
 }
 
 struct Prepared {

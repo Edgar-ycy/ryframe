@@ -234,9 +234,7 @@ pub(crate) fn verify_with(backend: &Path, filename: &Path, runner: &dyn Runner) 
     if receipt["toolchain"] != versions {
         return Err("维护工具未绑定当前完整开发源码和工具链".into());
     }
-    if receipt::jobs(&receipt)? != jobs {
-        return Err("维护构建的 verification.build_jobs 与当前 config/tools.toml 或 .local-tests/tools.toml 不同；保留原收据，在新输出目录显式重新构建，不能修改历史命令或自动重放".into());
-    }
+    require_build_jobs(&receipt, jobs)?;
     if digest::file(filename)? != before
         || super::bridge::build_jobs(backend)? != jobs
         || source::binding_value(&source::capture(backend)?.source)
@@ -245,6 +243,13 @@ pub(crate) fn verify_with(backend: &Path, filename: &Path, runner: &dyn Runner) 
         return Err("校验维护工具期间源码或收据变化".into());
     }
     Ok(receipt)
+}
+
+pub(in crate::recovery) fn require_build_jobs(receipt: &Value, jobs: u8) -> Result<()> {
+    if receipt::jobs(receipt)? != jobs {
+        return Err("维护构建的 verification.build_jobs 与当前 config/tools.toml 或 .local-tests/tools.toml 不同；保留原收据，在新输出目录显式重新构建，不能修改历史命令或自动重放".into());
+    }
+    Ok(())
 }
 
 pub(in crate::recovery) fn command(role: &str, target: &Path, jobs: u8) -> Result<Vec<String>> {

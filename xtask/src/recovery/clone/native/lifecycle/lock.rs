@@ -3,18 +3,21 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
+    sync::Mutex,
 };
 
 use serde_json::{Value, json};
 
-use super::super::{digest, json as json_io};
+use super::super::{digest, json as json_io, resources::common};
 use super::{identity, manifest};
 use crate::Result;
 
 pub(crate) struct ProcessGuard {
     path: PathBuf,
     file: File,
-    identity: MetadataIdentity,
+    handle: same_file::Handle,
+    parent: (u64, u64),
+    marker: Mutex<()>,
 }
 
 pub(crate) struct RunLock {
@@ -32,25 +35,17 @@ impl ProcessGuard {
         if name.is_empty() || name.contains(['/', '\\']) || name.contains("..") {
             return Err("控制互斥文件名称无效".into());
         }
+        let parent = guard_parent(directory)?;
         let path = directory.join(name);
-        let existing = fs::symlink_metadata(&path);
-        let created = existing.is_err();
-        if let Ok(metadata) = &existing
-            && (!metadata.is_file() || digest::linked(metadata) || metadata.len() != 1)
-        {
-            return Err("控制互斥文件已被替换或改变，拒绝继续".into());
-        }
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&path)
-            .map_err(|error| format!("控制互斥文件无法安全打开，拒绝继续：{error}"))?;
-        if created {
-            file.write_all(&[0])?;
-            file.sync_all()?;
-        }
+        let (file, created) = match guard_options().create_new(true).open(&path) {
+            Ok(file) => (file, true),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                guard_metadata(&path, 1)?;
+                (guard_options().open(&path)?, false)
+            }
+            Err(error) => return Err(error.into()),
+        };
+        let handle = same_file::Handle::from_file(file.try_clone()?)?;
         file.try_lock().map_err(|error| -> String {
             match error {
                 fs::TryLockError::WouldBlock => "控制或锁恢复正在执行，拒绝并发操作".into(),
@@ -59,29 +54,49 @@ impl ProcessGuard {
                 }
             }
         })?;
-        let identity = metadata_identity(
-            &fs::symlink_metadata(&path)
-                .map_err(|error| format!("控制互斥文件无法核验：{error}"))?,
-        )?;
-        let guard = Self {
+        let mut guard = Self {
             path,
             file,
-            identity,
+            handle,
+            parent,
+            marker: Mutex::new(()),
         };
+        if created {
+            guard.verify_identity(0)?;
+            guard.file.write_all(&[0])?;
+            guard.file.sync_all()?;
+        }
         guard.check()?;
         Ok(guard)
     }
 
-    pub(crate) fn check(&self) -> Result<()> {
-        let metadata = fs::symlink_metadata(&self.path)
-            .map_err(|error| format!("控制互斥文件已变化：{error}"))?;
+    pub(crate) fn check_named(&self, directory: &Path, name: &str) -> Result<()> {
+        if self.path.file_name().and_then(|value| value.to_str()) != Some(name)
+            || guard_parent(directory)? != self.parent
+        {
+            return Err("控制互斥不属于明确父目录和名称".into());
+        }
+        self.check()
+    }
+
+    fn verify_identity(&self, size: u64) -> Result<()> {
+        let parent = self.path.parent().ok_or("控制互斥缺少父目录")?;
+        let metadata = self.file.metadata()?;
+        guard_metadata(&self.path, size)?;
         if !metadata.is_file()
-            || digest::linked(&metadata)
-            || metadata.len() != 1
-            || metadata_identity(&metadata)? != self.identity
+            || metadata.len() != size
+            || guard_parent(parent)? != self.parent
+            || same_file::Handle::from_path(&self.path)? != self.handle
         {
             return Err("控制互斥文件已被替换或改变，拒绝继续".into());
         }
+        Ok(())
+    }
+
+    pub(crate) fn check(&self) -> Result<()> {
+        self.verify_identity(1)?;
+        // 多个只读对象工作线程共享同一内核 guard 的文件游标。
+        let _marker = self.marker.lock().map_err(|_| "控制互斥标记检查被中断")?;
         let mut file = &self.file;
         file.seek(SeekFrom::Start(0))?;
         let mut marker = [0_u8; 1];
@@ -89,8 +104,47 @@ impl ProcessGuard {
         if marker != [0] {
             return Err("控制互斥文件内容无效，拒绝继续".into());
         }
-        Ok(())
+        self.verify_identity(1)
     }
+}
+
+fn guard_options() -> OpenOptions {
+    let mut options = OpenOptions::new();
+    options.read(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options
+            .mode(0o600)
+            .custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(OPEN_REPARSE_POINT);
+    }
+    options
+}
+
+fn guard_parent(directory: &Path) -> Result<(u64, u64)> {
+    crate::local_test_path::validate_absolute_path(
+        directory,
+        crate::local_test_path::LocalTestPathKind::ExistingDirectory,
+    )?;
+    common::device_inode_for(directory, &fs::symlink_metadata(directory)?)
+}
+
+fn guard_metadata(path: &Path, size: u64) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.is_file()
+        || digest::linked(&metadata)
+        || metadata.len() != size
+        || common::link_count_for(path, &metadata)? != 1
+    {
+        return Err("控制互斥文件不是独占普通文件或大小已改变".into());
+    }
+    Ok(())
 }
 
 impl Drop for ProcessGuard {

@@ -23,6 +23,8 @@ pub(super) mod capture;
 pub(super) mod inventory;
 #[path = "images/objects.rs"]
 mod objects;
+pub(in crate::recovery) use objects::saved::request as saved_object_captures;
+pub(in crate::recovery) use objects::{inspect as inspect_object, result as object_capture_result};
 #[path = "images/schema.rs"]
 mod schema;
 

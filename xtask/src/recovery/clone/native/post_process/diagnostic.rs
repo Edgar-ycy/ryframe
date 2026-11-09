@@ -1,4 +1,4 @@
-//! 三模式的窄阶段诊断；任意底层正文仅留在cause链，不进入正式公共输出。
+//! 窄阶段诊断；底层正文仅留在原因链，不进入正式公共输出。
 use crate::{Result, recovery::clone::native::lifecycle::stage::StageRequest};
 use std::{error::Error, fmt, path::PathBuf};
 
@@ -8,6 +8,8 @@ pub(super) enum Phase {
     Registration,
     Preparation,
     Amendment,
+    Schedules,
+    Business,
     Cleanup,
 }
 
@@ -71,6 +73,8 @@ pub(crate) fn diagnostic(error: &(dyn Error + 'static)) -> Option<(&'static str,
         Phase::Registration => ("PostCopyRegistrationRejected", "registration"),
         Phase::Preparation => ("PostCopyPreparationRejected", "preparation"),
         Phase::Amendment => ("PostCopyAmendmentRejected", "amendment"),
+        Phase::Schedules => ("PostCopySchedulesRejected", "schedules"),
+        Phase::Business => ("PostCopyBusinessRejected", "business"),
         Phase::Cleanup => ("PostCopyCleanupRejected", "cleanup"),
     };
     let mut message = format!("固定请求阶段={phase}；{}", reason(&*failure.cause));
@@ -138,6 +142,9 @@ fn reason(error: &(dyn Error + 'static)) -> String {
         }
         "准备API前完整对象范围不同于复制后像" | "准备API前对象GET字节或摘要不同于原复制对象" => {
             "对象完整范围或GET摘要不同于原复制，保留现场核对".into()
+        }
+        "已有未知调度写入必须先显式核对" | "调度核对未得到要求的完整行" => {
+            "目标调度仍缺少完整前像或后像结论。使用同一 run 的 reconcile 核对已有意图".into()
         }
         "业务动作或seed已经开始，不能修订API环境绑定" => {
             "业务动作或seed已开始，不具备环境修订资格".into()

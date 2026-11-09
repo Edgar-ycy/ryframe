@@ -72,7 +72,7 @@ pub(super) fn drain(value: &Value, worker: &Value) -> Result<()> {
     close::identity(worker)
 }
 
-pub(super) fn validate(
+pub(in crate::recovery::clone::native::seed) fn validate(
     value: &Value,
     runtime: &Path,
     handoff: &Value,

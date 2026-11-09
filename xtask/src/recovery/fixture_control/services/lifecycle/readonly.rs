@@ -15,11 +15,30 @@ pub(crate) mod process;
 #[path = "readonly/tree.rs"]
 mod tree;
 
+const FIXTURE_MEMBERS: &[&str] = &["rustfs", "api", "worker"];
+
+pub(in crate::recovery) fn restore_completion(backend: &Path, tree: &Value) -> Result<Value> {
+    tree::members(
+        backend,
+        tree,
+        Duration::from_secs(10),
+        &["api", "worker", "frontend"],
+    )
+}
+
+pub(in crate::recovery) fn check_restore_completion(expected: &Value, proof: &Value) -> Result<()> {
+    if proof["format_version"].as_u64() != Some(1) {
+        return Err("恢复运行成员关闭证明版本无效".into());
+    }
+    tree::validate_members(expected, proof)
+}
+
 pub(super) fn handles(operation: &str) -> bool {
     matches!(
         operation,
         "review-successor"
             | "cache-status"
+            | "cache-external-termination"
             | "storage-running"
             | "storage-closed"
             | "members-wait"
@@ -66,9 +85,16 @@ impl NativeRuntime {
             "cache-status" => crate::recovery::clone::native::cache::readonly::status(
                 &self.backend, &args["request"], &args["runtime"],
                 (!args["effective"].is_null()).then_some(&args["effective"]))
-                .map_err(|error| if error.is::<crate::recovery::clone::native::cache::ObserverFailure>() {
-                    error
-                } else { model::error("缓存原生观察失败；核对 tools.toml 的 [verification.linux_observer] 双端路径、发行版/用户/UID、来源 SHA 与完整来源/ELF 摘要，并核对冻结收据、进程代次和端口占用；保留现场，禁止回退 Python 或自动重放") }),
+                .map_err(|error| {
+                    let reason = crate::recovery::clone::native::cache::policy_message(error.as_ref());
+                    model::error(reason.unwrap_or("缓存原生观察失败。核对 Windows Redis 工具绑定、冻结收据、进程代次和端口占用，保留现场，禁止自动重放"))
+                }),
+            "cache-external-termination" =>
+                crate::recovery::clone::native::cache::readonly::external_termination(
+                    &self.backend, &args["request"], &args["runtime"],
+                    (!args["effective"].is_null()).then_some(&args["effective"]),
+                )
+                .map_err(|_| model::error("Windows Redis 外部终止证据核对失败。核对冻结收据、原进程身份和独占回环端口，保留现场，禁止自动重放")),
             "review-successor" => {
                 let (code, result) =
                     crate::recovery::fixture_control::environment::protocol::execute(
@@ -112,10 +138,10 @@ impl NativeRuntime {
                 document::text(&args["scope_id"], "进程树 scope")?,
             ),
             "members-wait" => {
-                let binding = tree::members(&self.backend, &args["tree"], Duration::ZERO)?;
+                let binding = tree::members(&self.backend, &args["tree"], Duration::ZERO, FIXTURE_MEMBERS)?;
                 common::read_bound(&self.backend, &binding, "完整成员关闭证明")
             }
-            "completion" => tree::members(&self.backend, &args["tree"], Duration::from_secs(10)),
+            "completion" => tree::members(&self.backend, &args["tree"], Duration::from_secs(10), FIXTURE_MEMBERS),
             "controller" => self.controller(&args),
             "storage-running" => self.storage(&args),
             "storage-closed" => {

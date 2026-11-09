@@ -1,11 +1,8 @@
-//! 当前夹具工具预检由 Rust 读取配置和实际工具，不探测 Linux Python。
-use super::{
-    super::{digest, json as doc},
-    native_tool::{self, NativeTool},
-};
+//! 夹具工具预检使用已登记的 Windows Redis 和本机工具。
+use super::super::{digest, json as doc};
 use crate::Result;
 use serde_json::{Value, json};
-use std::{path::Path, time::Duration};
+use std::path::Path;
 
 pub(super) fn local_tools(review: &Value) -> Result<Value> {
     let mut result = json!({});
@@ -24,79 +21,52 @@ pub(in crate::recovery) fn observe(backend: &Path, review: &Value) -> Result<Val
     let ready = review["ready_for_execution"]
         .as_bool()
         .ok_or("夹具预检状态无效")?;
-    let windows_review = review["tools"]["redis_server"]["platform"] == "windows";
-    let windows = super::windows_tool::observe(backend)?;
-    if ready && windows.is_some() != windows_review {
-        return Err(if windows_review {
-            "已就绪 Windows Redis 审阅需要显式 verification.windows_redis 工具配置"
-        } else {
-            "已就绪 Linux Redis 审阅不能改用 Windows Redis；请新建隔离场景"
-        }
-        .into());
+    if ready && review["tools"]["redis_server"]["platform"] != "windows" {
+        return Err("历史 WSL Redis 审阅仅供核对；请新建 Windows Redis 隔离场景".into());
     }
+    let redis = super::windows_tool::observe(backend)?
+        .ok_or("夹具工具预检需要显式配置 verification.windows_redis")?;
     let mut result = local_tools(review)?;
-    if let Some(redis) = windows {
-        result["redis_server"] = redis;
-        return Ok(result);
-    }
-    let path = native_tool::wsl_program()?;
-    let wsl = json!({"path":path,"sha256":digest::file(&path)?.sha256});
-    let tool = NativeTool::capture(backend)?;
-    if review["tools"]["redis_server"]["distribution"] != tool.distribution {
-        return Err("Redis 工具与绑定 Linux 工具发行版不同".into());
-    }
-    native_tool::verify_remote(backend, &wsl, &tool)?;
-    let read = |program: &str, args: &[&str]| read(backend, &wsl, &tool, program, args);
-    let executable = read("/usr/bin/readlink", &["-f", "/usr/bin/redis-server"])?;
-    let sha = read("/usr/bin/sha256sum", &["/usr/bin/redis-server"])?;
-    let version = read("/usr/bin/redis-server", &["--version"])?;
-    let executable = executable.trim();
-    let sha = sha.split_whitespace().next().ok_or("Redis 工具缺少摘要")?;
-    if !matches!(
-        executable,
-        "/usr/bin/redis-server" | "/usr/bin/redis-check-rdb"
-    ) || !crate::frontend_origin::manifest::hex_digest(sha, 64)
-        || !version.trim().starts_with("Redis server v=")
-    {
-        return Err("Redis 实际工具预检失败".into());
-    }
-    result["redis_server"] = json!({"distribution":tool.distribution,"path":"/usr/bin/redis-server",
-        "resolved_path":executable,"sha256":sha,"version":version.trim()});
-    result["wsl"] = wsl;
-    result["native_tool"] = serde_json::to_value(&tool)?;
-    tool.finish(backend)?;
+    result["redis_server"] = redis;
     Ok(result)
 }
 
-fn read(
-    backend: &Path,
-    wsl: &Value,
-    tool: &NativeTool,
-    program: &str,
-    args: &[&str],
-) -> Result<String> {
-    let mut arguments = vec![
-        "--distribution",
-        &tool.distribution,
-        "--user",
-        &tool.user,
-        "--exec",
-        program,
-    ];
-    arguments.extend_from_slice(args);
-    let output = crate::process::command_output_with_input_timeout(
-        backend,
-        doc::text(&wsl["path"], "WSL 工具")?,
-        &arguments,
-        &[],
-        None,
-        Duration::from_secs(20),
-    )?;
-    if !output.status.success()
-        || output.stdout.len() > 16384
-        || digest::file(Path::new(doc::text(&wsl["path"], "WSL 工具")?))?.sha256 != wsl["sha256"]
-    {
-        return Err("Redis 预检读取失败或 WSL 字节变化".into());
-    }
-    String::from_utf8(output.stdout).map_err(|_| "Redis 预检不是UTF-8".into())
+#[cfg(test)]
+#[test]
+fn live_preflight_requires_windows_configuration_and_refuses_ready_legacy_review() {
+    let local = crate::workspace::root_dir().join(".local-tests");
+    std::fs::create_dir_all(&local).unwrap();
+    let temporary = tempfile::tempdir_in(local).unwrap();
+    let legacy = json!({
+        "ready_for_execution": false,
+        "tools": {
+            "redis_server": {"distribution": "Ubuntu-24.04"},
+            "wsl": {"path": "D:/missing-wsl-sentinel.exe", "sha256": "a".repeat(64)},
+        },
+    });
+    let error = observe(temporary.path(), &legacy).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "夹具工具预检需要显式配置 verification.windows_redis"
+    );
+
+    let mut ready_windows = legacy.clone();
+    ready_windows["ready_for_execution"] = json!(true);
+    ready_windows["tools"]["redis_server"] = json!({"platform": "windows"});
+    let error = observe(temporary.path(), &ready_windows).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "夹具工具预检需要显式配置 verification.windows_redis"
+    );
+
+    let mut ready_legacy = legacy;
+    ready_legacy["ready_for_execution"] = json!(true);
+    let config = temporary.path().join("config");
+    std::fs::create_dir(&config).unwrap();
+    std::fs::write(config.join("tools.toml"), b"invalid [").unwrap();
+    let error = observe(temporary.path(), &ready_legacy).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "历史 WSL Redis 审阅仅供核对；请新建 Windows Redis 隔离场景"
+    );
 }

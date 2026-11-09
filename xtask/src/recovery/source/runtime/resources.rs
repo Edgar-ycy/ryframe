@@ -149,25 +149,18 @@ impl<T: Transport> Resources<'_, T> {
         read: impl FnOnce(&mut dyn FnMut(&[&str]) -> Result<Value>) -> Result<R>,
     ) -> Result<R> {
         let original = &self.request["storage"]["redis"];
-        let redis = if original["platform"] == "windows" {
-            if generation["platform"] != "windows" {
-                return Err("来源缓存读取缺少 START 绑定的 Windows Redis 代次".into());
-            }
-            generation
-        } else {
-            original
-        };
+        if original["platform"] != "windows" || generation["platform"] != "windows" {
+            return Err("来源缓存读取需要原审阅和 START 绑定的 Windows Redis 代次".into());
+        }
         (self.checkpoint)()?;
-        let result = Client::authenticated(&self.inputs(), redis).and_then(|mut client| {
+        let result = Client::authenticated(&self.inputs(), generation).and_then(|mut client| {
             let result = read(&mut |parts| {
                 (self.checkpoint)()?;
                 let result = client.command(parts);
                 checked_redis_read(result, (self.checkpoint)())
             });
             #[cfg(windows)]
-            if redis["platform"] == "windows" {
-                return checked_redis_read(result, client.recheck_windows_peer());
-            }
+            let result = checked_redis_read(result, client.recheck_windows_peer());
             result
         });
         checked_redis_read(result, (self.checkpoint)())

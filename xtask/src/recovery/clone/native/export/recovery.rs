@@ -54,28 +54,50 @@ pub(crate) fn prepare_intent(context: &Context) -> Result<()> {
         &context.run_dir,
         crate::cli::CloneSide::Source,
     )?;
-    let output = context.output();
-    if output.exists() {
-        return Err("源导出 attempt 输出目录已存在，拒绝覆盖".into());
+    let value = expected_intent(
+        context,
+        &attempt,
+        &context.manifest["source_request"],
+        &json!(source_storage),
+        controller,
+    )?;
+    write_intent(context, &value)
+}
+
+pub(crate) fn write_intent(context: &Context, value: &Value) -> Result<()> {
+    match std::fs::symlink_metadata(context.output()) {
+        Ok(_) => return Err("源导出 attempt 输出目录已存在，拒绝覆盖".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
     }
     json_io::write_new(
         &context
             .run_dir
             .join(format!("export-{:04}.intent.json", context.attempt)),
-        &json!({
+        value,
+    )
+}
+
+pub(crate) fn expected_intent(
+    context: &Context,
+    attempt: &Value,
+    source_request: &Value,
+    source_storage: &Value,
+    controller: Value,
+) -> Result<Value> {
+    let number = attempt["number"].as_u64().ok_or("原 export 序号无效")?;
+    Ok(json!({
             "format_version": 1,
             "kind": "devex-clone-export-attempt",
-            "attempt": context.attempt,
-            "output": output,
+            "attempt": number,
+            "output": context.run_dir.join(format!("e{number:04}")),
             "manifest": state::manifest_binding(&context.run_dir)?,
             "controller": controller,
-            "source_request": context.manifest["source_request"],
+            "source_request": source_request,
             "source_storage": source_storage,
             "execution_source": attempt["sources"],
             "remote_operations": "read_only",
-        }),
-    )?;
-    Ok(())
+    }))
 }
 
 pub(crate) fn record_verified(context: &Context, verified: &Value) -> Result<()> {
@@ -85,18 +107,33 @@ pub(crate) fn record_verified(context: &Context, verified: &Value) -> Result<()>
         .join(format!("export-{:04}.verified.json", context.attempt));
     json_io::write_new(
         &path,
-        &json!({
+        &seal(
+            context.attempt,
+            &intent_binding(context)?,
+            &intent,
+            &verified["binding"],
+            &summary(verified)?,
+        ),
+    )
+}
+
+pub(crate) fn seal(
+    number: u64,
+    binding: &Value,
+    intent: &Value,
+    export: &Value,
+    summary: &Value,
+) -> Value {
+    json!({
             "format_version": 1,
             "kind": "devex-clone-export-verified",
-            "attempt": context.attempt,
-            "intent": intent_binding(context)?,
-            "export": verified["binding"],
+            "attempt": number,
+            "intent": binding,
+            "export": export,
             "source_storage": intent["source_storage"],
-            "summary": summary(verified)?,
+            "summary": summary,
             "remote_writes": 0,
-        }),
-    )?;
-    Ok(())
+    })
 }
 
 pub(crate) fn reconcile(context: &Context) -> Result<Value> {
@@ -250,7 +287,7 @@ fn current_attempt(context: &Context) -> Result<Value> {
     Ok(attempt.clone())
 }
 
-fn original_controller(context: &Context, attempt: &Value) -> Result<Value> {
+pub(crate) fn original_controller(context: &Context, attempt: &Value) -> Result<Value> {
     let number = attempt["number"].as_u64().ok_or("原 export 序号无效")?;
     let mut initial = attempt.clone();
     initial["status"] = json!("running");
@@ -265,7 +302,7 @@ fn original_controller(context: &Context, attempt: &Value) -> Result<Value> {
     Ok(binding)
 }
 
-fn product(sources: &Value) -> Result<&Value> {
+pub(crate) fn product(sources: &Value) -> Result<&Value> {
     let value = sources
         .pointer("/fingerprints/product")
         .ok_or("export 恢复缺少产品源码指纹")?;
@@ -376,11 +413,26 @@ fn adoptions(context: &Context) -> Result<Vec<(Value, Value)>> {
 }
 
 fn summary(verified: &Value) -> Result<Value> {
-    let export = verified.get("export").ok_or("已复核导出缺少 export")?;
+    summary_for(
+        verified.get("export").ok_or("已复核导出缺少 export")?,
+        verified
+            .get("generation")
+            .ok_or("已复核导出缺少 generation")?,
+        verified
+            .get("proof_files")
+            .ok_or("已复核导出缺少 proof_files")?,
+    )
+}
+
+pub(crate) fn summary_for(
+    export: &Value,
+    generation: &Value,
+    proof_files: &Value,
+) -> Result<Value> {
     Ok(json!({
         "export_sha256": digest::plan_hash(export)?,
-        "generation_sha256": digest::plan_hash(verified.get("generation").ok_or("已复核导出缺少 generation")?)?,
-        "proof_files_sha256": digest::plan_hash(verified.get("proof_files").ok_or("已复核导出缺少 proof_files")?)?,
+        "generation_sha256": digest::plan_hash(generation)?,
+        "proof_files_sha256": digest::plan_hash(proof_files)?,
         "logical_inventory_sha256": export["logical_inventory_sha256"],
         "databases": export["databases"].as_array().map(Vec::len).unwrap_or(0),
         "objects": export["objects"].as_array().map(|items| items.iter().map(|bucket| bucket["entries"].as_array().map(Vec::len).unwrap_or(0)).sum::<usize>()).unwrap_or(0),

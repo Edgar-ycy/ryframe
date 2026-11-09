@@ -37,7 +37,7 @@ fn qualification(backend: &Path, target: &Path, owner: Option<&Generation>) -> R
     if target.join("initialized.json").is_file() {
         let initialized = read(backend, &target.join("initialized.json"))?;
         let inventory = resume::inventory::confirmed(backend, target, &initialized, owner);
-        let migration = resume_confirmed::confirmed(backend, target, &initialized);
+        let migration = resume_confirmed::confirmed(backend, target, &initialized, owner);
         if inventory || migration {
             return Ok(true);
         }

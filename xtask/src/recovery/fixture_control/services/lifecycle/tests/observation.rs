@@ -7,6 +7,7 @@ struct Observer {
     responses: VecDeque<&'static str>,
     clock: Duration,
     cache: &'static str,
+    cache_external: Option<Value>,
     running: bool,
     events: Vec<(String, Value)>,
     members_fail: bool,
@@ -32,6 +33,7 @@ impl Observer {
             responses: VecDeque::new(),
             clock: Duration::ZERO,
             cache: "stopped",
+            cache_external: Some(Value::Null),
             running: true,
             events: Vec::new(),
             members_fail: false,
@@ -60,6 +62,10 @@ impl Runtime for Observer {
         self.events.push((operation.into(), args.clone()));
         match operation {
             "cache-status" => Ok(json!({"state":self.cache})),
+            "cache-external-termination" => self
+                .cache_external
+                .clone()
+                .ok_or_else(|| model::error("Redis 外部终止证据未知")),
             "storage-running" => Ok(json!(self.running)),
             "members-wait" if self.members_fail => Err(model::error("成员关闭证明无效")),
             "members-wait" => Ok(Value::Null),
@@ -101,12 +107,17 @@ fn running_members_use_successor_cache_request_and_exact_storage_identity() {
         value,
         json!({"redis":"stopped","rustfs":"running","termination":null})
     );
-    assert_eq!(
-        runtime.events[0].1["effective"],
-        json!({"tool":"successor"})
-    );
-    let storage = runtime.events.last().unwrap();
-    assert_eq!(storage.0, "storage-running");
+    let cache = runtime
+        .events
+        .iter()
+        .find(|event| event.0 == "cache-status")
+        .unwrap();
+    assert_eq!(cache.1["effective"], json!({"tool":"successor"}));
+    let storage = runtime
+        .events
+        .iter()
+        .find(|event| event.0 == "storage-running")
+        .unwrap();
     assert_eq!(
         storage.1["identity"],
         runtime.fixture.services["tree"]["process"]
@@ -201,13 +212,13 @@ fn external_termination_requires_ready_proof_redis_exit_and_second_identity_samp
 
 #[test]
 fn external_termination_rejects_control_or_result_and_changed_ready_receipt() {
-    for suffix in ["control", "result"] {
+    for suffix in ["control.json", "result.json", "result.json.partial.tmp"] {
         let mut runtime = Observer::new();
         runtime.ready();
-        let path = runtime.fixture.run.join(format!(
-            "rustfs/rustfs-tree-{}-{suffix}.json",
-            "b".repeat(32)
-        ));
+        let path = runtime
+            .fixture
+            .run
+            .join(format!("rustfs/rustfs-tree-{}-{suffix}", "b".repeat(32)));
         std::fs::write(path, b"{}").unwrap();
         assert!(
             runtime
@@ -264,6 +275,9 @@ fn observation_rejects_escaped_directory_invalid_identity_and_unknown_cache_stat
     let mut runtime = Observer::new();
     runtime.fixture.services["tree"]["monitor"]["pid"] = json!(true);
     assert!(runtime.observe().is_err());
+
+    let mut runtime = Observer::new();
+    runtime.responses = VecDeque::from(["alive", "alive", "alive"]);
     runtime.cache = "unknown";
     assert!(
         runtime
@@ -272,4 +286,49 @@ fn observation_rejects_escaped_directory_invalid_identity_and_unknown_cache_stat
             .to_string()
             .contains("明确结果")
     );
+}
+
+#[test]
+fn windows_external_termination_is_used_only_after_rustfs_proof_and_fails_closed() {
+    let mut runtime = Observer::new();
+    runtime.fixture.services["requests"]["redis"]["format_version"] = json!(3);
+    let redis = binding(&runtime.fixture.run.join("redis/runtime.json")).unwrap();
+    runtime.fixture.services["evidence"]["redis_runtime"] = redis.clone();
+    let proof = json!({"kind":"windows-redis-external-termination","runtime":redis,
+        "normal_job_exit_proof":null});
+    runtime.cache_external = Some(proof.clone());
+
+    assert!(runtime.observe().is_err());
+    assert!(
+        !runtime
+            .events
+            .iter()
+            .any(|event| event.0.starts_with("cache-"))
+    );
+    runtime.ready();
+    let observed = runtime.observe().unwrap();
+    assert_eq!(observed["redis"], "stopped");
+    assert_eq!(observed["termination"]["evidence"]["redis_external"], proof);
+    assert!(!runtime.events.iter().any(|event| event.0 == "cache-status"));
+
+    runtime.cache_external = None;
+    assert!(runtime.observe().is_err());
+    assert!(!runtime.events.iter().any(|event| event.0 == "cache-status"));
+
+    runtime.cache_external = Some(proof);
+    runtime.responses = VecDeque::from([
+        "missing", "missing", "missing", "missing", "missing", "missing", "missing", "alive",
+        "missing",
+    ]);
+    assert!(runtime.observe().is_err());
+    assert!(!runtime.events.iter().any(|event| event.0 == "cache-status"));
+
+    runtime.cache_external = Some(Value::Null);
+    let observed = runtime.observe().unwrap();
+    assert!(
+        observed["termination"]["evidence"]
+            .get("redis_external")
+            .is_none()
+    );
+    assert!(runtime.events.iter().any(|event| event.0 == "cache-status"));
 }

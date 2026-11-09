@@ -17,25 +17,22 @@ pub(super) struct Guard {
 }
 impl Guard {
     pub fn acquire(role: super::role::Role, directory: &Path) -> Result<Self> {
+        Self::acquire_with(role, directory, true)
+    }
+
+    pub(super) fn acquire_existing(role: super::role::Role, directory: &Path) -> Result<Self> {
+        Self::acquire_with(role, directory, false)
+    }
+
+    fn acquire_with(role: super::role::Role, directory: &Path, create: bool) -> Result<Self> {
         super::operation::canonical(directory)?;
         let identity = common::device_inode_for(directory, &fs::symlink_metadata(directory)?)?;
         let path = directory.join(format!("{}-control.guard", role.name()));
-        let mut file = match OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(mut file) => {
-                file.write_all(&[0])?;
-                file.sync_all()?;
-                file
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                validate(&path)?;
-                OpenOptions::new().read(true).write(true).open(&path)?
-            }
-            Err(error) => return Err(error.into()),
+        let mut file = if create {
+            Self::open_or_create(&path)?
+        } else {
+            validate(&path)?;
+            OpenOptions::new().read(true).write(true).open(&path)?
         };
         file.try_lock().map_err(|error| match error {
             fs::TryLockError::WouldBlock => "控制或锁恢复正在执行，拒绝并发操作".to_owned(),
@@ -51,6 +48,26 @@ impl Guard {
         };
         guard.check()?;
         Ok(guard)
+    }
+
+    fn open_or_create(path: &Path) -> Result<File> {
+        match OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(path)
+        {
+            Ok(mut file) => {
+                file.write_all(&[0])?;
+                file.sync_all()?;
+                Ok(file)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                validate(path)?;
+                Ok(OpenOptions::new().read(true).write(true).open(path)?)
+            }
+            Err(error) => Err(error.into()),
+        }
     }
     pub fn check(&self) -> Result<()> {
         let directory = self.path.parent().ok_or("Worker互斥缺少父目录")?;
@@ -97,6 +114,21 @@ mod tests {
         let root = crate::workspace::root_dir().join(".local-tests");
         fs::create_dir_all(&root).unwrap();
         tempfile::tempdir_in(root).unwrap()
+    }
+    #[test]
+    fn existing_guard_requires_original_file_and_excludes_the_normal_controller() -> Result<()> {
+        let directory = directory();
+        let role = super::super::role::Role::Worker;
+        let path = directory.path().join("worker-control.guard");
+        assert!(Guard::acquire_existing(role, directory.path()).is_err());
+        assert!(!path.exists());
+        drop(Guard::acquire(role, directory.path())?);
+        let held = Guard::acquire_existing(role, directory.path())?;
+        assert!(Guard::acquire(role, directory.path()).is_err());
+        held.check()?;
+        drop(held);
+        assert_eq!(fs::read(path)?, [0]);
+        Ok(())
     }
     #[test]
     fn kernel_guard_excludes_second_controller_and_survives_normal_release() {

@@ -300,3 +300,32 @@ fn guard_only_failure_cannot_hide_a_producer_or_unknown_write_evidence() {
         assert!(f.call().is_err());
     }
 }
+
+#[test]
+fn original_plan_logout_diagnostic_matches_its_failure_protocol_version() {
+    for (version, expected, wrong) in [
+        (1, "ValueError", "ProducerLogoutError"),
+        (2, "ProducerLogoutError", "ValueError"),
+    ] {
+        let f = Adoption::new();
+        let failure = f.f.run.join("failure-0001.json");
+        if version == 2 {
+            let mut native = document::read(&failure).unwrap();
+            native["format_version"] = json!(2);
+            native.as_object_mut().unwrap().remove("frames");
+            native["operation_id"] = json!("clone.seed-runtime.departments-plan");
+            fs::write(&failure, serde_json::to_vec(&native).unwrap()).unwrap();
+        }
+        let logout =
+            f.f.run
+                .join("seed-runtime/attempt-0001/department-logout-error.json");
+        document::write_new(&logout, &json!({"error_type":expected})).unwrap();
+        assert!(f.call().is_ok());
+        fs::write(
+            logout,
+            serde_json::to_vec(&json!({"error_type":wrong})).unwrap(),
+        )
+        .unwrap();
+        assert!(f.call().is_err());
+    }
+}

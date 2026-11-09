@@ -44,7 +44,7 @@ impl Default for VerificationSettings {
     }
 }
 
-/// Linux 夹具工具的显式双端路径与冻结来源；观察与写入口分别授权，不读取环境覆盖。
+/// 保留历史验收配置中的 Linux 工具路径与冻结来源字段，以便原始配置仍可读取。
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct LinuxObserverSettings {
@@ -390,25 +390,17 @@ sha256='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 "#,
         )
         .unwrap();
+        let public = ToolSettings::load(root.path()).unwrap();
         assert_eq!(
-            ToolSettings::load(root.path())
-                .unwrap()
-                .verification
-                .python_program,
+            public.verification.python_program,
             Some("public/python.exe".into())
         );
         assert_eq!(
-            ToolSettings::load(root.path())
-                .unwrap()
-                .verification
-                .node_program,
+            public.verification.node_program,
             Some("public/node.exe".into())
         );
         assert_eq!(
-            ToolSettings::load(root.path())
-                .unwrap()
-                .pnpm_cache_dir(root.path())
-                .unwrap(),
+            public.pnpm_cache_dir(root.path()).unwrap(),
             Some(root.path().join("public/cache"))
         );
         fs::write(
@@ -427,11 +419,9 @@ sha256='cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
 "#,
         )
         .unwrap();
+        let local = ToolSettings::load(root.path()).unwrap();
         assert_eq!(
-            ToolSettings::load(root.path())
-                .unwrap()
-                .verification
-                .windows_redis,
+            local.verification.windows_redis,
             Some(WindowsRedisSettings {
                 program: PathBuf::from("D:/fixture/local/redis-server.exe"),
                 sha256: "c".repeat(64),
@@ -439,17 +429,11 @@ sha256='cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
             }),
         );
         assert_eq!(
-            ToolSettings::load(root.path())
-                .unwrap()
-                .verification
-                .python_program,
+            local.verification.python_program,
             Some("本机/python.exe".into())
         );
         assert_eq!(
-            ToolSettings::load(root.path())
-                .unwrap()
-                .verification
-                .node_program,
+            local.verification.node_program,
             Some("本机/node.exe".into())
         );
         assert!(
@@ -464,10 +448,7 @@ sha256='cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
         assert!(settings.verification.windows_redis.is_none());
         assert!(settings.pnpm_cache_dir(root.path()).unwrap().is_none());
         assert_eq!(
-            ToolSettings::load(root.path())
-                .unwrap()
-                .pnpm_cache_dir(root.path())
-                .unwrap(),
+            local.pnpm_cache_dir(root.path()).unwrap(),
             Some(root.path().join("本机/cache with spaces"))
         );
         assert!(!root.path().join("本机").exists());

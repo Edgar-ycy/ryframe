@@ -6,6 +6,8 @@ use serde_json::{Value, json};
 use super::{digest, json as document, resources::common};
 use crate::Result;
 
+#[path = "department/adopt_plan.rs"]
+pub(super) mod adopt_plan;
 #[path = "department/adoption.rs"]
 mod adoption;
 #[path = "department/adoption_receipts.rs"]
@@ -18,6 +20,8 @@ mod evidence;
 mod history;
 #[path = "department/model.rs"]
 mod model;
+#[path = "department/orchestration.rs"]
+pub(super) mod orchestration;
 #[path = "department/plan.rs"]
 mod plan;
 #[path = "department/receipts.rs"]
@@ -27,12 +31,47 @@ mod workbook;
 #[path = "department/workflow.rs"]
 mod workflow;
 
+pub(super) fn read_prerequisite(backend: &Path, run: &Path) -> Result<Value> {
+    plan::read_prerequisite(backend, run)
+}
+
+pub(super) fn require_prerequisite(
+    backend: &Path,
+    run: &Path,
+    request: &Value,
+    prior: &Value,
+) -> Result<()> {
+    model::execute(backend, run, &json!("require-prerequisite"), &json!({
+        "request":{"identity_plan":request["identity_plan"],"identity_state":request["identity_state"]},
+        "value":prior
+    })).map(|_| ())
+}
+
 /// 复用最新阶段选择器和部门证据算法，不创建中间受管输入文件。
 pub(crate) fn verified_evidence(
     backend: &Path,
     run: &Path,
     request: &Value,
     current: Option<u64>,
+) -> Result<Value> {
+    verified_evidence_for(backend, run, request, current, false)
+}
+
+pub(super) fn authorize_identity_verification(
+    backend: &Path,
+    run: &Path,
+    request: &Value,
+    current: u64,
+) -> Result<Value> {
+    verified_evidence_for(backend, run, request, Some(current), true)
+}
+
+fn verified_evidence_for(
+    backend: &Path,
+    run: &Path,
+    request: &Value,
+    current: Option<u64>,
+    authorize_identity: bool,
 ) -> Result<Value> {
     let request_path = run.join("seed-runtime.json");
     let request_binding = common::binding(&request_path)?;
@@ -52,7 +91,17 @@ pub(crate) fn verified_evidence(
         current,
         false,
     )?;
-    let result = evidence::department_evidence(backend, run, request, record)?;
+    let result = if authorize_identity {
+        evidence::dispatch(
+            backend,
+            run,
+            &json!("authorize-identity"),
+            &json!({"request":{"identity_plan":request["identity_plan"],
+                "identity_state":request["identity_state"]},"record":record,"mode":"verify"}),
+        )?
+    } else {
+        evidence::department_evidence(backend, run, request, record)?
+    };
     common::bound_file(backend, &record["result"], "部门最终阶段结果")?;
     common::bound_file(backend, &request["identity_plan"], "部门身份计划")?;
     common::bound_file(backend, &request_binding, "部门seed登记请求")?;
@@ -198,6 +247,9 @@ mod history_tests;
 #[cfg(test)]
 #[path = "../../../../tests/unit/recovery/clone/native/department/model_tests.rs"]
 mod model_tests;
+#[cfg(test)]
+#[path = "../../../../tests/unit/recovery/clone/native/department/orchestration_tests.rs"]
+mod orchestration_tests;
 #[cfg(test)]
 #[path = "../../../../tests/unit/recovery/clone/native/department/plan_tests.rs"]
 mod plan_tests;

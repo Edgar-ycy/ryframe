@@ -92,7 +92,7 @@ pub(crate) fn execute(
                 write,
             );
         }
-        let mut runtime = runtime::PythonRuntime::new(backend)?;
+        let mut runtime = runtime::LifecycleRuntime::new(backend)?;
         execute_with(
             &mut runtime,
             backend,
@@ -105,7 +105,7 @@ pub(crate) fn execute(
     })();
     outcome.map_err(|failure: Box<dyn std::error::Error>| {
         if model::reason(failure.as_ref()).is_some()
-            || failure.is::<crate::recovery::clone::native::cache::ObserverFailure>()
+            || crate::recovery::clone::native::cache::policy_message(failure.as_ref()).is_some()
             || crate::recovery::clone::native::cache::primitive_message(failure.as_ref()).is_some() {
             failure
         } else {

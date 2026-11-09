@@ -127,7 +127,10 @@ fn wait_registered(
 #[cfg(windows)]
 pub(super) fn detach(_actor: &actor::Actor, encoded: &str) -> Result<()> {
     let executable = std::env::current_exe()?;
-    crate::process::spawn_detached(&executable, &[actor::ENTRY, "monitor", encoded])?;
+    crate::process::windows_detach::spawn_detached(
+        &executable,
+        &[actor::ENTRY, "monitor", encoded],
+    )?;
     use std::io::Write;
     std::io::stdout().lock().write_all(b"started\n")?;
     Ok(())

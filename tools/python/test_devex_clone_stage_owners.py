@@ -24,11 +24,13 @@ class StageOwnersTests(unittest.TestCase):
     def execute(self, runner=None):
         return factory.copy_to_fresh_target(self.backend, self.case.export_binding, self.case.initialized,
             self.case.environments['source'], self.case.environments['target'], self.output,
-            copy_id='factory-case', stage='source_to_seed', run=runner or self.case.case.runner)
+            copy_id='factory-case', stage='source_to_seed', run=runner or self.case.case.runner,
+            source_storage_run=self.case.run_dir)
 
     def continue_copy(self, mode, runner=None):
         return resume.continue_copy(self.backend, self.output, self.case.environments['source'],
-            self.case.environments['target'], mode=mode, run=runner or self.case.case.runner)
+            self.case.environments['target'], mode=mode, run=runner or self.case.case.runner,
+            source_storage_run=self.case.run_dir)
 
     def owner_requests(self, directory):
         requests = []

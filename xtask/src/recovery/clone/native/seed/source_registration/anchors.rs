@@ -1,13 +1,13 @@
 //! 来源登记锚点的内部组合；控制器授权和真实 quiet 观察由父流程提供。
-use super::{close, copied, identity, lineage, storage};
+use super::{close, copied, identity, lineage, materialize::Session, storage};
 use crate::{
     Result,
     recovery::clone::native::{
+        bridge::scope::Scope,
         json as document,
         lifecycle::{manifest as manifests, state},
         resources::common,
         seed::{Registration, capacity, history, latest, runtime_model},
-        target_verify::guard::Generation,
     },
 };
 use serde_json::{Value, json};
@@ -21,15 +21,20 @@ pub(crate) struct Anchors {
     pub environment: Value,
 }
 
-pub(crate) fn collect(
-    backend: &Path,
-    run: &Path,
-    manifest: &Value,
-    current: u64,
+pub(super) fn collect(
+    session: &Session<'_>,
     coordinator_tool: &Value,
-    generation: &Generation,
+    scope: &Scope,
     quiet: &mut dyn FnMut(&Value) -> Result<()>,
 ) -> Result<Anchors> {
+    let Session {
+        backend,
+        run,
+        current,
+        generation,
+        ..
+    } = *session;
+    let manifest = &session.manifest.value;
     if current == 0 {
         return Err("来源登记必须明确当前正数 attempt".into());
     }
@@ -60,7 +65,20 @@ pub(crate) fn collect(
         &inputs.handoff,
         current,
     )?;
-    let lineage = lineage::collect(backend, run, coordinator_tool)?;
+    let build_binding = &post.request["backend_build"];
+    let build_path = common::bound_file(backend, build_binding, "来源登记原产品构建")?;
+    let build = common::read_bound(backend, build_binding, "来源登记原产品构建")?;
+    let product = scope.registered_product_root(&build_path, &build)?;
+    let lineage = lineage::collect(
+        backend,
+        run,
+        coordinator_tool,
+        &product,
+        &saved,
+        &post,
+        &inputs,
+    )?;
+    common::bound_file(backend, build_binding, "来源登记原产品构建后像")?;
     require_quiet(&lineage, quiet)?;
     let record = latest(&saved, "seed-runtime", &["register"], None, false)?;
     let stage = attempt_binding(backend, run, record)?;
@@ -83,7 +101,7 @@ pub(crate) fn collect(
     )?;
     common::bound_file(backend, &evidence["seed_handoff"], "seed 固定 handoff")?;
     generation.check()?;
-    assemble(evidence, &registered.value, post.request, inputs)
+    assemble(backend, evidence, &registered.value, post.request, inputs)
 }
 
 fn require_handoff(identity: &Value, capacity: &Value, handoff: &Value) -> Result<()> {
@@ -172,6 +190,7 @@ fn recheck(
 }
 
 fn assemble(
+    backend: &Path,
     evidence: Value,
     seed: &Value,
     post: Value,
@@ -193,9 +212,9 @@ fn assemble(
         "来源内部锚点",
     )?
     .clone();
-    if inputs.environment != json!({"APP_ENV":"test"}) {
-        return Err("来源环境只能包含 APP_ENV=test，配置必须来自绑定文件".into());
-    }
+    let environment = serde_json::from_value(inputs.environment.clone())
+        .map_err(|_| "来源环境必须是固定文本映射")?;
+    runtime_model::validate_api_environment(backend, &environment)?;
     for key in ["post_copy", "post_verify"] {
         public.insert(
             key.into(),

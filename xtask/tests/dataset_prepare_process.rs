@@ -196,7 +196,7 @@ fn bound_s3_configuration_errors_never_expose_file_credentials() {
         assert!(!diagnostic.contains(secret));
     }
     assert!(diagnostic.contains("会话令牌"), "{diagnostic}");
-    let mut inline = request.clone();
+    let mut inline = request;
     let binding = inline
         .as_object_mut()
         .unwrap()

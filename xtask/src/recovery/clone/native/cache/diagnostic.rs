@@ -53,6 +53,7 @@ pub(super) struct Diagnostic {
 }
 
 impl Diagnostic {
+    #[cfg(any(test, target_os = "linux"))]
     pub(super) fn decode_output(bytes: &[u8]) -> Result<Self> {
         if bytes.is_empty() || bytes.len() > 16384 {
             return Err("缓存失败诊断为空或超限".into());
@@ -252,20 +253,6 @@ pub(super) fn operating_system(
         write_outcome: Outcome::Unknown,
         os_code: Some(error.raw_os_error()),
     })
-}
-
-pub(super) fn from_error(error: &(dyn std::error::Error + 'static)) -> Value {
-    error.downcast_ref::<Diagnostic>().map_or_else(
-        || {
-            Diagnostic {
-                category: Category::RequestRejected,
-                write_outcome: Outcome::Unknown,
-                os_code: None,
-            }
-            .value()
-        },
-        Diagnostic::value,
-    )
 }
 
 pub(crate) fn primitive_detail(error: &(dyn std::error::Error + 'static)) -> (Value, Value) {

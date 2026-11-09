@@ -28,7 +28,6 @@ pub(crate) use source_pair::*;
 mod successor;
 pub(crate) use successor::*;
 
-pub(crate) const FIXTURE_CONTROL_PROTOCOL_KIND: &str = "ryframe-reference-fixture-control";
 pub(crate) const FIXTURE_CONTROL_USAGE: &str = concat!(
     "用法：cargo xtask check recovery fixture <子域> <操作与参数>\n",
     "  artifact snapshot --runtime-dir <目录> --job-id <正 i64> --receipt <新文件>\n",
@@ -72,20 +71,6 @@ pub(crate) enum FixtureControlCommand {
 }
 
 impl FixtureControlCommand {
-    pub(crate) const fn domain(&self) -> &'static str {
-        match self {
-            Self::Artifact(_) => "artifact",
-            Self::Dataset(_) => "dataset",
-            Self::Environment(_) => "environment",
-            Self::Retention(_) => "retention",
-            Self::Review(_) => "review",
-            Self::Request(_) => "request",
-            Self::SourcePair(_) => "source-pair",
-            Self::Successor(_) => "successor",
-            Self::Services(_) => "services",
-        }
-    }
-
     pub(crate) const fn operation(&self) -> &'static str {
         match self {
             Self::Artifact(command) => command.operation(),
@@ -112,21 +97,6 @@ impl FixtureControlCommand {
             Self::Successor(command) => command.writes(),
             Self::Services(command) => command.writes(),
         }
-    }
-
-    pub(crate) const fn is_help(&self) -> bool {
-        matches!(
-            self,
-            Self::Artifact(FixtureArtifactCommand::Help)
-                | Self::Dataset(FixtureDatasetCommand::Help)
-                | Self::Environment(FixtureEnvironmentCommand::Help)
-                | Self::Retention(FixtureRetentionCommand::Help)
-                | Self::Review(FixtureReviewCommand::Help)
-                | Self::Request(FixtureRequestCommand::Help)
-                | Self::SourcePair(FixtureSourcePairCommand::Help)
-                | Self::Successor(FixtureSuccessorCommand::Help)
-                | Self::Services(FixtureServicesCommand::Help)
-        )
     }
 }
 

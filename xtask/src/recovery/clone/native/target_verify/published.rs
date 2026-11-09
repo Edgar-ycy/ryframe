@@ -28,7 +28,9 @@ fn unlocked(target: &Path) -> Result<()> {
 }
 
 pub(crate) fn unlocked_history(backend: &Path, filename: &Path) -> Result<(Value, Value)> {
-    history(backend, filename, None)
+    observe_unlocked_history(backend, filename, |initialized, request| {
+        Ok((initialized, request))
+    })
 }
 
 pub(crate) fn owned_history(
@@ -36,7 +38,9 @@ pub(crate) fn owned_history(
     filename: &Path,
     owner: &guard::Generation,
 ) -> Result<(Value, Value)> {
-    history(backend, filename, Some(owner))
+    history(backend, filename, Some(owner), |initialized, request| {
+        Ok((initialized, request))
+    })
 }
 
 /// 已发布来源只消费原阶段事实；当前树用于防漂移，不补称历史全树封存。
@@ -55,14 +59,22 @@ pub(crate) fn evidence_history(
     let (filename, registration) = tree::registered(backend, filename)?;
     let target = filename.parent().ok_or("登记初始化历史缺少目标目录")?;
     protection(target, owner)?;
-    let before = super::tree::snapshot(backend, target, owner.is_some())?;
+    let before = super::tree::protected_snapshot(backend, target, owner)?;
     let inputs = guard::Inputs::open(super::tree::files(target, &before)?)?;
     let resolved = failure::resolved(backend, target, owner)?;
     let initialized = read(backend, &filename)?;
     let prepared = read(backend, &target.join("prepare.json"))?;
     let request = read(backend, &bound(backend, &prepared["request"])?)?;
-    initialization(backend, target, &initialized, &prepared, &request, resolved)?;
-    if super::tree::snapshot(backend, target, owner.is_some())? != before {
+    initialization(
+        backend,
+        target,
+        &initialized,
+        &prepared,
+        &request,
+        resolved,
+        owner,
+    )?;
+    if super::tree::protected_snapshot(backend, target, owner)? != before {
         return Err("已发布 seed 初始化内容或当前文件树在核验期间变化".into());
     }
     inputs.check()?;
@@ -82,11 +94,20 @@ fn protection(target: &Path, owner: Option<&guard::Generation>) -> Result<()> {
     }
 }
 
-fn history(
+pub(in crate::recovery) fn observe_unlocked_history<T>(
+    backend: &Path,
+    filename: &Path,
+    observe: impl FnOnce(Value, Value) -> Result<T>,
+) -> Result<T> {
+    history(backend, filename, None, observe)
+}
+
+fn history<T>(
     backend: &Path,
     filename: &Path,
     owner: Option<&guard::Generation>,
-) -> Result<(Value, Value)> {
+    observe: impl FnOnce(Value, Value) -> Result<T>,
+) -> Result<T> {
     let target = filename.parent().ok_or("初始化历史缺少目标目录")?;
     validate_local_test_path(target, backend, LocalTestPathKind::ExistingDirectory)?;
     check(
@@ -97,26 +118,37 @@ fn history(
     let (filename, registration) = tree::registered(backend, filename)?;
     let target = filename.parent().ok_or("登记初始化历史缺少目标目录")?;
     protection(target, owner)?;
-    let locked = owner.is_some();
-    let before = tree::initialized(backend, target, locked)?;
-    let files = super::tree::snapshot(backend, target, locked)?;
+    let before = tree::initialized(backend, target, owner)?;
+    let files = super::tree::protected_snapshot(backend, target, owner)?;
     let inputs = guard::Inputs::open(super::tree::files(target, &files)?)?;
     let resumed = failure::resolved(backend, target, owner)?;
     let initialized = read(backend, &filename)?;
     let prepared = read(backend, &target.join("prepare.json"))?;
     let request = read(backend, &bound(backend, &prepared["request"])?)?;
     request_binding(backend, &request)?;
-    initialization(backend, target, &initialized, &prepared, &request, resumed)?;
-    inputs.check()?;
-    registration.check()?;
-    protection(target, owner)?;
-    check(
-        tree::initialized(backend, target, locked)? == before
-            && super::tree::snapshot(backend, target, locked)? == files,
-        "初始化历史读取期间文件树或绑定变化",
+    initialization(
+        backend,
+        target,
+        &initialized,
+        &prepared,
+        &request,
+        resumed,
+        owner,
     )?;
-    protection(target, owner)?;
-    Ok((initialized, request))
+    let observed = observe(initialized, request);
+    let checked = (|| {
+        inputs.check()?;
+        registration.check()?;
+        protection(target, owner)?;
+        check(
+            tree::initialized(backend, target, owner)? == before
+                && super::tree::protected_snapshot(backend, target, owner)? == files,
+            "初始化历史读取期间文件树或绑定变化",
+        )?;
+        protection(target, owner)?;
+        Ok(())
+    })();
+    super::execution::combine(observed, checked)
 }
 
 fn initialization(
@@ -126,6 +158,7 @@ fn initialization(
     prepared: &Value,
     request: &Value,
     resumed: bool,
+    owner: Option<&guard::Generation>,
 ) -> Result<()> {
     check(
         initialized["status"] == "fresh_target_initialized"
@@ -150,7 +183,13 @@ fn initialization(
         }),
     )?;
     check(
-        super::evidence_reset::history(backend, target, request, &initialized["generation"])?["completed"]
+        super::evidence_reset::history(
+            backend,
+            target,
+            request,
+            &initialized["generation"],
+            owner,
+        )?["completed"]
             == initialized["reset"],
         "初始化历史 reset 完成证据变化",
     )

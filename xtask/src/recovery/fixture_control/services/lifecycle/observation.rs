@@ -12,17 +12,6 @@ pub(super) fn observe(
         Path::new(text(&services["tree"], "runtime_directory")?),
         "服务观察目录",
     )?;
-    let cache = runtime.call(
-        "cache-status",
-        json!({"request":services["requests"]["redis"],
-        "runtime":services["runtime"],"effective":services["cache_effective"]}),
-    )?;
-    check(
-        ["running", "stopped"]
-            .iter()
-            .any(|state| cache["state"] == *state),
-        "Redis 状态观察未返回明确结果",
-    )?;
     let tree = &services["tree"];
     let request = &services["requests"]["rustfs"];
     let identities = identities(runtime, tree)?;
@@ -31,7 +20,7 @@ pub(super) fn observe(
             .iter()
             .all(|role| identities[*role] == expected)
     };
-    let (rustfs, termination) = if all("running") {
+    let (rustfs, mut termination) = if all("running") {
         check(
             runtime.call(
                 "storage-running",
@@ -42,7 +31,7 @@ pub(super) fn observe(
         ("running", Value::Null)
     } else if all("missing") {
         let stopped = receipt(tree, "stopped")?;
-        if stopped.exists() {
+        if entry_exists(&stopped)? {
             runtime.call("members-wait", json!({"tree":tree}))?;
             closed(request)?;
             ("stopped", Value::Null)
@@ -55,11 +44,51 @@ pub(super) fn observe(
     } else {
         return Err(model::error("RustFS 进程树仅部分存活，不能判定服务状态"));
     };
+    let cache = cache_state(runtime, services, &identities, &mut termination)?;
+    Ok(json!({"redis":cache,"rustfs":rustfs,"termination":termination}))
+}
+
+fn cache_state(
+    runtime: &mut dyn Runtime,
+    services: &Value,
+    identities: &Value,
+    termination: &mut Value,
+) -> Result<Value> {
+    let args = json!({"request":services["requests"]["redis"],
+        "runtime":services["runtime"],"effective":services["cache_effective"]});
+    if !termination.is_null() && args["request"]["format_version"] == 3 {
+        let mut redis = runtime.call("cache-external-termination", args.clone())?;
+        if !redis.is_null() {
+            let recorded = &termination["evidence"]["redis_runtime"];
+            check(
+                redis["kind"] == "windows-redis-external-termination"
+                    && redis
+                        .get("normal_job_exit_proof")
+                        .is_some_and(Value::is_null)
+                    && Path::new(text(&redis["runtime"], "path")?)
+                        == Path::new(text(recorded, "path")?)
+                    && redis["runtime"]["sha256"] == recorded["sha256"]
+                    && redis["runtime"]["bytes"] == recorded["bytes"]
+                    && external(runtime, services, identities)? == *termination,
+                "Redis 外部终止证据或原 RustFS 终止状态变化",
+            )?;
+            redis["runtime"] = recorded.clone();
+            termination["evidence"]["redis_external"] = redis;
+            return Ok(json!("stopped"));
+        }
+    }
+    let cache = runtime.call("cache-status", args)?;
+    check(
+        ["running", "stopped"]
+            .iter()
+            .any(|state| cache["state"] == *state),
+        "Redis 状态观察未返回明确结果",
+    )?;
     check(
         termination.is_null() || cache["state"] == "stopped",
         "RustFS 外部终止时 Redis 仍存活或状态未知",
     )?;
-    Ok(json!({"redis":cache["state"],"rustfs":rustfs,"termination":termination}))
+    Ok(cache["state"].clone())
 }
 
 pub(super) fn identities(runtime: &mut dyn Runtime, tree: &Value) -> Result<Value> {
@@ -119,34 +148,52 @@ fn external(runtime: &mut dyn Runtime, services: &Value, observations: &Value) -
     let expected = json!({"format_version":1,"operation_id":tree["operation_id"],
         "directory":tree["runtime_directory"],"role":tree["role"],"scope_id":tree["scope_id"],
         "supervisor":tree["supervisor"],"monitor":tree["monitor"]});
+    let ready_binding = binding(&ready)?;
     check(
         read(&ready)? == expected,
         "RustFS 成员监督器启动归属证据缺失或变化",
     )?;
-    let directory = Path::new(text(tree, "runtime_directory")?);
-    for suffix in ["control", "result"] {
-        check(
-            !directory
-                .join(format!(
-                    "rustfs-tree-{}-{suffix}.json",
-                    text(tree, "operation_id")?
-                ))
-                .exists(),
-            "RustFS 外部终止现场包含未完成的控制或关闭证据",
-        )?;
-    }
+    no_close_receipts(tree)?;
     closed(&services["requests"]["rustfs"])?;
     check(
-        identities(runtime, tree)? == *observations,
-        "RustFS 外部终止核对期间进程身份变化",
+        identities(runtime, tree)? == *observations && binding(&ready)? == ready_binding,
+        "RustFS 外部终止核对期间进程身份变化或启动归属证据变化",
     )?;
+    no_close_receipts(tree)?;
     let mut evidence = services["evidence"]
         .as_object()
         .ok_or("服务观察缺少证据对象")?
         .clone();
-    evidence.insert("rustfs_monitor_ready".into(), binding(&ready)?);
+    evidence.insert("rustfs_monitor_ready".into(), ready_binding);
     Ok(
         json!({"status":"external-termination-unreconciled","identities":observations,
         "normal_shutdown_proof":null,"evidence":evidence}),
     )
+}
+
+fn no_close_receipts(tree: &Value) -> Result<()> {
+    let directory = Path::new(text(tree, "runtime_directory")?);
+    for entry in std::fs::read_dir(directory)? {
+        let name = entry?.file_name();
+        let name = name.to_str().ok_or("RustFS 控制目录文件名不是 UTF-8")?;
+        let receipt = name.trim_start_matches('.').to_ascii_lowercase();
+        let close = (receipt.starts_with("rustfs-tree-")
+            && ["-control.json", "-result.json"]
+                .iter()
+                .any(|suffix| receipt.contains(suffix)))
+            || receipt.starts_with("rustfs-members-") && receipt.contains("-stopped.json")
+            || ["actor-cancel.json", "actor-failed.json"]
+                .iter()
+                .any(|prefix| receipt.starts_with(prefix));
+        check(!close, "RustFS 外部终止现场包含未完成的控制或关闭证据")?;
+    }
+    Ok(())
+}
+
+fn entry_exists(path: &Path) -> Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
 }

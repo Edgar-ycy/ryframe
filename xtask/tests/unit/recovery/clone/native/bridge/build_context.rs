@@ -25,7 +25,7 @@ fn fixed_versions_and_host_fallback_keep_parent_commands_and_dev_defaults() {
         );
     }
     super::super::validate_build_context(&result).unwrap();
-    let mut changed = result.clone();
+    let mut changed = result;
     changed["jobs"] = json!("1");
     assert!(super::super::validate_build_context(&changed).is_err());
     for invalid in [json!("0"), json!("65"), json!("01"), json!(true)] {

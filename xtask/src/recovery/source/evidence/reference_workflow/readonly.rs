@@ -11,6 +11,54 @@ mod binding;
 mod collector;
 pub(crate) mod defaults;
 
+pub(super) struct BackupDatabases(binding::Inputs);
+
+impl BackupDatabases {
+    pub(super) fn capture(
+        backend: &Path,
+        plan_path: &Path,
+        plan: &Value,
+        work: &Path,
+    ) -> Result<Self> {
+        Ok(Self(binding::Inputs::capture(
+            backend, plan_path, plan, work, "source",
+        )?))
+    }
+
+    pub(super) fn check(&self) -> Result<()> {
+        self.0.unchanged()
+    }
+
+    pub(super) fn verify(
+        &self,
+        transport: &impl native::export::transport::Transport,
+    ) -> Result<()> {
+        let tools = collector::Collector {
+            inputs: &self.0,
+            transport,
+        };
+        let plan = &self.0.plan;
+        for database in native::json::array(&plan["source"]["databases"], "备份数据库")? {
+            verify_database(plan, "source", database, &tools)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn dump(
+        &self,
+        transport: &impl native::export::transport::Transport,
+        database: &Value,
+        tables: &[&str],
+        output: &Path,
+    ) -> Result<()> {
+        collector::Collector {
+            inputs: &self.0,
+            transport,
+        }
+        .dump(database, tables, output)
+    }
+}
+
 pub(super) fn execute(args: &Value) -> Result<Value> {
     super::exact(args, &["raw"])?;
     let request = protocol::request(args)?;

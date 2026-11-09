@@ -66,9 +66,6 @@ pub(crate) fn observe_with(
         return Err("目标只读权威只接受无attempt的target-verify/run观察".into());
     }
     let original = manifest::load(backend, &request.run_dir.join("manifest.json"))?;
-    if original.value["copy_stage"] != "source_to_seed" {
-        return Err("目标只读权威只接受source_to_seed清单".into());
-    }
     let filename =
         manifest::bound_file(backend, &original.value["initialized"], "目标初始化", true)?;
     let (registered_path, registration) = published::tree::registered(backend, &filename)?;
@@ -79,7 +76,16 @@ pub(crate) fn observe_with(
         &[],
     )?;
     let (initialized, target_request) = published::unlocked_history(backend, &filename)?;
+    let prepare = json_io::read(&target.join("prepare.json"))?;
     let files = tree::snapshot(backend, target, false)?;
+    require_arm_target(
+        backend,
+        &original.value,
+        target,
+        &prepare["request"],
+        &target_request,
+        &files,
+    )?;
     let inputs = guard::Inputs::open(tree::files(target, &files)?)?;
     let environment = common::environment(backend, &original.value["target_environment"])?;
     let generation = observe(backend, &target_request, &environment, &scope)?;
@@ -88,7 +94,6 @@ pub(crate) fn observe_with(
     if generation != Value::Object(expected) {
         return Err("目标当前源码、维护工具、配置或物理连接不同于初始化代次".into());
     }
-    let prepare = json_io::read(&target.join("prepare.json"))?;
     let value = json!({
         "format_version":1,"kind":"devex-clone-target-authority",
         "initialized":original.value["initialized"],"request":prepare["request"],
@@ -149,9 +154,7 @@ pub(crate) fn validate(backend: &Path, directory: &Path, value: &Value) -> Resul
         return Err("目标只读权威类型、写入或资格声明无效".into());
     }
     let manifest_value = manifest::load(backend, &directory.join("manifest.json"))?.value;
-    if manifest_value["copy_stage"] != "source_to_seed"
-        || value["initialized"] != manifest_value["initialized"]
-    {
+    if value["initialized"] != manifest_value["initialized"] {
         return Err("目标只读权威不属于当前固定运行清单".into());
     }
     let path = manifest::bound_file(backend, &value["initialized"], "目标权威 initialized", true)?;
@@ -162,8 +165,9 @@ pub(crate) fn validate(backend: &Path, directory: &Path, value: &Value) -> Resul
     }
     let request_path = manifest::bound_file(backend, &value["request"], "目标权威 request", true)?;
     let prepare = json_io::read(&target.join("prepare.json"))?;
+    let target_request = json_io::read(&request_path)?;
     if prepare["request"] != value["request"]
-        || json_io::read(&request_path)? != json_io::read(&target.join("request.json"))?
+        || target_request != json_io::read(&target.join("request.json"))?
     {
         return Err("目标权威请求未绑定同一初始化前像".into());
     }
@@ -182,6 +186,19 @@ pub(crate) fn validate(backend: &Path, directory: &Path, value: &Value) -> Resul
     {
         return Err("目标权威完整文件树或谱系路径不同".into());
     }
+    if manifest_value["copy_stage"] == "seed_to_arm"
+        && value["initialized_files"] != manifest_value["target_initialized_files"]
+    {
+        return Err("seed_to_arm 权威文件谱系不同于固定运行清单".into());
+    }
+    require_arm_target(
+        backend,
+        &manifest_value,
+        target,
+        &value["request"],
+        &target_request,
+        &value["files"],
+    )?;
     let guard = json!({"path": "copy-target.guard", "type": "file", "bytes": 1,
         "sha256": hex::encode(Sha256::digest([0]))});
     if !json_io::array(&value["files"], "目标完整文件树")?.contains(&guard) {
@@ -196,6 +213,83 @@ pub(crate) fn validate(backend: &Path, directory: &Path, value: &Value) -> Resul
         return Err("目标权威当前代次不属于初始化证据".into());
     }
     Ok(())
+}
+
+fn require_arm_target(
+    backend: &Path,
+    manifest: &Value,
+    target: &Path,
+    request: &Value,
+    target_request: &Value,
+    current_files: &Value,
+) -> Result<()> {
+    if manifest["copy_stage"] != "seed_to_arm" {
+        return Ok(());
+    }
+    if !matches!(target_request["side"].as_str(), Some("base" | "candidate")) {
+        return Err("seed_to_arm 目标权威只接受实际 base 或 candidate 请求".into());
+    }
+    let workspace = target.parent().ok_or("arm 目标缺少初始化工作区")?;
+    let registration_path = workspace.join("registration.json");
+    let files_path = workspace.join("initialized-files.json");
+    let prepared_path = workspace.join("prepared-files.json");
+    let guard = guard::Inputs::open([
+        registration_path.clone(),
+        files_path.clone(),
+        prepared_path.clone(),
+    ])?;
+    if common::binding(&registration_path)? != manifest["target_registration"]
+        || common::binding(&files_path)? != manifest["target_initialized_files"]
+    {
+        return Err("seed_to_arm 清单未绑定初始化工作区的原登记和文件谱系".into());
+    }
+    let registration =
+        common::read_bound(backend, &manifest["target_registration"], "arm 原目标登记")?;
+    let files = common::read_bound(
+        backend,
+        &manifest["target_initialized_files"],
+        "arm 原目标文件谱系",
+    )?;
+    json_io::exact(
+        &registration,
+        &[
+            "format_version",
+            "kind",
+            "request",
+            "environment",
+            "storage_run",
+            "target_directory",
+        ],
+        "arm 原目标登记",
+    )?;
+    json_io::exact(
+        &files,
+        &[
+            "format_version",
+            "kind",
+            "registration",
+            "predecessor",
+            "files",
+        ],
+        "arm 原目标文件谱系",
+    )?;
+    if registration["format_version"] != 1
+        || registration["kind"] != "devex-clone-fresh-target-registration"
+        || registration["request"] != *request
+        || registration["environment"] != manifest["target_environment"]
+        || Path::new(json_io::text(
+            &registration["target_directory"],
+            "arm 原目标目录",
+        )?) != target
+        || files["format_version"] != 1
+        || files["kind"] != "devex-clone-fresh-target-initialized-files"
+        || files["registration"] != manifest["target_registration"]
+        || files["predecessor"] != common::binding(&prepared_path)?
+        || files["files"] != *current_files
+    {
+        return Err("seed_to_arm 目标原登记、环境、请求或文件谱系不同".into());
+    }
+    guard.check()
 }
 
 fn require_unlocked(target: &Path) -> Result<()> {

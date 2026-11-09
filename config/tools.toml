@@ -20,20 +20,6 @@ build_jobs = 4
 # 可选 pnpm 元数据缓存目录；相对后端根解析，缺省保留 pnpm 标准行为，不创建目录。
 # pnpm_cache_dir = ".local-tests/pnpm-cache"
 
-# 缓存 WSL 观察和独立授权写入口复用；从明确 SHA 的无 alternates 普通 clone 构建同一 xtask。
-# 两端路径必须显式填写，不推断挂载映射；摘要必须来自完整编译来源与实际 ELF。
-# [verification.linux_observer]
-# distribution = "Ubuntu-24.04"
-# user = "your-linux-user"
-# uid = 1000
-# program = "D:/isolated/linux-tool/xtask"
-# linux_program = "/mnt/d/isolated/linux-tool/xtask"
-# source_root = "D:/isolated/linux-source"
-# linux_source_root = "/mnt/d/isolated/linux-source"
-# source_commit = "<40 lowercase hex digits: actual clean HEAD>"
-# sha256 = "<64 lowercase hex digits: ELF SHA-256>"
-# source_sha256 = "<64 lowercase hex digits: complete relative source list SHA-256>"
-
 # Windows Redis 夹具使用显式绑定；复制到本机工具文件并填入实际文件的路径与摘要。
 # 不读取环境覆盖或从 PATH 查找。DLL 表登记该构建所需的同目录文件，仅填写文件名。
 # [verification.windows_redis]

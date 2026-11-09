@@ -9,7 +9,6 @@ use crate::{
     recovery::{
         clone::native::{
             digest,
-            export::transport::SystemTransport,
             lifecycle::{manifest, state},
         },
         fixture_control::services::{history, lifecycle::readonly::process},
@@ -183,6 +182,7 @@ fn fixture_manifest(backend: &Path, run: &Path) -> Result<Value> {
 }
 
 fn layout(backend: &Path, target: &Path, value: &Value) -> Result<Value> {
+    redis_layout::require_windows(&value["storage"]["redis"])?;
     let descriptor = &value["request"];
     let path = common::bound_file(backend, descriptor, "存储布局请求")?;
     let request = json_io::read(&path)?;
@@ -222,8 +222,7 @@ fn layout(backend: &Path, target: &Path, value: &Value) -> Result<Value> {
     generation::validate_transition(&request["storage"], &value["storage"], runtime, cache)?;
     validate_runtime_files(backend, runtime)?;
     validate_runtime_files(backend, cache)?;
-    let transport = SystemTransport;
-    let observer = SystemObserver::new(&transport);
+    let observer = SystemObserver;
     let storage = &value["storage"];
     rustfs::verify(&inputs, &review, &storage["rustfs"], runtime, &observer)?;
     redis_layout::verify(&inputs, &review, &storage["redis"], &observer)?;

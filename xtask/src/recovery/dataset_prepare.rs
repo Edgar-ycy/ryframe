@@ -10,9 +10,9 @@ use std::{io::Read, path::Path};
 #[path = "dataset_prepare/batch.rs"]
 mod batch;
 #[path = "dataset_prepare/configuration.rs"]
-mod configuration;
+pub(in crate::recovery) mod configuration;
 #[path = "dataset_prepare/existing.rs"]
-mod existing;
+pub(in crate::recovery) mod existing;
 #[path = "dataset_prepare/existing_native.rs"]
 pub(in crate::recovery) mod existing_native;
 #[path = "dataset_prepare/model.rs"]

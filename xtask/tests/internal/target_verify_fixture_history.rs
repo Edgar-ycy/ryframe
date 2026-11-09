@@ -18,10 +18,10 @@ use crate::recovery::clone::native::{
 };
 
 /// 只构造外部工具替身的协议证据；不执行 Cargo，也不写共享 target。
-pub(super) fn maintenance(fixture: &Fixture) {
-    let directory = fixture.local.join("maintenance");
+pub(super) fn maintenance(backend: &Path, local: &Path) {
+    let directory = local.join("maintenance");
     fs::create_dir(&directory).unwrap();
-    let target = fixture.backend.join("target").join("ci").join("backend");
+    let target = backend.join("target").join("ci").join("backend");
     fs::create_dir_all(&target).unwrap();
     let original = target.join("fixture-cargo-artifact.exe");
     fs::write(&original, b"RyFrame mock-maintenance-artifact-v1\n").unwrap();
@@ -33,7 +33,7 @@ pub(super) fn maintenance(fixture: &Fixture) {
         digest::file(&canonical).unwrap(),
         digest::file(&saved).unwrap()
     );
-    let inventory = source::capture(&fixture.backend).unwrap();
+    let inventory = source::capture(backend).unwrap();
     let mut artifacts = serde_json::Map::new();
     for (role, feature, name) in [
         ("reset", "bin-reset", "ryframe-reset"),
@@ -42,7 +42,7 @@ pub(super) fn maintenance(fixture: &Fixture) {
     ] {
         let output = directory.join(format!("{role}.cargo.jsonl"));
         let log = directory.join(format!("{role}.cargo.log"));
-        let event = json!({"reason":"compiler-artifact","target":{"name":name,"kind":["bin"]},"manifest_path":fixture.backend.join("crates/ryframe/Cargo.toml"),"executable":canonical});
+        let event = json!({"reason":"compiler-artifact","target":{"name":name,"kind":["bin"]},"manifest_path":backend.join("crates/ryframe/Cargo.toml"),"executable":canonical});
         fs::write(&output, format!("{event}\n")).unwrap();
         fs::write(&log, []).unwrap();
         let command = vec![
@@ -66,16 +66,11 @@ pub(super) fn maintenance(fixture: &Fixture) {
         artifacts.insert(role.into(),json!({"executable":saved,"cargo_executable":canonical,"command":command,"bytes":actual.bytes,"sha256":actual.sha256,
             "cargo_output":log_binding(&output),"cargo_log":log_binding(&log)}));
     }
-    let receipt = json!({"format_version":1,"kind":"devex-clone-tool-build","backend_root":fixture.backend,"source":source::binding_value(&inventory.source),
+    let receipt = json!({"format_version":1,"kind":"devex-clone-tool-build","backend_root":backend,"source":source::binding_value(&inventory.source),
         "source_inventory":source::inventory_value(&inventory),"toolchain":{"rustc":"explicit-fixture-observation","cargo":"explicit-fixture-observation"},
         "target_directory":target,"artifacts":artifacts,"restore_qualified":false,"resources_modified":false});
     write(&directory.join("build.json"), &receipt);
-    maintenance::verify_evidence(
-        &fixture.backend,
-        &directory.join("build.json"),
-        Some(&receipt),
-    )
-    .unwrap();
+    maintenance::verify_evidence(backend, &directory.join("build.json"), Some(&receipt)).unwrap();
 }
 
 fn log_binding(path: &Path) -> Value {

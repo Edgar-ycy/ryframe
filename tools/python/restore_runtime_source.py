@@ -6,6 +6,7 @@ from pathlib import Path
 
 from restore_build import registered_source, repository, verify_build
 from restore_frontend_build import validate_registered_frontend
+from restore_frontend_native import b0_runtime_source
 from restore_runtime_evidence import (
     HEX_40,
     HEX_64,
@@ -125,19 +126,26 @@ def resolve_runtime_sources(
     product, product_inventory, execution_inventory = _backend_sources(
         coordinator, execution, backend_receipt, adapter_contract, product_backend
     )
-    frontend_inventory, observed_frontend = validate_registered_frontend(frontend, expected_frontend_sha)
+    identity = {
+        "backend_product_sha": _head(product_inventory),
+        "backend_execution_sha": _head(execution_inventory),
+        "backend_adapter_contract": adapter_contract,
+        "frontend_sha": expected_frontend_sha,
+    }
+    if b0_runtime_source(identity):
+        frontend_inventory, observed_frontend = validate_registered_frontend(
+            frontend, expected_frontend_sha, b0=True
+        )
+    else:
+        frontend_inventory, observed_frontend = validate_registered_frontend(frontend, expected_frontend_sha)
     if (
         observed_frontend.path != frontend_receipt.path
         or observed_frontend.raw != frontend_receipt.raw
         or observed_frontend.state != frontend_receipt.state
     ):
         raise ValueError("前端构建收据在来源绑定期间被替换")
-    identity = {
-        "backend_product_sha": _head(product_inventory),
-        "backend_execution_sha": _head(execution_inventory),
-        "backend_adapter_contract": adapter_contract,
-        "frontend_sha": _head(frontend_inventory),
-    }
+    if _head(frontend_inventory) != expected_frontend_sha:
+        raise ValueError("恢复运行的前端来源不同于登记的精确提交")
     if adapter_contract is None and identity["backend_product_sha"] != identity["backend_execution_sha"]:
         raise ValueError("普通恢复运行必须使用相同的产品与执行提交")
     if capture_inventory(product) != product_inventory or capture_inventory(execution) != execution_inventory:

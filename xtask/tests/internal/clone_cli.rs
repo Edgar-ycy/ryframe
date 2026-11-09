@@ -72,6 +72,30 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn copy_lock_recovery_uses_the_native_evidence_write_entry() {
+    let fixture = Fixture::new();
+    let args = [
+        "recover-copy",
+        "--run-dir",
+        Fixture::value(&fixture.run),
+        "--owner-binding",
+        Fixture::value(&fixture.first),
+    ];
+    assert!(fixture.parse(&args).is_err());
+    let mut authorized = args.to_vec();
+    authorized.push("--write");
+    let command = fixture.parse(&authorized).unwrap();
+    assert!(matches!(command, CloneCommand::RecoverCopy { .. }));
+    assert_eq!(command.effect(), CloneEffect::EvidenceWrite);
+    assert!(
+        protocol(&command, &super::workspace::root_dir())
+            .unwrap_err()
+            .to_string()
+            .contains("Rust 原生入口")
+    );
+}
+
+#[test]
 fn parses_core_clone_operations_and_enforces_write_policy() {
     let fixture = Fixture::new();
     let output = fixture.directory.join("plan.json");
@@ -284,7 +308,13 @@ fn parses_post_copy_and_non_source_seed_operations_with_exact_inputs() {
         ])
         .unwrap();
     assert!(
-        matches!(seed, CloneCommand::SeedRuntime(value) if value.operation == SeedRuntimeOperation::ArmInput)
+        matches!(&seed, CloneCommand::SeedRuntime(value) if value.operation == SeedRuntimeOperation::ArmInput)
+    );
+    assert!(
+        protocol(&seed, &super::workspace::root_dir())
+            .unwrap_err()
+            .to_string()
+            .contains("Rust 正式入口")
     );
     assert!(matches!(
         fixture.parse(&[
@@ -292,6 +322,7 @@ fn parses_post_copy_and_non_source_seed_operations_with_exact_inputs() {
         ]),
         Ok(CloneCommand::SeedRuntime(value)) if value.operation == SeedRuntimeOperation::Status
     ));
+    assert_native_seed_runtime_modes(&fixture);
     for invalid in [
         vec![
             "post-copy",
@@ -331,6 +362,92 @@ fn parses_post_copy_and_non_source_seed_operations_with_exact_inputs() {
         ],
     ] {
         assert!(fixture.parse(&invalid).is_err(), "{invalid:?}");
+    }
+}
+
+fn assert_native_seed_runtime_modes(fixture: &Fixture) {
+    for (mode, operation, binding) in [
+        (
+            "register",
+            SeedRuntimeOperation::Register,
+            Some("--request"),
+        ),
+        ("quotas-plan", SeedRuntimeOperation::QuotasPlan, None),
+        ("quotas-apply", SeedRuntimeOperation::QuotasApply, None),
+        (
+            "quotas-reconcile",
+            SeedRuntimeOperation::QuotasReconcile,
+            None,
+        ),
+        (
+            "departments-plan",
+            SeedRuntimeOperation::DepartmentsPlan,
+            None,
+        ),
+        (
+            "departments-apply",
+            SeedRuntimeOperation::DepartmentsApply,
+            None,
+        ),
+        (
+            "departments-reconcile",
+            SeedRuntimeOperation::DepartmentsReconcile,
+            None,
+        ),
+        (
+            "departments-verify",
+            SeedRuntimeOperation::DepartmentsVerify,
+            None,
+        ),
+        (
+            "identities-apply",
+            SeedRuntimeOperation::IdentitiesApply,
+            None,
+        ),
+        (
+            "identities-verify",
+            SeedRuntimeOperation::IdentitiesVerify,
+            None,
+        ),
+        ("prepare", SeedRuntimeOperation::Prepare, None),
+        ("start", SeedRuntimeOperation::Start, None),
+        ("close", SeedRuntimeOperation::Close, None),
+        (
+            "arm-input",
+            SeedRuntimeOperation::ArmInput,
+            Some("--request"),
+        ),
+        ("stop", SeedRuntimeOperation::Stop, None),
+        ("status", SeedRuntimeOperation::Status, None),
+        ("recover", SeedRuntimeOperation::Recover, None),
+        (
+            "recover-session",
+            SeedRuntimeOperation::RecoverSession,
+            Some("--producer-binding"),
+        ),
+    ] {
+        let mut args = vec![
+            "seed-runtime",
+            "--run-dir",
+            Fixture::value(&fixture.run),
+            "--operation",
+            mode,
+        ];
+        if let Some(flag) = binding {
+            args.extend([flag, Fixture::value(&fixture.first)]);
+        }
+        if mode != "status" {
+            args.push("--write");
+        }
+        let parsed = fixture.parse(&args).unwrap();
+        assert!(
+            matches!(&parsed, CloneCommand::SeedRuntime(value) if value.operation == operation)
+        );
+        let error = protocol(&parsed, &super::workspace::root_dir()).unwrap_err();
+        assert!(
+            error.to_string().contains("Rust 正式入口"),
+            "{mode}: {error}"
+        );
     }
 }
 

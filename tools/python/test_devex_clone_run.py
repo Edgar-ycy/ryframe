@@ -253,18 +253,15 @@ class RunTests(unittest.TestCase):
         self.assertEqual(recover.call_args.args[-1], descriptor)
         self.assertEqual(state.load_state(self.directory)['attempts'][0]['mode'], 'recover-session')
 
-    def test_arm_input_is_local_handoff_and_does_not_open_product_bridge_context(self):
+    def test_retired_arm_input_cannot_create_a_python_attempt(self):
         request = self.local / "arm-request.json"
         write_json(request, {"kind": "fixture-arm-input"})
-        expected = {"status": "seed_arm_input_published", "remote_writes": 0}
-        with patch("source_fingerprints.artifact_sources",
-                   side_effect=AssertionError("unexpected product context")) as sources, \
-                patch("devex_clone_seed_runtime.execute_seed", return_value=expected) as publish:
-            result = run.execute(self.backend, self.directory, "seed-runtime", "arm-input",
-                                 seed_request=request)
-        self.assertEqual(result["result"], expected)
-        sources.assert_not_called()
-        self.assertEqual(publish.call_args.args[3:6], ("arm-input", 1, request))
+        original = (self.directory / "state.json").read_bytes()
+        with patch("devex_clone_seed_runtime.execute_seed") as publish, \
+                self.assertRaisesRegex(ValueError, "Rust 正式入口"):
+            run.execute(self.backend, self.directory, "seed-runtime", "arm-input", seed_request=request)
+        publish.assert_not_called()
+        self.assertEqual((self.directory / "state.json").read_bytes(), original)
 
     def test_target_start_requires_complete_copy_and_holds_worker_for_schedule_actions(self):
         output = Path(self.value["copy_directory"])
@@ -290,18 +287,17 @@ class RunTests(unittest.TestCase):
                 run.require_target_copy(self.backend, self.directory, self.value, ("api", "worker"))
 
     def test_partial_ledger_only_allows_a_complete_zero_write_copy(self):
-        from devex_clone_transfer import TransferSteps
-
         output = Path(self.value["copy_directory"])
         output.mkdir()
         saved = {"initialized": self.value["initialized"], "source_export": self.value["source_export"],
                  "plan_sha256": "a" * 64, "generation_sha256": "b" * 64}
         item = {"key": "shared-control"}
+        database_id = "database-075921cce671fc36b9360281d8b631a2"
         result = {"status": "data_steps_verified", "plan_sha256": saved["plan_sha256"],
                   "generation_sha256": saved["generation_sha256"], "written_steps": 0,
                   "source_export_sha256": self.value["source_export"]["sha256"],
                   "fresh_target_sha256": self.value["initialized"]["sha256"], "pending_target_actions": [],
-                  "unchanged_databases": 1, "unchanged_database_images": {TransferSteps.db_step(item): {"observed": True}}}
+                  "unchanged_databases": 1, "unchanged_database_images": {database_id: {"observed": True}}}
         write_json(output / "session.json", saved)
         write_json(output / "result.json", result)
         number = state.begin(self.directory, "copy", "resume", self.sources)
@@ -310,6 +306,10 @@ class RunTests(unittest.TestCase):
         with patch("devex_clone_ledger.CloneLedger") as ledger, patch("devex_clone.verify_plan_result", return_value=SimpleNamespace(plan=plan)):
             ledger.return_value.inspect.return_value = {"status": "partial", "steps": {}}
             run.require_target_copy(self.backend, self.directory, self.value, ("api", "worker"))
+            plan["databases"] = [{"key": "different"}]
+            with self.assertRaises(ValueError):
+                run.require_target_copy(self.backend, self.directory, self.value, ("api",))
+            plan["databases"] = [item]
             plan["objects"] = [{"pending": True}]
             with self.assertRaises(ValueError):
                 run.require_target_copy(self.backend, self.directory, self.value, ("api",))

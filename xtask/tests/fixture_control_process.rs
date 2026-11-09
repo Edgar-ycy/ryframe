@@ -1,4 +1,4 @@
-//! 夹具控制公开入口必须先完成 Rust 参数核验，并只传递单个私有协议。
+//! 夹具控制公开入口的 Rust 参数核验与失败关闭。
 
 use std::{
     fs,
@@ -188,12 +188,26 @@ fn invalid_arguments_exit_two_before_python_starts() {
 }
 
 #[test]
-fn initial_services_reject_invalid_environment_before_any_python_or_side_effect() {
-    for operation in ["rustfs", "redis", "buckets"] {
+fn mutating_services_reject_invalid_environment_without_side_effects() {
+    for operation in [
+        "rustfs",
+        "redis",
+        "buckets",
+        "close",
+        "reconcile",
+        "recover",
+        "restart",
+    ] {
         let fixture = Fixture::new();
         let mut arguments = fixture.valid();
         arguments[4] = operation.to_owned();
         arguments.push("--write".to_owned());
+        if matches!(operation, "reconcile" | "recover" | "restart") {
+            arguments.extend([
+                "--owner-binding".to_owned(),
+                fixture.review.to_string_lossy().into_owned(),
+            ]);
+        }
         let result = invoke(&arguments);
         assert_eq!(result.status.code(), Some(1));
         let stdout = String::from_utf8(result.stdout).unwrap();

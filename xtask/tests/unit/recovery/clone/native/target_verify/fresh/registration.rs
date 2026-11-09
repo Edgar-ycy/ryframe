@@ -3,19 +3,19 @@ use crate::recovery::clone::native::{
     resources::common,
     target_verify::fresh::registration::{Registration, Workspace},
 };
-use crate::{
-    target_initialize_restart_fixture as services,
-    target_verify_fixture::{Fixture, snapshot},
-};
+use crate::target_verify_fixture::Fixture;
+#[cfg(windows)]
+use crate::{target_initialize_restart_fixture as services, target_verify_fixture::snapshot};
 use serde_json::Value;
 use serde_json::json;
 use std::fs;
 use std::path::PathBuf;
 
+#[cfg(windows)]
 #[test]
 fn registered_window_holds_the_real_run_owner_and_rejects_input_drift_without_replay() {
     service_windows();
-    let fixture = Fixture::for_status();
+    let fixture = Fixture::for_registration();
     let registration = Registration::load(&fixture.backend, &fixture.local).unwrap();
     let registered = document::read(&fixture.local.join("registration.json")).unwrap();
     let storage = PathBuf::from(registered["storage_run"]["path"].as_str().unwrap());
@@ -50,8 +50,9 @@ fn registered_window_holds_the_real_run_owner_and_rejects_input_drift_without_re
     );
 }
 
+#[cfg(windows)]
 fn service_windows() {
-    let fixture = Fixture::for_status();
+    let fixture = Fixture::for_registration();
     for phase in ["initial", "restart", "closed", "unpublished-restart"] {
         let storage = fixture
             .backend
@@ -109,6 +110,9 @@ fn service_windows() {
 
 #[test]
 fn workspace_guard_refuses_replacement_and_never_cleans_another_owner_lock() {
+    #[cfg(windows)]
+    let fixture = Fixture::for_registration();
+    #[cfg(not(windows))]
     let fixture = Fixture::for_status();
     let workspace = fixture.local.join("prepare-workspace");
     fs::create_dir(&workspace).unwrap();
@@ -125,7 +129,11 @@ fn workspace_guard_refuses_replacement_and_never_cleans_another_owner_lock() {
         called = true;
         Ok(Value::Null)
     });
-    assert!(result.is_err());
+    let error = result.unwrap_err().to_string();
+    #[cfg(windows)]
+    assert!(error.contains("禁止自动抢锁"), "{error}");
+    #[cfg(not(windows))]
+    assert!(error.contains("历史 WSL 收据仅供离线核对"), "{error}");
     assert!(!called);
     assert_eq!(
         fs::read(storage.join("run.lock/foreign.bin")).unwrap(),

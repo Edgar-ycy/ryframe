@@ -133,36 +133,45 @@ def private_configuration(backend, plan):
 
 
 def identity_evidence(backend, directory, request):
-    """只读委托当前绑定的 seed 原生协议；不重签、不重试、不临时编译。"""
+    return seed_evidence(backend, directory, "identity-evidence", {"request": request})
+
+
+def seed_evidence(backend, directory, operation, arguments):
+    return invoke_seed_tool(backend, "__seed-evidence", {
+        "format_version": 1, "kind": "ryframe-seed-evidence", "run_dir": str(directory),
+        "operation": operation, "arguments": arguments,
+    }, timeout=180)
+
+
+def invoke_seed_tool(backend, command, value, *, timeout):
+    """通过正式工具绑定传递有界 seed 请求，原生端完成校验和执行。"""
     import os
     import subprocess
     from devex_clone_capture import unique_object
     from rate_limit_client import _child_environment
     from rate_limit_tool import tool_binding, verified_tool
 
-    payload = json.dumps({"format_version": 1, "kind": "ryframe-seed-evidence",
-                          "run_dir": str(directory), "operation": "identity-evidence",
-                          "arguments": {"request": request}},
+    payload = json.dumps(value,
                          ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     if len(payload) > 65536:
-        raise ValueError("seed 身份只读请求超过 64 KiB")
+        raise ValueError("seed 请求超过 64 KiB")
     options = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
     try:
         with verified_tool(tool_binding()) as executable:
             if executable is None:
-                raise ValueError("seed 身份核验缺少当前原生工具绑定，禁止临时编译")
-            process = subprocess.run([executable, "__seed-evidence"], cwd=backend,
+                raise ValueError("seed 核验缺少当前原生工具绑定，禁止临时编译")
+            process = subprocess.run([executable, command], cwd=backend,
                 env=_child_environment(), input=payload, stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL, timeout=180, check=False, **options)
+                stderr=subprocess.DEVNULL, timeout=timeout, check=False, **options)
         if len(process.stdout) > 1024 * 1024:
-            raise ValueError("seed 身份只读响应超过 1 MiB")
+            raise ValueError("seed 响应超过 1 MiB")
         response = json.loads(process.stdout.decode("utf-8"), object_pairs_hook=unique_object)
     except (OSError, subprocess.SubprocessError, UnicodeError, ValueError):
-        raise ValueError("seed 身份只读核验未完成；保留现场，核对当前绑定工具，禁止自动重放") from None
+        raise ValueError("seed 原生请求未完成；保留现场，核对当前绑定工具，禁止自动重放") from None
     if (process.returncode != 0 or not isinstance(response, dict)
             or set(response) != {"ok", "result"} or response["ok"] is not True
             or not isinstance(response["result"], dict)):
-        raise ValueError("seed 身份发布证据无效；保留原始文件与阶段，禁止自动重放")
+        raise ValueError("seed 文件证据无效；保留原始文件与阶段，禁止自动重放")
     return response["result"]
 
 

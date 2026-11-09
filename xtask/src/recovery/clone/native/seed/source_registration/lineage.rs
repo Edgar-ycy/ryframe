@@ -1,13 +1,20 @@
 //! 从固定阶段记录派生完整历史集合；正文只在原生登记闭环内流转。
-use std::{collections::BTreeSet, path::Path};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+};
 
 use serde_json::{Value, json};
 
 use crate::{
     Result,
     recovery::clone::native::{
-        json as documents, lifecycle::state, post_process::command, resources::common,
-        seed::history,
+        cache::handoff::registration::cleanup_runtime,
+        json as documents,
+        lifecycle::state,
+        post_process::command,
+        resources::common,
+        seed::{history, runtime_model},
     },
 };
 
@@ -21,16 +28,22 @@ pub(crate) mod runtime;
 #[path = "../../../../../../tests/unit/recovery/clone/native/seed/source_registration/lineage.rs"]
 mod tests;
 
-pub(crate) fn collect(backend: &Path, run: &Path, coordinator_tool: &Value) -> Result<Value> {
+pub(super) fn collect(
+    backend: &Path,
+    run: &Path,
+    coordinator_tool: &Value,
+    product: &Path,
+    saved: &Value,
+    post: &history::Post,
+    seed: &runtime_model::Inputs,
+) -> Result<Value> {
     let run = common::local_directory(backend, run, "来源历史运行")?;
-    let saved = state::load(&run, true)?;
-    let post = history::post(backend, &run, None, None, true)?;
-    let paths = runtime_paths(&run, &saved, &post.runtime)?;
+    let inputs = runtime_bindings(backend, &run, saved, post, seed)?;
     let mut identities = identities::Identities::default();
     let mut seen = BTreeSet::new();
     let mut runtimes = Vec::new();
-    for (rank, path) in paths.iter().enumerate() {
-        let record = runtime::collect(backend, path)?;
+    for (rank, (path, binding)) in inputs.iter().enumerate() {
+        let record = runtime::collect_bound(backend, product, path, binding)?;
         let recorded = Path::new(documents::text(
             &record["runtime_directory"],
             "历史运行目录",
@@ -54,8 +67,8 @@ pub(crate) fn collect(backend: &Path, run: &Path, coordinator_tool: &Value) -> R
         }
         runtimes.push(record);
     }
-    let producers = collect_producers(backend, &run, &saved, coordinator_tool, &mut identities)?;
-    if state::load(&run, true)? != saved || state::manifest_binding(&run)? != saved["manifest"] {
+    let producers = collect_producers(backend, &run, saved, coordinator_tool, &mut identities)?;
+    if state::load(&run, true)? != *saved || state::manifest_binding(&run)? != saved["manifest"] {
         return Err("收集来源历史期间阶段记录或运行清单变化；保留证据，禁止自动重放".into());
     }
     Ok(json!({
@@ -65,7 +78,48 @@ pub(crate) fn collect(backend: &Path, run: &Path, coordinator_tool: &Value) -> R
     }))
 }
 
-fn runtime_paths(run: &Path, saved: &Value, active: &Path) -> Result<Vec<std::path::PathBuf>> {
+fn runtime_bindings(
+    backend: &Path,
+    run: &Path,
+    saved: &Value,
+    active: &history::Post,
+    seed: &runtime_model::Inputs,
+) -> Result<Vec<(PathBuf, Value)>> {
+    let paths = runtime_paths(run, saved, &active.runtime)?;
+    let posts = history::post_generations(backend, run, saved, true)?;
+    let latest = posts.last().ok_or("缺少活动 post-copy 登记")?;
+    if paths.len() != posts.len() + 1
+        || paths.last() != Some(&seed.runtime)
+        || latest.descriptor != active.descriptor
+        || seed.handoff["backend_build"] != active.request["backend_build"]
+    {
+        return Err("来源历史不同于已发布 post-copy、seed 和产品构建交接".into());
+    }
+    let seed_contract =
+        common::read_bound(backend, &seed.handoff["runtime"], "已发布 seed 运行合同")?;
+    let mut inputs = Vec::with_capacity(paths.len());
+    for (path, post) in paths.into_iter().zip(posts.iter()) {
+        if path != post.runtime || post.request["backend_build"] != active.request["backend_build"]
+        {
+            return Err("post-copy 历史路径或产品构建不同于权威登记".into());
+        }
+        let descriptor = common::binding(&path.join("handoff.json"))?;
+        let handoff = common::read_bound(backend, &descriptor, "post-copy 原运行交接")?;
+        let contract = cleanup_runtime(backend, run, post)?;
+        if handoff["registration"] != post.descriptor
+            || common::read_bound(backend, &handoff["runtime"], "post-copy 原运行合同")? != contract
+            || post.descriptor == active.descriptor && contract != seed_contract
+        {
+            return Err("来源历史运行合同不同于已发布 post-copy 或 seed 交接".into());
+        }
+        common::bound_file(backend, &descriptor, "post-copy 原运行交接后像")?;
+        inputs.push((path, handoff["runtime"].clone()));
+    }
+    inputs.push((seed.runtime.clone(), seed.handoff["runtime"].clone()));
+    Ok(inputs)
+}
+
+fn runtime_paths(run: &Path, saved: &Value, active: &Path) -> Result<Vec<PathBuf>> {
     let attempts = state::attempts(saved)?;
     let amendments = attempts
         .iter()

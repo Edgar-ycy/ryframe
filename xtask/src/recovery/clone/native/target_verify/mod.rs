@@ -3,7 +3,9 @@ use std::{fs, path::Path};
 use serde_json::{Value, json};
 
 use super::lifecycle::stage::{StageRequest, StageRunner};
-use super::{digest, export::transport::SystemTransport, json as json_io};
+use super::{
+    cache::handoff::locks::Storage, digest, export::transport::SystemTransport, json as json_io,
+};
 use crate::Result;
 
 pub(crate) mod authority;
@@ -48,42 +50,39 @@ pub(crate) mod storage;
 pub(crate) mod tree;
 
 pub(crate) use diagnostic::diagnostic;
+#[cfg(not(test))]
+use execution::execute_context;
+#[cfg(test)]
+pub(crate) use execution::execute_context;
 
 pub(crate) fn preflight(backend: &Path, request: &StageRequest<'_>) -> Result<()> {
-    preflight_with(backend, request, &authority::SystemObserver)
-}
-
-pub(crate) fn preflight_with(
-    backend: &Path,
-    request: &StageRequest<'_>,
-    observer: &impl authority::Observer,
-) -> Result<()> {
-    input::validate_inputs(backend, request)?;
-    let _ = authority::inspect(backend, request, observer)?;
+    input::validate_live_inputs(backend, request)?;
+    authority::inspect(backend, request, &authority::SystemObserver)?;
     Ok(())
 }
 
 pub(crate) fn execute(backend: &Path, request: &StageRequest<'_>) -> Result<Value> {
-    let transport = SystemTransport;
-    execute_with(
-        backend,
+    let context = input::TargetContext::load(backend, request)?;
+    storage::redis_layout::require_windows(&context.storage()["redis"])?;
+    execute_context(
+        &context,
         request,
-        &transport,
-        &storage::SystemObserver::new(&transport),
+        &SystemTransport,
+        &storage::SystemObserver,
         &authority::SystemObserver,
     )
 }
 
-pub(crate) fn execute_with<T: super::export::transport::Transport>(
-    backend: &Path,
+fn verify_and_publish<T: super::export::transport::Transport>(
+    context: &input::TargetContext,
     request: &StageRequest<'_>,
     transport: &T,
     storage_observer: &impl storage::StorageObserver,
     authority_observer: &impl authority::Observer,
+    external_storage: Option<&Storage>,
 ) -> Result<Value> {
-    let context = input::TargetContext::load(backend, request)?;
-    let authority = authority::inspect(backend, request, authority_observer)?;
-    let frame = execution::Frame::begin(&context, authority)?;
+    let authority = authority::inspect(&context.backend, request, authority_observer)?;
+    let frame = execution::Frame::begin(context, authority)?;
     let result = (|| {
         fs::create_dir(&context.observation_dir)
             .map_err(|error| format!("无法创建目标观察目录：{error}"))?;
@@ -95,19 +94,29 @@ pub(crate) fn execute_with<T: super::export::transport::Transport>(
             inner: storage_observer,
             frame: &frame,
         };
-        verify(&context, &transport, &observer, &|| frame.checkpoint())
+        let owner = frame.owner()?;
+        let selected = storage::generation::select(context, owner)?;
+        let observed = verify(context, owner, &selected, &transport, &observer, &|| {
+            frame.checkpoint()
+        });
+        execution::combine(observed, selected.check(context)).map(|value| (value, selected))
     })();
     let result = frame.finish(result, authority_observer);
     match result {
-        Ok(value) => {
-            if let Err(error) =
+        Ok((value, selected)) => {
+            let publication = (|| {
+                selected.check(context)?;
+                if let Some(storage) = external_storage {
+                    storage.check()?;
+                }
                 publication::publish(&context.observation_dir.join("verify.json"), &value)
-            {
-                return fail(&context, error);
+            })();
+            match publication {
+                Ok(()) => Ok(value),
+                Err(error) => fail(context, error),
             }
-            Ok(value)
         }
-        Err(error) => fail(&context, error),
+        Err(error) => fail(context, error),
     }
 }
 
@@ -153,13 +162,15 @@ impl StageRunner for TargetVerifyRunner {
 
 fn verify<T: super::export::transport::Transport>(
     context: &input::TargetContext,
+    owner: &guard::Generation,
+    selected: &storage::generation::Selected,
     transport: &T,
     observer: &impl storage::StorageObserver,
     checkpoint: &impl Fn() -> Result<()>,
 ) -> Result<Value> {
     proof::verify_history(context)?;
     proof::verify_initial_inventory(context)?;
-    proof::verify_reset(context)?;
+    proof::verify_reset(context, owner)?;
     proof::verify_generation(context)?;
     let captured = database::capture_with(context, transport, checkpoint)?;
     let expected_inventory = context
@@ -174,15 +185,11 @@ fn verify<T: super::export::transport::Transport>(
     if objects != context.initialized["objects"] {
         return Err("目标当前对象状态与初始化像不同".into());
     }
-    let redis = redis::verify_with_observer(
-        context,
-        &context.initialized["generation"]["storage"]["redis"],
-        observer,
-    )?;
+    let redis = redis::verify_with_observer(context, &selected.storage["redis"], observer)?;
     if redis != context.initialized["redis"] {
         return Err("目标当前 Redis 状态与初始化像不同".into());
     }
-    storage::verify_with_observer(context, observer)?;
+    storage::verify_with_observer(context, selected, observer)?;
     if tree::snapshot(
         &context.backend,
         &context.observation_dir.join("inventory"),

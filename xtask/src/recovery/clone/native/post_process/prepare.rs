@@ -37,20 +37,10 @@ pub(super) fn run(context: &Context<'_>) -> Result<Value> {
         "ryframe-reset":maintenance["artifacts"]["reset"]["executable"],
         "ryframe-migrate":maintenance["artifacts"]["migrate"]["executable"]});
     let runtime = &context.post.runtime;
-    if runtime.try_exists()? {
-        common::local_directory(context.backend, runtime, "复制后运行目录")?;
-        for entry in fs::read_dir(runtime)? {
-            let entry = entry?;
-            if !["binaries.json", "runtime.json", "handoff.json"]
-                .contains(&entry.file_name().to_str().ok_or("运行文件名无效")?)
-            {
-                return Err("runtime已有生产者、未知文件或控制证据，不能重新准备或覆盖".into());
-            }
-            common::common_file(context.backend, &entry.path(), "已有准备文件")?;
-        }
-    } else {
+    if !runtime.try_exists()? {
         fs::create_dir(runtime)?;
     }
+    require_runtime_receipts(context.backend, runtime)?;
     context.check()?;
     super::files::publish(context.backend, &runtime.join("binaries.json"), &binaries)?;
     let (api, worker) = snapshot(context)?;
@@ -82,6 +72,23 @@ pub(super) fn run(context: &Context<'_>) -> Result<Value> {
         json!({"status":"post_copy_api_prepared","handoff":common::binding(&runtime.join("handoff.json"))?,
         "worker_started":false,"restore_qualified":false}),
     )
+}
+
+pub(in crate::recovery::clone::native) fn require_runtime_receipts(
+    backend: &Path,
+    runtime: &Path,
+) -> Result<()> {
+    common::local_directory(backend, runtime, "原生运行准备目录")?;
+    for entry in fs::read_dir(runtime)? {
+        let entry = entry?;
+        if !["binaries.json", "runtime.json", "handoff.json"]
+            .contains(&entry.file_name().to_str().ok_or("运行文件名无效")?)
+        {
+            return Err("runtime已有生产者、未知文件或控制证据，不能重新准备或覆盖".into());
+        }
+        common::common_file(backend, &entry.path(), "已有准备文件")?;
+    }
+    Ok(())
 }
 
 fn snapshot(context: &Context<'_>) -> Result<(PathBuf, PathBuf)> {

@@ -332,7 +332,7 @@ fn required_text<'a>(value: Option<&'a Value>, label: &str) -> Result<&'a str> {
         .ok_or_else(|| format!("{label}缺失或无效").into())
 }
 
-fn validate_key(scope: &str, key: &str, allow_owner: bool) -> Result<()> {
+pub(crate) fn validate_key(scope: &str, key: &str, allow_owner: bool) -> Result<()> {
     let prefix = format!("{scope}/");
     let logical = key.strip_prefix(&prefix).unwrap_or_default();
     if logical.is_empty()

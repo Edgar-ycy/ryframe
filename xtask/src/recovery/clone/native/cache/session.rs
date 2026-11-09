@@ -89,6 +89,12 @@ pub(super) fn execute(
         return Err(rejected("缓存阶段协议版本或类型无效"));
     }
     let arguments = &value["arguments"];
+    if matches!(
+        arguments["action"].as_str(),
+        Some("reboot-starts" | "reboot-generation")
+    ) {
+        return Err(rejected("重启缓存历史仅限原生只读入口"));
+    }
     if arguments["action"] == "status"
         || (arguments["action"] == "binding"
             && arguments["parameters"]["owned_lock_identity"].is_null())
@@ -96,53 +102,29 @@ pub(super) fn execute(
         // 当前写控制器的初始化锁不能由跨进程整数冒认；其余查询不再回调 Python。
         return super::binding::execute_stage(backend, arguments, None);
     }
+    let parameters = &arguments["parameters"];
+    let supplied = match arguments["action"].as_str() {
+        Some("execute" | "execution-preflight") => Some(&parameters["request_file"]),
+        Some("preflight") => Some(&parameters["filename"]),
+        _ => None,
+    };
+    if let Some(supplied) = supplied {
+        let directory = stage::path(&arguments["directory"])?;
+        super::super::resources::common::local_directory(backend, &directory, "缓存运行目录")?;
+        let supplied = (!supplied.is_null())
+            .then(|| stage::path(supplied))
+            .transpose()?;
+        stage::require_live_request(backend, &directory, supplied.as_deref())?;
+    }
     stage::dispatch(
         backend,
-        &value["arguments"],
+        arguments,
         &mut Stream {
             backend,
             input,
             output,
             sequence: 0,
         },
-    )
-}
-
-pub(super) fn start(
-    backend: &Path,
-    value: &Value,
-    input: &mut impl BufRead,
-    output: &mut impl Write,
-) -> Result<Value> {
-    doc::exact(
-        value,
-        &["format_version", "kind", "operation", "arguments"],
-        "缓存启动会话",
-    )?;
-    if value["format_version"] != 1
-        || value["kind"] != "ryframe-cache-process"
-        || value["operation"] != "start-session"
-    {
-        return Err(rejected("缓存启动会话类型无效"));
-    }
-    let arguments = &value["arguments"];
-    doc::exact(
-        arguments,
-        &["request", "private", "output"],
-        "缓存启动会话参数",
-    )?;
-    let mut stream = Stream {
-        backend,
-        input,
-        output,
-        sequence: 0,
-    };
-    super::host_start::start(
-        backend,
-        &arguments["request"],
-        &arguments["private"],
-        Path::new(doc::text(&arguments["output"], "缓存启动目录")?),
-        || stream.call("checkpoint", Value::Null).map(|_| ()),
     )
 }
 

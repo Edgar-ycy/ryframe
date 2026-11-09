@@ -161,23 +161,7 @@ pub(crate) fn dump<T: Transport>(
         .get("database")
         .and_then(Value::as_str)
         .ok_or("数据库名称无效")?;
-    let mut args = vec![
-        format!("--defaults-file={}", defaults.display()),
-        "--no-create-info".into(),
-        "--skip-triggers".into(),
-        "--skip-lock-tables".into(),
-        "--skip-add-locks".into(),
-        "--skip-comments".into(),
-        "--skip-disable-keys".into(),
-        "--skip-extended-insert".into(),
-        "--complete-insert".into(),
-        "--hex-blob".into(),
-        "--set-gtid-purged=OFF".into(),
-        "--no-tablespaces".into(),
-        "--default-character-set=utf8mb4".into(),
-        database_name.into(),
-    ];
-    args.extend(catalog.keys().cloned());
+    let args = dump_arguments(&defaults, database_name, catalog.keys().map(String::as_str));
     transport
         .run(command(
             context,
@@ -199,6 +183,31 @@ pub(crate) fn dump<T: Transport>(
             "sha256": digest::file(&output)?.sha256,
         }),
     ))
+}
+
+pub(crate) fn dump_arguments<'a>(
+    defaults: &Path,
+    database_name: &str,
+    tables: impl IntoIterator<Item = &'a str>,
+) -> Vec<String> {
+    let mut args = vec![
+        format!("--defaults-file={}", defaults.display()),
+        "--no-create-info".into(),
+        "--skip-triggers".into(),
+        "--skip-lock-tables".into(),
+        "--skip-add-locks".into(),
+        "--skip-comments".into(),
+        "--skip-disable-keys".into(),
+        "--skip-extended-insert".into(),
+        "--complete-insert".into(),
+        "--hex-blob".into(),
+        "--set-gtid-purged=OFF".into(),
+        "--no-tablespaces".into(),
+        "--default-character-set=utf8mb4".into(),
+        database_name.into(),
+    ];
+    args.extend(tables.into_iter().map(str::to_owned));
+    args
 }
 
 pub(crate) fn mysql<T: Transport>(

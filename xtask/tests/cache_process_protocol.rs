@@ -26,28 +26,26 @@ fn request(operation: &str, arguments: Value) -> Vec<u8> {
 }
 
 #[test]
-fn linux_observer_private_entry_rejects_malformed_input_without_private_output() {
-    for payload in [
-        b"{}".to_vec(),
-        b"{\"uid\":1,\"uid\":1,\"password\":\"private-marker\"}".to_vec(),
-        b"{} {}".to_vec(),
-        vec![b' '; 4 * 1024 * 1024 + 1],
-    ] {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_xtask"))
-            .arg("__linux-observer")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
+fn retired_linux_commands_fail_at_cli_dispatch_without_receipts() {
+    let directory = tempfile::tempdir().unwrap();
+    for command in ["__linux-cache", "__linux-cache-exec", "__linux-observer"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+            .arg(command)
+            .current_dir(directory.path())
+            .stdin(Stdio::null())
+            .output()
             .unwrap();
-        child.stdin.take().unwrap().write_all(&payload).unwrap();
-        let output = child.wait_with_output().unwrap();
         assert_eq!(output.status.code(), Some(2));
-        assert!(output.stderr.is_empty());
-        assert_eq!(
-            serde_json::from_slice::<Value>(&output.stdout).unwrap(),
-            json!({"ok":false,"error":"LinuxObserverRejected"})
-        );
+        assert!(output.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("参数错误"));
+        assert!(directory.path().read_dir().unwrap().next().is_none());
+    }
+}
+
+#[test]
+fn retired_cache_session_and_tool_capture_fail_closed() {
+    for operation in ["start-session", "native-tool"] {
+        rejected(invoke(&request(operation, json!({})), &[]));
     }
 }
 

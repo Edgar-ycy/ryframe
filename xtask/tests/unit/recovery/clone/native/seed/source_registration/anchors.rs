@@ -26,7 +26,14 @@ fn public_anchor_set_and_private_outputs_match_python_projection() {
     let (evidence, seed, post, inputs) = values();
     let expected_runtime = inputs.runtime.clone();
     let expected_handoff = inputs.handoff.clone();
-    let result = assemble(evidence.clone(), &seed, post.clone(), inputs).unwrap();
+    let result = assemble(
+        Path::new("unused-test-backend"),
+        evidence.clone(),
+        &seed,
+        post.clone(),
+        inputs,
+    )
+    .unwrap();
     let actual = result
         .anchors
         .as_object()
@@ -88,6 +95,37 @@ fn public_anchor_set_and_private_outputs_match_python_projection() {
 }
 
 #[test]
+fn assembled_source_keeps_only_the_original_bound_temporary_environment() {
+    let fixture = tempfile::tempdir_in(crate::workspace::root_dir()).unwrap();
+    let backend = fixture.path();
+    let temporary = backend.join(".local-tests/private");
+    std::fs::create_dir_all(&temporary).unwrap();
+    let (evidence, seed, post, mut inputs) = values();
+    let environment = json!({"APP_ENV":"test","TEMP":temporary,"TMP":temporary});
+    inputs.environment = environment.clone();
+    let result = assemble(backend, evidence, &seed, post.clone(), inputs).unwrap();
+    assert_eq!(result.environment, environment);
+    assert_eq!(
+        result.anchors["source_environment"],
+        post["api_environment"]
+    );
+    let private_path = serde_json::to_string(&temporary).unwrap();
+    assert!(!result.anchors.to_string().contains(&private_path));
+
+    for invalid in [
+        json!({"APP_ENV":"test","TEMP":temporary}),
+        json!({"APP_ENV":"test","temp":temporary,"tmp":temporary}),
+        json!({"APP_ENV":"test","TEMP":temporary,"TMP":temporary.join("other")}),
+        json!({"APP_ENV":"test","TEMP":backend,"TMP":backend}),
+        json!({"APP_ENV":"dev","TEMP":temporary,"TMP":temporary}),
+    ] {
+        let (evidence, seed, post, mut inputs) = values();
+        inputs.environment = invalid;
+        assert!(assemble(backend, evidence, &seed, post, inputs).is_err());
+    }
+}
+
+#[test]
 fn identity_capacity_handoff_and_private_environment_cannot_drift() {
     let (evidence, seed, post, inputs) = values();
     assert!(
@@ -105,10 +143,16 @@ fn identity_capacity_handoff_and_private_environment_cannot_drift() {
     }
     let mut inputs = inputs;
     inputs.environment["APP_PASSWORD"] = json!("private-fixture-secret");
-    let error = assemble(evidence, &seed, post, inputs)
-        .err()
-        .unwrap()
-        .to_string();
+    let error = assemble(
+        Path::new("unused-test-backend"),
+        evidence,
+        &seed,
+        post,
+        inputs,
+    )
+    .err()
+    .unwrap()
+    .to_string();
     assert!(!error.contains("private-fixture-secret"));
 }
 

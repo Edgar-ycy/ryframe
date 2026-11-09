@@ -8,14 +8,14 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde_json::{Value, json};
 use std::{process::Stdio, time::Duration};
 
-pub(super) struct Counts {
+pub(in crate::recovery) struct Counts {
     pub tenants: u64,
     pub posts: u64,
     pub files: u64,
     pub subjects: Vec<Value>,
 }
 
-pub(super) struct Options {
+pub(in crate::recovery) struct Options {
     pub network: u8,
     pub request_interval_ms: u64,
     pub collect_subjects: bool,
@@ -88,7 +88,7 @@ pub(super) async fn run(inputs: &Inputs) -> Result<Value> {
     )
 }
 
-pub(super) async fn verify_at(
+pub(in crate::recovery) async fn verify_at(
     target: &Value,
     identities: &[Value],
     catalog: &std::collections::BTreeMap<String, Value>,

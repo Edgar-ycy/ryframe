@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import devex_clone_factory as factory
 import test_devex_clone_transfer as fixtures
 from devex_clone_ledger import CloneLedger
+from devex_clone_run_state import initialize_state
 from devex_clone_capture import capture_object
 from devex_clone_transfer import ObjectObservation
 from restore_build import file_digest
@@ -32,6 +33,10 @@ class FactoryTests(unittest.TestCase):
             for database in self.case.tools.plan[side]["databases"]:
                 database["defaults_sha256"] = file_digest(defaults)["sha256"]
         self.backend, self.local = self.case.backend, self.case.backend / ".local-tests"
+        self.run_dir = self.local / "run"
+        self.run_dir.mkdir()
+        self.bind(self.run_dir / "manifest.json", {"fixture": "bound run for offline generation adapter"})
+        initialize_state(self.run_dir)
         self.output = self.local / "live-copy"
         self.target = self.local / "fresh-target"
         self.target.mkdir()
@@ -73,7 +78,7 @@ class FactoryTests(unittest.TestCase):
         self.environments["target"].update(TEMP=str(temporary), TMP=str(temporary))
         self.patches = [patch.object(factory, "verify_source_export", return_value=self.verified),
                         patch.object(factory, "verify_export_bindings"),
-                        patch.object(factory, "verify_generation", side_effect=self.generation),
+                        patch.object(factory, "copy_source_generation", side_effect=self.generation),
                         patch.object(factory, "target_history", side_effect=self.history),
                         patch.object(factory, "target_binding", side_effect=self.preflight),
                         patch.object(factory, "capture_side_inventory", side_effect=self.inventory),
@@ -89,8 +94,9 @@ class FactoryTests(unittest.TestCase):
         path.write_text(json.dumps(value), encoding="utf-8")
         return {"path": str(path), **file_digest(path)}
 
-    def generation(self, *_):
+    def generation(self, backend, run_dir, _run):
         self.assertEqual(os.environ["CLONE_SIDE"], "source")
+        self.assertEqual((backend, run_dir), (self.backend, self.run_dir))
         return {"fixture": "changed" if self.source_changed else "stopped"}
 
     def history(self, backend, binding, output, run, *, owned_lock_identity, storage_run=None):
@@ -158,7 +164,7 @@ class FactoryTests(unittest.TestCase):
         return factory.copy_to_fresh_target(self.backend, self.export_binding, self.initialized,
                     self.environments["source"], self.environments["target"], self.output,
                     copy_id="factory-case", stage="source_to_seed", run=self.case.runner,
-                    source_storage_run=source_storage_run, target_storage_run=target_storage_run)
+                    source_storage_run=source_storage_run or self.run_dir, target_storage_run=target_storage_run)
 
     def test_complete_transfer_uses_source_and_target_environments_and_retains_pending_state(self):
         original = dict(os.environ)

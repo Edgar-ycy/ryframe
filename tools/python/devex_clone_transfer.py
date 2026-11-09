@@ -20,7 +20,7 @@ from devex_clone_rows import EXCLUDED
 from restore_build import file_digest
 from restore_reference_io import ExternalTools, validate_dump
 from native_s3_client import configuration as object_configuration
-from restore_reference_plan import plan_hash
+from restore_reference_plan import _native, plan_hash
 
 PRESERVED = EXCLUDED | {"seaql_tenant_data_migrations", "ryframe_business_migration"}
 
@@ -92,6 +92,13 @@ def table_images(values: dict) -> dict:
     return copy.deepcopy(values)
 
 
+def copy_step_ids(databases: list[dict], objects: list[dict]) -> dict[str, list[str]]:
+    return _native("reference-copy-step-ids", {
+        "databases": [{"key": item["key"]} for item in databases],
+        "objects": [{"bucket": item["bucket"], "target_key": item["target_key"]} for item in objects],
+    })
+
+
 class TransferSteps:
     """只供已核验 live factory 组合使用；构造不会授予公开执行权限。
 
@@ -116,19 +123,14 @@ class TransferSteps:
         self.failed = self.finished = False
         self.noops = {}
         self.bases = {}
-        self.databases = {self.db_step(item): item for item in self.plan["databases"]}
-        self.objects = {self.object_step(item): item for item in self.plan["objects"]}
+        ids = copy_step_ids(self.plan["databases"], self.plan["objects"])
+        self.databases = dict(zip(ids["databases"], self.plan["databases"], strict=True))
+        self.objects = dict(zip(ids["objects"], self.plan["objects"], strict=True))
         if len(self.databases) != len(self.plan["databases"]) or len(self.objects) != len(self.plan["objects"]):
             raise ValueError("数据步骤标识重复，不能省略计划资源")
+        self.database_ids = {item["key"]: step for step, item in self.databases.items()}
+        self.object_ids = {(item["bucket"], item["target_key"]): step for step, item in self.objects.items()}
         self._check()
-
-    @staticmethod
-    def db_step(item: dict) -> str:
-        return "database-" + plan_hash({"key": item["key"]})[:32]
-
-    @staticmethod
-    def object_step(item: dict) -> str:
-        return "object-" + plan_hash({"bucket": item["bucket"], "key": item["target_key"]})[:32]
 
     def _bindings(self) -> None:
         if local_path(self.backend, str(self.tools.work)) != self.work or not self.work.is_dir():
@@ -272,11 +274,11 @@ class TransferSteps:
 
     def _write(self, step: str, item: dict, artifact: Path) -> dict:
         # 没有通用 write callback：SQL 和对象参数全部从完整离线计划派生。
+        expected = {key: item["artifact"][key] for key in ("bytes", "sha256")}
         if step in self.databases:
             target = next(entry for entry in self.tools.plan["target"]["databases"] if entry["key"] == item["key"])
-            self.tools.restore_database(copy.deepcopy(target), sorted(item["tables"]), artifact)
+            self.tools.restore_database(copy.deepcopy(target), sorted(item["tables"]), artifact, expected)
             return self._observe(step)
-        expected = {key: item["artifact"][key] for key in ("bytes", "sha256")}
         self.tools.create_object_if_absent(item["bucket"], item["target_key"], artifact, copy.deepcopy(item["metadata"]), expected)
         output = local_path(self.backend, str(self.tools.work / ("transfer-capture-" + uuid.uuid4().hex)), new=True)
         capture_object(self.tools, "target", item["bucket"], item["target_key"], output,
@@ -314,16 +316,16 @@ class TransferSteps:
             raise
 
     def apply_database(self, key: str) -> str:
-        item = next((item for item in self.databases.values() if item["key"] == key), None)
-        if item is None:
+        step = self.database_ids.get(key)
+        if step is None:
             raise ValueError("数据库不在完整离线计划中")
-        return self._apply(self.db_step(item), resume=False)
+        return self._apply(step, resume=False)
 
     def apply_object(self, bucket: str, target_key: str) -> str:
-        item = next((item for item in self.objects.values() if (item["bucket"], item["target_key"]) == (bucket, target_key)), None)
-        if item is None:
+        step = self.object_ids.get((bucket, target_key))
+        if step is None:
             raise ValueError("对象不在完整离线计划中")
-        return self._apply(self.object_step(item), resume=False)
+        return self._apply(step, resume=False)
 
     def reconcile(self, step: str) -> str:
         try:

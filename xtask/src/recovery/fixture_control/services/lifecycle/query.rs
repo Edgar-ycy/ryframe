@@ -137,3 +137,13 @@ pub(crate) fn storage_history(backend: &Path, run: &Path) -> Result<Value> {
     let mut runtime = readonly::NativeRuntime::new(backend);
     projection::historical(&mut runtime, backend, run)
 }
+
+/// 为已冻结 arm 代次复用原服务进程、监听和认证观察。
+pub(in crate::recovery) fn observe_arm_generation(
+    backend: &Path,
+    run: &Path,
+    generation: &Value,
+) -> Result<()> {
+    let mut runtime = readonly::NativeRuntime::new(backend);
+    projection::observe_current(&mut runtime, backend, run, generation)
+}

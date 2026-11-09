@@ -497,7 +497,14 @@ def segmented_resume(backend: Path, directory: Path, attempts: list, archive: di
                     raise ValueError("C68 失败后缺少唯一相邻且完整的 C69 重试授权")
                 replay_records = replay["records"]
                 previous_generation, lifecycle = replay["record"]["number"], lifecycle[2:]
-    exported = None if pending_replay else _verify_generation_tail(lifecycle, previous_generation)
+    arm_at = next((index for index, row in enumerate(lifecycle)
+                   if (row["stage"], row["mode"]) == ("seed-runtime", "arm-input")), len(lifecycle))
+    arm_rows = lifecycle[arm_at:]
+    if any((row["stage"], row["mode"]) != ("seed-runtime", "arm-input") for row in arm_rows):
+        raise ValueError("ARM 签发后不能继续生成或重新导出来源")
+    exported = None if pending_replay else _verify_generation_tail(lifecycle[:arm_at], previous_generation)
+    if arm_rows and exported is None:
+        raise ValueError("ARM 签发要求同一分段来源的正式共享导出")
     if pending_replay and cleanup:
         raise ValueError("C69 重试授权完成前不能清理资源")
     cleanup_records = ()

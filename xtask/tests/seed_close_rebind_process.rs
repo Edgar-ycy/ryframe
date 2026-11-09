@@ -304,7 +304,7 @@ fn lineage_generation_models_use_existing_bound_protocol_without_writes() {
         "attempts":[{"number":68,"stage":"seed-runtime","mode":"source-generation-start",
             "status":"failed","result":null,"error_type":"ValueError"}],"previous":67}}});
     let mut request: Value =
-        serde_json::from_slice(&fixture.request("coordinator", parameters.clone())).unwrap();
+        serde_json::from_slice(&fixture.request("coordinator", parameters)).unwrap();
     request["operation"] = json!("generation-guard");
     let before = fixture.files();
     let output = invoke(&serde_json::to_vec(&request).unwrap());

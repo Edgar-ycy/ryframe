@@ -121,12 +121,18 @@ impl ManagedRestart {
     ) {
         let directory = run.join("g0070/reboot-close");
         std::fs::create_dir_all(&directory).unwrap();
+        let cache_request = run.join("cache-request.json");
+        document::write_new(&cache_request, &json!({"fixture":"original cache request"})).unwrap();
         let receipt = json!({"format_version":1,"kind":"seed-source-generation-reboot-closure",
             "status":"seed_source_generation_reboot_closed","start":start["result"],"request":request,
             "failed_prefix":{"producer":{}},"reboot":{"format_version":1,"kind":"host-boot-proof",
                 "source":"GetTickCount64","margin_seconds":300,"observed_ticks":130000000000000000_u64,
                 "uptime_ticks":36000000000_u64,"boot_ticks":129999964000000000_u64,"boot_time":"2012-12-14T22:06:40+00:00"},
-            "roles":{},"storage":{},"cache":{"generations":[{"state":"stopped"}]},
+            "roles":{},"storage":{},"cache":{
+                "status":"cache_status","request":common::binding(&cache_request).unwrap(),
+                "generations":[{"attempt":61,"state":"stopped","linux_alive":false,
+                    "recorded_boot_id":"old-boot","current_boot_id":"later-boot","boot_id_changed":true}]
+            },
             "baseline":before,"running":running,"declared_deltas":{"sys_login_info":11,"sys_oper_log":0,"sys_outbox_event":0},
             "verification_qualified":false,"replay_allowed":false,"remote_writes":0,"restore_qualified":false});
         document::write_new(&directory.join("closure.json"), &receipt).unwrap();
@@ -251,6 +257,7 @@ fn managed_restart_rejects_forged_closure_even_after_all_file_bindings_are_recom
         ("replay_allowed", json!(true), false),
         ("remote_writes", json!(1), true),
         ("reboot", json!({"observed_ticks":1}), false),
+        ("cache", json!({"generations":[{"state":"stopped"}]}), false),
     ] {
         let fixture = ManagedRestart::new("storage-target", "restart");
         fixture.rewrite_closure(field, value, mirror);

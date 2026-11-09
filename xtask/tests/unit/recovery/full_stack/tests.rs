@@ -6,7 +6,6 @@ use std::fs;
 struct Fake {
     events: Vec<String>,
     fail: Option<String>,
-    ready: bool,
 }
 impl Port for Fake {
     fn leaf(&mut self, op: &str) -> Result<Value> {
@@ -27,6 +26,9 @@ impl Port for Fake {
                 json!({"ryframe-reset":root.join("reset"),"ryframe-migrate":root.join("migrate")}),
             );
         }
+        if op == "api-stop" {
+            return Ok(json!({"state":"stopped"}));
+        }
         Ok(json!({}))
     }
     fn command(&mut self, _program: &str, args: &[String], _log: Option<&Path>) -> Result<String> {
@@ -37,15 +39,8 @@ impl Port for Fake {
         }
         Ok(format!("plan_hash={}\n", "a".repeat(64)))
     }
-    fn ready(&mut self, _url: &str) -> Result<bool> {
-        Ok(self.ready)
-    }
     fn sleep(&mut self, _duration: Duration) -> Result<()> {
-        if self.fail.as_deref() == Some("cancel") {
-            Err("已取消".into())
-        } else {
-            Ok(())
-        }
+        Ok(())
     }
     fn storage(&mut self, _table: &Value) -> Result<()> {
         self.events.push("storage".into());
@@ -84,60 +79,51 @@ fn fixture() -> (tempfile::TempDir, context::Context) {
 }
 
 #[test]
-fn startup_waits_then_checks_listener_before_worker_and_never_replays() {
+fn startup_requires_confirmed_api_launch_and_observation_before_worker_and_never_replays() {
     let (_temp, context) = fixture();
-    let mut port = Fake {
-        ready: true,
-        ..Default::default()
-    };
+    let mut port = Fake::default();
     lifecycle::start(&context, &mut port).unwrap();
     assert_eq!(
         port.events,
-        [
-            "register",
-            "api-launch",
-            "api-alive",
-            "api-probe",
-            "worker-start"
-        ]
+        ["register", "api-launch", "api-probe", "worker-start"]
     );
     assert!(lifecycle::start(&context, &mut port).is_err());
     assert_eq!(port.events.iter().filter(|v| *v == "api-launch").count(), 1);
 }
 
 #[test]
-fn startup_failure_cancellation_and_early_exit_reclaim_only_registered_api() {
-    for failure in [
-        "api-launch",
-        "api-alive",
-        "api-probe",
-        "worker-start",
-        "cancel",
-    ] {
+fn startup_failure_preserves_receipt_and_never_replays_or_stops_worker() {
+    for failure in ["api-launch", "api-probe", "worker-start"] {
         let (_temp, context) = fixture();
         let mut port = Fake {
-            ready: failure != "cancel",
             fail: Some(failure.into()),
             ..Default::default()
         };
-        assert!(lifecycle::start(&context, &mut port).is_err(), "{failure}");
-        assert_eq!(port.events.last().map(String::as_str), Some("api-stop"));
+        let error = lifecycle::start(&context, &mut port)
+            .unwrap_err()
+            .to_string();
+        let owns_api = failure != "api-launch";
+        if owns_api {
+            assert_eq!(port.events.last().map(String::as_str), Some("api-stop"));
+        } else {
+            assert_eq!(port.events, ["register", "api-launch"]);
+            assert!(error.contains("显式执行 collect"));
+        }
         assert!(!port.events.iter().any(|v| v == "worker-stop"));
-        let receipt: Value =
-            serde_json::from_slice(&fs::read(context.output.join("ci-start.json")).unwrap())
-                .unwrap();
+        assert_eq!(
+            port.events.iter().any(|v| v == "worker-start"),
+            failure == "worker-start"
+        );
+        let path = context.output.join("ci-start.json");
+        let bytes = fs::read(&path).unwrap();
+        let receipt: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(receipt["state"], "start-failed");
+        assert_eq!(receipt["api_cleanup_confirmed"], owns_api);
         assert_eq!(receipt["automatic_retry_permitted"], false);
+        assert!(lifecycle::start(&context, &mut port).is_err());
+        assert_eq!(fs::read(path).unwrap(), bytes);
+        assert_eq!(port.events.iter().filter(|v| *v == "api-launch").count(), 1);
     }
-}
-
-#[test]
-fn readiness_timeout_is_bounded_and_does_not_start_worker() {
-    let (_temp, context) = fixture();
-    let mut port = Fake::default();
-    assert!(lifecycle::start(&context, &mut port).is_err());
-    assert_eq!(port.events.iter().filter(|v| *v == "api-alive").count(), 90);
-    assert!(!port.events.iter().any(|v| v == "worker-start"));
 }
 
 #[test]
@@ -157,7 +143,7 @@ fn collect_failure_does_not_prevent_other_owned_cleanup() {
     fs::write(context.output.join("runtime.json"), "{}").unwrap();
     fs::write(context.output.join("api-tree.json"), "{}").unwrap();
     let mut port = Fake {
-        fail: Some("worker-stop".into()),
+        fail: Some("worker-stop|api-stop|api-port-free".into()),
         ..Default::default()
     };
     assert!(lifecycle::collect(&context, &mut port).is_err());
@@ -166,6 +152,10 @@ fn collect_failure_does_not_prevent_other_owned_cleanup() {
         "api-stop".into(),
         "api-port-free".into()
     ]));
+    assert!(port.events.iter().any(|v| v == "--stop-server"));
+    let errors = fs::read_to_string(context.output.join("cleanup-errors.log")).unwrap();
+    assert!(errors.contains("API 回收未确认"));
+    assert!(errors.contains("API 端口未确认释放"));
 }
 
 #[test]
@@ -245,7 +235,6 @@ fn frozen_database_input_is_captured_once_and_stages_keep_original_order() {
 fn worker_failure_with_unconfirmed_api_cleanup_never_claims_safe_completion() {
     let (_temp, context) = fixture();
     let mut port = Fake {
-        ready: true,
         fail: Some("worker-start|api-stop".into()),
         ..Default::default()
     };

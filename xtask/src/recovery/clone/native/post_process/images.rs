@@ -43,6 +43,7 @@ pub(super) fn verify(context: &Context<'_>, phase: &str) -> Result<()> {
     let mut source_request = context.source.request.clone();
     source_request["target"] = source_request["source"].clone();
     source_request["execution_backend"] = json!({"path":context.source.execution_backend});
+    source_request["config_dir"] = source_configuration["directory"].clone();
     capture(
         context,
         &source_request,
@@ -100,6 +101,13 @@ fn capture(
         environment,
         observation_dir: &context.output,
     };
+    let mut selected = request["target"].clone();
+    if side == CloneSide::Target {
+        for field in ["runtime_dir", "api_url"] {
+            selected[field] = context.initial["generation"]["selected"][field].clone();
+        }
+        selected["s3"] = json!({"configuration":configuration});
+    }
     let captured = target_verify::database::capture_source_at(
         &inputs,
         &context
@@ -113,7 +121,7 @@ fn capture(
         &SourceBinding {
             side,
             plan: Some(&context.plan),
-            selected: &request["target"],
+            selected: &selected,
             tools: &request["tools"],
             maintenance: &request["maintenance_build"],
             scope: context.scope,
@@ -122,11 +130,14 @@ fn capture(
     )?;
     for database in inputs.databases()? {
         let key = document::text(&database["key"], "库存逻辑目标")?;
-        let actual = captured.observations.get(key).ok_or("完整库存缺少目标")?;
+        let name = document::text(&database["database"], "库存物理库")?;
+        let actual = captured
+            .observations
+            .get(name)
+            .ok_or("完整库存缺少登记物理库")?;
         let expected = if side == CloneSide::Source {
             json!({"tables":actual["tables"],"preserved":actual["preserved"]})
         } else {
-            let name = document::text(&database["database"], "目标物理库")?;
             let mut expected = context.initial["inventory"]["observations"][name].clone();
             if !expected.is_object() {
                 return Err("原初始化完整库存缺失".into());
@@ -146,6 +157,35 @@ fn capture(
 }
 
 fn target(context: &Context<'_>, inputs: &StorageInputs<'_>, configuration: &Value) -> Result<()> {
+    target_identity(context, inputs, configuration)?;
+    require_worker_closed(context)?;
+    common::require_closed_port(document::text(
+        &context.selected["api_url"],
+        "原目标 API 地址",
+    )?)?;
+    target_storage(context)?;
+    // 新准备运行没有生产者历史；已有任何角色/控制证据都不能通过prepare接管或覆盖。
+    if context.post.runtime.try_exists()? {
+        for name in [
+            "api.json",
+            "worker.json",
+            "api-tree.json",
+            "worker-tree.json",
+            "producer-history.json",
+            "api-control.lock",
+            "worker-control.lock",
+        ] {
+            super::files::absent(&context.post.runtime.join(name))?;
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn target_identity(
+    context: &Context<'_>,
+    inputs: &StorageInputs<'_>,
+    configuration: &Value,
+) -> Result<()> {
     let mut declared = inputs.target().clone();
     declared["s3"] = json!({"configuration":configuration});
     let execution = inputs.execution_backend()?;
@@ -168,13 +208,21 @@ fn target(context: &Context<'_>, inputs: &StorageInputs<'_>, configuration: &Val
         document::text(&context.selected["worker_ready_url"], "Worker地址")?,
         &table,
     )?;
-    for field in ["api_url", "worker_ready_url"] {
-        common::require_closed_port(document::text(&context.selected[field], "原目标监听端口")?)?;
-    }
     super::files::absent(Path::new(document::text(
         &context.selected["runtime_dir"],
         "原目标运行目录",
     )?))?;
+    Ok(())
+}
+
+pub(super) fn require_worker_closed(context: &Context<'_>) -> Result<()> {
+    target_verify::authority::require_closed(document::text(
+        &context.selected["worker_ready_url"],
+        "原目标 Worker 地址",
+    )?)
+}
+
+pub(super) fn target_storage(context: &Context<'_>) -> Result<()> {
     let (selected, cache) = target_verify::fresh::selection::transition(
         context.backend,
         &context.target,
@@ -187,21 +235,6 @@ fn target(context: &Context<'_>, inputs: &StorageInputs<'_>, configuration: &Val
         "storage-layout",
         &json!({"request":context.target_descriptor,"storage":selected.value,"runtime":selected.runtime,"cache_runtime":cache}),
     )?;
-    // 新准备运行没有生产者历史；已有任何角色/控制证据都不能通过prepare接管或覆盖。
-    if context.post.runtime.try_exists()? {
-        for name in [
-            "api.json",
-            "worker.json",
-            "api-tree.json",
-            "worker-tree.json",
-            "producer-history.json",
-            "api-control.lock",
-            "worker-control.lock",
-        ] {
-            super::files::absent(&context.post.runtime.join(name))?;
-        }
-    }
-
     Ok(())
 }
 

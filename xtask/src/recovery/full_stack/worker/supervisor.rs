@@ -367,7 +367,10 @@ fn run_frontend(
     guard.check()
 }
 
-fn supervise_product(child: &mut std::process::Child, tree: &Value) -> Result<i32> {
+pub(in crate::recovery) fn supervise_product(
+    child: &mut std::process::Child,
+    tree: &Value,
+) -> Result<i32> {
     let directory = Path::new(tree["runtime_directory"].as_str().ok_or("目录无效")?);
     let id = tree["operation_id"].as_str().ok_or("操作ID无效")?;
     let control = directory.join(format!(
@@ -379,28 +382,8 @@ fn supervise_product(child: &mut std::process::Child, tree: &Value) -> Result<i3
             break (status.code().unwrap_or(1), "natural");
         }
         require_monitor(&tree["monitor"])?;
-        if control.exists() {
-            let request = operation::read(&control)?;
-            json::exact(
-                &request,
-                &[
-                    "format_version",
-                    "kind",
-                    "operation_id",
-                    "mode",
-                    "requested_at_ns",
-                ],
-                "角色停止请求",
-            )?;
-            if request["format_version"].as_u64() != Some(1)
-                || request["kind"] != "full-stack-process-tree-control"
-                || request["operation_id"] != tree["operation_id"]
-                || !matches!(request["mode"].as_str(), Some("normal" | "crash"))
-                || !super::documents::positive(&request["requested_at_ns"])
-            {
-                return Err("角色停止请求无效".into());
-            }
-            break stop_product(child, request["mode"] == "crash")?;
+        if let Some(crash) = read_stop_request(&control, &tree["operation_id"])? {
+            break stop_product(child, crash)?;
         }
         thread::sleep(Duration::from_millis(20));
     };
@@ -412,6 +395,36 @@ fn supervise_product(child: &mut std::process::Child, tree: &Value) -> Result<i3
         &json!({"format_version":1,"kind":"full-stack-process-tree-result","operation_id":id,"process":tree["process"],"exit_code":code,"termination":termination}),
     )?;
     Ok(code)
+}
+
+pub(in crate::recovery) fn read_stop_request(
+    path: &Path,
+    operation_id: &Value,
+) -> Result<Option<bool>> {
+    if !path.try_exists()? {
+        return Ok(None);
+    }
+    let request = operation::read(path)?;
+    json::exact(
+        &request,
+        &[
+            "format_version",
+            "kind",
+            "operation_id",
+            "mode",
+            "requested_at_ns",
+        ],
+        "角色停止请求",
+    )?;
+    if request["format_version"].as_u64() != Some(1)
+        || request["kind"] != "full-stack-process-tree-control"
+        || request["operation_id"] != *operation_id
+        || !matches!(request["mode"].as_str(), Some("normal" | "crash"))
+        || !super::documents::positive(&request["requested_at_ns"])
+    {
+        return Err("角色停止请求无效".into());
+    }
+    Ok(Some(request["mode"] == "crash"))
 }
 
 fn stop_product(child: &mut std::process::Child, crash: bool) -> Result<(i32, &'static str)> {

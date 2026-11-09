@@ -150,12 +150,16 @@ pub(crate) fn history(backend: &Path, target: &Path) -> Result<Value> {
     Ok(serde_json::to_value(names)?)
 }
 
-pub(crate) fn verify_reset(context: &TargetContext) -> Result<()> {
+pub(crate) fn verify_reset(
+    context: &TargetContext,
+    owner: &super::guard::Generation,
+) -> Result<()> {
     let observed = super::evidence_reset::history(
         &context.backend,
         &context.target_dir,
         &context.request,
         &context.initialized["generation"],
+        Some(owner),
     )?["completed"]
         .clone();
     if context.initialized.get("reset") != Some(&observed) {

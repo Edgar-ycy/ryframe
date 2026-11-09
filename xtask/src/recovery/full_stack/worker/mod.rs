@@ -14,6 +14,7 @@ pub(crate) mod role;
 mod runtime;
 pub(crate) mod start;
 mod supervisor;
+pub(in crate::recovery) use supervisor::{read_stop_request, supervise_product};
 #[cfg(test)]
 #[path = "../../../../tests/unit/recovery/full_stack/worker/tests.rs"]
 mod tests;
@@ -21,7 +22,11 @@ mod tree;
 
 use crate::{Result, recovery::clone::native::json as strict};
 use serde_json::{Value, json};
-use std::io::{Read, Write};
+use std::{
+    fs,
+    io::{Read, Write},
+    path::Path,
+};
 
 pub(crate) fn control_command(
     role: role::Role,
@@ -42,6 +47,108 @@ pub(crate) fn control_command(
         "role-control"
     };
     launch::command(operation, &args, directory)
+}
+
+pub(super) fn wait_api_port_free(url: &str) -> Result<Value> {
+    probes::execute(&json!({"action":"wait-free","url":url,"timeout":5}))?;
+    Ok(json!({"state":"free"}))
+}
+
+pub(super) fn ci_api_evidence(directory: &Path) -> Result<bool> {
+    use crate::local_test_path::{LocalTestPathKind, validate_absolute_path};
+
+    validate_absolute_path(directory, LocalTestPathKind::ExistingDirectory)?;
+    let mut product = false;
+    let mut tree = false;
+    let mut archive = false;
+    let mut generation = None;
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let lower = name.to_ascii_lowercase();
+        if lower != "api.json" && lower != "api.log" && !lower.starts_with("api-") {
+            continue;
+        }
+        let kind = match name.as_ref() {
+            "api.json" => {
+                product = true;
+                LocalTestPathKind::ExistingFile
+            }
+            "api-tree.json" => {
+                tree = true;
+                LocalTestPathKind::ExistingFile
+            }
+            "api-control.lock" => return Err("API 尚有原控制锁；保留现场，禁止自动重放".into()),
+            "api-control-receipts" => {
+                archive = true;
+                LocalTestPathKind::ExistingDirectory
+            }
+            "api.log" | "api-control.guard" => LocalTestPathKind::ExistingFile,
+            name => {
+                let id = name
+                    .strip_prefix("api-members-")
+                    .and_then(|v| {
+                        v.strip_suffix("-ready.json")
+                            .or_else(|| v.strip_suffix("-stopped.json"))
+                    })
+                    .or_else(|| {
+                        let tree = name.strip_prefix("api-tree-")?;
+                        tree.strip_suffix("-control.json")
+                            .or_else(|| tree.strip_suffix("-result.json"))
+                    })
+                    .or_else(|| {
+                        name.strip_prefix("api-external-termination-")?
+                            .strip_suffix(".json")
+                    });
+                if let Some(id) = id {
+                    if !operation_id(id)
+                        || generation
+                            .replace(id.to_owned())
+                            .is_some_and(|prior| prior != id)
+                    {
+                        return Err("API 成员收据未绑定同一启动代次；保留现场".into());
+                    }
+                } else if !name
+                    .strip_prefix("api-")
+                    .and_then(|v| v.strip_suffix(".log"))
+                    .is_some_and(operation_id)
+                {
+                    return Err("发现未知 API 文件；保留现场，禁止自动重放".into());
+                }
+                LocalTestPathKind::ExistingFile
+            }
+        };
+        validate_absolute_path(&entry.path(), kind)?;
+    }
+    if product && tree {
+        if let Some(id) = generation
+            && operation::read(&directory.join("api-tree.json"))?["operation_id"] != id
+        {
+            return Err("API 成员收据未绑定顶层进程树；保留现场".into());
+        }
+        return Ok(true);
+    }
+    if product || tree || archive || generation.is_some() {
+        return Err("API 进程与成员证据不完整；保留现场，禁止自动重放".into());
+    }
+    Ok(false)
+}
+
+fn operation_id(value: &str) -> bool {
+    value.len() == 32
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn ci_api_action(role: role::Role, action: &str) -> Result<(&str, bool)> {
+    match action {
+        "start-strict" if role == role::Role::Api => Ok(("start", true)),
+        "stop-strict" if role == role::Role::Api => Ok(("stop", true)),
+        "start" | "stop" | "crash" | "status" | "reconcile" => Ok((action, false)),
+        _ => reject("角色控制操作无效"),
+    }
 }
 
 const LIMIT: usize = 1024 * 1024;

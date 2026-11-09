@@ -8,18 +8,22 @@ use crate::{
     recovery::{clone::native, inputs},
 };
 
+mod backup;
+mod dataset;
 mod files;
 mod local;
 mod model;
+mod plan;
 mod proof;
 mod protocol;
 pub(crate) mod readonly;
 mod receipts;
+mod restore;
 #[cfg(test)]
 #[path = "../../../../../tests/unit/recovery/source/evidence/reference_workflow/tests.rs"]
 mod tests;
 
-pub(crate) fn run_local(raw: &str) -> Result<Option<Value>> {
+pub(crate) fn run_local(raw: &str) -> Result<Value> {
     local::run(raw)
 }
 
@@ -35,7 +39,6 @@ pub(crate) fn handles(operation: &str) -> bool {
             | "reference-damage"
             | "reference-receipt-start"
             | "reference-receipt-finish"
-            | "reference-backup-manifest"
             | "reference-restore-resources"
             | "reference-bound-artifact"
             | "reference-summary"
@@ -46,7 +49,6 @@ pub(crate) fn handles(operation: &str) -> bool {
             | "reference-product-hash"
             | "reference-dataset-preflight"
             | "reference-dataset-result"
-            | "reference-backup-inventory"
     )
 }
 
@@ -61,14 +63,12 @@ pub(crate) fn request(operation: &str, args: &Value) -> Result<Value> {
         "reference-damage" => files::damage(args),
         "reference-receipt-start" => receipts::start(args),
         "reference-receipt-finish" => receipts::finish(args),
-        "reference-backup-manifest" => model::manifest(args),
         "reference-restore-resources" => model::resources(args),
         "reference-bound-artifact" => model::bound_artifact(args),
         "reference-summary" => model::summary(args),
         "reference-restore-result" => model::restore_result(args),
         "reference-dataset-preflight" => model::preflight(args),
         "reference-dataset-result" => model::dataset_result(args),
-        "reference-backup-inventory" => model::backup_inventory(args),
         "reference-backup-source" => proof::backup_source(args),
         "reference-backup-result" => proof::backup_result(args),
         "reference-restore-record" => proof::record(args),

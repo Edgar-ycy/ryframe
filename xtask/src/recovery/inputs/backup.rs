@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::{
     document::{Document, digest, exact, integer, object, text},
@@ -8,6 +8,71 @@ use super::{
     inventory, source,
 };
 use crate::Result;
+
+pub(crate) fn verify_frozen_source(backend: &Path, backup: &Backup) -> Result<()> {
+    let result = &backup.result;
+    let mut inventory = object(&backup.manifest, "备份清单")?.clone();
+    for field in ["completed_at", "retention_until", "artifacts"] {
+        inventory.remove(field);
+    }
+    let verified = verify_source(
+        backend,
+        &result["reference_plan"],
+        &Value::Object(inventory),
+        &result["source_generation"],
+        &result["source_export"]["result"],
+        false,
+    )?;
+    if verified["source_export"] != result["source_export"] {
+        return Err("备份引用的共享导出与已发布来源不同".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn verify_source(
+    backend: &Path,
+    plan: &Value,
+    inventory: &Value,
+    generation: &Value,
+    publication: &Value,
+    live: bool,
+) -> Result<Value> {
+    use crate::recovery::{
+        clone::native::export,
+        source::evidence::{comparison::published, reference_workflow},
+    };
+
+    let published = published::verified(backend, publication, None)?;
+    if live {
+        published.check_live(backend)?;
+    }
+    let exported = export::frozen::verify(backend, &published.identity["export"])?;
+    let read = |descriptor, label| super::document::bound_file(backend, descriptor, label);
+    let (_, build) = read(&exported.request["backend_build"], "原源构建")?;
+    let (_, stopped) = read(generation, "备份来源停止代次")?;
+    let (_, runtime) = read(&stopped.value["source_runtime"], "原来源运行验收")?;
+    let (_, quiescence) = read(&stopped.value["runtime_evidence"], "原来源停止观察")?;
+    let verified = reference_workflow::request(
+        "reference-backup-source",
+        &json!({
+            "plan":plan, "inventory":inventory, "identity":published.identity,
+            "source":published.source,
+            "exported":{"request":exported.request,"generation":exported.generation,"inventory":exported.inventory},
+            "build":build.value, "descriptor":generation, "runtime":runtime.value, "quiescence":quiescence.value,
+        }),
+    )?;
+    if verified["source_export"] != published.identity
+        || verified["source_generation"] != *generation
+    {
+        return Err("正式备份来源证明或共享导出摘要已变化".into());
+    }
+    for document in [build, stopped, runtime, quiescence] {
+        document.assert_unchanged()?;
+    }
+    exported.check_proofs(backend, &published.identity["export"])?;
+    published.check(backend)?;
+    Ok(verified)
+}
 
 pub(crate) struct Backup {
     pub(crate) result: Value,
@@ -99,6 +164,8 @@ pub(crate) fn validate(
             "source_sha",
             "captured_at",
             "quiesced_at",
+            "control_schema_fingerprint",
+            "tenant_schema_fingerprint",
             "databases",
             "objects",
             "completed_at",

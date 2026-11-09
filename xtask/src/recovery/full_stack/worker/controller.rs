@@ -18,9 +18,22 @@ use std::{
 #[path = "controller/result.rs"]
 mod result;
 use result::finish;
+#[path = "controller/observation.rs"]
+mod observation;
+pub(crate) use observation::observe;
+use observation::verify_running;
 #[path = "controller/bound.rs"]
 mod bound;
-pub(crate) use bound::{control_bound, observe_bound, reconcile_completed_bound};
+pub(crate) use bound::{
+    StopGeneration, StopTarget, control_bound, observe_bound, observe_bound_state,
+    observe_worker_under_outer_lock, reconcile_completed_bound, reconcile_recorded_stop,
+    require_api_tree, stop_bound_recorded,
+};
+#[path = "controller/archived_start.rs"]
+mod archived_start;
+#[cfg(test)]
+pub(crate) use archived_start::tests::{STOP_ID_START, archive_stopped_fixture, stopped_runtime};
+pub(crate) use archived_start::{ArchivedStop, archived_start_bound, archived_stop_bound};
 
 #[derive(Debug)]
 struct Pending(Role);
@@ -72,7 +85,6 @@ pub(super) fn execute(role: Role, args: &Value) -> Result<Value> {
     )?;
     let action = args["action"]
         .as_str()
-        .filter(|s| matches!(*s, "start" | "stop" | "crash" | "status" | "reconcile"))
         .ok_or_else(|| super::Rejection(format!("{}控制操作无效", role.label())))?;
     let timeout = args["timeout"]
         .as_f64()
@@ -104,6 +116,11 @@ pub(crate) fn control(
     control_verified(role, action, backend, directory, timeout, started, None)
 }
 
+struct BoundControl<'a> {
+    environment: &'a super::environment::Environment,
+    stop: Option<StopTarget<'a>>,
+}
+
 fn control_verified(
     role: Role,
     action: &str,
@@ -111,16 +128,13 @@ fn control_verified(
     directory: &Path,
     timeout: f64,
     started: Instant,
-    environment: Option<&super::environment::Environment>,
+    binding: Option<&BoundControl<'_>>,
 ) -> Result<Value> {
     if role == Role::Frontend {
         return Err("前端有限命令不能使用长期服务控制入口".into());
     }
-    if !matches!(action, "start" | "stop" | "crash" | "status" | "reconcile")
-        || !timeout.is_finite()
-        || !(0.0..=180.0).contains(&timeout)
-        || timeout == 0.0
-    {
+    let (action, ci_api) = super::ci_api_action(role, action)?;
+    if !timeout.is_finite() || !(0.0..=180.0).contains(&timeout) || timeout == 0.0 {
         return Err(super::Rejection(format!("{}操作或超时无效", role.label())).into());
     }
     let backend = operation::canonical(backend)?;
@@ -131,20 +145,20 @@ fn control_verified(
         Instant::now() + Duration::from_secs_f64(timeout + 10.0)
     };
     loop {
-        if let Some(environment) = environment {
-            environment.check()?;
+        if let Some(binding) = binding {
+            binding.environment.check()?;
         }
         let result = once(
             role,
-            action,
+            (action, ci_api),
             &backend,
             &directory,
             timeout,
             deadline,
-            environment,
+            binding,
         );
-        if let Some(environment) = environment {
-            environment.check()?;
+        if let Some(binding) = binding {
+            binding.environment.check()?;
         }
         match result {
             Err(error) if error.is::<Pending>() && Instant::now() < deadline => {
@@ -155,52 +169,21 @@ fn control_verified(
     }
 }
 
-pub(crate) fn observe(role: Role, backend: &Path, directory: &Path) -> Result<Value> {
-    if role == Role::Frontend {
-        return Err("前端有限命令使用完成证明观察".into());
+fn inputs(role: Role, policy: (&str, bool), root: &Path, dir: &Path) -> Result<(Value, String)> {
+    let (action, ci_api) = policy;
+    if ci_api && super::ci_api_evidence(dir)? != (action == "stop") {
+        return Err("API 启动目录已有进程证据，或停止缺少完整进程树；保留现场".into());
     }
-    let runtime = super::runtime::load(role, backend, directory).map_err(|_| {
+    let runtime = super::runtime::load(role, root, dir).map_err(|_| {
         super::Rejection(format!(
             "{}运行合同核验失败；核对冻结来源、配置与产物，保留现场且不启动或停止进程",
             role.label()
         ))
     })?;
-    let source = operation::source(directory)?;
-    let tree = tree::read(
-        directory,
-        &runtime,
-        role,
-        directory.join(format!("{}.json", role.name())).exists(),
-    )?;
-    let identity = process::registered(role, directory, &runtime)?;
-    if let Some(identity) = &identity {
-        verify_running(role, directory, &runtime, identity)?;
-    } else {
-        if let Some(tree) = &tree {
-            tree::closure(tree, Duration::from_secs(5), false)?;
-        }
-        free(role, &runtime, 0.0)?;
-    }
-    if super::runtime::load(role, backend, directory)? != runtime
-        || operation::source(directory)? != source
-    {
-        return Err("角色运行输入在只读观察期间漂移".into());
-    }
-    Ok(json!({"state":if identity.is_some(){"running"}else{"stopped"},"identity":identity}))
-}
-fn inputs(role: Role, action: &str, backend: &Path, directory: &Path) -> Result<(Value, String)> {
-    let runtime = super::runtime::load(role, backend, directory).map_err(|_| {
-        super::Rejection(format!(
-            "{}运行合同核验失败；核对冻结来源、配置与产物，保留现场且不启动或停止进程",
-            role.label()
-        ))
-    })?;
-    let source = operation::source(directory)?;
+    let source = operation::source(dir)?;
     if role != Role::Worker
-        && directory.join(format!("{}.json", role.name())).exists()
-        && !directory
-            .join(format!("{}-tree.json", role.name()))
-            .exists()
+        && dir.join(format!("{}.json", role.name())).exists()
+        && !dir.join(format!("{}-tree.json", role.name())).exists()
     {
         return Err(super::Rejection(format!(
             "{}旧进程没有完整监督树；拒绝接管或补签，由原现场控制器收尾",
@@ -208,7 +191,7 @@ fn inputs(role: Role, action: &str, backend: &Path, directory: &Path) -> Result<
         ))
         .into());
     }
-    if directory.join(role.lock()).exists() {
+    if dir.join(role.lock()).exists() {
         if action == "start" {
             return Err(super::Rejection(format!(
                 "已有{}控制操作，必须先使用status或reconcile核对",
@@ -216,23 +199,23 @@ fn inputs(role: Role, action: &str, backend: &Path, directory: &Path) -> Result<
             ))
             .into());
         }
-        let empty = fs::read_dir(directory.join(role.lock()))?.next().is_none();
+        let empty = fs::read_dir(dir.join(role.lock()))?.next().is_none();
         if empty {
             if action != "reconcile" {
                 return Err("发现旧空锁；必须显式reconcile核对".into());
             }
-            legacy(role, directory, &runtime, &source)?;
+            legacy(role, dir, &runtime, &source)?;
         } else {
-            reconcile(role, backend, directory, &runtime, &source)?;
+            reconcile(role, root, dir, &runtime, &source)?;
         }
     }
     if action == "start" {
-        if process::registered(role, directory, &runtime)?.is_some() {
+        if process::registered(role, dir, &runtime)?.is_some() {
             return Err(
                 super::Rejection(format!("已登记{}仍在运行，拒绝重复启动", role.label())).into(),
             );
         }
-        if let Some(tree) = tree::read(directory, &runtime, role, false)? {
+        if let Some(tree) = tree::read(dir, &runtime, role, false)? {
             if process::alive(&tree["supervisor"])? {
                 return Err(
                     super::Rejection(format!("上一代{}监督器仍在运行", role.label())).into(),
@@ -242,36 +225,54 @@ fn inputs(role: Role, action: &str, backend: &Path, directory: &Path) -> Result<
         }
         free(role, &runtime, 0.0)?;
     }
+    if ci_api && action == "stop" {
+        bound::require_api_tree(dir, &runtime)?;
+    }
     Ok((runtime, source))
 }
 fn once(
     role: Role,
-    action: &str,
+    (action, ci_api): (&str, bool),
     backend: &Path,
     directory: &Path,
     timeout: f64,
     deadline: Instant,
-    environment: Option<&super::environment::Environment>,
+    binding: Option<&BoundControl<'_>>,
 ) -> Result<Value> {
     if action == "start" {
         super::check_result_deadline(role, deadline)?;
     }
     let guard = guard(role, directory, Duration::ZERO)?;
-    if environment.is_some() {
+    if binding.is_some() || ci_api {
         bound::require_no_pending(role, directory)?;
     }
-    let (runtime, source) = inputs(role, action, backend, directory)?;
+    let (runtime, source) = inputs(role, (action, ci_api), backend, directory)?;
     if action == "start" {
         super::check_result_deadline(role, deadline)?;
     }
-    let op =
-        Operation::claim(role, action, backend, directory, &runtime, timeout).map_err(|_| {
-            super::Rejection(format!(
-                "{} {action} 的 owner/request 发布未确认；保留控制目录，不重放",
-                role.label()
-            ))
-        })?;
+    let stop = binding.and_then(|binding| binding.stop.as_ref());
+    let claimed = if let Some(stop) = stop {
+        stop.check(role, directory, &runtime)?;
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        (stop.record)(&id)?;
+        guard.check()?;
+        stop.check(role, directory, &runtime)?;
+        Operation::claim_recorded_stop(role, backend, directory, &runtime, timeout, &id)
+    } else {
+        Operation::claim(role, action, backend, directory, &runtime, timeout)
+    };
+    let op = claimed.map_err(|_| {
+        super::Rejection(format!(
+            "{} {action} 的 owner/request 发布未确认；保留控制目录，不重放",
+            role.label()
+        ))
+    })?;
     guard.check()?;
+    if let Some(stop) = stop {
+        op.check_source()?;
+        stop.check(role, directory, &runtime)?;
+        guard.check()?;
+    }
     if action != "start" {
         let result = match simple(&op, &runtime, action) {
             Ok(result) => result,
@@ -295,7 +296,16 @@ fn once(
         };
         op.publish("result.json", &result, false)?;
         guard.check()?;
-        return op.archive();
+        let result = op.archive()?;
+        if let Some(stop) = stop {
+            let stopped_tree =
+                tree::read(directory, &runtime, role, true)?.ok_or("原停止缺少进程树")?;
+            stop.generation
+                .prove_closed(role, directory, &runtime, &stopped_tree)?;
+            (stop.publish)()?;
+            guard.check()?;
+        }
+        return Ok(result);
     }
     start(backend, &runtime, &source, &op, guard, deadline)
 }
@@ -308,7 +318,7 @@ pub(super) fn reserved_start(
     reservation.verify()?;
     let (runtime, source) = inputs(
         reservation.role,
-        "start",
+        ("start", false),
         &reservation.backend,
         &reservation.directory,
     )?;
@@ -443,15 +453,10 @@ fn simple(op: &Operation, runtime: &Value, action: &str) -> Result<Value> {
         reconciled,
     )
 }
-fn verify_running(role: Role, directory: &Path, runtime: &Value, identity: &Value) -> Result<()> {
-    let url = runtime[role.ready()].as_str().ok_or("端点无效")?;
-    if !ready(url)? {
-        return Err(super::Rejection(format!("已登记{}未通过就绪探针", role.label())).into());
-    }
-    process::listener(identity, url)?;
-    tree::running(directory, runtime, role, identity)?;
-    Ok(())
-}
+#[cfg(test)]
+#[path = "../../../../tests/unit/recovery/full_stack/worker/bound_state_tests.rs"]
+mod bound_state_tests;
+
 fn archive_completed(op: &Operation) -> Result<Value> {
     let result = op.validate("result", operation::read(&op.path.join("result.json"))?)?;
     if result["operation"] == "start" && result["outcome"] == "failed" {

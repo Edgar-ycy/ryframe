@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -26,9 +26,17 @@ pub(super) fn inspect(backend: &Path, output: &Path, target: &Value) -> Result<V
     let retry = Regex::new(r"^mysql-(identity|ownership)-retry-[a-f0-9]{32}\.json$")?;
     let owner = Regex::new(r"^owner-target-([a-z0-9-]+)-[a-f0-9]{32}\.txt$")?;
     let layout = Regex::new(r"^storage-layout-[a-f0-9]{32}\.json$")?;
+    let owner_binding = Regex::new(r"^(live-owner-[a-f0-9]{32})-binding\.json$")?;
+    let owner_payload =
+        Regex::new(r"^live-owner-[a-f0-9]{32}-[a-z0-9-]+\.(?:bin|json|diagnostic\.json)$")?;
+    let query_status = Regex::new(
+        r"^(seed-enabled-schedules-read|schedule-full-row-read|administrator-row-read)-[a-f0-9]{32}\.json$",
+    )?;
     let mut artifacts = Vec::new();
     let mut payloads = BTreeSet::new();
     let mut referenced = BTreeSet::new();
+    let mut native_owners = BTreeMap::new();
+    let mut native_owner_bound = BTreeMap::new();
     for path in entries {
         let name = path
             .file_name()
@@ -53,6 +61,18 @@ pub(super) fn inspect(backend: &Path, output: &Path, target: &Value) -> Result<V
         } else if let Some(matches) = owner.captures(name) {
             owner_artifact(&path, &matches[1], target)?;
             payloads.insert(path.clone());
+        } else if let Some(matches) = owner_binding.captures(name) {
+            native_owner_bound.extend(native_owner_round(
+                backend,
+                output,
+                &matches[1],
+                target,
+                &path,
+            )?);
+        } else if owner_payload.is_match(name) {
+            native_owners.insert(path.clone(), before.clone());
+        } else if let Some(matches) = query_status.captures(name) {
+            receipts::query_status(&document::read(&path)?, &matches[1])?;
         } else if layout.is_match(name) {
             let value = document::read(&path)?;
             document::exact(
@@ -80,8 +100,58 @@ pub(super) fn inspect(backend: &Path, output: &Path, target: &Value) -> Result<V
     if payloads != referenced {
         return Err("部门守卫本地输出没有被只读命令收据完整覆盖".into());
     }
+    if native_owners != native_owner_bound {
+        return Err("部门原生 owner 证据必须属于同一目标绑定的完整五桶窗口".into());
+    }
     validate_closed(backend, output, &artifacts, identity)?;
     Ok(json!(artifacts))
+}
+
+fn native_owner_round(
+    backend: &Path,
+    output: &Path,
+    phase: &str,
+    target: &Value,
+    binding: &Path,
+) -> Result<Vec<(PathBuf, Value)>> {
+    let scope = receipts::target_scope(target)?;
+    document::text(&target["endpoint"], "部门对象目标端点")?;
+    if document::read(binding)? != *target {
+        return Err("部门原生 owner 窗口未绑定原对象目标".into());
+    }
+    let mut files = Vec::with_capacity(BUCKETS.len() * 3);
+    for bucket in BUCKETS {
+        let prefix = format!("{phase}-{bucket}");
+        let body = common::common_file(
+            backend,
+            &output.join(format!("{prefix}.bin")),
+            "部门原生 owner 正文",
+        )?;
+        let response = common::common_file(
+            backend,
+            &output.join(format!("{prefix}.json")),
+            "部门原生 owner 响应",
+        )?;
+        let diagnostic = common::common_file(
+            backend,
+            &output.join(format!("{prefix}.diagnostic.json")),
+            "部门原生 owner 诊断",
+        )?;
+        let bound = [&body, &response, &diagnostic].map(|path| common::binding(path));
+        if document::read(&diagnostic)?
+            != json!({"operation":"get-object","returned":true,"checkpoint_passed":true})
+        {
+            return Err("部门原生 owner 读取或保护检查失败".into());
+        }
+        receipts::native_owner_response(&document::read(&response)?, scope, bucket)?;
+        owner_artifact(&body, bucket, target)?;
+        for (path, descriptor) in [body, response, diagnostic].into_iter().zip(bound) {
+            let descriptor = descriptor?;
+            common::bound_file(backend, &descriptor, "部门原生 owner 证据")?;
+            files.push((path, descriptor));
+        }
+    }
+    Ok(files)
 }
 
 fn validate_closed(

@@ -246,6 +246,25 @@ class ExistingTests(unittest.TestCase):
             context.guard()
         self.assertEqual(windows, [])
 
+    def test_source_guard_uses_the_registered_run_and_rejects_changed_generation(self):
+        context = Context.__new__(Context)
+        context.backend, context.output = self.context.backend, self.context.output
+        context.directory_root = context.backend / '.local-tests' / 'registered-run'
+        context.environments = Environments({'APP_ENV': 'test'}, {'APP_ENV': 'prod'})
+        context.source = {'generation': {'fixture': 'original'}}
+        context.tool_plan = {}
+
+        def observe(backend, run_dir, runner):
+            self.assertEqual((backend, run_dir, runner), (context.backend, context.directory_root, context.run))
+            self.assertEqual(os.environ['APP_ENV'], 'test')
+            return {'fixture': 'changed'}
+
+        with patch('devex_clone_post_context.copy_source_generation', side_effect=observe), \
+                patch('devex_clone_post_context.ExternalTools') as tools, \
+                self.assertRaisesRegex(ValueError, '停止的来源代次变化'):
+            context.source_guard()
+        tools.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

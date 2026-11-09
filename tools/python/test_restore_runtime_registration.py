@@ -1,8 +1,6 @@
 import json
-import io
 import sys
 import unittest
-from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -96,37 +94,28 @@ class RestoreRuntimeRegistrationTests(unittest.TestCase):
         self.assertEqual(path, self.target_path)
         return self.target
 
-    def register(self) -> dict:
-        with patch.object(registration, "validate_plan"), patch.object(
-            registration, "require_closed_port"
-        ) as ports:
-            result = registration.register_runtime(
-                ROOT,
-                self.reference_path,
-                self.target_path,
-                self.output,
-                target_verifier=self.verifier,
-            )
-        self.assertGreaterEqual(ports.call_count, 9)
-        return result
+    def prepare_registration(self) -> None:
+        anchor = self.root.stat()
+        self.write_json(self.output, {
+            "format_version": 1,
+            "kind": "restore-runtime-registration",
+            "reference_plan": artifact_snapshot(self.reference_path).descriptor(),
+            "target_plan": self.target_descriptor(),
+            "observation": {
+                "runtime": {"exists": False, "entries": [], "anchor": {
+                    "path": str(self.root), "device": anchor.st_dev,
+                    "inode": anchor.st_ino, "created_ns": anchor.st_ctime_ns,
+                }},
+                "ports_idle": ["api", "worker", "frontend"],
+            },
+            "remote_writes": 0,
+        })
 
     def target_descriptor(self) -> dict:
         return artifact_snapshot(self.target_path).descriptor()
 
-    def test_register_binds_whole_target_plan_and_rechecks_idle_state(self):
-        result = self.register()
-        value = json.loads(self.output.read_text(encoding="utf-8"))
-        self.assertEqual(result["status"], "runtime_registered_not_started")
-        self.assertEqual(value["target_plan"], self.target_descriptor())
-        self.assertEqual(value["observation"]["ports_idle"], ["api", "worker", "frontend"])
-        self.assertFalse(value["observation"]["runtime"]["exists"])
-        self.assertEqual(value["observation"]["runtime"]["entries"], [])
-        self.assertEqual(value["observation"]["runtime"]["anchor"]["path"], str(self.root))
-        self.assertNotIn("endpoints", value)
-        self.assertNotIn("scope_id", value)
-
     def test_context_holds_lock_and_supports_live_checks(self):
-        self.register()
+        self.prepare_registration()
         with patch.object(registration, "validate_plan"), patch.object(
             registration, "require_closed_port"
         ):
@@ -145,7 +134,7 @@ class RestoreRuntimeRegistrationTests(unittest.TestCase):
                 checkpoint()
 
     def test_context_rechecks_after_restore_failure_and_preserves_original(self):
-        self.register()
+        self.prepare_registration()
         with patch.object(registration, "validate_plan"), patch.object(
             registration, "require_closed_port"
         ):
@@ -162,7 +151,7 @@ class RestoreRuntimeRegistrationTests(unittest.TestCase):
         self.assertTrue(any("零进程状态复核也失败" in note for note in caught.exception.__notes__))
 
     def test_context_rejects_runtime_file_created_during_successful_restore(self):
-        self.register()
+        self.prepare_registration()
         with patch.object(registration, "validate_plan"), patch.object(
             registration, "require_closed_port"
         ), self.assertRaisesRegex(ValueError, "运行目录已出现"):
@@ -176,7 +165,7 @@ class RestoreRuntimeRegistrationTests(unittest.TestCase):
                 (self.runtime / "launch.json").write_text("unknown", encoding="utf-8")
 
     def test_descriptor_mismatch_and_busy_port_fail_closed(self):
-        self.register()
+        self.prepare_registration()
         wrong = {**self.target_descriptor(), "sha256": "b" * 64}
         with patch.object(registration, "validate_plan"), self.assertRaisesRegex(
             ValueError, "调用方绑定"
@@ -194,25 +183,7 @@ class RestoreRuntimeRegistrationTests(unittest.TestCase):
                 target_verifier=self.verifier,
             )
 
-    def test_register_rejects_output_in_target_runtime_before_lock_or_write(self):
-        self.runtime.mkdir()
-        output = self.runtime / "registration.json"
-        with patch.object(registration, "validate_plan"), patch.object(
-            registration, "require_closed_port"
-        ), patch.object(registration, "controller_lock") as control, self.assertRaisesRegex(
-            ValueError, "不能写入"
-        ):
-            registration.register_runtime(
-                ROOT,
-                self.reference_path,
-                self.target_path,
-                output,
-                target_verifier=self.verifier,
-            )
-        control.assert_not_called()
-        self.assertFalse(output.exists())
-
-    def test_registration_protocol_requires_write_and_dispatches_request(self):
+    def test_retired_registration_protocol_rejects_both_write_values(self):
         protocol = {
             "backend_dir": str(ROOT),
             "format_version": 1,
@@ -221,20 +192,11 @@ class RestoreRuntimeRegistrationTests(unittest.TestCase):
             "plan": str(self.reference_path),
             "target_plan": str(self.target_path),
             "output": str(self.output),
-            "write": False,
         }
-        with self.assertRaises(restore_runtime.RuntimeProtocolError):
-            restore_runtime.decode_request(json.dumps(protocol))
-
-        expected = {"status": "runtime_registered_not_started"}
-        protocol["write"] = True
-        request = restore_runtime.decode_request(json.dumps(protocol))
-        with patch.object(
-            registration, "execute", return_value=expected
-        ) as execute, redirect_stdout(io.StringIO()) as output:
-            restore_runtime.main(request)
-        execute.assert_called_once()
-        self.assertEqual(json.loads(output.getvalue()), expected)
+        for write in (False, True):
+            with self.subTest(write=write), self.assertRaises(restore_runtime.RuntimeProtocolError):
+                restore_runtime.decode_request(json.dumps({**protocol, "write": write}))
+        self.assertFalse(self.output.exists())
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@ use super::start_deadline::Deadline;
 use super::{
     super::digest,
     diagnostic::{Category, Diagnostic, Outcome},
-    host_control, model, native_tool, process,
+    model, native_tool,
 };
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
@@ -73,49 +73,6 @@ fn formal_cache_status_is_read_only_and_direct_guard_failure_never_connects_or_p
     }
 }
 
-fn initialize_capture_source(root: &std::path::Path) {
-    use crate::frontend_origin::sources;
-    use std::{fs, process::Command};
-    fs::create_dir_all(root.join("xtask")).unwrap();
-    fs::write(root.join("input.rs"), b"source-input").unwrap();
-    fs::write(root.join(sources::POLICY), br#"{"format_version":1,"files":["input.rs","xtask/source-inventory.json"],"trees":[],"excluded_directories":[]}"#).unwrap();
-    for arguments in [
-        vec!["init", "--quiet"],
-        vec!["add", "."],
-        vec![
-            "-c",
-            "user.name=source-unit",
-            "-c",
-            "user.email=source-unit@example.invalid",
-            "-c",
-            "commit.gpgsign=false",
-            "commit",
-            "--quiet",
-            "-m",
-            "test(source): 创建来源核验夹具",
-        ],
-    ] {
-        let mut command = Command::new("git");
-        command.arg("-C").arg(root).args(arguments);
-        for (name, _) in std::env::vars_os() {
-            if name
-                .to_string_lossy()
-                .to_ascii_uppercase()
-                .starts_with("GIT_")
-            {
-                command.env_remove(name);
-            }
-        }
-        assert!(
-            command
-                .env("GIT_OPTIONAL_LOCKS", "0")
-                .status()
-                .unwrap()
-                .success()
-        );
-    }
-}
-
 #[test]
 fn local_review_preflight_rejects_real_tool_byte_drift_and_preserves_files() {
     use super::review_tools;
@@ -161,99 +118,6 @@ fn local_review_preflight_rejects_real_tool_byte_drift_and_preserves_files() {
     assert_eq!(snapshot(), healthy);
     assert_eq!(review_tools::local_tools(&review).unwrap(), observed);
     assert_eq!(snapshot(), healthy);
-}
-
-#[test]
-fn native_capture_binds_complete_sources_and_preserves_failure_order_and_io_category() {
-    use crate::frontend_origin::manifest;
-    use native_tool::NativeTool;
-    use std::fs;
-    let base = crate::workspace::root_dir().join(".local-tests");
-    fs::create_dir_all(&base).unwrap();
-    let directory = tempfile::tempdir_in(base).unwrap();
-    let backend = directory.path();
-    let root = backend.join("source");
-    initialize_capture_source(&root);
-    fs::create_dir(backend.join("config")).unwrap();
-    // 仅提供静态格式检查的最小字节，不执行此测试映像。
-    let mut image = [0_u8; 20];
-    image[..4].copy_from_slice(b"\x7fELF");
-    image[4] = 2;
-    image[5] = 1;
-    image[18] = 62;
-    let program = backend.join("observer");
-    fs::write(&program, image).unwrap();
-    let sha = digest::file(&program).unwrap().sha256;
-    let source = crate::recovery::clone::native::source::capture(&root).unwrap();
-    let entries = manifest::capture(&root).unwrap();
-    let source_sha = manifest::sha256(&entries).unwrap();
-    let configuration = format!(
-        "[verification.linux_observer]\ndistribution = \"fixture\"\nuser = \"fixture\"\nuid = 1000\nprogram = {}\nlinux_program = \"/fixture/observer\"\nsource_root = {}\nlinux_source_root = \"/fixture/source\"\nsource_commit = \"{}\"\nsha256 = \"{sha}\"\nsource_sha256 = \"{source_sha}\"\n",
-        serde_json::to_string(program.to_str().unwrap()).unwrap(),
-        serde_json::to_string(root.to_str().unwrap()).unwrap(),
-        source.source.snapshot.head,
-    );
-    let config_path = backend.join("config/tools.toml");
-    fs::write(&config_path, &configuration).unwrap();
-    let tool = NativeTool::capture(backend).unwrap();
-    assert_eq!(tool.sources, entries);
-    assert_eq!(tool.source_sha256, source_sha);
-    assert_eq!(tool.source_commit, source.source.snapshot.head);
-    assert_eq!(tool.sha256, sha);
-    tool.finish(backend).unwrap();
-    // 映像也无效时，结构/路径门禁仍须先于任何并发检查失败。
-    fs::write(&program, []).unwrap();
-    for path in [&program, &root] {
-        let invalid = configuration.replace(
-            &serde_json::to_string(path.to_str().unwrap()).unwrap(),
-            "\"relative-path\"",
-        );
-        fs::write(&config_path, invalid).unwrap();
-        assert_eq!(
-            NativeTool::capture(backend).unwrap_err().to_string(),
-            "观察器 Windows 路径必须是无链接的完整绝对路径"
-        );
-    }
-    #[cfg(unix)]
-    {
-        let linked = backend.join("linked-source");
-        std::os::unix::fs::symlink(&root, &linked).unwrap();
-        let invalid = configuration.replace(
-            &serde_json::to_string(root.to_str().unwrap()).unwrap(),
-            &serde_json::to_string(linked.to_str().unwrap()).unwrap(),
-        );
-        fs::write(&config_path, invalid).unwrap();
-        assert_eq!(
-            NativeTool::capture(backend).unwrap_err().to_string(),
-            "观察器 Windows 路径必须是无链接的完整绝对路径"
-        );
-    }
-    let wrong_source = configuration
-        .replace(&source.source.snapshot.head, &"0".repeat(40))
-        .replace(&source_sha, &"0".repeat(64));
-    fs::write(&config_path, wrong_source).unwrap();
-    fs::write(&program, []).unwrap();
-    let error = NativeTool::capture(backend).unwrap_err();
-    assert_eq!(
-        error.downcast_ref::<std::io::Error>().unwrap().kind(),
-        std::io::ErrorKind::UnexpectedEof
-    );
-    fs::write(&program, image).unwrap();
-    assert!(
-        NativeTool::capture(backend)
-            .unwrap_err()
-            .to_string()
-            .contains("Linux 观察器来源 HEAD 或 clean 状态不匹配")
-    );
-    fs::write(
-        &config_path,
-        configuration.replace(&source_sha, &"0".repeat(64)),
-    )
-    .unwrap();
-    assert_eq!(
-        NativeTool::capture(backend).unwrap_err().to_string(),
-        "缓存原生工具完整来源摘要不符"
-    );
 }
 
 #[test]
@@ -432,43 +296,6 @@ fn native_successor_preserves_uid_paths_resources_and_original_full_source_diges
     let mut wrong = tools;
     wrong["native_tool"]["sources"][0]["sha256"] = json!("0".repeat(64));
     assert!(native_tool::successor(&original, &wrong).is_err());
-}
-
-#[test]
-fn stop_failure_observes_once_and_preserves_original_failure_if_alive_or_unknown() {
-    for observation in [Some(false), Some(true), None] {
-        let mut actions = Vec::new();
-        let result = host_control::stop_once(|action| {
-            actions.push(action.to_string());
-            match action {
-                "stop" => Err(process::ControlFailure(Some(17)).into()),
-                "check" => observation
-                    .map(|alive| json!({"alive":alive}))
-                    .ok_or_else(|| "unknown".into()),
-                _ => panic!("不得重放或执行其他动作"),
-            }
-        });
-        assert_eq!(actions, ["stop", "check"]);
-        if observation == Some(false) {
-            assert_eq!(result.unwrap(), (json!({"alive":false}), true));
-        } else {
-            assert_eq!(
-                result
-                    .unwrap_err()
-                    .downcast_ref::<process::ControlFailure>()
-                    .unwrap()
-                    .0,
-                Some(17)
-            );
-        }
-    }
-    let mut calls = 0;
-    host_control::stop_once(|_| {
-        calls += 1;
-        Ok(json!({"alive":false}))
-    })
-    .unwrap();
-    assert_eq!(calls, 1);
 }
 
 #[test]

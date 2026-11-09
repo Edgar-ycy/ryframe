@@ -159,9 +159,13 @@ class ReferenceTests(unittest.TestCase):
         self.assertEqual(tools.create_object_if_absent.call_args.args[:2],
                          ("uploads", "target/tenant/file.txt"))
         for call in tools.restore_database.call_args_list:
-            self.assertEqual(call.args[1], ["sys_post"])
+            _, tables, path, expected = call.args
+            self.assertEqual(tables, ["sys_post"])
+            artifact = next(item for item in manifest["artifacts"]
+                            if item["relative_path"] == path.relative_to(root).as_posix())
+            self.assertEqual(expected, {key: artifact[key] for key in ("bytes", "sha256")})
 
-    def test_restore_requires_running_record_same_physical_targets_and_stopped_processes(self):
+    def test_restore_requires_running_record_and_same_physical_targets(self):
         manifest = inventory(self.plan)
         for change in (lambda value: value.update(status="succeeded"),
                        lambda value: value["plan"]["databases"][0].update(database="source_control"),
@@ -170,11 +174,6 @@ class ReferenceTests(unittest.TestCase):
             change(record)
             with self.assertRaises(ValueError):
                 execution.validate_restore_record(self.plan, manifest, record, record["plan"])
-        with patch.object(reference, "read_process", return_value={"pid": 1}), patch.object(reference, "process_identity", return_value={"pid": 1}):
-            with self.assertRaisesRegex(ValueError, "必须停止"):
-                reference.require_stopped(self.plan, "source")
-        with patch.object(reference, "read_process", return_value={"pid": 1}), patch.object(reference, "process_identity", return_value=None):
-            reference.require_stopped(self.plan, "source")
 
     def test_source_with_existing_tenant_cannot_be_seeded(self):
         tools = Mock()

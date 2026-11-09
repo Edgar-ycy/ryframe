@@ -15,6 +15,16 @@ use super::process::{
     with_process_log,
 };
 
+/// 捕获长时私有阶段的输出，沿用进程树取消规则，不设置总运行期限。
+pub(super) fn command_output_with_input(
+    dir: &Path,
+    executable: &str,
+    args: &[&str],
+    input: &[u8],
+) -> crate::Result<String> {
+    crate::process::command_output_impl(dir, executable, args, &[], (true, true), Some(input))
+}
+
 #[test]
 fn process_liveness_distinguishes_the_current_and_invalid_pid() {
     assert!(process_is_running(std::process::id()));
@@ -717,7 +727,7 @@ fn stdin_capture_transports_utf8_once_without_environment_and_preserves_failure(
         value: value.into(),
     })
     .unwrap();
-    let output = super::process::command_output_with_input(
+    let output = command_output_with_input(
         Path::new("."),
         executable.to_str().unwrap(),
         &args,
@@ -743,7 +753,7 @@ fn stdin_capture_transports_utf8_once_without_environment_and_preserves_failure(
         marker: marker.clone(),
     })
     .unwrap();
-    let error = super::process::command_output_with_input(
+    let error = command_output_with_input(
         Path::new("."),
         executable.to_str().unwrap(),
         &args,

@@ -1,7 +1,10 @@
 use super::{LAUNCH, ROLES, check, descriptor, files, hex, integer, text};
 use crate::{
     Result,
-    recovery::clone::native::{json as strict, resources::common},
+    recovery::{
+        clone::native::{json as strict, resources::common},
+        fixture_control::services::lifecycle::readonly::check_restore_completion,
+    },
 };
 use serde_json::{Value, json};
 use std::path::Path;
@@ -21,7 +24,11 @@ pub(super) fn commands(value: &Value) -> Result<()> {
     }
     Ok(())
 }
-fn tree(directory: &Path, role: &str, scope: &Value) -> Result<Value> {
+pub(in crate::recovery::runtime) fn tree(
+    directory: &Path,
+    role: &str,
+    scope: &Value,
+) -> Result<Value> {
     let value = files::document(&directory.join(format!("{role}-tree.json")))?;
     strict::exact(
         &value,
@@ -59,7 +66,11 @@ fn tree(directory: &Path, role: &str, scope: &Value) -> Result<Value> {
     )?;
     Ok(value)
 }
-fn process(directory: &Path, role: &str, scope: &Value) -> Result<(Value, Value)> {
+pub(in crate::recovery::runtime) fn process(
+    directory: &Path,
+    role: &str,
+    scope: &Value,
+) -> Result<(Value, Value)> {
     let path = directory.join(format!("{role}.json"));
     let value = files::document(&path)?;
     strict::exact(
@@ -111,22 +122,26 @@ pub(super) fn generation_receipts(value: &Value, directory: &Path, commands: &Va
         )?;
         if !item["tree"].is_null() {
             let current = tree(directory, role, scope)?;
-            let (identity, _) = process(directory, role, scope)?;
             check(
                 current == item["tree"]
                     && current["operation_id"] == item["operation_id"]
-                    && current["process"] == identity
                     && directory.join(format!("{role}.log")).is_file(),
                 "恢复运行状态没有绑定当前进程树文件",
             )?;
+            if process_path.try_exists()? {
+                let (identity, _) = process(directory, role, scope)?;
+                check(
+                    current["process"] == identity,
+                    "恢复运行树与产品进程收据不同",
+                )?;
+            } else {
+                interrupted_closed_tree(value, role, &current, commands)?;
+            }
         }
         if !item["completion"].is_null() {
-            let name = format!(
-                "{role}-members-{}-stopped.json",
-                text(&item["operation_id"])?
-            );
-            files::document(&directory.join(&name))?;
-            files::bound(&directory.join(name), &item["completion"])?;
+            let path = completion_path(directory, role, item)?;
+            files::document(&path)?;
+            files::bound(&path, &item["completion"])?;
         }
     }
     check(
@@ -134,6 +149,44 @@ pub(super) fn generation_receipts(value: &Value, directory: &Path, commands: &Va
         "运行代次缺少成功启动收据",
     )
 }
+fn completion_path(directory: &Path, role: &str, item: &Value) -> Result<std::path::PathBuf> {
+    let operation = text(&item["operation_id"])?;
+    Ok(directory.join(format!("{role}-members-{operation}-stopped.json")))
+}
+
+fn interrupted_closed_tree(
+    value: &Value,
+    role: &str,
+    tree: &Value,
+    commands: &Value,
+) -> Result<()> {
+    let item = &value["roles"][role];
+    check(
+        value["launch"].is_null()
+            && matches!(
+                value["status"].as_str(),
+                Some("stopping" | "stop_failed" | "stopped" | "start_failed" | "cleanup_failed")
+            )
+            && item["state"] == "stopped"
+            && !item["completion"].is_null(),
+        "缺少原产品进程收据，且无启动中断后的完整停止证明",
+    )?;
+    check(
+        crate::recovery::runtime::dataset_authority::commands::same_path(
+            &super::path(&tree["process"]["executable"])?,
+            &super::path(&commands[role][0])?,
+        )?,
+        "启动中断的原进程树与登记产物不同",
+    )?;
+    // 旧代次可以与后续代次共用端口。这里只验证原监控器关闭证据；Stop 和 Status
+    // 对当前代次另行动态核验原成员退出和端口闭口。
+    let directory = super::path(&value["directory"])?;
+    let path = completion_path(&directory, role, item)?;
+    files::bound(&path, &item["completion"])?;
+    check_restore_completion(tree, &files::document(&path)?)?;
+    files::bound(&path, &item["completion"])
+}
+
 pub(super) fn validate_launch(
     value: &Value,
     directory: &Path,

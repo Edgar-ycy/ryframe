@@ -5,7 +5,6 @@ use std::{
 };
 
 use super::super::{
-    export::transport::Transport,
     json::{self as json_io, exact},
     resources::common,
 };
@@ -94,12 +93,39 @@ impl<'a> StorageInputs<'a> {
     }
 }
 
-pub(crate) fn verify_with_observer(
+/// 用已登记的同一 RustFS/Redis 组合验证请求的原端口、配置及工具。
+pub(in crate::recovery) fn arm_fixture_projection(
+    backend: &Path,
+    run: &Path,
+    expected: &Value,
+) -> Result<(super::fresh::selection::Selected, Option<Value>)> {
+    let projection = protocol::fixture_projection(backend, run, expected)?;
+    let cache = &projection["cache_runtime"];
+    let redis = super::fresh::selection::redis(
+        backend,
+        &expected["redis"],
+        (!cache.is_null()).then_some(cache),
+        true,
+    )?;
+    if projection["storage"]["redis"] != redis {
+        return Err("arm 夹具 Redis 后继改变了原端点或工具".into());
+    }
+    let runtime = &projection["runtime"];
+    Ok((
+        super::fresh::selection::Selected {
+            value: projection["storage"].clone(),
+            runtime: (!runtime.is_null()).then(|| runtime.clone()),
+        },
+        (!cache.is_null()).then(|| cache.clone()),
+    ))
+}
+
+pub(super) fn verify_with_observer(
     context: &TargetContext,
+    selected: &generation::Selected,
     observer: &impl StorageObserver,
 ) -> Result<()> {
     let review = review(context)?;
-    let selected = generation::select(context)?;
     let rustfs = selected.storage.get("rustfs").ok_or("目标缺少 RustFS")?;
     let identity = common::validate_process_identity(&rustfs["identity"])?;
     let inputs = context.storage_inputs();

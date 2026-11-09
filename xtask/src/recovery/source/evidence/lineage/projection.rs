@@ -137,8 +137,8 @@ pub(super) fn objects(dataset: &Value, copy: &Value, image: &Value) -> Result<Va
             observed.insert((bucket.clone(), key.clone()));
         }
     }
-    if !declared.is_empty() || business.len() != 256 || additional.len() != 1 {
-        return Err("256个业务对象与唯一探针不完整".into());
+    if !declared.is_empty() || business.len() != 256 || additional.len() > 1 {
+        return Err("需要完整的256个业务对象，额外探针最多一个".into());
     }
     if observed != planned {
         return Err("当前完整像包含复制计划之外的未知对象".into());
@@ -154,6 +154,6 @@ pub(super) fn objects(dataset: &Value, copy: &Value, image: &Value) -> Result<Va
             .ok_or("业务对象字节溢出")
     })?;
     Ok(
-        json!({"business_objects":business.len(),"business_bytes":bytes,"mapping_sha256":digest::plan_hash(&json!(business))?,"probe":additional[0],"verified_objects":planned.len()}),
+        json!({"business_objects":business.len(),"business_bytes":bytes,"mapping_sha256":digest::plan_hash(&json!(business))?,"probe":additional.first(),"verified_objects":planned.len()}),
     )
 }

@@ -41,17 +41,25 @@ class NativeDigestTests(unittest.TestCase):
         other = self.directory / "replacement.exe"
         shutil.copyfile(self.path, other)
         with frozen.protect_binaries([self.value]):
-            for operation in (self.writable, self.path.unlink, lambda: os.replace(other, self.path),
-                              lambda: self.path.rename(self.directory / "renamed.exe")):
-                with self.subTest(operation=operation), self.assertRaises(OSError):
-                    operation()
-            self.assertEqual(self.path.read_bytes(), self.original)
-            result = subprocess.run([str(self.path), "/?"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0, timeout=10)
-            self.assertEqual(result.returncode, 0)
-            self.assertEqual(file_digest(self.path), {
-                "bytes": len(self.original), "sha256": self.value["sha256"],
-            })
+            with patch.object(frozen, "_plain_digest", wraps=frozen._plain_digest) as read:
+                with frozen.protect_binary_invocation(dict(self.value)):
+                    for operation in (self.writable, self.path.unlink, lambda: os.replace(other, self.path),
+                                      lambda: self.path.rename(self.directory / "renamed.exe")):
+                        with self.subTest(operation=operation), self.assertRaises(OSError):
+                            operation()
+                    self.assertEqual(self.path.read_bytes(), self.original)
+                    result = subprocess.run([str(self.path), "/?"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                            creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
+                    self.assertEqual(result.returncode, 0)
+                    self.assertEqual(file_digest(self.path), {
+                        "bytes": len(self.original), "sha256": self.value["sha256"],
+                    })
+                with self.assertRaises(OSError):
+                    self.writable()
+                with self.assertRaisesRegex(ValueError, "不同摘要"), frozen.protect_binary_invocation(
+                        self.value | {"sha256": "0" * 64}):
+                    pass
+                read.assert_not_called()
         self.writable()
 
     def test_existing_writable_mapping_after_file_close_refuses_protection(self):
@@ -114,16 +122,35 @@ class NativeDigestTests(unittest.TestCase):
     def test_nested_collection_expansion_and_other_controller_are_rejected(self):
         other = self.directory / "second.exe"
         shutil.copyfile(self.path, other)
-        with frozen.protect_binaries([self.value]):
-            with self.assertRaises(ValueError), frozen.protect_binaries([
-                    self.value, {"path": str(other), "sha256": self.value["sha256"]}]):
+        other_binding = {"path": str(other), "sha256": self.value["sha256"]}
+
+        def foreign_controller():
+            with frozen.protect_binaries([self.value]):
                 pass
-            def foreign_controller():
-                with frozen.protect_binaries([self.value]):
-                    pass
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                with self.assertRaises(ValueError):
-                    executor.submit(foreign_controller).result()
+
+        def invoke(binding):
+            with frozen.protect_binary_invocation(binding):
+                pass
+
+        with frozen.protect_binaries([self.value]):
+            with self.assertRaises(ValueError), frozen.protect_binaries([self.value, other_binding]):
+                pass
+            with patch.object(frozen, "_plain_digest", wraps=frozen._plain_digest) as read:
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    with self.assertRaises(ValueError):
+                        executor.submit(foreign_controller).result()
+                    executor.submit(invoke, self.value).result()
+                invoke(other_binding)
+                self.assertEqual([call.args[0] for call in read.call_args_list],
+                                 [self.path, self.path, other, other])
+
+        with patch.object(frozen, "_plain_digest", wraps=frozen._plain_digest) as read:
+            invoke(self.value)
+            self.assertEqual([call.args[0] for call in read.call_args_list], [self.path, self.path])
+        with frozen.protect_files([self.value]):
+            with patch.object(frozen, "_plain_digest", wraps=frozen._plain_digest) as read:
+                invoke(self.value)
+                self.assertEqual([call.args[0] for call in read.call_args_list], [self.path, self.path])
 
     def test_exception_releases_all_handles(self):
         other = self.directory / "second.exe"

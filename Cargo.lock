@@ -5163,6 +5163,7 @@ name = "xtask"
 version = "0.13.1"
 dependencies = [
  "async-trait",
+ "axum",
  "base64 0.23.1",
  "chrono",
  "file-id",
@@ -5170,6 +5171,9 @@ dependencies = [
  "glob",
  "hex",
  "hmac",
+ "hyper",
+ "hyper-util",
+ "mime_guess",
  "nix 0.29.0",
  "notify",
  "percent-encoding",
@@ -5184,6 +5188,7 @@ dependencies = [
  "same-file",
  "serde",
  "serde_json",
+ "sha1 0.11.0",
  "sha2 0.11.0",
  "tempfile",
  "tokio",

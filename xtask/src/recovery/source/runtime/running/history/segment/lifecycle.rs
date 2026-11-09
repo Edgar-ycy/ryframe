@@ -54,11 +54,7 @@ pub(super) fn read(
     };
     reregistration(context, &mut generation)?;
     replay(context, &mut generation)?;
-    let exported = if generation.pending {
-        None
-    } else {
-        generation_tail(generation.rows, generation.previous)?
-    };
+    let exported = export_before_arms(&generation)?;
     if generation.pending && !cleanup.is_empty() {
         return Err("C69 重试授权完成前不能清理资源".into());
     }
@@ -86,6 +82,30 @@ struct Generation<'a> {
     records: Vec<Value>,
     replay: Value,
     pending: bool,
+}
+
+fn export_before_arms<'a>(generation: &Generation<'a>) -> Result<Option<&'a Value>> {
+    let arm_at = generation
+        .rows
+        .iter()
+        .position(|row| super::operation(row) == ("seed-runtime", "arm-input"))
+        .unwrap_or(generation.rows.len());
+    let (generation_rows, arm_rows) = generation.rows.split_at(arm_at);
+    if arm_rows
+        .iter()
+        .any(|row| super::operation(row) != ("seed-runtime", "arm-input"))
+    {
+        return Err("ARM 签发后不能继续生成或重新导出来源".into());
+    }
+    let exported = if generation.pending {
+        None
+    } else {
+        generation_tail(generation_rows, generation.previous)?
+    };
+    if !arm_rows.is_empty() && exported.is_none() {
+        return Err("ARM 签发要求同一分段来源的正式共享导出".into());
+    }
+    Ok(exported)
 }
 
 fn reregistration(context: &super::Context<'_>, generation: &mut Generation<'_>) -> Result<()> {

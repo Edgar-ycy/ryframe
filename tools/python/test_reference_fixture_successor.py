@@ -1,12 +1,7 @@
-"""seed review successor 的纯关系模型必须可重算并拒绝任何资源碰撞。"""
+"""核验已发布 seed 来源消费后继关系与前后文件绑定。"""
 
 from __future__ import annotations
 
-from rate_limit_tool import tool_binding
-import copy
-from contextlib import redirect_stderr
-import io
-import json
 from pathlib import Path
 import sys
 import unittest
@@ -14,8 +9,6 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from workspace_directory import WorkspaceDirectory
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 import reference_fixture_successor as successor
 import devex_clone_target_binding as target_binding
 from devex_clone_capture import write_json
@@ -37,149 +30,6 @@ class SuccessorTests(unittest.TestCase):
         path = self.local / name
         write_json(path, value)
         return path, binding(path)
-
-    def review(self, token: str, port: int) -> dict:
-        root = self.local / token
-        scopes = {}
-        for index, side in enumerate(successor.SIDES):
-            scope = f"fixture-{side}-{token}"
-            scopes[side] = {
-                "scope_id": scope,
-                "runtime_dir": str(root / f"runtime-{side}"),
-                "identity_ledger": str(root / f"identity-{side}"),
-                "api_url": f"http://127.0.0.1:{port + index}",
-                "worker_ready_url": f"http://127.0.0.1:{port + 10 + index}/readyz",
-                "frontend_url": f"http://127.0.0.1:{port + 20 + index}",
-                "objects": {
-                    "endpoint": f"http://127.0.0.1:{port + 30}",
-                    "region": "us-east-1",
-                },
-                "redis": {
-                    "url": f"redis://127.0.0.1:{port + 32}/0",
-                    "namespace": f"ryframe:{{{scope}}}:",
-                    "ownership_key": f"ryframe:{{{scope}}}:.ryframe-owner",
-                    "ownership_value": f"ryframe-owner:v1:{scope}:redis",
-                },
-                "databases": [
-                    {
-                        "key": key,
-                        "database": f"{token}_{side}_{key.replace('-', '_')}",
-                        "expected_server_uuid": f"00000000-0000-0000-{index:04x}-{position:012x}",
-                    }
-                    for position, key in enumerate(
-                        ("shared-control", "shared", "dedicated-a", "dedicated-b"),
-                        start=1,
-                    )
-                ],
-            }
-        return {
-            "future_root": str(root),
-            "scopes": scopes,
-            "services": {
-                "rustfs": {
-                    "api": f"http://127.0.0.1:{port + 30}",
-                    "console": f"http://127.0.0.1:{port + 31}",
-                    "data_dir": str(root / "rustfs"),
-                },
-                "redis": {
-                    "endpoint": f"127.0.0.1:{port + 32}",
-                    "directory": str(root / "redis"),
-                },
-            },
-        }
-
-    def test_collision_projection_covers_all_resource_classes_and_rejects_overlap(self):
-        predecessor = self.review("old", 11000)
-        current = self.review("new", 12000)
-        projection = successor.collision_projection(predecessor, current)
-        self.assertEqual(set(projection), {"predecessor", "successor"})
-        self.assertEqual(
-            set(projection["successor"]),
-            {"scopes", "databases", "redis", "objects", "paths", "sockets"},
-        )
-        self.assertEqual(len(projection["successor"]["databases"]), 12)
-        self.assertEqual(len(projection["successor"]["objects"]), 15)
-
-        mutations = {
-            "database": lambda value: value["scopes"]["base"]["databases"][0].update(
-                database=predecessor["scopes"]["seed"]["databases"][0]["database"],
-                expected_server_uuid=predecessor["scopes"]["seed"]["databases"][0][
-                    "expected_server_uuid"
-                ],
-            ),
-            "scope": lambda value: value["scopes"]["base"].update(
-                scope_id=predecessor["scopes"]["seed"]["scope_id"]
-            ),
-            "path": lambda value: value["scopes"]["base"].update(
-                runtime_dir=predecessor["scopes"]["seed"]["runtime_dir"]
-            ),
-            "socket": lambda value: value["scopes"]["base"].update(
-                api_url=predecessor["scopes"]["seed"]["api_url"]
-            ),
-        }
-        for label, mutate in mutations.items():
-            changed = copy.deepcopy(current)
-            mutate(changed)
-            with self.subTest(label=label), self.assertRaises(ValueError):
-                successor.collision_projection(predecessor, changed)
-
-    def test_ready_review_binds_its_pending_preflight_parent(self):
-        pending = {
-            "ready_for_execution": False,
-            "semantic": "same",
-            "tools": {"old": True},
-        }
-        pending_path, pending_binding = self.file("pending.json", pending)
-        ready = {
-            "ready_for_execution": True,
-            "semantic": "same",
-            "tools": {"current": True},
-            "preflight": {"supersedes": pending_binding},
-        }
-        ready_path, _ = self.file("ready.json", ready)
-
-        def validate_preflight(previous, current):
-            if previous["semantic"] != current["semantic"]:
-                raise ValueError("semantic drift")
-
-        with (
-            patch.object(successor, "validate_review"),
-            patch.object(
-                successor,
-                "validate_preflight_successor",
-                side_effect=validate_preflight,
-            ),
-        ):
-            observed, descriptor = successor._ready_review(self.backend, ready_path)
-        self.assertEqual(observed, ready)
-        self.assertEqual(descriptor["canonical_sha256"], plan_hash(ready))
-
-        ready["semantic"] = "changed"
-        ready_path.unlink()
-        write_json(ready_path, ready)
-        with (
-            patch.object(successor, "validate_review"),
-            patch.object(
-                successor,
-                "validate_preflight_successor",
-                side_effect=validate_preflight,
-            ),
-            self.assertRaisesRegex(ValueError, "语义不同"),
-        ):
-            successor._ready_review(self.backend, ready_path)
-
-        ready["semantic"] = "same"
-        ready_path.unlink()
-        write_json(ready_path, ready)
-        pending["binding_drift"] = True
-        pending_path.unlink()
-        write_json(pending_path, pending)
-        with (
-            patch.object(successor, "validate_review"),
-            patch.object(successor, "validate_preflight_successor"),
-            self.assertRaisesRegex(ValueError, "输入绑定已变化"),
-        ):
-            successor._ready_review(self.backend, ready_path)
 
     def test_pending_request_has_a_dedicated_non_executable_validator(self):
         base = Path(__file__).resolve().parents[2] / ".local-tests/python-unit"
@@ -204,164 +54,6 @@ class SuccessorTests(unittest.TestCase):
                 fixture.request,
                 {**fixture.request["review"], "sha256": "f" * 64},
             )
-
-    def test_build_bridges_distinct_historical_and_current_reviews(self):
-        _, inner_registration = self.file(
-            "source-registration.json",
-            {"kind": "devex-clone-seed-source-registration"},
-        )
-        source_path, source_result_binding = self.file(
-            "0052.json",
-            {
-                "status": "seed_source_registered",
-                "registration": inner_registration,
-                "remote_writes": 0,
-                "outbox_drained": True,
-                "restore_qualified": False,
-            },
-        )
-        prior = {**self.review("old", 11000), "ready_for_execution": True}
-        _, prior_file = self.file("predecessor-previous-ready.json", prior)
-        predecessor = {**prior, "preflight": {"supersedes": prior_file}}
-        successor_pending = {
-            **self.review("new", 12000),
-            "ready_for_execution": False,
-            "semantic": "same",
-        }
-        _, successor_pending_file = self.file(
-            "successor-pending.json", successor_pending
-        )
-        successor_review = {
-            **successor_pending,
-            "ready_for_execution": True,
-            "preflight": {"supersedes": successor_pending_file},
-        }
-        predecessor_path, predecessor_file = self.file("predecessor.json", predecessor)
-        successor_path, successor_file = self.file("successor.json", successor_review)
-        predecessor_descriptor = {
-            **predecessor_file,
-            "canonical_sha256": plan_hash(predecessor),
-        }
-        successor_descriptor = {
-            **successor_file,
-            "canonical_sha256": plan_hash(successor_review),
-        }
-        predecessor_request_path, predecessor_request_file = self.file(
-            "predecessor-request.json",
-            {"id": "historical-seed", "side": "seed", "review": predecessor_descriptor},
-        )
-        requests = {}
-        for side in successor.SIDES:
-            request = {
-                "id": f"fresh-{side}",
-                "side": side,
-                "review": successor_descriptor,
-                "storage": {"generation": "seed-service-r1"},
-            }
-            requests[side] = self.file(f"{side}.json", request)[0]
-        with (
-            patch.object(successor, "validate_preflight_successor") as preflight,
-            patch.object(successor, "request_binding"),
-            patch.object(successor, "predecessor_request_binding") as history,
-        ):
-            result = successor.build(
-                self.backend,
-                source_path,
-                predecessor_path,
-                predecessor_request_path,
-                successor_path,
-                requests,
-                "successor-r1",
-            )
-        self.assertEqual(
-            [call.args for call in preflight.call_args_list],
-            [(prior, predecessor), (successor_pending, successor_review)],
-        )
-        history.assert_called_once_with(
-            self.backend, {"id": "historical-seed", "side": "seed", "review": predecessor_descriptor},
-            predecessor_descriptor,
-        )
-        self.assertNotEqual(predecessor_file, successor_pending_file)
-        self.assertEqual(result["predecessor_review"], predecessor_descriptor)
-        self.assertEqual(result["successor_review"], successor_descriptor)
-        self.assertNotEqual(
-            result["predecessor_review"]["path"],
-            successor_review["preflight"]["supersedes"]["path"],
-        )
-        self.assertEqual(result["source_result"], source_result_binding)
-        self.assertEqual(result["source_registration"], inner_registration)
-        self.assertEqual(
-            result["predecessor_request"]["path"], predecessor_request_file["path"]
-        )
-        self.assertEqual(set(result["requests"]), set(successor.SIDES))
-        self.assertEqual(
-            successor.relationship_hash(result), result["relationship_sha256"]
-        )
-
-        changed = copy.deepcopy(result)
-        changed["collision_projection"]["successor"]["scopes"][0]["identity"] = (
-            "tampered"
-        )
-        self.assertNotEqual(
-            successor.relationship_hash(changed), result["relationship_sha256"]
-        )
-
-        candidate = requests["candidate"]
-        value = {
-            "id": "fresh-candidate",
-            "side": "candidate",
-            "review": successor_descriptor,
-            "storage": {"generation": "other"},
-        }
-        candidate.unlink()
-        write_json(candidate, value)
-        with (
-            patch.object(successor, "validate_preflight_successor"),
-            patch.object(successor, "request_binding"),
-            patch.object(successor, "predecessor_request_binding"),
-            self.assertRaisesRegex(ValueError, "服务代次"),
-        ):
-            successor.build(
-                self.backend,
-                source_path,
-                predecessor_path,
-                predecessor_request_path,
-                successor_path,
-                requests,
-                "successor-r1",
-            )
-
-    def test_cli_requires_explicit_write_before_reading_inputs(self):
-        arguments = [
-            "reference_fixture_successor.py",
-            "relationship",
-            "--backend-dir",
-            str(self.backend),
-            "--source-result",
-            "missing-source.json",
-            "--predecessor-review",
-            "missing-predecessor.json",
-            "--predecessor-request",
-            "missing-request.json",
-            "--successor-review",
-            "missing-successor.json",
-            "--seed-request",
-            "missing-seed.json",
-            "--base-request",
-            "missing-base.json",
-            "--candidate-request",
-            "missing-candidate.json",
-            "--id",
-            "successor-r1",
-            "--output",
-            "missing-output.json",
-        ]
-        with (
-            redirect_stderr(io.StringIO()),
-            self.assertRaises(SystemExit) as raised,
-        ):
-            successor.main([*arguments[1:], "--native-tool", json.dumps(tool_binding())])
-        self.assertEqual(raised.exception.code, 2)
 
     def test_published_source_uses_predecessor_validator_and_rechecks_relationship(self):
         historical = {"id": "historical-seed", "side": "seed"}
@@ -408,7 +100,7 @@ class SuccessorTests(unittest.TestCase):
         with (
             patch.object(
                 successor,
-                "_validated_relationship",
+                "review_successor_binding",
                 side_effect=[relationship, relationship],
             ) as validate_relationship,
             patch.object(successor, "_deep_published_source", side_effect=deep_source),
@@ -451,7 +143,7 @@ class SuccessorTests(unittest.TestCase):
 
         with (
             patch.object(
-                successor, "_validated_relationship", return_value=relationship
+                successor, "review_successor_binding", return_value=relationship
             ),
             patch.object(successor, "_deep_published_source", side_effect=wrong_seed),
             self.assertRaisesRegex(ValueError, "初始化历史"),
@@ -469,7 +161,7 @@ class SuccessorTests(unittest.TestCase):
 
         with (
             patch.object(
-                successor, "_validated_relationship", return_value=relationship
+                successor, "review_successor_binding", return_value=relationship
             ),
             patch.object(
                 successor, "_deep_published_source", side_effect=wrong_registration
@@ -491,7 +183,7 @@ class SuccessorTests(unittest.TestCase):
         with (
             patch.object(
                 successor,
-                "_validated_relationship",
+                "review_successor_binding",
                 side_effect=[relationship, changed],
             ),
             patch.object(successor, "_deep_published_source", side_effect=valid_source),

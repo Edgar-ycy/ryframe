@@ -4,8 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from pathlib import Path, PureWindowsPath
-import re
+from pathlib import Path
 import uuid
 
 
@@ -49,14 +48,6 @@ def plain(path):
     return path
 
 
-def linux_path(value):
-    path = PureWindowsPath(value)
-    if (not path.is_absolute() or not re.fullmatch(r"[A-Za-z]:", path.drive)
-            or ".." in path.parts or any(":" in part for part in path.parts[1:])):
-        raise ValueError("WSL 仅映射已登记 Windows 盘符绝对路径")
-    return "/mnt/" + path.drive[0].lower() + "/" + "/".join(path.parts[1:])
-
-
 def validate(request, *, files=True):
     from devex_clone_cache_native import invoke
     invoke("validate", request=request, files=files)
@@ -72,26 +63,3 @@ def validate(request, *, files=True):
 def inspect_start(request, output):
     from devex_clone_cache_native import invoke
     return invoke("inspect", request=request, output=str(output))
-
-
-def start(backend, request, environment, output, guard):
-    from devex_clone_cache_native import exchange
-    def port(operation, arguments):
-        if operation != "checkpoint" or arguments is not None:
-            raise ValueError("缓存启动拒绝未知回调")
-        return guard()
-    return exchange({"format_version": 1, "kind": "ryframe-cache-process", "operation": "start-session",
-                     "arguments": {"request": request, "private": environment, "output": str(output)}}, port)
-
-
-def observe(backend, request, environment, runtime, output=None):
-    from devex_clone_cache_native import invoke
-    result = invoke("observe", request=request, runtime=runtime)
-    if output is not None:
-        write(Path(output) / "observed.json", result)
-    return result
-
-
-def stop(backend, request, environment, runtime, output):
-    from devex_clone_cache_native import invoke
-    return invoke("stop", request=request, runtime=runtime, output=str(output))

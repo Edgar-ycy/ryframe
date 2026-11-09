@@ -1,23 +1,24 @@
-//! Windows 端的原代次观察与停止；失败停止仅允许一次只读复核。
-use super::{
-    super::{json as doc, resources::common},
-    diagnostic::{self, Category},
-    evidence, facts, model, native_tool, process,
-};
-use crate::{
-    Result, recovery::fixture_control::services::lifecycle::readonly::process as identity,
-};
-use serde_json::{Value, json};
+//! 本机 Windows Redis 的观察、停止与独占端口检查。
+use super::diagnostic;
+use crate::Result;
+#[cfg(any(test, windows))]
+use diagnostic::Category;
+use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
+use std::path::Path;
+#[cfg(any(test, windows))]
 use std::{
     net::{Ipv4Addr, SocketAddrV4},
-    path::Path,
     time::{Duration, Instant},
 };
 
+#[cfg(any(test, windows))]
 pub(super) fn bind_and_close(request: &Value) -> Result<()> {
     let port = u16::try_from(request["port"].as_u64().ok_or("缓存端口无效")?)?;
     bind_once(port).map_err(|(_, error)| error.into())
 }
+#[cfg(any(test, windows))]
 fn bind_once(port: u16) -> std::result::Result<(), (Category, std::io::Error)> {
     let socket = tokio::net::TcpSocket::new_v4()
         .map_err(|error| (Category::PrelaunchSocketFailed, error))?;
@@ -31,6 +32,7 @@ fn bind_once(port: u16) -> std::result::Result<(), (Category, std::io::Error)> {
     Ok(())
 }
 
+#[cfg(any(test, windows))]
 pub(super) fn wait_before_start(
     request: &Value,
     guard: &mut impl FnMut() -> Result<()>,
@@ -59,6 +61,7 @@ pub(super) fn wait_before_start(
     )
 }
 
+#[cfg(any(test, windows))]
 fn wait_for_release(
     deadline: Instant,
     guard: &mut impl FnMut() -> Result<()>,
@@ -135,73 +138,16 @@ async fn occupied_prelaunch_port_keeps_bind_stage_and_os_code_across_diagnostic_
     bind_and_close(&request).unwrap();
 }
 
-pub(super) fn launcher(request: &Value, runtime: &Value, required: bool) -> Result<bool> {
-    let expected = &runtime["launcher"];
-    model::identity(expected, false)?;
-    let pid = u32::try_from(expected["pid"].as_u64().ok_or("WSL PID 无效")?)?;
-    let Some(actual) = common::process_identity(pid)? else {
-        if required {
-            return Err("缓存 WSL 监督器已退出".into());
-        }
-        return Ok(false);
-    };
-    let output = Path::new(doc::text(&runtime["output"], "缓存运行目录")?);
-    if actual != *expected
-        || identity::arguments(expected)? != evidence::command(request, output, "serve")?
-    {
-        return Err("缓存 WSL 监督器创建身份或完整参数变化".into());
-    }
-    Ok(true)
-}
-
 pub(crate) fn observe(backend: &Path, request: &Value, runtime: &Value) -> Result<Value> {
-    if request["format_version"] == 3 {
-        #[cfg(windows)]
-        return super::windows::observe(backend, request, runtime);
-        #[cfg(not(windows))]
-        return Err("Windows Redis 原生观察只支持本机 Windows".into());
+    super::require_windows(request)?;
+    #[cfg(windows)]
+    return super::windows::observe(backend, request, runtime);
+    #[cfg(not(windows))]
+    {
+        let _ = (backend, runtime);
+        Err("Windows Redis 原生观察只支持本机 Windows".into())
     }
-    model::validate(backend, request, true)?;
-    let tool = native_tool::from_request(request)?;
-    tool.finish(backend)?;
-    launcher(request, runtime, true)?;
-    let before = process::call(backend, request, runtime, "observe")?;
-    if before["alive"] != true || before["boot_id"] != runtime["boot_id"] {
-        return Err("缓存原运行代次已退出".into());
-    }
-    let observed = facts::bounded(backend, request)?;
-    facts::check(
-        request,
-        &runtime["linux_identity"],
-        &observed,
-        &runtime["redis"]["run_id"],
-    )?;
-    if process::call(backend, request, runtime, "observe")? != before {
-        return Err("缓存认证观察期间内核代次变化".into());
-    }
-    let mut redis = json!({});
-    for key in [
-        "wsl",
-        "distribution",
-        "port",
-        "executable",
-        "sha256",
-        "configuration",
-    ] {
-        redis[key] = request[key].clone();
-    }
-    redis["pid"] = runtime["linux_identity"]["pid"].clone();
-    redis["started"] = runtime["linux_identity"]["started"].clone();
-    redis["run_id"] = observed["run_id"].clone();
-    let mut result = runtime.clone();
-    result["redis"] = redis;
-    result["facts"] = observed;
-    tool.finish(backend)?;
-    model::validate(backend, request, true)?;
-    Ok(result)
 }
-
-mod stop;
 
 pub(crate) fn stop(
     backend: &Path,
@@ -209,13 +155,7 @@ pub(crate) fn stop(
     runtime: &Value,
     output: &Path,
 ) -> Result<Value> {
-    if request["format_version"] == 3 {
-        #[cfg(windows)]
-        return super::windows::stop(backend, request, runtime, output, || Ok(()), false);
-        #[cfg(not(windows))]
-        return Err("Windows Redis 原生停止只支持本机 Windows".into());
-    }
-    stop::run(backend, request, runtime, output, || Ok(()), false)
+    stop_with(backend, request, runtime, output, || Ok(()), false)
 }
 
 pub(crate) fn stop_guarded(
@@ -225,47 +165,36 @@ pub(crate) fn stop_guarded(
     output: &Path,
     guard: impl FnMut() -> Result<()>,
 ) -> Result<Value> {
-    if request["format_version"] == 3 {
-        #[cfg(windows)]
-        return super::windows::stop(backend, request, runtime, output, guard, true);
-        #[cfg(not(windows))]
-        return Err("Windows Redis 原生停止只支持本机 Windows".into());
+    stop_with(backend, request, runtime, output, guard, true)
+}
+
+fn stop_with(
+    backend: &Path,
+    request: &Value,
+    runtime: &Value,
+    output: &Path,
+    guard: impl FnMut() -> Result<()>,
+    wait: bool,
+) -> Result<Value> {
+    super::require_windows(request)?;
+    #[cfg(windows)]
+    return super::windows::stop(backend, request, runtime, output, guard, wait);
+    #[cfg(not(windows))]
+    {
+        let _ = (backend, runtime, output, guard, wait);
+        Err("Windows Redis 原生停止只支持本机 Windows".into())
     }
-    stop::run(backend, request, runtime, output, guard, true)
 }
 
 pub(crate) fn closed_port(backend: &Path, request: &Value, runtime: &Value) -> Result<()> {
-    if request["format_version"] == 3 {
-        let observation = super::readonly::status(backend, request, runtime, None)?;
-        if observation["state"] != "stopped" {
-            return Err("原 Windows Redis 代次尚未关闭".into());
-        }
-        return Ok(());
-    }
-    model::validate(backend, request, true)?;
-    let tool = native_tool::from_request(request)?;
-    tool.finish(backend)?;
-    let observed = evidence::inspect(
-        request,
-        Path::new(doc::text(&runtime["output"], "原缓存目录")?),
-    )?;
-    if observed.as_object().is_none_or(|fields| {
-        fields
-            .iter()
-            .any(|(key, value)| runtime.get(key) != Some(value))
-    }) || launcher(request, runtime, false)?
-    {
-        return Err("原缓存收据或launcher身份变化".into());
-    }
-    bind_after_stop(request, false)?;
-    tool.finish(backend)?;
-    model::validate(backend, request, true)?;
-    if launcher(request, runtime, false)? {
-        return Err("独占绑定后原launcher身份变化".into());
+    let observation = super::readonly::status(backend, request, runtime, None)?;
+    if observation["state"] != "stopped" {
+        return Err("原 Windows Redis 代次尚未关闭".into());
     }
     Ok(())
 }
 
+#[cfg(windows)]
 pub(super) fn bind_after_stop(request: &Value, requested: bool) -> Result<()> {
     let port = u16::try_from(request["port"].as_u64().ok_or("缓存端口无效")?)?;
     bind_once(port).map_err(|(category, error)| {
@@ -282,16 +211,6 @@ pub(super) fn bind_after_stop(request: &Value, requested: bool) -> Result<()> {
 pub(crate) fn recovery_port_error(error: Box<dyn std::error::Error>) -> Box<dyn std::error::Error> {
     diagnostic::stop::capture(diagnostic::stop::Stage::Port, false, true, error)
 }
-pub(super) fn stop_once(mut call: impl FnMut(&str) -> Result<Value>) -> Result<(Value, bool)> {
-    Ok(match call("stop") {
-        Ok(value) => (value, false),
-        Err(original) => match call("check") {
-            Ok(value) if value["alive"] == false => (value, true),
-            _ => return Err(original),
-        },
-    })
-}
-
 #[cfg(test)]
 #[tokio::test]
 async fn prelaunch_wait_allows_only_actual_port_release_within_original_budget() {

@@ -10,14 +10,14 @@ use super::super::{
     input::request_physical,
     storage::StorageInputs,
 };
-use crate::Result;
+use crate::{Result, cli::CloneSide};
 
 pub(super) fn capture_source(
     context: &StorageInputs<'_>,
     source: &super::SourceBinding<'_>,
 ) -> Result<Value> {
     let execution = context.execution_backend()?;
-    let configuration_value = source_configuration(context, source.configuration)?;
+    let configuration_value = source_configuration(context, source.configuration, source.side)?;
     let selected = source.selected;
     if selected["scope_id"] != context.target()["scope_id"]
         || selected["databases"] != context.target()["databases"]
@@ -38,7 +38,9 @@ pub(super) fn capture_source(
     let observed = json!({"side":source.side.as_str(),"tools_plan_sha256":digest::plan_hash(source.plan.unwrap_or(&default_plan))?,
         "configuration":configuration_value,"physical":physical,"maintenance":common::binding(&path)?,"source":maintenance["source"]});
     common::bound_file(context.backend, source.maintenance, "来源维护构建")?;
-    if source_configuration(context, source.configuration)? != observed["configuration"] {
+    if source_configuration(context, source.configuration, source.side)?
+        != observed["configuration"]
+    {
         return Err("来源四库配置在读取期间变化".into());
     }
     source.scope.assert_unchanged()?;
@@ -141,6 +143,7 @@ pub(super) fn configuration(context: &StorageInputs<'_>) -> Result<Value> {
 pub(super) fn source_configuration(
     context: &StorageInputs<'_>,
     binding: Option<&Value>,
+    side: CloneSide,
 ) -> Result<Value> {
     let Some(binding) = binding else {
         return configuration(context);
@@ -148,20 +151,22 @@ pub(super) fn source_configuration(
     if binding["app_env"] != "test" {
         return Err("来源库存配置必须显式选择test".into());
     }
+    let execution = context.execution_backend()?;
+    let root = match side {
+        CloneSide::Source => context.backend,
+        CloneSide::Target => &execution,
+    };
     let directory = std::path::Path::new(text(&binding["directory"], "来源库存配置目录")?);
     let mut snapshots = Vec::new();
-    super::super::super::s3::app_configuration::load(context.backend, binding, &mut snapshots)?;
-    let observed = super::super::super::s3::app_configuration::configuration_value(
-        context.backend,
-        directory,
-        "test",
-    )?;
+    super::super::super::s3::app_configuration::load(root, binding, &mut snapshots)?;
+    let observed =
+        super::super::super::s3::app_configuration::configuration_value(root, directory, "test")?;
     if observed != *binding {
         return Err("来源库存配置绑定或共同配置缺失状态发生变化".into());
     }
     super::super::super::s3::app_configuration::unchanged(&snapshots)?;
     let (directory, files) = super::super::input::request_configuration::configuration_files(
-        context.backend,
+        root,
         &std::collections::BTreeMap::from([("APP_ENV".into(), "test".into())]),
         Some(&binding["directory"]),
     )?;

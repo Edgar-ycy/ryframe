@@ -8,6 +8,7 @@ use crate::{
             digest, export,
             input::BUCKETS,
             json as document,
+            lifecycle::manifest::fixture_storage,
             resources::common,
             s3::{Operation, app_configuration},
             target_verify::{self, guard::Generation, storage::StorageInputs},
@@ -73,21 +74,21 @@ pub(super) fn after(
 }
 
 fn target(frame: &Frame, owner: &Generation, storage: &Path, running: bool) -> Result<()> {
-    if frame.manifest["copy_stage"] == "seed_to_arm" {
-        let expected = &frame.manifest["target_storage_run"];
-        let actual = crate::recovery::clone::native::resources::storage::registered::registered(
-            &frame.backend,
-            storage,
-            crate::cli::CloneSide::Target,
-            None,
-        )?;
-        if actual.as_ref() != Some(&expected["storage"])
-            || super::super::binding::load(&frame.backend, storage, Some(owner))?
-                != expected["cache"]
-        {
-            return Err("API交接目标存储完整登记代次不同于原复制清单".into());
-        }
-    }
+    let fixture = arm_storage(frame, owner, storage)?;
+    let result = target_current(frame, owner, storage, running, fixture.as_ref());
+    super::locks::combine(
+        result,
+        fixture.map_or(Ok(()), |fixture| fixture.check(&frame.backend)),
+    )
+}
+
+fn target_current(
+    frame: &Frame,
+    owner: &Generation,
+    storage: &Path,
+    running: bool,
+    fixture: Option<&fixture_storage::Fixture>,
+) -> Result<()> {
     let environment: BTreeMap<String, String> = serde_json::from_value(
         common::read_bound(
             &frame.backend,
@@ -130,19 +131,7 @@ fn target(frame: &Frame, owner: &Generation, storage: &Path, running: bool) -> R
         &frame.selected["runtime_dir"],
         "原目标运行目录",
     )?))?;
-    let (selected, cache) = target_verify::fresh::selection::transition(
-        &frame.backend,
-        &frame.target,
-        Some(storage),
-        Some(owner),
-    )?;
-    target_verify::storage::protocol::execute(
-        &frame.backend,
-        &frame.output,
-        "storage-layout",
-        &json!({"request":frame.target_descriptor,"storage":selected.value,
-        "runtime":selected.runtime,"cache_runtime":cache}),
-    )?;
+    verify_target_storage_layout(frame, owner, storage, fixture)?;
     databases(&inputs, &configuration, || {
         owner.checkpoint()?;
         frame.protected.checkpoint()
@@ -164,6 +153,73 @@ fn target(frame: &Frame, owner: &Generation, storage: &Path, running: bool) -> R
         return Err("API交接期间原目标文件配置变化".into());
     }
     Ok(())
+}
+
+fn verify_target_storage_layout(
+    frame: &Frame,
+    owner: &Generation,
+    storage: &Path,
+    fixture: Option<&fixture_storage::Fixture>,
+) -> Result<()> {
+    let (selected, cache) = if let Some(fixture) = fixture {
+        fixture.check(&frame.backend)?;
+        let projection = target_verify::storage::arm_fixture_projection(
+            &frame.backend,
+            &fixture.run,
+            &frame.target["storage"],
+        )?;
+        fixture.check(&frame.backend)?;
+        projection
+    } else {
+        target_verify::fresh::selection::transition(
+            &frame.backend,
+            &frame.target,
+            Some(storage),
+            Some(owner),
+        )?
+    };
+    target_verify::storage::protocol::execute(
+        &frame.backend,
+        &frame.output,
+        "storage-layout",
+        &json!({"request":frame.target_descriptor,"storage":selected.value,
+        "runtime":selected.runtime,"cache_runtime":cache}),
+    )?;
+    Ok(())
+}
+
+fn arm_storage(
+    frame: &Frame,
+    owner: &Generation,
+    storage: &Path,
+) -> Result<Option<fixture_storage::Fixture>> {
+    if frame.manifest["copy_stage"] != "seed_to_arm" {
+        return Ok(None);
+    }
+    let expected = &frame.manifest["target_storage_run"];
+    if let Some(fixture) = fixture_storage::resolve(
+        &frame.backend,
+        &frame.manifest["target_registration"],
+        Some(expected),
+        true,
+    )? {
+        if fixture.run != storage {
+            return Err("API交接夹具代次不属于原运行目录".into());
+        }
+        return Ok(Some(fixture));
+    }
+    let actual = crate::recovery::clone::native::resources::storage::registered::registered(
+        &frame.backend,
+        storage,
+        crate::cli::CloneSide::Target,
+        None,
+    )?;
+    if actual.as_ref() != Some(&expected["storage"])
+        || super::super::binding::load(&frame.backend, storage, Some(owner))? != expected["cache"]
+    {
+        return Err("API交接目标存储完整登记代次不同于原复制清单".into());
+    }
+    Ok(None)
 }
 
 fn addresses(frame: &Frame, directory: &Path) -> Result<()> {

@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 
 use crate::{
     Result,
-    cli::{CloneCommand, CloneRuntimeOptions, PostCopyOptions, SeedRuntimeOptions, StorageOptions},
+    cli::{CloneCommand, CloneRuntimeOptions, StorageOptions},
     local_test_path::{LocalTestPathKind, validate_local_test_path},
 };
 
@@ -12,15 +12,19 @@ use crate::{
 pub(crate) mod native;
 
 pub(crate) fn protocol(command: &CloneCommand, root: &Path) -> Result<String> {
-    if let CloneCommand::PostCopy(options) = command
-        && native::post_process::entry::selected(options)
-    {
-        return Err("固定登记、准备和环境修订必须使用原生持锁正式入口".into());
+    if matches!(command, CloneCommand::PostCopy(_)) {
+        return Err("复制后阶段必须使用原生持锁正式入口".into());
+    }
+    if matches!(command, CloneCommand::SeedRuntime(_)) {
+        return Err("seed-runtime 由 Rust 正式入口执行".into());
     }
     if let CloneCommand::Runtime(options) = command
         && native::cache::handoff::selected(root, options)?
     {
         return Err("已登记post-copy目标API生命周期必须由原生完整树控制入口执行".into());
+    }
+    if matches!(command, CloneCommand::RecoverCopy { .. }) {
+        return Err("复制控制器锁回收仅通过 Rust 原生入口执行".into());
     }
     if matches!(
         command,
@@ -78,14 +82,11 @@ fn options(command: &CloneCommand, root: &Path) -> Result<Value> {
         CloneCommand::Recover {
             run_dir,
             owner_binding,
-        }
-        | CloneCommand::RecoverCopy {
-            run_dir,
-            owner_binding,
         } => json!({
             "run_dir": run(run_dir, root)?,
             "owner_binding": local(owner_binding, root, LocalTestPathKind::ExistingFile, "控制器绑定")?,
         }),
+        CloneCommand::RecoverCopy { .. } => return Err("复制锁回收没有私有请求参数".into()),
         CloneCommand::Bridge {
             build,
             inventory,
@@ -95,8 +96,8 @@ fn options(command: &CloneCommand, root: &Path) -> Result<Value> {
             "inventory": local(inventory, root, LocalTestPathKind::ExistingFile, "来源清单")?,
             "output": output_file(output, root, "来源桥接输出")?,
         }),
-        CloneCommand::PostCopy(value) => post_copy(value, root)?,
-        CloneCommand::SeedRuntime(value) => seed_runtime(value, root)?,
+        CloneCommand::PostCopy(_) => return Err("复制后阶段没有 Python 私有请求参数".into()),
+        CloneCommand::SeedRuntime(_) => return Err("seed-runtime 没有 Python 私有请求参数".into()),
         CloneCommand::Storage(value) => storage(value, root)?,
         CloneCommand::Cache(_) => return Err("cache仅通过原生Rust正式入口执行".into()),
         CloneCommand::MaintenanceBuild { output } => json!({
@@ -115,24 +116,6 @@ fn runtime(value: &CloneRuntimeOptions, root: &Path) -> Result<Value> {
         "side": value.side.as_str(),
         "operation": value.operation.as_str(),
         "roles": value.roles.iter().map(|role| role.as_str()).collect::<Vec<_>>(),
-    }))
-}
-
-fn post_copy(value: &PostCopyOptions, root: &Path) -> Result<Value> {
-    Ok(json!({
-        "run_dir": run(&value.run_dir, root)?,
-        "operation": value.operation.as_str(),
-        "request": optional_file(value.request.as_deref(), root, "post-copy 请求")?,
-        "producer_binding": optional_file(value.producer_binding.as_deref(), root, "post-copy 生产者绑定")?,
-    }))
-}
-
-fn seed_runtime(value: &SeedRuntimeOptions, root: &Path) -> Result<Value> {
-    Ok(json!({
-        "run_dir": run(&value.run_dir, root)?,
-        "operation": value.operation.as_str(),
-        "request": optional_file(value.request.as_deref(), root, "seed 请求")?,
-        "producer_binding": optional_file(value.producer_binding.as_deref(), root, "seed 生产者绑定")?,
     }))
 }
 

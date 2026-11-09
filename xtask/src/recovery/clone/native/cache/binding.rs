@@ -9,8 +9,6 @@ pub(in crate::recovery::clone::native::cache) mod request;
 pub(crate) mod source;
 #[path = "readonly/tools.rs"]
 mod tools;
-#[path = "binding/tools.rs"]
-mod wsl;
 use crate::Result;
 use serde_json::{Value, json};
 use std::path::Path;
@@ -42,6 +40,9 @@ pub(crate) fn execute_stage(
 ) -> Result<Value> {
     let run = Path::new(document::text(&args["directory"], "缓存发布查询目录")?);
     common::local_directory(backend, run, "缓存发布查询目录")?;
+    if args["action"] == "status" {
+        stage::require_live_request(backend, run, None)?;
+    }
     let scope = super::super::bridge::scope::Scope::load(backend, &[], &[])?;
     let state_path = run.join("state.json");
     let state = common::binding(&state_path)?;
@@ -50,6 +51,10 @@ pub(crate) fn execute_stage(
         backend,
         run,
         owner,
+        reboot: matches!(
+            args["action"].as_str(),
+            Some("reboot-starts" | "reboot-generation")
+        ),
     };
     let result = stage::dispatch(backend, args, &mut runtime);
     scope.assert_unchanged()?;
@@ -65,6 +70,7 @@ struct BindingRuntime<'a> {
     backend: &'a Path,
     run: &'a Path,
     owner: Option<&'a target_verify::guard::Generation>,
+    reboot: bool,
 }
 
 pub(super) fn port(
@@ -79,6 +85,7 @@ pub(super) fn port(
             backend,
             run,
             owner,
+            reboot: false,
         },
         operation,
         arguments,
@@ -101,6 +108,13 @@ impl session::Runtime for BindingRuntime<'_> {
                 document::exact(&arguments, &["request", "output"], "缓存实际创建证据")?;
                 let path = Path::new(document::text(&arguments["output"], "缓存创建目录")?);
                 common::local_directory(self.backend, path, "缓存创建目录")?;
+                if self.reboot {
+                    super::require_windows(&arguments["request"])?;
+                    #[cfg(windows)]
+                    return super::windows::inspect_reboot(&arguments["request"], path);
+                    #[cfg(not(windows))]
+                    return Err("原缓存重启创建证据只能在本机 Windows 核验".into());
+                }
                 evidence::inspect(&arguments["request"], path)
             }
             "successor" => self.successor(&arguments),
@@ -152,6 +166,7 @@ impl BindingRuntime<'_> {
             &source,
             &effective,
             document::boolean(&args["observe_current_tools"], "观察当前工具")?,
+            self.reboot,
         )?;
         Ok(json!([effective, private, source]))
     }

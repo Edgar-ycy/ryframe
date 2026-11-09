@@ -27,6 +27,7 @@ pub(crate) fn dispatch(backend: &Path, run: &Path, operation: &str, args: &Value
                         args["mode"].as_str(),
                         Some("resume" | "reconcile" | "stop" | "recover")
                     ),
+                None,
             )?["later"]
                 .clone()
         }

@@ -16,7 +16,7 @@ use crate::{
     },
 };
 
-pub(super) fn files(fixture: &mut Fixture) -> Value {
+pub(super) fn files(fixture: &mut Fixture, windows_redis: bool) -> Value {
     let storage = fixture.local.join("storage");
     fs::create_dir(&storage).unwrap();
     let data = storage.join("objects");
@@ -44,13 +44,30 @@ pub(super) fn files(fixture: &mut Fixture) -> Value {
     );
     let redis = fixture.local.join("redis");
     fs::create_dir(&redis).unwrap();
-    let linux = redis_layout::wsl_path(&redis).unwrap();
-    fs::write(redis.join("redis.conf"),format!("bind 127.0.0.1\nport 26379\ndir \"{linux}\"\ndatabases 1\nprotected-mode yes\nsave \"\"\nappendonly no\ndaemonize no\n")).unwrap();
+    let projection = if windows_redis {
+        crate::target_initialize_restart_fixture::windows_redis_files(fixture, &redis)
+    } else {
+        historical_redis_files(fixture, &redis)
+    };
     fixture.request["storage"] = json!({"rustfs":{"identity":identity,"sha256":tool(&fixture.local.join("rustfs"))["sha256"],
         "process_receipt":bound(&storage.join("process.json")),"launch_receipt":bound(&storage.join("launch.json"))},
-        "redis":{"port":26379,"wsl":tool(&fixture.local.join("wsl")),"distribution":"fixture","pid":200,"started":"67890","executable":"/usr/bin/redis-server",
-            "sha256":"9".repeat(64),"run_id":"3".repeat(40),"configuration":bound(&redis.join("redis.conf"))}});
-    json!({"rustfs":expected,"redis":{"directory":redis}})
+        "redis":projection});
+    let mut services = json!({"rustfs":expected,"redis":{"directory":redis}});
+    if windows_redis {
+        services["redis"]["endpoint"] = json!("redis://127.0.0.1:26379/0");
+    }
+    services
+}
+
+fn historical_redis_files(fixture: &Fixture, redis: &Path) -> Value {
+    let wsl = fixture.local.join("wsl");
+    fs::write(&wsl, "explicit-mock-wsl").unwrap();
+    let linux = redis_layout::wsl_path(redis).unwrap();
+    let configuration = redis.join("redis.conf");
+    fs::write(&configuration,format!("bind 127.0.0.1\nport 26379\ndir \"{linux}\"\ndatabases 1\nprotected-mode yes\nsave \"\"\nappendonly no\ndaemonize no\n")).unwrap();
+    json!({"port":26379,"wsl":tool(&wsl),"distribution":"fixture","pid":200,"started":"67890",
+        "executable":"/usr/bin/redis-server","sha256":"9".repeat(64),"run_id":"3".repeat(40),
+        "configuration":bound(&configuration)})
 }
 
 pub(in super::super) struct ExternalFacts {

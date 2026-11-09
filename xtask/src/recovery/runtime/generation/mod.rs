@@ -8,10 +8,12 @@ use std::{
 use crate::{Result, recovery::clone::native::json as strict};
 
 mod files;
-mod receipts;
+pub(in crate::recovery::runtime) mod receipts;
 #[cfg(test)]
 #[path = "../../../../tests/unit/recovery/runtime/generation/tests.rs"]
 mod tests;
+
+pub(super) use files::generation_directory as verify_directory;
 
 pub(super) const ROLES: [&str; 3] = ["api", "worker", "frontend"];
 pub(super) const STATE: &str = "lifecycle.json";
@@ -154,7 +156,8 @@ fn validate_creation(value: &Value, root: &Path, binding: &Value) -> Result<()> 
             && value["runtime_directory"] == json!(root)
             && value["generation"].as_u64() == Some(1)
             && value["registration"] == *binding
-            && value["request"]["registration"] == *binding,
+            && value["request"]["registration"] == *binding
+            && value["request"]["runtime_directory"] == json!(root),
         "恢复运行首次目录 intent 与登记或目录不匹配",
     )
 }
@@ -168,6 +171,10 @@ fn create_intent(root: &Path, binding: &Value, request: &Value) -> Result<Value>
     files::bound_value(&output)
 }
 fn new_generation(root: &Path, number: u64, request: &Value, commands: &Value) -> Result<Value> {
+    check(
+        request["runtime_directory"] == json!(root),
+        "恢复启动请求必须绑定本次运行目录",
+    )?;
     receipts::commands(commands)?;
     let directory = root.join(format!("generation-{number:04}"));
     let mut roles = serde_json::Map::new();
@@ -218,6 +225,7 @@ fn validate_generation(
                 )
             )
             && value["request"]["registration"] == *binding
+            && value["request"]["runtime_directory"] == json!(root)
             && (value["error_type"].is_null() || value["error_type"].is_string()),
         "恢复运行代次编号、状态或登记绑定无效",
     )?;

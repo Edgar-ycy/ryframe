@@ -43,6 +43,7 @@ pub(crate) fn prepare(
         )?;
         let request = common::binding(&request)?;
         let request_value = common::read_bound(backend, &request, "fresh 固定请求")?;
+        super::super::storage::redis_layout::require_windows(&request_value["storage"]["redis"])?;
         crate::recovery::fixture_control::review::reconciled::validate_request(
             backend,
             &request_value,

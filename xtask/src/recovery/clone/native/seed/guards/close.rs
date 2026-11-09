@@ -4,7 +4,7 @@ use regex::Regex;
 use serde_json::{Value, json};
 use std::path::Path;
 
-pub(super) const ACTIVE: &[&str] = &[
+pub(in crate::recovery::clone::native::seed) const ACTIVE: &[&str] = &[
     "background_job_status",
     "background_job_lease",
     "background_job_completion",
@@ -27,7 +27,7 @@ pub(super) const ACTIVE: &[&str] = &[
     "file_upload",
     "tenant_status",
 ];
-pub(super) const TERMINAL: &[&str] = &[
+pub(in crate::recovery::clone::native::seed) const TERMINAL: &[&str] = &[
     "background_job_dead",
     "background_job_attempt_failed",
     "background_job_attempt_dead",
@@ -72,7 +72,7 @@ pub(super) fn snapshot(value: &Value) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn drained(value: &Value) -> Result<bool> {
+pub(in crate::recovery::clone::native::seed) fn drained(value: &Value) -> Result<bool> {
     snapshot(value)?;
     Ok(value["active"]
         .as_object()
@@ -141,7 +141,7 @@ pub(super) fn control(
     Ok(())
 }
 
-pub(super) fn require(
+pub(in crate::recovery::clone::native::seed) fn require(
     value: &Value,
     kind: &str,
     runtime: &Path,

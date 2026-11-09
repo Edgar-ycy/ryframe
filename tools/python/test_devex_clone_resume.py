@@ -27,7 +27,7 @@ class ResumeTests(unittest.TestCase):
     def continue_copy(self, mode, **environments):
         values = self.case.environments | environments
         return continue_copy(self.backend, self.output, values["source"], values["target"],
-                             mode=mode, run=self.case.case.runner)
+                             mode=mode, run=self.case.case.runner, source_storage_run=self.case.run_dir)
 
     def interrupted(self, failure="commit-response-lost"):
         self.case.case.runner.failure = failure

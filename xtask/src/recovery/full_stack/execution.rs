@@ -1,5 +1,13 @@
-use super::{Port, context::Context};
-use crate::{Result, ci::databases::snapshot::Frozen};
+use super::{
+    Port,
+    context::Context,
+    worker::{self, role::Role},
+};
+use crate::{
+    Result,
+    ci::databases::snapshot::Frozen,
+    recovery::clone::native::{json as documents, resources::common},
+};
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -46,89 +54,80 @@ impl<'a> Native<'a> {
         })
     }
 
-    fn support(&mut self, operation: &str, arguments: Value) -> Result<Value> {
-        if matches!(operation, "worker-start" | "worker-stop") {
-            return self.worker_control(operation);
+    fn control(&self, role: Role, action: &str) -> Result<Value> {
+        let cleanup = matches!(action, "stop" | "stop-strict");
+        let cancel = (!cleanup).then_some(self.cancel.as_ref());
+        if cancel.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+            return Err("全栈控制已取消；保留现场，未启动角色控制器".into());
         }
-        let executable = std::env::current_exe()?;
-        let bytes = fs::read(&executable)?;
-        let tool = json!({"format_version":1,"kind":"ryframe-native-rate-limit-tool","path":executable,
-            "bytes":bytes.len(),"sha256":crate::devex::runtime_native::artifacts::sha(&bytes)});
-        let input = serde_json::to_vec(
-            &json!({"format_version":1,"operation":operation,"backend":self.context.root,
-            "directory":self.context.output,"tool":tool,"arguments":arguments}),
-        )?;
-        if input.len() > 32768 {
-            return Err("全栈底层请求超过32KiB".into());
-        }
-        let mut command = Command::new(crate::process::resolved_executable(
+        let mut command = worker::control_command(
+            role,
             &self.context.root,
-            "python",
-        )?);
-        command.args([
-            "-X",
-            "utf8",
-            "-E",
-            "-s",
-            "-B",
-            "tools/python/full_stack_ci_support.py",
-        ]);
+            &self.context.output,
+            action,
+            180.0,
+        )?;
         self.environment(&mut command);
         command.env("APP_ENV", "test");
-        // 既有持久 supervisor 必须继续脱离一次性调用者的 Job 生命周期。
-        let persistent = operation == "api-launch";
-        let cleanup = operation.ends_with("-stop");
-        let output = capture(
-            command,
-            &self.context.root,
-            &input,
-            Duration::from_secs(210),
-            (!cleanup).then_some(&self.cancel),
-            persistent,
-            false,
-        )?;
-        let value = crate::recovery::clone::native::json::parse_fragment(&output, "全栈底层响应")
-            .map_err(|_| "全栈底层返回无效JSON；保留收据，不重放")?;
+        let timeout = if role == Role::Api {
+            worker::CONTROL_TIMEOUT
+        } else {
+            Duration::from_secs(210)
+        };
+        // 持久 supervisor 继续脱离一次性调用者的 Job 生命周期。
+        let output = capture_prebound(command, &self.context.root, timeout, cancel, true, false)?;
+        let value = documents::parse_fragment(&output, "全栈角色原生控制响应")?;
         if value["ok"] != true
             || value
                 .as_object()
                 .is_none_or(|v| v.len() != 2 || !v.contains_key("result"))
         {
-            return Err(format!(
-                "全栈底层 {operation} 未确认完成；保留来源、进程及操作收据，不重放"
-            )
-            .into());
+            return Err(format!("{} 原生控制未确认；保留收据，不自动重放", role.label()).into());
         }
         Ok(value["result"].clone())
     }
 
-    fn worker_control(&mut self, operation: &str) -> Result<Value> {
-        let mut command = Command::new(std::env::current_exe()?);
-        command.arg("__full-stack-worker");
-        self.environment(&mut command);
-        command.env("APP_ENV", "test");
-        let request = serde_json::to_vec(
-            &json!({"format_version":1,"kind":"ryframe-full-stack-worker","operation":"control","arguments":{"backend":self.context.root,"directory":self.context.output,"action":operation.trim_start_matches("worker-"),"timeout":180}}),
-        )?;
-        let output = capture(
-            command,
-            &self.context.root,
-            &request,
-            Duration::from_secs(210),
-            (operation != "worker-stop").then_some(&self.cancel),
-            true,
-            false,
-        )?;
-        let value =
-            crate::recovery::clone::native::json::parse_fragment(&output, "Worker 原生控制响应")?;
-        if value["ok"] != true
-            || value
-                .as_object()
-                .is_none_or(|v| v.len() != 2 || !v.contains_key("result"))
+    fn launch_api(&mut self) -> Result<Value> {
+        let result = self.control(Role::Api, "start-strict")?;
+        if result["operation"] != "start"
+            || result["outcome"] != "succeeded"
+            || result["state"] != "running"
         {
-            return Err("Worker 原生控制未确认；保留收据，不自动重放".into());
+            return Err("API 原生启动未返回成功运行收据；保留现场".into());
         }
-        Ok(value["result"].clone())
+        self.api = Some(common::validate_process_identity(&result["identity"])?);
+        Ok(result)
+    }
+
+    fn observe_api(&self) -> Result<Value> {
+        let identity = self.api.as_ref().ok_or("API 启动未确认创建身份")?;
+        if self.cancel.load(Ordering::Acquire) {
+            return Err("API 观察已取消；保留收据".into());
+        }
+        let observed =
+            worker::controller::observe(Role::Api, &self.context.root, &self.context.output)?;
+        if observed["state"] != "running" || observed.get("identity") != Some(identity) {
+            return Err("API 已退出或创建身份漂移；保留原收据".into());
+        }
+        if self.cancel.load(Ordering::Acquire) {
+            return Err("API 观察已取消；保留收据".into());
+        }
+        Ok(observed)
+    }
+
+    fn stop_api(&self) -> Result<Value> {
+        if !worker::ci_api_evidence(&self.context.output)? {
+            return Ok(json!({"state":"absent"}));
+        }
+        let result = self.control(Role::Api, "stop-strict")?;
+        if result["operation"] != "stop"
+            || result["outcome"] != "succeeded"
+            || result["state"] != "stopped"
+            || result.get("identity") != Some(&Value::Null)
+        {
+            return Err("API 未返回无存活进程的成功停止收据；保留现场".into());
+        }
+        Ok(result)
     }
 
     fn s3_request(&self, marker: &str, request: &Value) -> Result<Value> {
@@ -178,6 +177,9 @@ impl<'a> Native<'a> {
 
 impl Port for Native<'_> {
     fn leaf(&mut self, operation: &str) -> Result<Value> {
+        if operation == "register" {
+            return self.context.register_runtime();
+        }
         if operation == "build" {
             let root = self.context.root.clone();
             let output = self.context.output.clone();
@@ -185,28 +187,15 @@ impl Port for Native<'_> {
                 self.command(program, args, None)
             });
         }
-        if operation == "api-alive" {
-            let identity = self.api.as_ref().ok_or("API 启动未确认创建身份")?;
-            let pid = identity["pid"]
-                .as_u64()
-                .and_then(|v| u32::try_from(v).ok())
-                .ok_or("API PID 无效")?;
-            if crate::recovery::clone::native::resources::common::process_identity(pid)?.as_ref()
-                != Some(identity)
-            {
-                return Err("API 已退出或创建身份漂移，停止等待并按原收据核对".into());
-            }
-            return Ok(json!({"state":"running"}));
+        match operation {
+            "api-launch" => self.launch_api(),
+            "api-probe" => self.observe_api(),
+            "api-stop" => self.stop_api(),
+            "api-port-free" => worker::wait_api_port_free(&self.context.api_url()?),
+            "worker-start" => self.control(Role::Worker, "start"),
+            "worker-stop" => self.control(Role::Worker, "stop"),
+            _ => Err("未知全栈控制操作".into()),
         }
-        let value = self.support(operation, json!({}))?;
-        if operation == "api-launch" {
-            self.api = Some(
-                crate::recovery::clone::native::resources::common::validate_process_identity(
-                    &value["identity"],
-                )?,
-            );
-        }
-        Ok(value)
     }
     fn command(&mut self, program: &str, args: &[String], log: Option<&Path>) -> Result<String> {
         self.command_at(&self.context.root.clone(), program, args, log)
@@ -292,26 +281,6 @@ impl Port for Native<'_> {
             file.write_all(output.as_bytes())?;
         }
         Ok(output)
-    }
-    fn ready(&mut self, url: &str) -> Result<bool> {
-        crate::http_session::install_crypto_provider()?;
-        // 同步阶段中的 HTTP 只访问明确的 loopback readiness，不跟随重定向。
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-        Ok(runtime
-            .block_on(async {
-                reqwest::Client::builder()
-                    .no_proxy()
-                    .redirect(reqwest::redirect::Policy::none())
-                    .timeout(Duration::from_secs(2))
-                    .build()?
-                    .get(url)
-                    .send()
-                    .await
-                    .map(|v| v.status().is_success())
-            })
-            .unwrap_or(false))
     }
     fn sleep(&mut self, duration: Duration) -> Result<()> {
         let until = Instant::now() + duration;
@@ -426,13 +395,22 @@ pub(in crate::recovery) fn capture(
     file.write_all(input)?;
     use std::io::{Seek, SeekFrom};
     file.seek(SeekFrom::Start(0))?;
+    command.stdin(Stdio::from(file));
+    capture_prebound(command, cwd, timeout, cancel, persistent, merge_stderr)
+}
+
+fn capture_prebound(
+    mut command: Command,
+    cwd: &Path,
+    timeout: Duration,
+    cancel: Option<&AtomicBool>,
+    persistent: bool,
+    merge_stderr: bool,
+) -> Result<String> {
     if command.get_current_dir().is_none() {
         command.current_dir(cwd);
     }
-    command
-        .stdin(Stdio::from(file))
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = if persistent {
         Child::Persistent(command.spawn()?)
     } else {

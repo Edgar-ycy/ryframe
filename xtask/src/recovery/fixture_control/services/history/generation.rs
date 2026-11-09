@@ -5,7 +5,9 @@ use serde_json::{Map, Value, json};
 use super::evidence::{binding, bound, check, exact, read, text};
 use crate::{
     Result,
-    recovery::clone::native::{cache::windows_tool, digest},
+    recovery::clone::native::{
+        cache::windows_tool, digest, resources::common::validate_process_identity,
+    },
 };
 
 pub(super) fn paths(run: &Path, generation: &Value) -> Result<(PathBuf, PathBuf)> {
@@ -44,12 +46,18 @@ pub(super) fn external(proof: &Value, run: &Path, owner: &Value, generation: &Va
     let observation = &proof["observation"];
     let evidence = &observation["evidence"];
     let (rustfs, redis) = paths(run, generation)?;
-    exact(
-        evidence,
-        &["rustfs_tree", "redis_runtime", "rustfs_monitor_ready"],
-    )?;
+    let external_redis = proof["format_version"] == 2;
+    let mut fields = vec!["rustfs_tree", "redis_runtime", "rustfs_monitor_ready"];
+    if external_redis {
+        fields.push("redis_external");
+        exact(
+            observation,
+            &["status", "identities", "normal_shutdown_proof", "evidence"],
+        )?;
+    }
+    exact(evidence, &fields)?;
     check(
-        proof["format_version"] == 1
+        (proof["format_version"] == 1 || external_redis)
             && proof["kind"] == "reference-fixture-external-termination"
             && super::evidence::path_is(&proof["run"], run)
             && &proof["owner"] == owner
@@ -73,6 +81,34 @@ pub(super) fn external(proof: &Value, run: &Path, owner: &Value, generation: &Va
                 .is_some_and(|name| name.ends_with("-ready.json"))
             && evidence["rustfs_monitor_ready"] == binding(ready_path)?,
         "夹具外部终止证据未绑定原成员监督启动归属",
+    )?;
+    if external_redis {
+        validate_external_redis(evidence, run, &redis)?;
+    }
+    Ok(())
+}
+
+fn validate_external_redis(evidence: &Value, run: &Path, directory: &Path) -> Result<()> {
+    let runtime = bound(run, &evidence["redis_runtime"])?;
+    let request = read(&directory.join("request.json"))?;
+    validate_process_identity(&runtime["supervisor"])?;
+    validate_process_identity(&runtime["process"])?;
+    check(
+        runtime["format_version"] == 3
+            && request["format_version"] == 3
+            && runtime["redis"]["platform"] == "windows"
+            && runtime["request_sha256"] == digest::plan_hash(&request)?
+            && runtime["redis"]["port"] == request["port"]
+            && request["port"]
+                .as_u64()
+                .is_some_and(|port| (1..=65535).contains(&port))
+            && runtime["supervisor"]["pid"] != runtime["process"]["pid"]
+            && evidence["redis_external"]
+                == json!({
+                "kind":"windows-redis-external-termination","runtime":evidence["redis_runtime"],
+                "supervisor":runtime["supervisor"],"process":runtime["process"],"port":request["port"],
+                "normal_job_exit_proof":null}),
+        "夹具 Redis 外部终止证据未绑定原 Windows 代次或错误记录正常 Job 退出",
     )
 }
 

@@ -7,11 +7,8 @@ sys.dont_write_bytecode = True
 import argparse
 import json
 from pathlib import Path
-import shlex
-from urllib.parse import urlsplit
 
 from devex_clone_capture import read_json, write_json
-from devex_clone_cache_process import start as start_redis
 from process_environment import configured
 from devex_clone_model import linked, local_path
 from devex_clone_run_state import begin, bind_controller_attempt, finish, initialize_state, load_state, run_lock
@@ -213,93 +210,15 @@ def rustfs(backend: Path, review_path: Path, bootstrap_path: Path, *, write: boo
             "services_started": True, "request_sha256": plan_hash(request)}
 
 
-def redis(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bool) -> dict:
-    if not write:
-        raise ValueError("启动夹具服务必须显式指定 --write")
-    review_file, review = document(backend, review_path)
-    bootstrap_file, bootstrap, private = environment(backend, review_file, review, bootstrap_path)
-    execution = Path(bootstrap["execution_backend"])
-    run = service_run(review)
-    output = run / "redis"
-    manifest = run / "manifest.json"
-    if output.exists() or not manifest.is_file():
-        raise ValueError("Redis 首代必须复用已有 RustFS 服务账本且不能覆盖已有证据")
-    state = load_state(run)
-    if (len(state["attempts"]) != 1 or state["attempts"][0]["stage"] != "storage-target"
-            or state["attempts"][0]["mode"] != "initial" or state["attempts"][0]["status"] != "passed"):
-        raise ValueError("Redis 首代只允许接续已完成的 RustFS 首代账本")
-    service = review["services"]["redis"]
-    directory = Path(service["directory"]).resolve()
-    local = (backend / ".local-tests").resolve()
-    if (not directory.is_relative_to(local) or linked(directory)
-            or any(linked(path) for path in directory.parents if path.exists())
-            or directory.exists() and (not directory.is_dir() or any(directory.iterdir()))):
-        raise ValueError("Redis 数据目录越界、经过链接或不是明确空目录")
-    port = urlsplit("redis://" + service["endpoint"]).port
-    if port is None:
-        raise ValueError("Redis 审阅端点无端口")
-    password = application_settings(bootstrap, Path(bootstrap["execution_backend"])).get("redis", {}).get("password")
-    if not isinstance(password, str) or not password:
-        raise ValueError("Redis 首代缺少私有认证")
-    tools = review["tools"]
-    redis_tool, wsl = tools["redis_server"], tools["wsl"]
-    from devex_clone_cache_native import invoke
-    native_tool = tools.get("native_tool")
-    if native_tool is None or native_tool != invoke("native-tool"):
-        raise ValueError("Redis 首代必须使用已预检的 v2 原生工具审阅；旧记录只读保留")
-    if (redis_tool["distribution"] != service["wsl_distribution"] or native_tool["distribution"] != service["wsl_distribution"]
-            or set(wsl) != {"path", "sha256"}):
-        raise ValueError("Redis 服务与冻结监督器工具不一致")
-    if not directory.exists():
-        directory.mkdir()
-    configuration = directory / "redis.conf"
-    with configuration.open("x", encoding="utf-8", newline="\n") as stream:
-        stream.write("\n".join(("bind 127.0.0.1", f"port {port}", f"dir /mnt/{directory.drive[0].lower()}/" + "/".join(directory.parts[1:]),
-                                  "databases 1", "protected-mode yes", 'save ""', "appendonly no", "daemonize no",
-                                  "requirepass " + shlex.quote(password))) + "\n")
-    request = {"format_version": 2, "scope_id": "services-" + bootstrap["plan"]["scope_id"], "wsl": wsl,
-               "distribution": service["wsl_distribution"], "launcher": "/usr/bin/redis-server",
-               "executable": redis_tool["resolved_path"], "sha256": redis_tool["sha256"], "configuration": bound(configuration),
-               "directory": {"path": str(directory), "device": directory.stat().st_dev, "inode": directory.stat().st_ino},
-               "previous_identity": None, "previous_boot_id": None, "previous_run_id": None, "port": port,
-               "password": password, "timeout_seconds": 60,
-               "native_tool": native_tool}
-    output.mkdir()
-    write_json(output / "request.json", request)
-    sources = {"review": bound(review_file), "bootstrap": bound(bootstrap_file), "manifest": bound(manifest),
-               "request": bound(output / "request.json")}
-    def guard() -> None:
-        current_review, current = document(backend, review_file)
-        current_bootstrap, current_value = document(backend, bootstrap_file)
-        if current_review != review_file or current != review or current_bootstrap != bootstrap_file or current_value != bootstrap:
-            raise ValueError("Redis 启动期间审阅或私有环境收据发生变化")
-        if bound(manifest) != sources["manifest"]:
-            raise ValueError("Redis 启动期间服务账本清单发生变化")
-    with run_lock(run) as owner:
-        number = begin(run, "cache-target", "initial", sources)
-        controller = bind_controller_attempt(run, number, owner)
-        try:
-            runtime = start_redis(backend, request, private, output, guard)
-            result = {"service": "redis", "runtime": runtime, "request_sha256": plan_hash(request),
-                      "controller": controller, "remote_writes": 0}
-            finish(run, number, result=result)
-        except BaseException as error:
-            finish(run, number, error=error)
-            raise
-    return {"status": "redis_started", "storage": runtime["redis"], "run": str(run), "remote_writes": 0,
-            "services_started": True, "request_sha256": plan_hash(request)}
-
-
 PROTOCOL_SCHEMAS = {
     "rustfs": (("review", "environment", "native_tool"), (), True),
-    "redis": (("review", "environment", "native_tool"), (), True),
     "buckets": (("review", "environment", "native_tool"), (), True),
 }
 
 
 def main(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
-    parser.add_argument("operation", choices=("rustfs", "redis", "buckets"))
+    parser.add_argument("operation", choices=("rustfs", "buckets"))
     parser.add_argument("--backend-dir", type=Path, required=True)
     parser.add_argument("--review", type=Path, required=True)
     parser.add_argument("--environment", type=Path, required=True)
@@ -314,7 +233,7 @@ def main(argv: list[str]) -> None:
     from rate_limit_tool import install_verified_binding
     install_verified_binding(args.native_tool)
     backend = args.backend_dir.resolve(strict=True)
-    action = {"rustfs": rustfs, "redis": redis, "buckets": buckets}[args.operation]
+    action = {"rustfs": rustfs, "buckets": buckets}[args.operation]
     result = action(backend, args.review, args.environment, write=args.write)
     summary = {"status": result["status"], "remote_writes": result["remote_writes"]}
     if "services_started" in result:

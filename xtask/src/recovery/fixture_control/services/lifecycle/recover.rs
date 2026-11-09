@@ -106,9 +106,17 @@ fn external(runtime: &mut dyn Runtime, context: &Context, owner_file: &Path) -> 
                     "发布外部终止证据前服务状态变化",
                 )?;
                 let file = output.join("external-termination.json");
+                let version = if observed["termination"]["evidence"]
+                    .get("redis_external")
+                    .is_some()
+                {
+                    2
+                } else {
+                    1
+                };
                 json_io::write_new(
                     &file,
-                    &json!({"format_version":1,"kind":"reference-fixture-external-termination", "run":context.run,
+                    &json!({"format_version":version,"kind":"reference-fixture-external-termination", "run":context.run,
                 "owner":context.value["sources"]["state_before"],"observation":observed["termination"],"normal_shutdown_proof":null,
                 "remote_writes":0,"resources_deleted":false}),
                 )?;

@@ -54,9 +54,8 @@ pub(crate) fn execute(input: &[u8]) -> (i32, Value) {
             let reason = model::reason(error.as_ref())
                 .map(str::to_owned)
                 .or_else(|| {
-                    error
-                        .downcast_ref::<crate::recovery::clone::native::cache::ObserverFailure>()
-                        .map(ToString::to_string)
+                    crate::recovery::clone::native::cache::policy_message(error.as_ref())
+                        .map(str::to_owned)
                 })
                 .or_else(|| {
                     crate::recovery::clone::native::cache::primitive_message(error.as_ref())

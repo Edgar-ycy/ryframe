@@ -11,6 +11,7 @@ pub(crate) mod chain;
 mod comparison;
 pub(crate) mod document;
 pub(in crate::recovery) mod domain;
+pub(crate) use domain::canonical_endpoint;
 mod fresh;
 pub(in crate::recovery) mod inventory;
 pub(crate) mod product;

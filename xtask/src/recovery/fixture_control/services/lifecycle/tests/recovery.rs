@@ -452,3 +452,42 @@ fn external_recovery_proof_tampering_and_additional_failed_close_are_not_reconci
     assert!(runtime.execute("reconcile", Some(runtime.owner())).is_err());
     assert_eq!(runtime.fixture.state(), before);
 }
+
+#[test]
+fn windows_external_recovery_binds_restart_to_the_observed_predecessor() {
+    let mut runtime = FakeRuntime::new();
+    let redis_directory = runtime.fixture.run.join("redis");
+    let request = json!({"format_version":3,"port":16390});
+    let executable = std::env::current_exe().unwrap();
+    let registered = json!({"format_version":3,"output":redis_directory,
+        "request_sha256":crate::recovery::clone::native::digest::plan_hash(&request).unwrap(),
+        "supervisor":{"pid":2147481020u32,"started":"1","executable":executable},
+        "process":{"pid":2147481021u32,"started":"1","executable":executable},
+        "redis":{"platform":"windows","port":16390,"run_id":"1".repeat(40)}});
+    json_io::write_replace(&redis_directory.join("request.json"), &request).unwrap();
+    json_io::write_replace(&redis_directory.join("runtime.json"), &registered).unwrap();
+    runtime.fixture.services["requests"]["redis"] = request;
+    runtime.fixture.services["runtime"] = registered.clone();
+    runtime.external();
+    let evidence = &mut runtime.observation["termination"]["evidence"];
+    evidence["redis_external"] = json!({
+        "kind":"windows-redis-external-termination","runtime":evidence["redis_runtime"],
+        "supervisor":registered["supervisor"],"process":registered["process"],"port":16390,
+        "normal_job_exit_proof":null});
+    let recovered = runtime.execute("recover", Some(runtime.owner())).unwrap();
+    let proof_path = Path::new(text(&recovered["evidence"], "path").unwrap());
+    let proof = read(proof_path).unwrap();
+    assert_eq!(proof["format_version"], 2);
+    assert_eq!(proof["observation"], runtime.observation["termination"]);
+    assert!(!redis_directory.join("exited.json").exists());
+    assert_eq!(
+        runtime.fixture.history()["external_recovery"],
+        runtime.fixture.history()["restart_predecessor"]
+    );
+
+    runtime.observation["termination"]["evidence"]["redis_external"]["port"] = json!(16391);
+    let before = runtime.fixture.state();
+    assert!(runtime.execute("restart", Some(runtime.owner())).is_err());
+    assert_eq!(runtime.fixture.state(), before);
+    assert!(!runtime.events.iter().any(|event| event.ends_with("-start")));
+}

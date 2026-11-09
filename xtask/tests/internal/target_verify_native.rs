@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, path::Path};
 
 use serde_json::{Value, json};
 
@@ -14,7 +14,7 @@ use crate::{
         },
         s3,
         target_verify::{
-            self,
+            self, authority,
             storage::{StorageInputs, StorageObserver},
         },
     },
@@ -23,6 +23,33 @@ use crate::{
 use crate::target_verify_fixture as fixture;
 
 use fixture::{Fixture, database::FakeTransport, snapshot};
+
+fn preflight_with(
+    backend: &Path,
+    request: &StageRequest<'_>,
+    observer: &impl authority::Observer,
+) -> Result<()> {
+    target_verify::input::validate_inputs(backend, request)?;
+    let _ = authority::inspect(backend, request, observer)?;
+    Ok(())
+}
+
+fn execute_with<T: Transport>(
+    backend: &Path,
+    request: &StageRequest<'_>,
+    transport: &T,
+    storage_observer: &impl StorageObserver,
+    authority_observer: &impl authority::Observer,
+) -> Result<Value> {
+    let context = target_verify::input::TargetContext::load(backend, request)?;
+    target_verify::execute_context(
+        &context,
+        request,
+        transport,
+        storage_observer,
+        authority_observer,
+    )
+}
 
 #[test]
 fn target_verify_success_publishes_create_only_evidence() {
@@ -51,7 +78,7 @@ fn target_verify_success_publishes_create_only_evidence() {
     let transport = FakeTransport::new(&fixture, false, false);
     let authority = fixture.authority();
     let storage = fixture.storage_observer();
-    let result = target_verify::execute_with(
+    let result = execute_with(
         &fixture.backend,
         &fixture.stage(),
         &transport,
@@ -79,7 +106,7 @@ fn target_verify_success_publishes_create_only_evidence() {
     storage.assert_complete();
     assert!(!fixture.target.join("initialize.lock").exists());
     assert!(
-        target_verify::execute_with(
+        execute_with(
             &fixture.backend,
             &fixture.stage(),
             &transport,
@@ -96,10 +123,25 @@ fn target_verify_preflight_is_read_only() {
     let fixture = Fixture::new();
     let before = snapshot(&fixture.backend);
     let authority = fixture.authority();
-    target_verify::preflight_with(&fixture.backend, &fixture.stage(), &authority).unwrap();
+    preflight_with(&fixture.backend, &fixture.stage(), &authority).unwrap();
     assert_eq!(snapshot(&fixture.backend), before);
     assert!(!fixture.run.join("v0001").exists());
     assert_eq!(authority.calls.get(), 1);
+}
+
+#[cfg(windows)]
+#[test]
+fn live_target_verify_rejects_historical_redis_before_observation() {
+    let fixture = Fixture::new();
+    let before = snapshot(&fixture.backend);
+    let expected = target_verify::storage::redis_layout::WINDOWS_REQUIRED;
+    let preflight = target_verify::preflight(&fixture.backend, &fixture.stage()).unwrap_err();
+    assert_eq!(preflight.to_string(), expected);
+    let execute = target_verify::execute(&fixture.backend, &fixture.stage()).unwrap_err();
+    assert_eq!(execute.to_string(), expected);
+    assert_eq!(snapshot(&fixture.backend), before);
+    assert!(!fixture.run.join("v0001").exists());
+    assert!(!fixture.target.join("initialize.lock").exists());
 }
 
 #[test]
@@ -196,7 +238,7 @@ fn target_verify_respects_target_generation_guard() {
     fs::create_dir(fixture.target.join("initialize.lock")).unwrap();
     let before = snapshot(&fixture.target);
     let transport = FakeTransport::new(&fixture, false, false);
-    let error = target_verify::execute_with(
+    let error = execute_with(
         &fixture.backend,
         &fixture.stage(),
         &transport,
@@ -231,11 +273,11 @@ struct FailureRunner<'a, O> {
 
 impl<O: StorageObserver> StageRunner for FailureRunner<'_, O> {
     fn preflight(&self, request: &StageRequest<'_>) -> Result<()> {
-        target_verify::preflight_with(&self.fixture.backend, request, &self.fixture.authority())
+        preflight_with(&self.fixture.backend, request, &self.fixture.authority())
     }
 
     fn execute(&self, request: &StageRequest<'_>) -> Result<Value> {
-        let result = target_verify::execute_with(
+        let result = execute_with(
             &self.fixture.backend,
             request,
             self,

@@ -356,7 +356,7 @@ fn windows_fixture_restart_updates_only_bound_process_generation() {
     changed["port"] = json!(29771);
     let changed_port = publish("different-port", &changed, &runtime);
     assert!(redis(&backend, &original, Some(&changed_port), true).is_err());
-    let mut changed_runtime = runtime.clone();
+    let mut changed_runtime = runtime;
     changed_runtime["redis"]["pid"] = json!(12);
     let changed_process = publish("different-runtime", &request, &changed_runtime);
     assert!(redis(&backend, &original, Some(&changed_process), true).is_err());

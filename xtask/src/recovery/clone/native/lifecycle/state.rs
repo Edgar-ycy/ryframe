@@ -33,6 +33,8 @@ pub(crate) const STAGES: &[&str] = &[
 
 pub(super) fn resource_cleanup(stage: &str, mode: &str) -> bool {
     matches!(stage, "cache-target" | "runtime-target") && matches!(mode, "stop" | "recover")
+        || stage == "seed-runtime" && matches!(mode, "stop" | "recover")
+        || matches!(stage, "post-copy" | "seed-runtime") && mode == "recover-session"
 }
 
 pub(crate) fn load(directory: &Path, verify_results: bool) -> Result<Value> {

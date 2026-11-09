@@ -15,7 +15,8 @@ pub(super) fn run(context: &Context<'_>) -> Result<Value> {
     candidate(context.backend, &active.request, &context.post.request)?;
     let saved = state::load(context.run, true)?;
     allowed(context.run, &saved)?;
-    let invalidated = proof::capture(context.backend, context.run, &saved, active)?;
+    let product = context.product_root()?;
+    let invalidated = proof::capture(context.backend, &product, context.run, &saved, active)?;
     let mut proof_files = std::collections::BTreeSet::new();
     super::files::bindings(context.backend, &invalidated, &mut proof_files)?;
     let proof_guard =
@@ -37,14 +38,14 @@ pub(super) fn run(context: &Context<'_>) -> Result<Value> {
         "invalidated_runtime":invalidated});
     context.check()?;
     context.source_generation()?;
-    if proof::capture(context.backend, context.run, &saved, active)? != invalidated {
+    if proof::capture(context.backend, &product, context.run, &saved, active)? != invalidated {
         return Err("环境修订前原运行关闭证明变化".into());
     }
     document::write_new(&path, &payload)?;
     let binding = common::binding(&path)?;
     context.check()?;
     context.source_generation()?;
-    if proof::capture(context.backend, context.run, &saved, active)? != invalidated {
+    if proof::capture(context.backend, &product, context.run, &saved, active)? != invalidated {
         return Err("环境修订后原运行关闭证明变化，保留新旧证据，不自动重放".into());
     }
     common::bound_file(context.backend, &binding, "新环境修订后像")?;

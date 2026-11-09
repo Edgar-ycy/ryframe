@@ -124,9 +124,6 @@ impl Port for GitPort {
         }
         Ok(String::new())
     }
-    fn ready(&mut self, _url: &str) -> Result<bool> {
-        unreachable!()
-    }
     fn sleep(&mut self, _duration: std::time::Duration) -> Result<()> {
         unreachable!()
     }

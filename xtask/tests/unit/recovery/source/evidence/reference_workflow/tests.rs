@@ -1,6 +1,6 @@
 use std::{fs, path::PathBuf};
 
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -15,15 +15,15 @@ pub(super) fn temporary() -> tempfile::TempDir {
     tempfile::tempdir_in(base).unwrap()
 }
 
-struct Fixture {
+pub(super) struct Fixture {
     _directory: tempfile::TempDir,
-    plan: Value,
-    root: PathBuf,
-    manifest: Value,
+    pub(super) plan: Value,
+    pub(super) root: PathBuf,
+    pub(super) manifest: Value,
 }
 
 impl Fixture {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let directory = temporary();
         let work = directory.path().join("reference 中文");
         let root = work.join("backup");
@@ -37,10 +37,15 @@ impl Fixture {
         formalize(&mut plan, directory.path());
         files::work(&json!({"plan":plan}), true).unwrap();
         fs::create_dir(&root).unwrap();
-        let observed = Utc::now().to_rfc3339();
+        let observed = DateTime::from_timestamp_micros(Utc::now().timestamp_micros())
+            .unwrap()
+            .to_rfc3339_opts(SecondsFormat::AutoSi, true);
         let mut manifest = json!({"id":"restore-case","scope_id":"source","source_sha":"a".repeat(40),
-            "quiesced_at":observed,"captured_at":observed,"databases":[{"key":"control","kind":"combined",
+            "quiesced_at":observed,"captured_at":observed,
+            "control_schema_fingerprint":"a".repeat(16),"tenant_schema_fingerprint":"b".repeat(64),
+            "databases":[{"key":"control","kind":"combined",
                 "shared":true,"database":"source_control","server_uuid":"uuid-1",
+                "placements":[{"tenant_id":"tenant","generation":1,"switch_token":"initial"}],
                 "tables":[{"table":"sys_post","rows":1,"sha256":"b".repeat(64)}]}],"objects":[],"artifacts":[]});
         let sql = root.join("databases/control.sql");
         fs::create_dir(sql.parent().unwrap()).unwrap();
@@ -393,13 +398,25 @@ fn resource_preflight_checks_all_artifacts_before_returning_ordered_tasks() {
 fn retention_uses_capture_time_and_dataset_drift_cannot_publish_success() {
     let fixture = Fixture::new();
     let mut inventory = fixture.manifest.clone();
-    let captured = Utc::now() - Duration::days(2);
-    inventory["captured_at"] = json!(captured.to_rfc3339());
+    let captured =
+        DateTime::from_timestamp_micros((Utc::now() - Duration::days(2)).timestamp_micros())
+            .unwrap();
+    let captured_text = json!(captured.to_rfc3339_opts(SecondsFormat::AutoSi, true));
+    inventory["quiesced_at"] = captured_text.clone();
+    inventory["captured_at"] = captured_text;
     let value = model::manifest(&json!({"plan":fixture.plan,"inventory":inventory,"artifacts":fixture.manifest["artifacts"],"root":fixture.root})).unwrap();
     assert_eq!(
-        DateTime::parse_from_rfc3339(value["retention_until"].as_str().unwrap()).unwrap(),
-        captured + Duration::days(7)
+        value["retention_until"],
+        (captured + Duration::days(7)).to_rfc3339_opts(SecondsFormat::AutoSi, true)
     );
+    let completed = DateTime::parse_from_rfc3339(value["completed_at"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        value["completed_at"],
+        completed
+            .to_utc()
+            .to_rfc3339_opts(SecondsFormat::AutoSi, true)
+    );
+    assert!(completed.timestamp_subsec_nanos().is_multiple_of(1_000));
     let args = json!({"preflight":{"same":true},"actual_preflight":{"same":true},"source":{"head":"a"},
         "actual_source":{"head":"a"},"tools":{"revision":1},"actual_tools":{"revision":1},"result":{"records":100000}});
     assert_eq!(model::dataset_result(&args).unwrap()["records"], 100000);
@@ -410,7 +427,32 @@ fn retention_uses_capture_time_and_dataset_drift_cannot_publish_success() {
     }
 }
 
-use chrono::DateTime;
+#[test]
+fn backup_inventory_requires_schema_and_well_formed_placements() {
+    let fixture = Fixture::new();
+    inputs::inventory::validate(&fixture.plan, &fixture.manifest).unwrap();
+    for (pointer, changed) in [
+        ("/control_schema_fingerprint", json!("A".repeat(16))),
+        ("/tenant_schema_fingerprint", Value::Null),
+        ("/databases/0/placements", Value::Null),
+        ("/databases/0/placements/0/generation", json!(0)),
+        ("/databases/0/tables/0/rows", json!(-1)),
+        ("/quiesced_at", json!("9999-01-01T00:00:00Z")),
+    ] {
+        let mut manifest = fixture.manifest.clone();
+        *manifest.pointer_mut(pointer).unwrap() = changed;
+        assert!(
+            inputs::inventory::validate(&fixture.plan, &manifest).is_err(),
+            "{pointer}"
+        );
+    }
+    let mut duplicate = fixture.manifest.clone();
+    duplicate["databases"][0]["placements"] = json!([
+        {"tenant_id":"tenant","generation":1,"switch_token":"initial"},
+        {"tenant_id":"tenant","generation":2,"switch_token":"second"}
+    ]);
+    assert!(inputs::inventory::validate(&fixture.plan, &duplicate).is_err());
+}
 
 #[test]
 fn public_local_summary_copy_and_damage_use_the_native_lifecycle() {
@@ -422,9 +464,7 @@ fn public_local_summary_copy_and_damage_use_the_native_lifecycle() {
     native::json::write_new(&plan, &fixture.plan).unwrap();
     let mut request = raw_request(backend, "plan", false);
     request["request"]["plan"] = json!(plan);
-    let summary = run_local(&serde_json::to_string(&request).unwrap())
-        .unwrap()
-        .unwrap();
+    let summary = run_local(&serde_json::to_string(&request).unwrap()).unwrap();
     assert_eq!(summary["id"], "restore-case");
     assert!(!summary.to_string().contains("fixture-secret"));
     assert!(
@@ -439,9 +479,7 @@ fn public_local_summary_copy_and_damage_use_the_native_lifecycle() {
     request["request"]["write"] = json!(true);
     request["request"]["backup_root"] = json!(fixture.root);
     request["request"]["copy_id"] = json!("public-copy");
-    let copied = run_local(&serde_json::to_string(&request).unwrap())
-        .unwrap()
-        .unwrap();
+    let copied = run_local(&serde_json::to_string(&request).unwrap()).unwrap();
     request["request"]
         .as_object_mut()
         .unwrap()
@@ -451,9 +489,7 @@ fn public_local_summary_copy_and_damage_use_the_native_lifecycle() {
     request["request"]["artifact"] = json!("databases/control.sql");
     request["request"]["missing"] = json!(false);
     assert_eq!(
-        run_local(&serde_json::to_string(&request).unwrap())
-            .unwrap()
-            .unwrap()["injected"],
+        run_local(&serde_json::to_string(&request).unwrap()).unwrap()["injected"],
         "corrupt"
     );
     let failed = run_local(&serde_json::to_string(&request).unwrap());

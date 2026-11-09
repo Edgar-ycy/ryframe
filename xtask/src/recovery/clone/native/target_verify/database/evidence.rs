@@ -12,7 +12,7 @@ use super::super::{
     input::request_physical,
     storage::StorageInputs,
 };
-use crate::Result;
+use crate::{Result, cli::CloneSide};
 
 #[path = "stdout.rs"]
 pub(crate) mod stdout;
@@ -26,8 +26,30 @@ pub(crate) fn verify_query<T: Transport, F: Fn() -> Result<()>>(
     database: &Value,
     check: &str,
 ) -> Result<String> {
+    verify_query_for_side(
+        context,
+        configuration,
+        CloneSide::Target,
+        transport,
+        checkpoint,
+        database,
+        check,
+    )
+}
+
+/// 两侧交接只复用固定查询，按原配置根保留输出及一次空输出重读。
+pub(crate) fn verify_query_for_side<T: Transport, F: Fn() -> Result<()>>(
+    context: &StorageInputs<'_>,
+    configuration: &Value,
+    side: CloneSide,
+    transport: &T,
+    checkpoint: &F,
+    database: &Value,
+    check: &str,
+) -> Result<String> {
     let port = Port {
         configuration: Some(configuration),
+        side,
         context,
         transport,
         checkpoint,
@@ -93,6 +115,7 @@ pub(super) struct Evidence {
 
 pub(super) struct Port<'a, T, F> {
     pub(super) configuration: Option<&'a Value>,
+    pub(super) side: CloneSide,
     pub(super) context: &'a StorageInputs<'a>,
     pub(super) transport: &'a T,
     pub(super) checkpoint: &'a F,
@@ -313,7 +336,7 @@ impl Evidence {
         environment.insert("MYSQL_TEST_LOGIN_FILE".into(), login.display().to_string());
         let mut command = vec![program.display().to_string()];
         command.extend(args.clone());
-        let secrets = secrets(port.context, port.configuration)?;
+        let secrets = secrets(port.context, port.configuration, port.side)?;
         let target = match &stdout {
             Some(output) => output.target()?,
             None => StdoutTarget::Capture,
@@ -410,6 +433,12 @@ fn mysql_arguments(
 ) -> Result<Vec<String>> {
     let sql = verification_sql(check)?;
     request_physical::defaults_connection(context.backend, database)?;
+    let mut args = mysql_client_arguments(database)?;
+    args.extend(["--execute".to_owned(), sql.to_owned()]);
+    Ok(args)
+}
+
+pub(crate) fn mysql_client_arguments(database: &Value) -> Result<Vec<String>> {
     Ok(vec![
         format!(
             "--defaults-file={}",
@@ -421,8 +450,6 @@ fn mysql_arguments(
         "--skip-column-names".into(),
         "--binary-mode".into(),
         "--default-character-set=utf8mb4".into(),
-        "--execute".into(),
-        sql.into(),
     ])
 }
 
@@ -478,7 +505,11 @@ fn response(output: &CommandOutput) -> Result<String> {
         .to_owned())
 }
 
-fn secrets(context: &StorageInputs<'_>, bound: Option<&Value>) -> Result<Vec<String>> {
+fn secrets(
+    context: &StorageInputs<'_>,
+    bound: Option<&Value>,
+    side: CloneSide,
+) -> Result<Vec<String>> {
     let mut result = context
         .environment
         .values()
@@ -502,13 +533,13 @@ fn secrets(context: &StorageInputs<'_>, bound: Option<&Value>) -> Result<Vec<Str
             result.push(value.into());
         }
     }
-    let configuration = super::binding::source_configuration(context, bound)?;
+    let configuration = super::binding::source_configuration(context, bound, side)?;
     let directory = Path::new(text(&configuration["directory"], "库存配置目录")?);
     let table =
         crate::rate_limit::load_app_table(&context.execution_backend()?, Some(directory), "test")
             .map_err(|_| "库存凭据配置无法安全读取")?;
     file_secrets(&serde_json::to_value(table)?, false, &mut result);
-    if super::binding::source_configuration(context, bound)? != configuration {
+    if super::binding::source_configuration(context, bound, side)? != configuration {
         return Err("采集脱敏字段期间配置已变化".into());
     }
     result.sort_by_key(|value| std::cmp::Reverse(value.len()));

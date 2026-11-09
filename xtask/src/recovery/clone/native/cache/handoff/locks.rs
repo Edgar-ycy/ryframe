@@ -195,6 +195,17 @@ impl Runtime {
     }
 }
 
+/// 双角色共用的内核互斥在角色运行目录之外。prepare 只发布文件，
+/// 异常退出由已登记 run owner 收口，不在角色目录制造新的持久锁。
+pub(in crate::recovery::clone::native) fn seed_runtime_guard(
+    backend: &Path,
+    run: &Path,
+) -> Result<ProcessGuard> {
+    let parent = run.join("seed-runtime");
+    common::local_directory(backend, &parent, "seed 双角色控制目录")?;
+    ProcessGuard::acquire_named(&parent, "runtime-control.guard")
+}
+
 fn directory_identity(backend: &Path, path: &Path) -> Result<(u64, u64)> {
     common::local_directory(backend, path, "API交接控制目录")?;
     let metadata = fs::symlink_metadata(path)?;
@@ -213,5 +224,32 @@ pub(super) fn combine<T>(result: Result<T>, checked: Result<()>) -> Result<T> {
             primary,
             Some(secondary),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn seed_runtime_control_uses_a_distinct_path_from_worker_role_control() {
+        let backend = crate::workspace::root_dir();
+        let root = backend.join(".local-tests");
+        fs::create_dir_all(&root).unwrap();
+        let run = tempfile::Builder::new()
+            .prefix("seed-pair-lock-")
+            .tempdir_in(root)
+            .unwrap();
+        let pair = run.path().join("seed-runtime");
+        let runtime = pair.join("runtime");
+        let worker = runtime.join("worker-control.lock");
+        fs::create_dir_all(&worker).unwrap();
+        let lock = seed_runtime_guard(&backend, run.path()).unwrap();
+        assert!(pair.join("runtime-control.guard").is_file());
+        assert!(seed_runtime_guard(&backend, run.path()).is_err());
+        lock.check().unwrap();
+        drop(lock);
+        assert!(seed_runtime_guard(&backend, run.path()).is_ok());
+        assert!(worker.is_dir());
     }
 }

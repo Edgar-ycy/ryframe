@@ -5,6 +5,7 @@ use super::{
 use crate::{
     Result,
     local_test_path::{LocalTestPathKind, validate_local_test_path},
+    recovery::clone::native::{input::BUCKETS, s3::protocol::validate_key},
 };
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, ffi::OsString};
@@ -283,7 +284,6 @@ pub(in crate::recovery) fn validate_lineage(value: &Value) -> Result<()> {
         || value["scale"]["current_post_rows"].as_u64() < value["scale"]["records"].as_u64()
         || value["scale"]["tenants"] != 11
         || value["scale"]["business_objects"] != 256
-        || value["scale"]["verified_objects"] != 257
         || value["scale"]["object_bytes"]
             .as_u64()
             .is_none_or(|bytes| bytes < 1024 * 1024 * 1024)
@@ -298,12 +298,33 @@ pub(in crate::recovery) fn validate_lineage(value: &Value) -> Result<()> {
         5000,
         "请求节奏",
     )?;
-    validate_probe(value)?;
+    validate_objects(value)?;
     validate_tenants(value)
 }
 
-fn validate_probe(value: &Value) -> Result<()> {
-    let probe = &value["objects"]["probe"];
+fn validate_objects(value: &Value) -> Result<()> {
+    let scale = &value["scale"];
+    let objects = &value["objects"];
+    let probe = &objects["probe"];
+    let verified = if probe.is_null() { 256 } else { 257 };
+    if scale["verified_objects"] != verified
+        || objects["verified_objects"] != verified
+        || objects["business_objects"] != scale["business_objects"]
+        || objects["business_bytes"] != scale["object_bytes"]
+    {
+        return Err("派生对象投影与已验证规模不同".into());
+    }
+    let origin = value["scopes"]["origin_tenant_scope_id"]
+        .as_str()
+        .filter(|scope| !scope.is_empty())
+        .ok_or("原对象scope缺失")?;
+    let current = value["scopes"]["current_object_scope_id"]
+        .as_str()
+        .filter(|scope| !scope.is_empty())
+        .ok_or("当前对象scope缺失")?;
+    if probe.is_null() {
+        return Ok(());
+    }
     documents::exact(
         probe,
         &[
@@ -316,26 +337,12 @@ fn validate_probe(value: &Value) -> Result<()> {
         ],
         "派生来源唯一探针",
     )?;
-    let origin = format!(
-        "{}/",
-        value["scopes"]["origin_tenant_scope_id"]
-            .as_str()
-            .unwrap_or("")
-    );
-    let current = format!(
-        "{}/",
-        value["scopes"]["current_object_scope_id"]
-            .as_str()
-            .unwrap_or("")
-    );
-    if !["uploads", "avatar", "exports", "imports", "config-packages"]
-        .contains(&probe["bucket"].as_str().unwrap_or(""))
-        || probe["source_key"]
-            .as_str()
-            .is_none_or(|key| !key.starts_with(&origin))
-        || probe["target_key"]
-            .as_str()
-            .is_none_or(|key| !key.starts_with(&current))
+    let source = probe["source_key"].as_str().ok_or("探针来源对象键缺失")?;
+    let target = probe["target_key"].as_str().ok_or("探针目标对象键缺失")?;
+    validate_key(origin, source, false)?;
+    validate_key(current, target, false)?;
+    if !BUCKETS.contains(&probe["bucket"].as_str().unwrap_or(""))
+        || source.strip_prefix(&format!("{origin}/")) != target.strip_prefix(&format!("{current}/"))
         || model::integer(&probe["bytes"], 1, 4 * 1024 * 1024, "探针对象大小").is_err()
         || !digest(probe["sha256"].as_str().unwrap_or(""), 64)
         || !probe["metadata"].is_object()

@@ -69,6 +69,144 @@ fn gone(directory: &Path) {
 }
 
 #[test]
+fn native_registration_rejects_partial_and_non_file_receipts_without_writing() {
+    for name in ["runtime.json", "runtime-evidence.json"] {
+        for is_directory in [false, true] {
+            let root = directory();
+            let context = Context {
+                root: root.path().into(),
+                output: root.path().into(),
+                control: Value::Null,
+                run: String::new(),
+                attempt: String::new(),
+            };
+            let mut native = Native {
+                context: &context,
+                cancel: Arc::new(AtomicBool::new(false)),
+                api: None,
+            };
+            let path = context.output.join(name);
+            if is_directory {
+                fs::create_dir(&path).unwrap();
+            } else {
+                fs::write(&path, b"preserve original").unwrap();
+            }
+
+            let error = native.leaf("register").unwrap_err().to_string();
+            if is_directory {
+                assert!(error.contains("普通文件"));
+                assert!(path.is_dir());
+            } else {
+                assert!(error.contains("只存在一份收据"));
+                assert_eq!(fs::read(&path).unwrap(), b"preserve original");
+            }
+            assert_eq!(fs::read_dir(&context.output).unwrap().count(), 2);
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn native_registration_preserves_dangling_receipt_links() {
+    let root = directory();
+    let context = Context {
+        root: root.path().into(),
+        output: root.path().into(),
+        control: Value::Null,
+        run: String::new(),
+        attempt: String::new(),
+    };
+    let mut native = Native {
+        context: &context,
+        cancel: Arc::new(AtomicBool::new(false)),
+        api: None,
+    };
+    let receipt = context.output.join("runtime-evidence.json");
+    let missing = context.output.join("absent");
+    std::os::unix::fs::symlink(&missing, &receipt).unwrap();
+
+    let error = native.leaf("register").unwrap_err().to_string();
+    assert!(error.contains("符号链接"));
+    assert_eq!(fs::read_link(receipt).unwrap(), missing);
+    assert_eq!(fs::read_dir(&context.output).unwrap().count(), 2);
+}
+
+#[test]
+fn capture_preserves_stdin_already_bound_to_the_role_command() {
+    let root = directory();
+    let mut command = command("echo", root.path());
+    let input = root.path().join("bound-input");
+    fs::write(&input, b"bound role request").unwrap();
+    command.stdin(fs::File::open(input).unwrap());
+    let output = capture_prebound(
+        command,
+        root.path(),
+        Duration::from_secs(5),
+        None,
+        true,
+        false,
+    )
+    .unwrap();
+    assert_eq!(output, "bound role request");
+    gone(root.path());
+}
+
+#[test]
+fn native_api_absence_and_cancelled_start_are_read_only() {
+    let root = directory();
+    let context = Context {
+        root: root.path().into(),
+        output: root.path().into(),
+        control: Value::Null,
+        run: String::new(),
+        attempt: String::new(),
+    };
+    let mut native = Native {
+        context: &context,
+        cancel: Arc::new(AtomicBool::new(true)),
+        api: None,
+    };
+    assert_eq!(native.leaf("api-stop").unwrap()["state"], "absent");
+    assert!(
+        native
+            .leaf("api-launch")
+            .unwrap_err()
+            .to_string()
+            .contains("取消")
+    );
+    assert_eq!(fs::read_dir(&context.output).unwrap().count(), 1);
+}
+
+#[test]
+fn native_api_stop_preserves_unowned_members_and_unknown_receipts() {
+    for name in [
+        "api-members-00000000000000000000000000000001-ready.json",
+        "api-unknown.json",
+        "api-tree.json",
+        "api-control.lock",
+    ] {
+        let root = directory();
+        let context = Context {
+            root: root.path().into(),
+            output: root.path().into(),
+            control: Value::Null,
+            run: String::new(),
+            attempt: String::new(),
+        };
+        let mut native = Native {
+            context: &context,
+            cancel: Arc::new(AtomicBool::new(false)),
+            api: None,
+        };
+        let path = context.output.join(name);
+        fs::write(&path, b"original").unwrap();
+        assert!(native.leaf("api-stop").is_err(), "{name}");
+        assert_eq!(fs::read(path).unwrap(), b"original");
+        assert_eq!(fs::read_dir(&context.output).unwrap().count(), 2);
+    }
+}
+
+#[test]
 fn captures_private_stdin_without_putting_values_in_arguments_or_errors() {
     let root = directory();
     let output = capture(

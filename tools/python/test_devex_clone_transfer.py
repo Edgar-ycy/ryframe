@@ -19,7 +19,7 @@ from devex_clone_ledger import CloneLedger, LedgerError
 from devex_clone_transfer import DatabaseBasis, DatabaseObservation, GenerationObservation, ObjectObservation, TransferSteps
 from restore_build import file_digest
 from restore_reference_io import ExternalTools, ObjectCreateError
-from restore_reference_plan import plan_hash, configuration_binding
+from restore_reference_plan import _native, plan_hash, configuration_binding
 from native_s3_client import configuration as object_configuration
 
 GENERATION = "e" * 64
@@ -241,7 +241,7 @@ class TransferTests(unittest.TestCase):
         with self.open():
             engine = self.engine()
             self.assertEqual(self.guard.proof_selections, [None])
-            step = engine.object_step(item)
+            step = engine.object_ids[(item["bucket"], item["target_key"])]
             self.guard.proof_selections.clear()
             engine.verify_pending(step)
             self.assertEqual(self.guard.proof_selections, [expected, expected])
@@ -298,7 +298,7 @@ class TransferTests(unittest.TestCase):
         with self.open(create=False, mode="reconcile"):
             engine = self.engine()
             self.guard.proof_selections.clear()
-            step = engine.object_step(item)
+            step = engine.object_ids[(item["bucket"], item["target_key"])]
             self.assertEqual(engine.reconcile(step), "reconciled_before")
             self.assertEqual(self.guard.proof_selections, [expected, expected])
         with self.open(create=False, mode="resume"):
@@ -308,9 +308,13 @@ class TransferTests(unittest.TestCase):
             self.assertEqual(self.guard.proof_selections, [expected] * 3)
 
     def test_sql_and_constructor_use_global_proof_and_unknown_step_never_reaches_guard(self):
-        with self.open():
+        with self.open(), patch("devex_clone_transfer._native", wraps=_native) as native:
             engine = self.engine()
             engine.apply_database(self.plan["databases"][0]["key"])
+            native.assert_called_once_with("reference-copy-step-ids", {
+                "databases": [{"key": item["key"]} for item in self.plan["databases"]],
+                "objects": [{"bucket": item["bucket"], "target_key": item["target_key"]} for item in self.plan["objects"]],
+            })
             self.assertTrue(all(value is None for value in self.guard.proof_selections))
             count = len(self.guard.proof_selections)
             with self.assertRaisesRegex(ValueError, "当前完整计划"):
@@ -521,7 +525,7 @@ class TransferTests(unittest.TestCase):
         with self.open():
             engine = self.engine()
             item = self.plan["databases"][0]
-            step = engine.db_step(item)
+            step = engine.database_ids[item["key"]]
             before, after = engine._database_basis(item)
             self.ledger.intent(step, before, {**after, "tables_sha256": "7" * 64}, item["artifact"]["sha256"])
         with self.assertRaises(ValueError), self.open(create=False, mode="reconcile"):

@@ -117,12 +117,19 @@ fn run_with(
     let directory = new_output(&root, &options.output)?;
     let before = registered(coordinator, options)?;
     fs::create_dir(&directory)?;
-    let front = frontend::run(
-        frontend_tools,
-        &options.sources.source_frontend,
-        &options.expected_frontend_head,
-        port,
-    )?;
+    let front = if options.sources.adapter_contract.is_some() {
+        frontend::run_b0(
+            &options.sources.source_frontend,
+            &options.expected_frontend_head,
+        )?
+    } else {
+        frontend::run(
+            frontend_tools,
+            &options.sources.source_frontend,
+            &options.expected_frontend_head,
+            port,
+        )?
+    };
     if registered(coordinator, options)? != before {
         return Err("前端构建后后端来源变化，保留本次目录".into());
     }

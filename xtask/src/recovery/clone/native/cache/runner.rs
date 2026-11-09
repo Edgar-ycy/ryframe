@@ -55,6 +55,11 @@ struct Runner<'a> {
 impl StageRunner for Runner<'_> {
     fn preflight(&self, request: &StageRequest<'_>) -> Result<()> {
         self.require(request, false)?;
+        stage::require_live_request(
+            request.backend,
+            request.run_dir,
+            self.options.request.as_deref(),
+        )?;
         let mut runtime = Native {
             backend: request.backend,
             directory: request.run_dir,
@@ -98,6 +103,11 @@ impl StageRunner for Runner<'_> {
 
     fn execute(&self, request: &StageRequest<'_>) -> Result<Value> {
         self.require(request, true)?;
+        stage::require_live_request(
+            request.backend,
+            request.run_dir,
+            self.options.request.as_deref(),
+        )?;
         let mut runtime = Native {
             backend: request.backend,
             directory: request.run_dir,
@@ -128,6 +138,13 @@ pub(crate) fn inherited_bridges(backend: &Path, manifest: &Value) -> Result<Vec<
     if source["source_request"] != manifest["source_request"] {
         return Err("缓存继承来源不属于当前清单的源请求".into());
     }
+    bridges_for_source(backend, &source)
+}
+
+pub(in crate::recovery::clone::native) fn bridges_for_source(
+    backend: &Path,
+    source: &Value,
+) -> Result<Vec<Value>> {
     if !source["source_generation"].is_null() {
         return Ok(vec![]);
     }

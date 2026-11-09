@@ -1,4 +1,4 @@
-//! 已发布配额计划与十一租户容量证明的只读入口；不执行 API 或资源写入。
+//! 十一租户的配额计划、受管执行和已发布容量证明。
 use std::path::Path;
 
 use serde_json::{Value, json};
@@ -15,6 +15,8 @@ mod history;
 mod inputs;
 #[path = "capacity/model.rs"]
 pub(crate) mod model;
+#[path = "capacity/orchestration.rs"]
+pub(crate) mod orchestration;
 
 use inputs::Reads;
 

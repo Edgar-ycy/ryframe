@@ -383,7 +383,7 @@ fn inventory_stdout_binding_capture_failure_duplicates_and_escape_fail_closed() 
         fixture.records(Value::Null)["error"]["message"],
         "库存失败 stdout 文件绑定变化"
     );
-    let mut capture = command.clone();
+    let mut capture = command;
     capture["stdout_file"] = json!({"path":stdout});
     capture["stdout_capture_error"] = json!("FileNotFoundError");
     fixture.write(&command_name, &capture);

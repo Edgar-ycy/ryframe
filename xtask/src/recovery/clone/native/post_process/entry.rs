@@ -1,4 +1,4 @@
-//! 固定请求三模式在统一阶段内持有真实存储、目标代次和完整复制账本保护。
+//! 复制后阶段在统一入口内持有真实存储、目标代次和完整复制账本保护。
 use super::{
     context::Context,
     diagnostic::{self, Phase},
@@ -10,27 +10,22 @@ use crate::{
         bridge::scope::Scope,
         cache, json as document,
         lifecycle::{
-            lock::ProcessGuard,
             manifest,
             stage::{self, StageRequest, StageRunner},
         },
         resources::common,
-        target_verify::guard::Generation,
     },
 };
 use serde_json::{Value, json};
 use std::{cell::RefCell, path::Path};
 
-pub(crate) fn selected(options: &PostCopyOptions) -> bool {
-    matches!(
-        options.operation,
-        PostCopyOperation::Register | PostCopyOperation::Prepare | PostCopyOperation::Amend
-    )
-}
-
 pub(crate) fn run(backend: &Path, options: &PostCopyOptions) -> Result<Value> {
-    if !selected(options) {
-        return Err("此原生入口仅处理登记、准备和环境修订".into());
+    if options.operation == PostCopyOperation::RecoverSession {
+        let path = options
+            .producer_binding
+            .as_deref()
+            .ok_or("回收需要明确生产者收据描述文件")?;
+        return super::recover::run(backend, &options.run_dir, "post-copy", path);
     }
     let value = stage::run_named(
         backend,
@@ -43,10 +38,12 @@ pub(crate) fn run(backend: &Path, options: &PostCopyOptions) -> Result<Value> {
             input: RefCell::new(None),
         },
     )?;
-    Ok(
-        json!({"status":value["status"],"stage":value["stage"],"mode":value["mode"],
-        "attempt":value["attempt"],"restore_qualified":value["restore_qualified"]}),
-    )
+    Ok(summary(&value))
+}
+
+pub(in crate::recovery::clone::native) fn summary(value: &Value) -> Value {
+    json!({"status":value["status"],"stage":value["stage"],"mode":value["mode"],
+        "attempt":value["attempt"],"restore_qualified":value["restore_qualified"]})
 }
 
 struct Runner<'a> {
@@ -73,8 +70,8 @@ impl StageRunner for Runner<'_> {
                     .ok_or("登记或修订需要显式请求文件")?;
                 common::binding(&common::common_file(request.backend, path, "固定请求输入")?)?
             }
-            PostCopyOperation::Prepare if self.options.request.is_none() => Value::Null,
-            _ => return Err("prepare不能替换登记请求".into()),
+            _ if self.options.request.is_none() => Value::Null,
+            _ => return Err("此复制后阶段沿用已登记请求".into()),
         };
         let mut frozen = self.input.borrow_mut();
         if frozen.as_ref().is_some_and(|old| *old != input) {
@@ -128,61 +125,35 @@ impl Runner<'_> {
             request.run_dir,
             &manifest.value,
         )?;
-        let result = (|| {
-            let initialized = common::bound_file(
-                request.backend,
-                &manifest.value["initialized"],
-                "初始化后像",
-            )?;
-            let owner = Generation::acquire(
-                request.backend,
-                initialized.parent().ok_or("初始化目录缺失")?,
-            )?;
-            let result = (|| {
-                let copy = common::local_directory(
-                    request.backend,
-                    Path::new(document::text(
-                        &manifest.value["copy_directory"],
-                        "复制目录",
-                    )?),
-                    "复制目录",
-                )?;
-                super::files::absent(&copy.join("ledger/clone.lock"))?;
-                let ledger =
-                    ProcessGuard::acquire_named(&copy.join("ledger"), "copy-ledger.guard")?;
-                super::files::absent(&copy.join("ledger/clone.lock"))?;
+        diagnostic::context(
+            request,
+            Phase::Cleanup,
+            super::ownership::with_target(request, &manifest.value, storage, |owner, storage| {
                 let input = self.input.borrow();
                 let context = Context::load(
                     request,
-                    &owner,
+                    owner,
                     scope,
-                    &storage.directory,
+                    storage,
                     input.as_ref().filter(|v| !v.is_null()),
                 )?;
-                let result = match self.options.operation {
-                    PostCopyOperation::Register => {
-                        diagnostic::context(request, Phase::Registration, context.register())
-                    }
-                    PostCopyOperation::Prepare => diagnostic::context(
-                        request,
-                        Phase::Preparation,
-                        super::prepare::run(&context),
-                    ),
-                    PostCopyOperation::Amend => {
-                        diagnostic::context(request, Phase::Amendment, super::amend::run(&context))
-                    }
-                    _ => Err("未知固定请求模式".into()),
-                };
-                let checked = (|| {
-                    context.check()?;
-                    storage.check()?;
-                    ledger.check()?;
-                    scope.assert_unchanged()
-                })();
-                super::files::combine(result, checked)
-            })();
-            diagnostic::context(request, Phase::Cleanup, owner.finish(result))
-        })();
-        diagnostic::context(request, Phase::Cleanup, storage.finish(result))
+                let result = self.execute_stage(request, &context);
+                super::files::combine(result, context.check())
+            }),
+        )
+    }
+
+    fn execute_stage(&self, request: &StageRequest<'_>, context: &Context<'_>) -> Result<Value> {
+        let (phase, result) = match self.options.operation {
+            PostCopyOperation::Register => (Phase::Registration, context.register()),
+            PostCopyOperation::Prepare => (Phase::Preparation, super::prepare::run(context)),
+            PostCopyOperation::Amend => (Phase::Amendment, super::amend::run(context)),
+            PostCopyOperation::Schedules | PostCopyOperation::Reconcile => {
+                (Phase::Schedules, super::execution::run(context))
+            }
+            PostCopyOperation::Verify => (Phase::Business, super::execution::run(context)),
+            PostCopyOperation::RecoverSession => return Err("回收须使用专用的历史保护入口".into()),
+        };
+        diagnostic::context(request, phase, result)
     }
 }

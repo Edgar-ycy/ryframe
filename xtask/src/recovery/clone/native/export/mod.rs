@@ -18,6 +18,10 @@ pub(crate) mod recovery;
 pub(crate) mod transport;
 mod verify;
 
+pub(crate) use evidence::bound_relative;
+pub(crate) use verify::SavedObjectInputs;
+pub(crate) use verify::frozen;
+
 pub(crate) fn preflight(backend: &Path, request: &StageRequest<'_>) -> Result<()> {
     let _ = input::Context::load(backend, request)?;
     if request.attempt.is_some() {

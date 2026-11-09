@@ -342,10 +342,10 @@ def read_authority(stream=None) -> dict:
     return validate_authority(decode_object(raw, "stdin 权威恢复上下文"))
 
 
-def validate_frontend_receipt(receipt: object) -> dict:
+def validate_frontend_receipt(receipt: object, *, b0: bool = False) -> dict:
     from restore_frontend_native import request
 
-    return request("receipt", value=receipt)
+    return request("receipt-b0" if b0 else "receipt", value=receipt)
 
 
 def process_identity_record(value: object, label: str) -> dict:
@@ -481,8 +481,10 @@ def validate_runtime_receipt(receipt: object) -> dict:
         ):
             raise ValueError(f"{role} 进程收据路径或摘要无效")
         process_identity_record(item["identity"], f"{role} 进程身份")
+    from restore_frontend_native import b0_runtime_source
+
     validate_backend_receipt(value["backend"])
-    validate_frontend_receipt(value["frontend"])
+    validate_frontend_receipt(value["frontend"], b0=b0_runtime_source(source))
     if value["frontend"]["build"]["identity"]["frontend_commit"] != source["frontend_sha"]:
         raise ValueError("恢复前端构建身份必须绑定权威前端精确 SHA")
     return value

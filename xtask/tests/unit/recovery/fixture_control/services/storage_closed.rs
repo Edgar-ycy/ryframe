@@ -160,11 +160,11 @@ impl Fixture {
             .collect();
         let actor = actor::Actor {
             backend: backend.clone(),
-            output: output.clone(),
-            request: request.clone(),
+            output,
+            request,
             private,
-            manifest: manifest.clone(),
-            controller: controller.clone(),
+            manifest,
+            controller,
             number,
             operation_id: "a".repeat(32),
             tool: common::binding(&std::env::current_exe().unwrap()).unwrap(),

@@ -76,6 +76,8 @@ mod build_source;
 #[path = "../src/data.rs"]
 mod data;
 
+#[path = "internal/arm_target.rs"]
+mod arm_target_tests;
 #[path = "internal/backend_sources.rs"]
 mod backend_sources_tests;
 #[path = "internal/build.rs"]
@@ -291,6 +293,8 @@ mod target_evidence_aggregate_tests;
 mod target_fresh_status_tests;
 #[path = "internal/target_guard_native.rs"]
 mod target_guard_native_tests;
+#[path = "internal/target_initialize_restart_fixture.rs"]
+mod target_initialize_restart_fixture;
 #[path = "internal/target_physical_file.rs"]
 mod target_physical_file;
 #[path = "internal/target_proof_native.rs"]
@@ -326,9 +330,6 @@ mod target_prepare_history_tests;
 mod target_prepare_ports_tests;
 #[path = "unit/recovery/clone/native/target_verify/fresh/registration.rs"]
 mod target_prepare_registration_tests;
-
-#[path = "internal/target_initialize_restart_fixture.rs"]
-mod target_initialize_restart_fixture;
 
 #[path = "internal/target_initialize_native.rs"]
 mod target_initialize_native_tests;

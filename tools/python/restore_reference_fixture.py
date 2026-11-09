@@ -47,8 +47,10 @@ def inventory(plan):
     observed = now()
     return {"id": plan["id"], "scope_id": "source", "source_sha": "a" * 40,
             "captured_at": observed, "quiesced_at": observed,
+            "control_schema_fingerprint": "a" * 16, "tenant_schema_fingerprint": "b" * 64,
             "databases": [{**{key: db[key] for key in ("key", "kind", "database", "server_uuid")},
                            "shared": db["mode"] == "shared",
+                           "placements": [],
                            "tables": [{"table": "sys_post", "rows": 1, "sha256": "b" * 64}]}
                           for db in plan["source"]["databases"]],
             "objects": [{"bucket": bucket, "prefix": "source/", "entries": []} for bucket in sorted(BUCKETS)]}

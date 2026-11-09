@@ -24,7 +24,7 @@ def transport(backend, request, private, checkpoint, *, password=None):
 
 
 def _port(backend, directory, operation, arguments):
-    from devex_clone_cache_process import inspect_start, observe, start, stop
+    from devex_clone_cache_process import inspect_start
     manifest = lambda: read_json(directory / "manifest.json")
     checkpoint = lambda spec: _invoke(backend, directory, "guard", **spec)
     if operation == "checkpoint":
@@ -41,13 +41,6 @@ def _port(backend, directory, operation, arguments):
         return None
     if operation == "inspect":
         return inspect_start(arguments["request"], Path(arguments["output"]))
-    if operation == "stop":
-        return stop(backend, arguments["request"], arguments["private"], arguments["runtime"], Path(arguments["output"]))
-    if operation == "observe":
-        return observe(backend, arguments["request"], arguments["private"], arguments["runtime"])
-    if operation == "start":
-        return start(backend, arguments["request"], arguments["private"], Path(arguments["output"]),
-                     lambda: checkpoint(arguments["guard"]))
     if operation == "redis":
         call = transport(backend, arguments["request"], environment(backend, arguments["request"]),
                          lambda: checkpoint(arguments["guard"]))

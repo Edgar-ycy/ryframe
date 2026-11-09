@@ -10,7 +10,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub(super) fn protect(inputs: &StorageInputs<'_>, target: &Path, before: &Value) -> Result<Inputs> {
+pub(in crate::recovery::clone::native) fn protect(
+    inputs: &StorageInputs<'_>,
+    target: &Path,
+    before: &Value,
+) -> Result<Inputs> {
     let root = inputs.execution_backend()?;
     let (directory, configuration) =
         request_configuration::fresh_files(&root, inputs.environment, inputs.request)?;

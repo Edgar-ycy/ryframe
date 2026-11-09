@@ -144,7 +144,7 @@ impl std::fmt::Display for ReviewFailure {
         };
         write!(
             f,
-            "环境审阅阶段“{}”失败：{reason}；核对 --review 的受控普通文件、原始字节摘要和前后像；核对 config/tools.toml 与 .local-tests/tools.toml 的 verification.windows_redis 及 Windows 工具/DLL 摘要，或 verification.linux_observer、WSL入口及完整源码/ELF绑定",
+            "环境审阅阶段“{}”失败：{reason}；核对 --review 的受控普通文件、原始字节摘要和前后像；核对 config/tools.toml 与 .local-tests/tools.toml 的 verification.windows_redis 及已登记的 Windows 工具与 DLL 摘要",
             self.stage
         )?;
         if self.stage == "本地收据发布" {

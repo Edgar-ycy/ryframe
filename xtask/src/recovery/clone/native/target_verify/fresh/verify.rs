@@ -1,5 +1,5 @@
 //! 复制前完整初像复验；正式工作区和直接目标共用同一只读资源窗口。
-mod inputs;
+pub(in crate::recovery::clone::native) mod inputs;
 pub(crate) mod window;
 
 use super::super::super::{
@@ -204,7 +204,7 @@ fn run(
             scope,
             run: active,
         };
-        let observer = super::super::storage::SystemObserver::new(&SystemTransport);
+        let observer = super::super::storage::SystemObserver;
         let generation = || resources.generation_owned(Some(&owner), true);
         window::Window {
             inputs: StorageInputs {
@@ -245,6 +245,10 @@ fn prepare_observation(
     if filename != target.join("initialized.json") {
         return Err("fresh 复验必须绑定固定 initialized.json".into());
     }
+    let initialized = document::read(&filename)?;
+    super::super::storage::redis_layout::require_windows(
+        &initialized["generation"]["storage"]["redis"],
+    )?;
     validate_local_test_path(observation, backend, LocalTestPathKind::NewDirectory)?;
     disjoint(observation, target)?;
     if let Some(run) = active {

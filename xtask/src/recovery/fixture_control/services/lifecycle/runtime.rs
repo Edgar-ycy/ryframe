@@ -3,10 +3,7 @@ use super::{
     Runtime,
     model::{self, check},
 };
-use crate::{
-    Result,
-    recovery::clone::native::{digest, json as json_io},
-};
+use crate::{Result, recovery::clone::native::json as json_io};
 use serde_json::{Value, json};
 use std::{
     fs::File,
@@ -17,36 +14,25 @@ use std::{
 };
 
 pub(super) const LIMIT: usize = 4 * 1024 * 1024;
-pub(super) struct PythonRuntime {
+pub(super) struct LifecycleRuntime {
     backend: PathBuf,
     tool: Value,
-    helper: PathBuf,
-    sources: Vec<(PathBuf, digest::FileDigest)>,
     started: Instant,
 }
-impl PythonRuntime {
+impl LifecycleRuntime {
     pub(super) fn new(backend: &Path) -> Result<Self> {
-        let helper = backend.join("tools/python/fixture_service_runtime.py");
-        check(
-            !digest::linked_path(&helper)?.contains(&true),
-            "服务原语入口不能经过链接",
-        )?;
-        let sources = source_snapshot(&backend.join("tools/python"))?;
         let executable = std::env::current_exe()?;
         let tool = crate::check::python_suite::binding(&executable)?
             .ok_or("服务生命周期需要明确原生工具绑定")?;
         Ok(Self {
             backend: backend.to_path_buf(),
             tool: serde_json::from_str(&tool)?,
-            helper,
-            sources,
             started: Instant::now(),
         })
     }
     fn invoke(&self, operation: &str, arguments: Value) -> Result<Value> {
         super::primitive::validate(&self.backend, operation, &arguments)?;
-        let native = matches!(operation, "cache-start" | "cache-stop" | "storage-start");
-        self.verify(native)?;
+        self.verify_tool()?;
         let payload = serde_json::to_vec(
             &json!({"format_version":1,"kind":"ryframe-fixture-service-primitive",
             "backend":self.backend,"native_tool":self.tool,"operation":operation,"arguments":arguments}),
@@ -57,8 +43,9 @@ impl PythonRuntime {
         input.write_all(&payload)?;
         input.seek(SeekFrom::Start(0))?;
         let mut output = tempfile::tempfile_in(&local)?;
-        let mut command = self.command(native)?;
+        let mut command = crate::process::child_command(model::text(&self.tool, "path")?);
         command
+            .arg(super::cache_primitive::ENTRY)
             .current_dir(&self.backend)
             .stdin(Stdio::from(input))
             .stdout(Stdio::from(output.try_clone()?))
@@ -81,60 +68,16 @@ impl PythonRuntime {
             }
         };
         let response = read_response(&mut output)?;
-        self.verify(native)?;
-        if native {
-            super::cache_primitive::decode(status.success(), &response)
-        } else {
-            decode(status.success(), &response)
-        }
+        self.verify_tool()?;
+        super::cache_primitive::decode(status.success(), &response)
     }
 
-    fn verify(&self, native: bool) -> Result<()> {
-        if native {
-            check(
-                self.tool == crate::check::python_suite::native_tool_binding()?,
-                "原生cache原语当前工具字节或身份变化；保留现场",
-            )
-        } else {
-            check(
-                source_snapshot(&self.backend.join("tools/python"))? == self.sources,
-                "服务原语入口在运行期间变化；保留现场",
-            )
-        }
+    fn verify_tool(&self) -> Result<()> {
+        check(
+            self.tool == crate::check::python_suite::native_tool_binding()?,
+            "原生cache原语当前工具字节或身份变化；保留现场",
+        )
     }
-
-    fn command(&self, native: bool) -> Result<std::process::Command> {
-        if native {
-            let mut command = crate::process::child_command(model::text(&self.tool, "path")?);
-            command.arg(super::cache_primitive::ENTRY);
-            Ok(command)
-        } else {
-            let executable = crate::process::resolved_executable(&self.backend, "python")?;
-            let mut command = crate::process::child_command(executable);
-            command.args(["-X", "utf8", "-B"]).arg(&self.helper);
-            Ok(command)
-        }
-    }
-}
-
-fn source_snapshot(directory: &Path) -> Result<Vec<(PathBuf, digest::FileDigest)>> {
-    check(
-        !digest::linked_path(directory)?.contains(&true),
-        "服务原语源码目录经过链接",
-    )?;
-    let mut sources = Vec::new();
-    for entry in std::fs::read_dir(directory)? {
-        let path = entry?.path();
-        if path.extension().is_some_and(|extension| extension == "py") {
-            check(
-                !digest::linked_path(&path)?.contains(&true),
-                "服务原语模块经过链接",
-            )?;
-            sources.push((path.clone(), digest::file(&path)?));
-        }
-    }
-    sources.sort_by(|left, right| left.0.cmp(&right.0));
-    Ok(sources)
 }
 
 fn wait_primitive(
@@ -155,7 +98,7 @@ fn wait_primitive(
         std::thread::sleep(Duration::from_millis(20));
     }
 }
-impl Runtime for PythonRuntime {
+impl Runtime for LifecycleRuntime {
     fn call(&mut self, operation: &str, arguments: Value) -> Result<Value> {
         if operation == "cache-closed-port" {
             json_io::exact(&arguments, &["request", "runtime"], "只读独占端口")?;
@@ -209,7 +152,7 @@ impl Runtime for PythonRuntime {
             let backend = self.backend.clone();
             super::observation::observe(self, &backend, &arguments["services"])
         } else {
-            self.invoke(operation, arguments)
+            Err(model::error("未知服务原语；不启动子进程"))
         }
     }
     fn now(&self) -> Duration {
@@ -307,21 +250,17 @@ mod tests {
     }
 
     #[test]
-    fn source_snapshot_detects_changed_added_or_removed_imported_modules() {
-        let root = crate::workspace::root_dir().join(".local-tests");
-        let directory = tempfile::tempdir_in(root).unwrap();
-        let module = directory.path().join("primitive.py");
-        std::fs::write(&module, b"original").unwrap();
-        let before = source_snapshot(directory.path()).unwrap();
-        std::fs::write(&module, b"changed").unwrap();
-        assert_ne!(source_snapshot(directory.path()).unwrap(), before);
-        std::fs::write(&module, b"original").unwrap();
-        std::fs::write(directory.path().join("extra.py"), b"extra").unwrap();
-        assert_ne!(source_snapshot(directory.path()).unwrap(), before);
-        std::fs::remove_file(directory.path().join("extra.py")).unwrap();
-        assert_eq!(source_snapshot(directory.path()).unwrap(), before);
-        std::fs::remove_file(&module).unwrap();
-        assert_ne!(source_snapshot(directory.path()).unwrap(), before);
+    fn unexpected_primitive_fails_before_opening_a_child() {
+        let mut runtime = LifecycleRuntime {
+            backend: PathBuf::from("unused-backend"),
+            tool: Value::Null,
+            started: Instant::now(),
+        };
+        let error = runtime.call("unexpected", json!({})).unwrap_err();
+        assert_eq!(
+            model::reason(error.as_ref()),
+            Some("未知服务原语；不启动子进程")
+        );
     }
 
     #[test]

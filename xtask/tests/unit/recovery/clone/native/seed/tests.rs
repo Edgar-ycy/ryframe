@@ -86,6 +86,76 @@ fn registered_seed_matches_published_run_and_does_not_write_runtime_or_ledger() 
 }
 
 #[test]
+fn seed_register_rejects_interpreter_dispatch_and_missing_input_without_stage_writes() {
+    use crate::cli::{CloneCommand, SeedRuntimeOperation, SeedRuntimeOptions};
+    let fixture = Fixture::new();
+    let before = fs::read(fixture.run.join("state.json")).unwrap();
+    let options = SeedRuntimeOptions {
+        run_dir: fixture.run.clone(),
+        operation: SeedRuntimeOperation::Register,
+        request: None,
+        producer_binding: None,
+    };
+    let command = CloneCommand::SeedRuntime(options);
+    assert!(
+        crate::recovery::clone::protocol(&command, &fixture.backend)
+            .unwrap_err()
+            .to_string()
+            .contains("原生持锁正式入口")
+    );
+    assert!(
+        crate::recovery::clone::native::run(&command, &fixture.backend)
+            .unwrap_err()
+            .to_string()
+            .contains("seed 登记需要明确 --request")
+    );
+    assert_eq!(before, fs::read(fixture.run.join("state.json")).unwrap());
+    assert!(!fixture.run.join("run.lock").exists());
+}
+
+#[test]
+fn seed_mutations_and_recovery_reject_interpreter_dispatch_and_invalid_inputs_without_writes() {
+    use crate::cli::{CloneCommand, SeedRuntimeOperation, SeedRuntimeOptions};
+    let fixture = Fixture::new();
+    let before = fs::read(fixture.run.join("state.json")).unwrap();
+    for operation in [
+        SeedRuntimeOperation::QuotasPlan,
+        SeedRuntimeOperation::QuotasApply,
+        SeedRuntimeOperation::QuotasReconcile,
+        SeedRuntimeOperation::IdentitiesApply,
+        SeedRuntimeOperation::IdentitiesVerify,
+        SeedRuntimeOperation::DepartmentsPlan,
+        SeedRuntimeOperation::DepartmentsApply,
+        SeedRuntimeOperation::DepartmentsReconcile,
+        SeedRuntimeOperation::DepartmentsVerify,
+        SeedRuntimeOperation::Prepare,
+        SeedRuntimeOperation::RecoverSession,
+    ] {
+        let command = CloneCommand::SeedRuntime(SeedRuntimeOptions {
+            run_dir: fixture.run.clone(),
+            operation,
+            request: Some(fixture.run.join("manifest.json")),
+            producer_binding: None,
+        });
+        assert!(
+            crate::recovery::clone::protocol(&command, &fixture.backend)
+                .unwrap_err()
+                .to_string()
+                .contains("原生持锁正式入口")
+        );
+        let error = crate::recovery::clone::native::run(&command, &fixture.backend)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(match operation {
+            SeedRuntimeOperation::RecoverSession => "回收需要明确生产者收据描述文件",
+            _ => "seed 业务及运行准备沿用本 run 已发布登记和原身份计划",
+        }));
+    }
+    assert_eq!(before, fs::read(fixture.run.join("state.json")).unwrap());
+    assert!(!fixture.run.join("run.lock").exists());
+}
+
+#[test]
 fn latest_failed_or_running_registration_blocks_normal_access_but_cleanup_uses_published() {
     for failed in [false, true] {
         let fixture = Fixture::new();

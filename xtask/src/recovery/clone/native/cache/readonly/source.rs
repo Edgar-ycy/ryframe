@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use std::path::Path;
 
 #[path = "source/relationship.rs"]
-mod relationship;
+pub(in crate::recovery) mod relationship;
 
 /// 无工具换代的正式已发布来源仍共用六文件、历史和初始化证明。
 pub(crate) fn published(backend: &Path, descriptor: &Value) -> Result<Value> {

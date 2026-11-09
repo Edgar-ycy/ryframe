@@ -26,7 +26,7 @@ from devex_clone_copy_locks import register_copy_owner
 from devex_clone_live_object import observe_target_object, verify_target_heads
 from devex_clone_object_batch import WORKERS, ordered_batches
 from devex_clone_model import local_path, name, schema_fingerprints
-from devex_clone_source_proof import bound_file, verify_generation
+from devex_clone_source_proof import bound_file, copy_source_generation
 from devex_clone_target_binding import _native as target_binding
 from devex_clone_target_state import generation_lock
 from devex_clone_transfer import DatabaseBasis, GenerationObservation, TransferSteps
@@ -77,14 +77,14 @@ class CloneSession:
         self.database_credentials = {"backend": str(self.backend), "databases": copy.deepcopy(databases)}
         redact_object_diagnostic("", {}, database_credentials=self.database_credentials)
 
-    def command(self, command, **kwargs):
+    def command(self, command, *, digest_output=False, **kwargs):
         # 写请求前就占有诊断文件；不记录 stdin 中的业务 SQL 或明文环境。
         if self.secret_redaction is None:
             raise ValueError("外部命令必须先绑定两侧文件与配置中的实际凭据")
         prefix = "command-" + (self.copy_owner.session_id + "-" if self.copy_owner else "")
         path = self.output / (prefix + uuid.uuid4().hex + ".json")
         redaction = dict(os.environ) | (kwargs.get("env") or {}) | self.secret_redaction
-        private_probe = Path(command[0]).name.lower() in {"powershell.exe", "pwsh.exe"}
+        private_probe = digest_output or Path(command[0]).name.lower() in {"powershell.exe", "pwsh.exe"}
 
         def diagnostic(value):
             if not private_probe:
@@ -117,16 +117,16 @@ class CloneSession:
         return self.output / (name(purpose) + "-" + uuid.uuid4().hex[:8])
 
     def _source_generation(self, selection: str | tuple[str, str] = "all") -> dict:
+        if self.source_storage_run is None:
+            raise ValueError("复制来源代次必须绑定正式运行目录")
         with self.environment.use("source"):
-            if self.source_storage_run is not None:
-                from devex_clone_run import source_storage_binding
+            from devex_clone_run import source_storage_binding
 
-                source_storage_binding(
-                    self.backend, self.source_storage_run, copy_stage=self.copy_stage,
-                )
+            source_storage_binding(
+                self.backend, self.source_storage_run, copy_stage=self.copy_stage,
+            )
             verify_export_bindings(self.backend, self.source_verified, selection=selection)
-            # 夹具源码树不属于当前验收仓库的检查窗口；窗口外完整核验，禁止跨仓库复用窗口结果。
-            current = verify_generation(self.backend, self.source_request, self.run)
+            current = copy_source_generation(self.backend, self.source_storage_run, self.run)
         if current != self.source_verified["generation"]:
             raise ValueError("源实际运行、停止声明、配置或构建代次与导出不同")
         return current

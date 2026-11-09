@@ -1,5 +1,9 @@
 //! 恢复运行的只读在线探针；不重试、不跟随重定向、不改变运行代次。
-use std::time::Duration;
+use std::{
+    future::Future,
+    io,
+    time::{Duration, Instant},
+};
 
 use reqwest::{Client, Url};
 use serde_json::{Value, json};
@@ -12,15 +16,70 @@ use crate::{Result, recovery::clone::native::json as strict};
 mod tests;
 
 pub(crate) fn request(args: &Value) -> Result<Value> {
+    runtime(args)?.block_on(controlled(args, async {
+        let _ = tokio::signal::ctrl_c().await;
+    }))
+}
+
+fn runtime(args: &Value) -> Result<tokio::runtime::Runtime> {
     // 先校验整个请求，再进行任何网络观察。
     validate(args)?;
     crate::http_session::install_crypto_provider()?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
+    Ok(tokio::runtime::Builder::new_current_thread()
         .enable_all()
-        .build()?;
-    runtime.block_on(controlled(args, async {
-        let _ = tokio::signal::ctrl_c().await;
-    }))
+        .build()?)
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct PreparedProbe<'a>(&'a Value);
+
+impl PreparedProbe<'_> {
+    pub(super) async fn observe(self) -> Result<()> {
+        observe(self.0).await.map(|_| ())
+    }
+}
+
+pub(super) fn within_deadline<'a, F>(
+    args: &'a Value,
+    deadline: Instant,
+    body: impl FnOnce(PreparedProbe<'a>) -> F,
+) -> Result<()>
+where
+    F: Future<Output = Result<()>>,
+{
+    require_before(deadline)?;
+    runtime(args)?.block_on(bounded(
+        body(PreparedProbe(args)),
+        deadline,
+        tokio::signal::ctrl_c(),
+    ))
+}
+
+async fn bounded(
+    body: impl Future<Output = Result<()>>,
+    deadline: Instant,
+    cancel: impl Future<Output = io::Result<()>>,
+) -> Result<()> {
+    tokio::select! {
+        biased;
+        signal = cancel => {
+            signal.map_err(|_| "无法登记恢复运行就绪取消信号")?;
+            Err(io::Error::new(io::ErrorKind::Interrupted, "恢复运行就绪等待已取消").into())
+        }
+        () = tokio::time::sleep_until(deadline.into()) => Err(deadline_error().into()),
+        result = body => result,
+    }
+}
+
+pub(super) fn require_before(deadline: Instant) -> Result<()> {
+    if Instant::now() >= deadline {
+        return Err(deadline_error().into());
+    }
+    Ok(())
+}
+
+fn deadline_error() -> io::Error {
+    io::Error::new(io::ErrorKind::TimedOut, "恢复运行角色就绪超时")
 }
 
 async fn controlled(args: &Value, cancel: impl std::future::Future<Output = ()>) -> Result<Value> {

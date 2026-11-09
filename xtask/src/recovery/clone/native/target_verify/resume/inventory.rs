@@ -170,7 +170,7 @@ fn verify_evidence(
     initialized: &Value,
     owner: Option<&super::super::guard::Generation>,
 ) -> Result<()> {
-    let files = super::super::tree::snapshot(backend, target, owner.is_some())?;
+    let files = super::super::tree::protected_snapshot(backend, target, owner)?;
     let paths = names(target, r"^resume-initialize-.*\.confirmed\.json$")?;
     check(
         paths.len() == 1
@@ -236,7 +236,7 @@ fn verify_evidence(
         &prepared["request"],
     )?;
     let request = read(backend, &bound(backend, &prepared["request"])?)?;
-    let reset_request = history_request(backend, target, &request, &prepared["generation"])?;
+    let reset_request = history_request(backend, target, &request, &prepared["generation"], owner)?;
     let available = resume_observations::file_map(&files)?.into_keys().collect();
     super::inventory_records::records(
         &super::inventory_records::Context {
@@ -253,11 +253,12 @@ fn verify_evidence(
         Some((attempt, &value["at"])),
     )?;
     check(
-        super::super::tree::snapshot(backend, target, owner.is_some())? == files,
+        super::super::tree::protected_snapshot(backend, target, owner)? == files,
         "库存续作判定期间目标证据树发生变化",
     )?;
     check(
-        history_request(backend, target, &request, &prepared["generation"])? == reset_request,
+        history_request(backend, target, &request, &prepared["generation"], owner)?
+            == reset_request,
         "库存续作 reset 执行请求在核验期间变化",
     )
 }

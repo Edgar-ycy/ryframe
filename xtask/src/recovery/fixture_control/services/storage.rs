@@ -1,7 +1,10 @@
 //! RustFS 专用监督启动；原请求、控制阶段和完整成员证明保持绑定。
 use crate::{
     Result,
-    recovery::clone::native::{digest, json as document, resources::common},
+    recovery::{
+        clone::native::{digest, json as document, resources::common},
+        process_tree as platform,
+    },
 };
 use serde_json::{Value, json};
 use std::{
@@ -19,15 +22,6 @@ pub(super) mod closed;
 mod launch;
 #[path = "storage/monitor.rs"]
 mod monitor;
-#[cfg(windows)]
-#[path = "storage/windows.rs"]
-mod platform;
-#[cfg(target_os = "linux")]
-#[path = "storage/linux.rs"]
-mod platform;
-#[cfg(not(any(windows, target_os = "linux")))]
-#[path = "storage/unsupported.rs"]
-mod platform;
 #[path = "storage/records.rs"]
 pub(super) mod records;
 #[path = "storage/supervisor.rs"]
@@ -157,7 +151,10 @@ impl std::fmt::Display for Rejected {
 }
 impl std::error::Error for Rejected {}
 pub(super) fn rejection_reason(error: &(dyn std::error::Error + 'static)) -> Option<&'static str> {
-    error.downcast_ref::<Rejected>().map(|error| error.0)
+    error
+        .downcast_ref::<Rejected>()
+        .map(|error| error.0)
+        .or_else(|| platform::rejection_reason(error))
 }
 pub(super) fn check(valid: bool, reason: &'static str) -> Result<()> {
     if valid {
@@ -167,8 +164,8 @@ pub(super) fn check(valid: bool, reason: &'static str) -> Result<()> {
     }
 }
 pub(super) fn safe_reason(error: &(dyn std::error::Error + 'static)) -> String {
-    if let Some(error) = error.downcast_ref::<Rejected>() {
-        return error.0.into();
+    if let Some(reason) = rejection_reason(error) {
+        return reason.into();
     }
     if let Some(error) = error.downcast_ref::<std::io::Error>() {
         return format!(

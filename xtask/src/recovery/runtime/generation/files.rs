@@ -101,7 +101,10 @@ pub(super) fn names(directory: &Path) -> Result<BTreeSet<String>> {
         })
         .collect()
 }
-pub(super) fn generation_directory(directory: &Path, roles: &Value) -> Result<()> {
+pub(in crate::recovery::runtime) fn generation_directory(
+    directory: &Path,
+    roles: &Value,
+) -> Result<()> {
     safe(directory)?;
     if !directory.try_exists()? {
         return Ok(());

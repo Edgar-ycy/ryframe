@@ -1,18 +1,13 @@
 //! Redis 首代复用现有原生握手、身份、期限和失败关闭，不重新实现监督器。
 use super::*;
-use crate::recovery::clone::native::{
-    cache::{
-        self,
-        model::{quoted, render_configuration},
-    },
-    target_verify::storage::redis_layout,
-};
+use crate::recovery::clone::native::cache::{self, model::render_configuration};
 use crate::recovery::fixture_control::services::lifecycle::{Runtime, readonly::NativeRuntime};
 use std::io::Write;
 
 const PREFIX: &[(&str, &str)] = &[("storage-target", "initial")];
 
 pub(super) fn run(inputs: &Inputs) -> Result<Value> {
+    reviewed_windows_tool(&inputs.review)?;
     prefix(inputs, PREFIX)?;
     let output = inputs.run.join("redis");
     check(
@@ -103,7 +98,25 @@ pub(super) fn storage_running(inputs: &Inputs, state: &Value) -> Result<()> {
     )
 }
 
+fn reviewed_windows_tool(review: &Value) -> Result<&Value> {
+    let tools = &review["tools"];
+    let tool = &tools["redis_server"];
+    check(
+        tool["platform"] == "windows",
+        "Redis 首代需要已预检的 Windows Redis 工具；历史 WSL 审阅仅供核对",
+    )?;
+    cache::windows_tool::validate(tool)?;
+    check(
+        ["wsl", "native_tool", "redis_python"]
+            .iter()
+            .all(|key| tools.get(*key).is_none()),
+        "Windows Redis 审阅不能混用 WSL 或 Linux Redis 工具绑定",
+    )?;
+    Ok(tool)
+}
+
 fn request(backend: &Path, review: &Value, bootstrap: &Value, settings: &Value) -> Result<Value> {
+    let tool = reviewed_windows_tool(review)?;
     let service = &review["services"]["redis"];
     let directory = PathBuf::from(document::text(&service["directory"], "Redis 目录")?);
     empty_directory(backend, &directory, false)?;
@@ -117,56 +130,20 @@ fn request(backend: &Path, review: &Value, bootstrap: &Value, settings: &Value) 
         !password.is_empty() && !password.contains('\0'),
         "Redis 明文文件认证无效",
     )?;
-    let tools = &review["tools"];
-    let tool = &tools["redis_server"];
-    if tool["platform"] == "windows" {
-        cache::windows_tool::validate(tool)?;
-        check(
-            ["wsl", "native_tool", "redis_python"]
-                .iter()
-                .all(|key| tools.get(*key).is_none()),
-            "Windows Redis 审阅不能混用 WSL 或 Linux Redis 工具绑定",
-        )?;
-        let scope = document::text(&bootstrap["plan"]["scope_id"], "夹具scope")?;
-        common::ensure_directory(backend, &directory, "Redis 数据目录")?;
-        let configuration = directory.join("redis.conf");
-        write_configuration(&configuration, ".", port, password)?;
-        return Ok(json!({
-            "format_version":3,"scope_id":format!("services-{scope}"),"tool":tool,
-            "configuration":common::binding(&configuration)?,"directory":directory_identity(&directory)?,
-            "previous_identity":null,"previous_run_id":null,"port":port,"password":password,
-            "timeout_seconds":60,
-        }));
-    }
-    let distribution = tools["redis_server"]["distribution"]
-        .as_str()
-        .filter(|value| !value.is_empty())
-        .ok_or("Redis 已审阅工具发行版必须为非空字符串")?;
-    check(
-        tools["native_tool"]["distribution"].as_str() == Some(distribution),
-        "Redis 服务与原生工具发行版不同",
-    )?;
+    let scope = document::text(&bootstrap["plan"]["scope_id"], "夹具scope")?;
     common::ensure_directory(backend, &directory, "Redis 数据目录")?;
     let configuration = directory.join("redis.conf");
-    let linux = redis_layout::wsl_path(&directory)?;
-    write_configuration(&configuration, &quoted(&linux), port, password)?;
-    Ok(
-        json!({"format_version":2,"scope_id":format!("services-{}",document::text(&bootstrap["plan"]["scope_id"], "夹具scope")?),
-        "wsl":tools["wsl"],"distribution":distribution,"launcher":"/usr/bin/redis-server",
-        "executable":tools["redis_server"]["resolved_path"],"sha256":tools["redis_server"]["sha256"],
+    write_configuration(&configuration, port, password)?;
+    Ok(json!({
+        "format_version":3,"scope_id":format!("services-{scope}"),"tool":tool,
         "configuration":common::binding(&configuration)?,"directory":directory_identity(&directory)?,
-        "previous_identity":null,"previous_boot_id":null,"previous_run_id":null,"port":port,
-        "password":password,"timeout_seconds":60,"native_tool":tools["native_tool"]}),
-    )
+        "previous_identity":null,"previous_run_id":null,"port":port,"password":password,
+        "timeout_seconds":60,
+    }))
 }
 
-fn write_configuration(
-    path: &Path,
-    directory_argument: &str,
-    port: u16,
-    password: &str,
-) -> Result<()> {
-    let text = render_configuration(directory_argument, port, password);
+fn write_configuration(path: &Path, port: u16, password: &str) -> Result<()> {
+    let text = render_configuration(".", port, password);
     let mut options = fs::OpenOptions::new();
     options.create_new(true).write(true);
     #[cfg(unix)]
@@ -240,64 +217,28 @@ fn windows_initial_request_binds_relative_configuration_and_rejects_mixed_tools_
     }
 }
 
-#[cfg(all(test, windows))]
+#[cfg(test)]
 #[test]
-fn request_uses_reviewed_tool_distribution_and_rejects_invalid_tools_before_directory_creation() {
+fn initial_request_rejects_historical_wsl_tools_before_creating_a_directory() {
     let backend = crate::workspace::root_dir();
-    let temporary = tempfile::tempdir_in(backend.join(".local-tests")).unwrap();
-    let directory = temporary.path().join("accepted-redis");
-    let review = json!({"services":{"redis":{"directory":directory,"endpoint":"127.0.0.1:29770"}},
-        "tools":{"redis_server":{"distribution":"Ubuntu-24.04","resolved_path":"/usr/bin/redis-server","sha256":"a".repeat(64)},
-        "native_tool":{"distribution":"Ubuntu-24.04"},"wsl":{"path":"C:/Windows/System32/wsl.exe","sha256":"b".repeat(64)}}});
-    let bootstrap = json!({"plan":{"scope_id":"redis-distribution-risk"}});
-    let settings = json!({"redis":{"password":"unit-only-redis-password"}});
-    let value = request(&backend, &review, &bootstrap, &settings).unwrap();
-    assert_eq!(value["format_version"], 2);
-    assert_eq!(value["distribution"], "Ubuntu-24.04");
-    assert_eq!(value["port"], 29770);
-    let configuration = directory.join("redis.conf");
+    let local = backend.join(".local-tests");
+    fs::create_dir_all(&local).unwrap();
+    let temporary = tempfile::tempdir_in(local).unwrap();
+    let directory = temporary.path().join("historical-redis");
+    let review = json!({
+        "services": {"redis": {"directory": directory, "endpoint": "127.0.0.1:29770"}},
+        "tools": {
+            "redis_server": {"distribution": "Ubuntu-24.04", "resolved_path": "/usr/bin/redis-server", "sha256": "a".repeat(64)},
+            "native_tool": {"distribution": "Ubuntu-24.04"},
+            "wsl": {"path": "D:/missing-wsl-sentinel.exe", "sha256": "b".repeat(64)},
+        },
+    });
+    let bootstrap = json!({"plan": {"scope_id": "historical-redis"}});
+    let settings = json!({"redis": {"password": "unit-only-redis-password"}});
+    let error = request(&backend, &review, &bootstrap, &settings).unwrap_err();
     assert_eq!(
-        value["configuration"],
-        common::binding(&configuration).unwrap()
+        error.to_string(),
+        "Redis 首代需要已预检的 Windows Redis 工具；历史 WSL 审阅仅供核对"
     );
-    let contents = fs::read_to_string(&configuration).unwrap();
-    assert!(contents.lines().any(|line| line == "port 29770"));
-    let expected_directory = format!(
-        "dir {}",
-        quoted(&redis_layout::wsl_path(&directory).unwrap())
-    );
-    assert!(contents.lines().any(|line| line == expected_directory));
-    assert!(
-        contents
-            .lines()
-            .any(|line| line == "requirepass \"unit-only-redis-password\"")
-    );
-    for (index, (role, invalid)) in [
-        ("native_tool", Some(json!("different-distribution"))),
-        ("redis_server", None),
-        ("redis_server", Some(json!(""))),
-        ("redis_server", Some(json!(7))),
-        ("native_tool", None),
-        ("native_tool", Some(json!(""))),
-        ("native_tool", Some(json!(7))),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let mut changed = review.clone();
-        let selected = temporary.path().join(format!("rejected-redis-{index}"));
-        changed["services"]["redis"]["directory"] = json!(selected);
-        if let Some(value) = invalid {
-            changed["tools"][role]["distribution"] = value;
-        } else {
-            changed["tools"][role]
-                .as_object_mut()
-                .unwrap()
-                .remove("distribution");
-        }
-        let error = request(&backend, &changed, &bootstrap, &settings).unwrap_err();
-        assert!(!error.to_string().contains("unit-only-redis-password"));
-        assert!(!selected.exists());
-        assert!(!selected.join("redis.conf").exists());
-    }
+    assert!(!directory.exists());
 }

@@ -1,7 +1,6 @@
 //! Windows Redis 监督控制仅消费已冻结的 v3 请求及本机收据。
 use super::{
     super::{digest, json as document, resources::common},
-    linux_write::publish,
     model, windows_tool,
 };
 use crate::{
@@ -21,7 +20,10 @@ mod start;
 mod stop;
 mod supervisor;
 
-pub(super) use observe::{inspect, observe, predecessor_request, status};
+pub(super) use observe::{
+    external_termination, inspect, inspect_reboot, observe, predecessor_reboot,
+    predecessor_request, reboot_exit, status,
+};
 pub(super) use start::run as start;
 pub(super) use stop::run as stop;
 
@@ -36,6 +38,17 @@ const FIELDS: &[&str] = &[
     "coordinator",
 ];
 
+fn publish(path: &Path, value: &Value) -> Result<()> {
+    let parent = path.parent().ok_or("缓存收据没有父目录")?;
+    let pending = parent.join(format!(".{}.pending", uuid::Uuid::new_v4().simple()));
+    document::write_new(&pending, value)?;
+    let result = std::fs::hard_link(&pending, path);
+    let cleanup = std::fs::remove_file(&pending);
+    result?;
+    cleanup?;
+    Ok(())
+}
+
 struct BoundLaunch {
     backend: PathBuf,
     output: PathBuf,
@@ -43,6 +56,7 @@ struct BoundLaunch {
     request: Value,
     binding: Value,
     coordinator: Value,
+    reboot: bool,
 }
 
 impl BoundLaunch {
@@ -60,6 +74,13 @@ impl BoundLaunch {
 
     fn load(path: &Path, expected_sha: &str) -> Result<Self> {
         let launch = Self::load_frozen(path, expected_sha)?;
+        launch.check()?;
+        Ok(launch)
+    }
+
+    fn load_reboot(path: &Path, expected_sha: &str) -> Result<Self> {
+        let mut launch = Self::load_frozen(path, expected_sha)?;
+        launch.reboot = true;
         launch.check()?;
         Ok(launch)
     }
@@ -89,6 +110,7 @@ impl BoundLaunch {
             request: value["request"].clone(),
             binding,
             coordinator: value["coordinator"].clone(),
+            reboot: false,
         };
         model::identity(&launch.owner, false)?;
         model::shape(&launch.request)?;
@@ -102,7 +124,11 @@ impl BoundLaunch {
         }
         model::file_bound(&self.coordinator)?;
         model::validate(&self.backend, &self.request, true)?;
-        windows_tool::verify_registered(&self.backend, &self.request["tool"])?;
+        if self.reboot {
+            windows_tool::verify_frozen(&self.request["tool"])?;
+        } else {
+            windows_tool::verify_registered(&self.backend, &self.request["tool"])?;
+        }
         let config = bound_path(&self.request["configuration"], "path")?;
         let expected = model::render_configuration(
             ".",

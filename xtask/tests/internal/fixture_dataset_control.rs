@@ -9,7 +9,6 @@ use super::{
         CheckCommand, Command, FixtureControlCommand, FixtureDatasetCommand, FixtureDatasetInputs,
         FixtureSide, RecoveryCommand, parse,
     },
-    recovery::fixture_control::private_invocation_at,
     workspace::root_dir,
 };
 
@@ -108,7 +107,6 @@ fn parses_dataset_plan_and_prepare_into_native_factory_inputs() {
         plan,
         FixtureControlCommand::Dataset(FixtureDatasetCommand::Plan { .. })
     ));
-    assert!(private_invocation_at(&plan, &root_dir()).is_err());
     let FixtureControlCommand::Dataset(native) = &plan else {
         unreachable!()
     };
@@ -139,7 +137,6 @@ fn parses_dataset_plan_and_prepare_into_native_factory_inputs() {
         prepare,
         FixtureControlCommand::Dataset(FixtureDatasetCommand::Prepare { .. })
     ));
-    assert!(private_invocation_at(&prepare, &root_dir()).is_err());
     let FixtureControlCommand::Dataset(native) = &prepare else {
         unreachable!()
     };

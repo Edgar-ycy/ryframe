@@ -217,6 +217,38 @@ class RunArmTests(unittest.TestCase):
         snapshot.assert_not_called()
         lock.assert_not_called()
 
+    def test_fixture_arm_storage_uses_native_frozen_and_active_binding(self):
+        storage = self.storage_run()
+        historical = {"path": str(storage), "manifest": binding(storage / "manifest.json"),
+                      "state": binding(storage / "state.json")}
+        registration = self.file("fixture-registration", {
+            "format_version": 1, "kind": "devex-clone-fresh-target-registration",
+            "request": self.value["source_request"], "environment": self.value["target_environment"],
+            "storage_run": historical, "target_directory": str(self.local / "target"),
+        })
+        effective = {"path": str(storage), "manifest": historical["manifest"],
+                     "generation": {"kind": "initial", "rustfs": {}, "redis": {}}}
+        value = {**self.value, "copy_stage": "seed_to_arm",
+                 "target_registration": registration, "target_storage_run": effective}
+        with (
+            patch("devex_clone_target_binding._native", return_value={"binding": effective}) as native,
+            patch.object(run, "_legacy_target_storage_run") as legacy,
+        ):
+            self.assertEqual(run.target_storage_run(self.backend, value, live=False), storage)
+            native.assert_called_once_with("fixture-arm-storage", self.backend,
+                                           registration=registration, binding=effective, active=False)
+            native.reset_mock()
+            self.assertEqual(run.target_storage_run(self.backend, value), storage)
+            native.assert_called_once_with("fixture-arm-storage", self.backend,
+                                           registration=registration, binding=effective, active=True)
+            native.return_value = {"binding": {**effective, "generation": {"kind": "different"}}}
+            with self.assertRaisesRegex(ValueError, "代次发生变化"):
+                run.target_storage_run(self.backend, value)
+            native.side_effect = ValueError("原代次不可用")
+            with self.assertRaisesRegex(ValueError, "原代次不可用"):
+                run.target_storage_run(self.backend, value)
+            legacy.assert_not_called()
+
     def test_ordinary_seed_to_arm_storage_control_keeps_valid_external_run(self):
         storage = self.storage_run()
         value = {**self.value, "copy_stage": "seed_to_arm",

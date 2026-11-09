@@ -1,10 +1,8 @@
-"""全栈协调器复用既有进程归属、Worker 与来源核验；不决定阶段顺序或重试。"""
+"""为历史运行配置复用原生目录权限与实例配置操作。"""
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
-
 
 
 def configuration_directory(path: Path) -> None:
@@ -45,97 +43,9 @@ def _configuration(operation: str, request: dict) -> dict:
     return value["result"]
 
 
-def execute(value):
-    if not isinstance(value, dict) or set(value) != {'format_version', 'operation', 'backend', 'directory', 'tool', 'arguments'}:
-        raise ValueError('全栈底层请求字段无效')
-    if type(value['format_version']) is not int or value['format_version'] != 1:
-        raise ValueError('全栈底层协议版本无效')
-    from rate_limit_tool import install_binding
-    install_binding(json.dumps(value['tool']))
-    backend, directory = Path(value['backend']), Path(value['directory'])
-    if not backend.is_absolute() or not directory.is_absolute():
-        raise ValueError('全栈底层请求必须绑定绝对目录')
-    operation = value['operation']
-    if operation == 'register':
-        from full_stack_runtime import register_runtime
-        return register_runtime(backend, directory)
-    if operation in {'api-launch', 'api-probe', 'api-stop', 'api-port-free'}:
-        return api(operation, backend, directory)
-    raise ValueError('未知全栈底层操作')
-
-
-def api(operation, backend, directory):
-    from full_stack_runtime import verify_runtime, process_environment
-    from full_stack_process_tree import launch_supervised_process, read_process_tree, terminate_owned_process_tree
-    from full_stack_process import read_process, process_identity, assert_identity
-    from process_sockets import verify_listener
-    if operation == 'api-port-free':
-        from full_stack_worker_native import invoke
-        from rate_limit_client import load_app_table
-        table = load_app_table(backend, {'APP_ENV':'test'}, config_dir=directory / 'config')
-        invoke('probe', action='wait-free', url=f"http://127.0.0.1:{table['app']['port']}/readyz", timeout=5)
-        return {'state':'free'}
-    receipt = verify_runtime(backend, directory)
-    if operation == 'api-launch':
-        from full_stack_worker_native import invoke
-        from rate_limit_client import load_app_table
-        table = load_app_table(backend, {'APP_ENV':'test'}, config_dir=Path(receipt['api_config_dir']))
-        url = f"http://127.0.0.1:{table['app']['port']}/readyz"
-        invoke('probe', action='free', url=url, timeout=0)
-        if any((directory / name).exists() for name in ('api.json', 'api-tree.json')):
-            raise ValueError('已有 API 进程收据，拒绝重复启动')
-        with (directory / 'api.log').open('ab') as log:
-            process = launch_supervised_process(directory, 'api', receipt['scope_id'],
-                [receipt['artifacts']['api']['path'], '--config-dir', receipt['api_config_dir']],
-                backend, process_environment(), log)
-        return {'pid':process.pid, 'identity':process.tree['process']}
-    tree_path = directory / 'api-tree.json'
-    process_path = directory / 'api.json'
-    if not tree_path.is_file() and not process_path.is_file():
-        if operation == 'api-stop':
-            if list(directory.glob('api-*.json')):
-                raise ValueError('API 启动成员证据不完整，拒绝声称已回收')
-            return {'state':'absent'}
-        raise ValueError('API 未登记进程树')
-    tree = read_process_tree(directory, 'api', receipt['scope_id'])
-    if not process_path.is_file() or read_process(directory, 'api', receipt['scope_id']) != tree['process']:
-        if operation == 'api-stop':
-            terminate_owned_process_tree(tree)
-        raise ValueError('API 产品进程与进程树收据不一致，保留现场')
-    if operation == 'api-stop':
-        terminate_owned_process_tree(tree)
-        return {'state':'stopped'}
-    if not assert_identity(process_identity(tree['process']['pid']), tree['process']):
-        raise ValueError('API 已退出；保留创建身份和进程树收据')
-    from rate_limit_client import load_app_table
-    table = load_app_table(backend, {'APP_ENV':'test'}, config_dir=Path(receipt['api_config_dir']))
-    verify_listener(tree['process']['pid'], f"http://127.0.0.1:{table['app']['port']}/readyz")
-    return {'state':'running'}
-
-
 def unique(pairs):
     result = {}
     for key, value in pairs:
         if key in result: raise ValueError('重复字段')
         result[key] = value
     return result
-
-
-def main():
-    if len(sys.argv) != 1:
-        print('protocol_error: only bounded stdin is accepted', file=sys.stderr)
-        return 2
-    try:
-        data = sys.stdin.buffer.read(32769)
-        if len(data) > 32768: raise ValueError('全栈底层请求超过限额')
-        result = execute(json.loads(data, object_pairs_hook=unique))
-        print(json.dumps({'ok':True,'result':result}, ensure_ascii=False))
-        return 0
-    except BaseException as error:
-        # 既有核验器可能带回含凭据的配置错误；原始异常不进入公开响应。
-        print(json.dumps({'ok':False,'error':'full_stack_support_failed; preserve receipts; no automatic replay', 'category':type(error).__name__}))
-        return 1
-
-
-if __name__ == '__main__':
-    raise SystemExit(main())

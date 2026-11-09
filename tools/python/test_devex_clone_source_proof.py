@@ -1,5 +1,6 @@
 """历史 producer 停止证明的受管原生桥接；不运行真实进程或服务。"""
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -51,6 +52,27 @@ class HistoricalProducerTests(unittest.TestCase):
             with self.assertRaises(native_s3_client.NativeS3InvocationError):
                 proof.require_recorded_producer_stopped(self.expected)
         run.assert_not_called()
+
+    def test_copy_generation_binds_only_the_run_and_keeps_safe_os_environment(self):
+        backend = Path(__file__).resolve().parents[2]
+        run_dir = backend / ".local-tests" / "explicit-run"
+        value = dict.fromkeys(proof.GENERATION_FIELDS, False)
+        self.run.return_value = self.response(value)
+        with patch.dict(os.environ, {"APP_ENV": "test", "LOCALAPPDATA": "system-cache",
+                                      "MYSQL_PWD": "excluded", "HTTP_PROXY": "excluded"}):
+            self.assertEqual(proof.copy_source_generation(backend, run_dir, self.run), value)
+        self.run.assert_called_once()
+        self.assertEqual(self.run.call_args.args[0][1:], ["__source-evidence"])
+        self.assertEqual(json.loads(self.run.call_args.kwargs["input"]), {
+            "operation": "copy-source-generation", "write": False,
+            "arguments": {"backend": str(backend), "run_dir": str(run_dir)}})
+        self.assertIs(self.run.call_args.kwargs["digest_output"], True)
+        environment = self.run.call_args.kwargs["env"]
+        self.assertEqual(environment["LOCALAPPDATA"], "system-cache")
+        self.assertTrue({"APP_ENV", "MYSQL_PWD", "HTTP_PROXY"}.isdisjoint(environment))
+        self.run.return_value = self.response({**value, "restore_qualified": 0})
+        with self.assertRaisesRegex(ValueError, "核验资格"):
+            proof.copy_source_generation(backend, run_dir, self.run)
 
     def test_registry_returns_original_identity_and_passes_no_legacy_kwargs(self):
         original = [{"name": role, "identity": {**self.expected, "pid": 45940 + index}} for index, role in enumerate(("api", "worker", "dataset"))]

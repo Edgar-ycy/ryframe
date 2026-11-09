@@ -1,5 +1,5 @@
 //! 完整像只重读既有对象证据；不向 S3 请求，不赋予当前资源或复制成功资格。
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{collections::BTreeMap, fs, io::ErrorKind, path::Path};
 
 use chrono::{DateTime, SecondsFormat};
 use serde_json::{Value, json};
@@ -7,8 +7,12 @@ use serde_json::{Value, json};
 use crate::{
     Result,
     recovery::clone::native::{
-        digest, input::BUCKETS, json as document, metadata, resources::common,
-        s3::app_configuration, target_verify::guard::Inputs,
+        digest,
+        input::BUCKETS,
+        json as document, metadata,
+        resources::common,
+        s3::{app_configuration, protocol::validate_key},
+        target_verify::guard::Inputs,
     },
 };
 
@@ -42,6 +46,8 @@ const OBSERVED: &[&str] = &[
 
 #[path = "objects/capture.rs"]
 pub(super) mod capture;
+#[path = "objects/saved.rs"]
+pub(super) mod saved;
 
 pub(super) fn owner(
     backend: &Path,
@@ -76,15 +82,41 @@ pub(super) fn verify(
     expected: &Value,
     max_bytes: u64,
 ) -> Result<Value> {
+    verify_bound(backend, selected, directory, expected, max_bytes, None)
+}
+
+fn verify_bound(
+    backend: &Path,
+    selected: &Value,
+    directory: &Path,
+    expected: &Value,
+    max_bytes: u64,
+    proofs: Option<&mut saved::ProofDigest>,
+) -> Result<Value> {
     common::local_directory(backend, directory, "完整像对象证据")?;
-    let value = document::read(&directory.join("capture.json"))?;
+    reject_failure(directory)?;
+    let value = document::read(&common::common_file(
+        backend,
+        &directory.join("capture.json"),
+        "对象采集收据",
+    )?)?;
     let bucket = document::text(&value["bucket"], "对象桶")?;
     let key = document::text(&value["key"], "对象键")?;
     let scope = document::text(&selected["scope_id"], "对象 scope")?;
-    if !BUCKETS.contains(&bucket) || !key.starts_with(&format!("{scope}/")) {
+    if !BUCKETS.contains(&bucket) {
         return Err("对象证据不属于明确五桶和来源 scope".into());
     }
-    let files = evidence_names();
+    common::scope_id(scope)?;
+    validate_key(scope, key, false)?;
+    let bytes = expected["bytes"]
+        .as_u64()
+        .filter(|bytes| *bytes <= max_bytes)
+        .ok_or("对象大小超过已登记上限")?;
+    let body = common::common_file(backend, &directory.join("object.bin"), "对象采集载荷")?;
+    if fs::metadata(&body)?.len() != bytes {
+        return Err("对象实际载荷大小不等于已登记大小".into());
+    }
+    let mut files = evidence_names();
     let held = Inputs::open(files.iter().map(|name| directory.join(name)))?;
     reject_failure(directory)?;
     let configuration = &selected["s3"]["configuration"];
@@ -99,7 +131,7 @@ pub(super) fn verify(
     let head = document::read(&directory.join("head-before.json"))?;
     let get = document::read(&directory.join("get.json"))?;
     let repeated = document::read(&directory.join("head-after.json"))?;
-    let actual = digest::file(&directory.join("object.bin"))?;
+    let actual = digest::file(&body)?;
     let calculated = result(
         &request,
         &head,
@@ -111,6 +143,12 @@ pub(super) fn verify(
     )?;
     if value != calculated {
         return Err("对象采集结果与原始 HEAD、GET、owner 或实际文件重算不符".into());
+    }
+    if let Some(proofs) = proofs {
+        files.sort_unstable();
+        for name in files.iter().filter(|name| name.as_str() != "object.bin") {
+            proofs.record(name, &digest::file(&directory.join(name))?);
+        }
     }
     held.check()?;
     app_configuration::public_configuration(backend, configuration)?;
@@ -187,7 +225,7 @@ fn owners(backend: &Path, directory: &Path, scope: &str) -> Result<(Vec<Value>, 
     Ok((before, after))
 }
 
-fn inspect(value: &Value) -> Result<Value> {
+pub(in crate::recovery) fn inspect(value: &Value) -> Result<Value> {
     let fields = document::object(value, "对象响应")?;
     if fields
         .keys()
@@ -244,7 +282,7 @@ fn inspect(value: &Value) -> Result<Value> {
     )
 }
 
-fn result(
+pub(in crate::recovery) fn result(
     request: &Value,
     head: &Value,
     get: &Value,
@@ -268,7 +306,7 @@ fn result(
     {
         return Err("对象身份、完整字节、摘要或采集前后 HEAD 不同".into());
     }
-    let differences = COPY.iter().filter(|field| head[**field] != get[**field])
+    let differences = COPY.iter().filter(|field| head.get(**field) != get.get(**field))
         .map(|field| json!({"field":field,"head_present":head.get(*field).is_some(),"head_value":head[*field],
             "get_present":get.get(*field).is_some(),"get_value":get[*field]})).collect::<Vec<_>>();
     let mut value = request.clone();
@@ -287,8 +325,29 @@ fn result(
 }
 
 fn reject_failure(directory: &Path) -> Result<()> {
-    if directory.join("failure.json").try_exists()? {
-        return Err("对象采集目录有失败证据，不能使用残留成功文件".into());
+    match fs::symlink_metadata(directory.join("failure.json")) {
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+        Ok(_) => Err("对象采集目录有失败证据，不能使用残留成功文件".into()),
     }
-    Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saved_object_rejects_dangling_failure_marker() {
+        let root = tempfile::tempdir_in(crate::workspace::root_dir()).unwrap();
+        assert!(reject_failure(root.path()).is_ok());
+        let marker = root.path().join("failure.json");
+        std::os::unix::fs::symlink(root.path().join("missing.json"), &marker).unwrap();
+        assert!(!marker.exists());
+        assert!(
+            reject_failure(root.path())
+                .unwrap_err()
+                .to_string()
+                .contains("失败证据")
+        );
+    }
 }

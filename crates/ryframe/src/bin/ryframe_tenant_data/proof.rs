@@ -3,7 +3,8 @@ use ryframe_application::ports::backup::{
     validate_restore_record,
 };
 use ryframe_kernel::{AppError, AppResult};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::{
     fs::File,
     io::{Read, Write},
@@ -13,9 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[path = "proof_python.rs"]
-mod python_environment;
-use python_environment::{PYTHON_DEPENDENCY_PROBE, PythonEnvironment, validate_python_environment};
+use super::proof_binding::{ArtifactSource, VerifierBinding};
 
 const MAX_EVIDENCE_BYTES: u64 = 16 * 1024 * 1024;
 const VERIFIER_TIMEOUT: Duration = Duration::from_secs(300);
@@ -37,14 +36,14 @@ struct VerificationAuthority<'a> {
     kind: &'static str,
     record: &'a RestoreRecord,
     backup_manifest: &'a BackupManifest,
-    tools: VerificationTools,
+    tools: VerificationTools<'a>,
 }
 
 #[derive(Serialize)]
-struct VerificationTools {
-    runner: GitSource,
-    verifier: GitSource,
-    python: ArtifactSource,
+struct VerificationTools<'a> {
+    runner: &'a GitSource,
+    verifier: &'a GitSource,
+    native_verifier: &'a ArtifactSource,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -53,17 +52,22 @@ struct GitSource {
     sha: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-struct ArtifactSource {
-    path: String,
-    bytes: u64,
-    sha256: String,
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NativeResponse {
+    ok: bool,
+    result: NativeResult,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NativeResult {
+    value: RestoreBusinessProof,
 }
 
 struct CapturedOutput {
     status: ExitStatus,
     stdout: Vec<u8>,
-    stderr: Vec<u8>,
 }
 
 pub async fn verify(
@@ -95,7 +99,8 @@ pub async fn verify(
         ));
     }
     let runner = clean_git_source(&runner_root, "恢复测试 runner")?;
-    let python = verified_python(&backend)?;
+    let binding = VerifierBinding::read(&backend, &verifier.sha)?;
+    let native_verifier = binding.verifier();
     let before = read_regular_file(paths.proof, "恢复业务证明")?;
     let proof: RestoreBusinessProof = serde_json::from_slice(&before)
         .map_err(|error| validation(format!("恢复业务证明格式无效：{error}")))?;
@@ -107,19 +112,18 @@ pub async fn verify(
             "恢复业务证明与命令行演练或独立采集的核验源码不同",
         ));
     }
-    let authority = serde_json::to_vec(&VerificationAuthority {
-        format_version: 1,
+    let authority = VerificationAuthority {
+        format_version: 2,
         kind: "restore-business-authority",
         record: &record,
         backup_manifest: &backup.manifest,
         tools: VerificationTools {
-            runner: runner.clone(),
-            verifier: verifier.clone(),
-            python: python.clone(),
+            runner: &runner,
+            verifier: &verifier,
+            native_verifier,
         },
-    })
-    .map_err(|_| validation("无法序列化恢复业务权威上下文"))?;
-    let verified = run_verifier(&backend, &runner_root, &python, &paths, &authority)?;
+    };
+    let verified = run_verifier(&backend, &runner_root, native_verifier, &paths, &authority)?;
     if verified != proof || read_regular_file(paths.proof, "恢复业务证明")? != before {
         return Err(validation(
             "恢复业务证明与独立核验结果不同或核验期间发生变化",
@@ -127,60 +131,68 @@ pub async fn verify(
     }
     if clean_git_source(&backend, "恢复证明协调后端")? != verifier
         || clean_git_source(&runner_root, "恢复测试 runner")? != runner
-        || artifact_source(Path::new(&python.path), "Python 解释器")? != python
     {
-        return Err(validation("恢复证明核验期间工具或源码发生变化"));
+        return Err(validation("恢复证明核验期间源码发生变化"));
     }
+    binding.check()?;
     Ok(proof)
 }
 
 fn run_verifier(
     backend: &Path,
     runner: &Path,
-    python: &ArtifactSource,
+    verifier: &ArtifactSource,
     paths: &EvidencePaths<'_>,
-    authority: &[u8],
+    authority: &VerificationAuthority<'_>,
 ) -> AppResult<RestoreBusinessProof> {
-    let script = backend.join("tools/python/restore_business_proof.py");
-    regular_path(&script, "恢复业务证明核验器")?;
-    let scripts = script
-        .parent()
-        .ok_or_else(|| validation("无法确定恢复证明脚本目录"))?;
-    let mut command = Command::new(&python.path);
-    command
-        .arg("-I")
-        .arg("-c")
-        .arg("import runpy,sys;root=sys.argv[1];script=sys.argv[2];sys.path.insert(0,root);sys.argv=[script,*sys.argv[3:]];runpy.run_path(script,run_name='__main__')")
-        .arg(scripts)
-        .arg(&script)
-        .arg("--backend-dir")
-        .arg(backend)
-        .arg("--runner-root")
-        .arg(runner)
-        .arg("--proof")
-        .arg(paths.proof)
-        .arg("--tests-receipt")
-        .arg(paths.tests)
-        .arg("--runtime-receipt")
-        .arg(paths.runtime)
-        .arg("--target-plan")
-        .arg(paths.target)
-        .current_dir(backend)
-        .env_remove("PYTHONHOME")
-        .env_remove("PYTHONPATH")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let output = capture_command(&mut command, authority, VERIFIER_TIMEOUT)?;
-    if !output.status.success() {
-        let detail = String::from_utf8_lossy(&output.stderr)
-            .chars()
-            .take(2000)
-            .collect::<String>();
-        return Err(validation(format!("恢复业务证明独立核验失败：{detail}")));
+    let input = serde_json::to_vec(&json!({
+        "operation":"restore-business-proof", "write":false,
+        "arguments":{"backend":backend,"runner_root":runner,"proof":paths.proof,
+            "tests_receipt":paths.tests,"runtime_receipt":paths.runtime,"target_plan":paths.target,
+            "authority":authority},
+    }))
+    .map_err(|_| validation("无法序列化恢复业务权威上下文"))?;
+    if input.len() as u64 > MAX_EVIDENCE_BYTES {
+        return Err(validation("恢复业务权威上下文超过 16 MiB"));
     }
-    serde_json::from_slice(&output.stdout)
-        .map_err(|error| validation(format!("恢复业务证明核验结果无效：{error}")))
+    let mut command = Command::new(&verifier.path);
+    command
+        .arg("__source-evidence")
+        .current_dir(backend)
+        .env_clear();
+    for key in [
+        "PATH",
+        "SYSTEMROOT",
+        "WINDIR",
+        "PATHEXT",
+        "COMSPEC",
+        "USERPROFILE",
+        "HOME",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "LANG",
+        "LC_ALL",
+    ] {
+        if let Some(value) = std::env::var_os(key) {
+            command.env(key, value);
+        }
+    }
+    let output = capture_command(&mut command, input, VERIFIER_TIMEOUT)?;
+    if !output.status.success() {
+        return Err(validation(format!(
+            "恢复业务证明独立核验失败（退出状态 {}）",
+            output.status
+        )));
+    }
+    let response: NativeResponse = serde_json::from_slice(&output.stdout)
+        .map_err(|_| validation("恢复业务证明核验结果格式无效"))?;
+    if !response.ok {
+        return Err(validation("恢复业务证明未获独立确认"));
+    }
+    Ok(response.result.value)
 }
 
 fn backend_root() -> AppResult<PathBuf> {
@@ -245,124 +257,41 @@ fn clean_git_source(root: &Path, label: &str) -> AppResult<GitSource> {
     })
 }
 
-fn verified_python(backend: &Path) -> AppResult<ArtifactSource> {
-    let configured = ryframe_config::ToolSettings::load(backend)
-        .map_err(|error| validation(format!("无法读取恢复证明工具配置：{error}")))?
-        .verification
-        .python_program;
-    let path = if let Some(path) = configured {
-        resolve_tool_path(backend, &path)?
-    } else {
-        let mut command = Command::new("python");
-        command
-            .args([
-                "-I",
-                "-c",
-                "import os,sys;print(os.path.realpath(sys.executable))",
-            ])
-            .env_remove("PYTHONHOME")
-            .env_remove("PYTHONPATH");
-        let output = capture_command(&mut command, &[], Duration::from_secs(30))?;
-        if !output.status.success() {
-            return Err(validation("无法解析默认 Python 解释器"));
-        }
-        let value = String::from_utf8(output.stdout)
-            .map_err(|_| validation("Python 解释器路径不是 UTF-8"))?;
-        PathBuf::from(value.trim())
-    };
-    let before = artifact_source(&path, "Python 解释器")?;
-    let requirements = std::fs::read_to_string(backend.join("scripts/requirements-ci.txt"))
-        .map_err(|error| validation(format!("无法读取固定 Python 依赖：{error}")))?;
-    let version = requirements
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("PyYAML=="))
-        .and_then(|line| line.split_whitespace().next())
-        .filter(|version| !version.is_empty())
-        .ok_or_else(|| validation("固定 Python 依赖缺少 PyYAML 精确版本"))?;
-    let mut command = Command::new(&before.path);
-    command
-        .arg("-I")
-        .arg("-B")
-        .arg("-c")
-        .arg(PYTHON_DEPENDENCY_PROBE)
-        .current_dir(backend)
-        .env_remove("PYTHONHOME")
-        .env_remove("PYTHONPATH");
-    let output = capture_command(&mut command, &[], Duration::from_secs(60))?;
-    if !output.status.success() {
-        let detail = String::from_utf8_lossy(&output.stderr)
-            .chars()
-            .take(2000)
-            .collect::<String>();
-        return Err(validation(format!("固定 Python 环境核验失败：{detail}")));
-    }
-    let report: PythonEnvironment = serde_json::from_slice(&output.stdout)
-        .map_err(|error| validation(format!("Python 环境协议无效：{error}")))?;
-    validate_python_environment(&before.path, version, &report)?;
-    if artifact_source(&path, "Python 解释器")? != before {
-        return Err(validation("Python 解释器在环境核验期间发生变化"));
-    }
-    Ok(before)
-}
-
-fn resolve_tool_path(backend: &Path, configured: &Path) -> AppResult<PathBuf> {
-    if configured.as_os_str().is_empty()
-        || configured.components().any(|component| {
-            matches!(
-                component,
-                std::path::Component::ParentDir | std::path::Component::CurDir
-            )
-        })
-        || configured.to_string_lossy().chars().any(char::is_control)
-    {
-        return Err(validation(
-            "verification.python_program 必须是无控制字符且不含父目录跳转的路径",
-        ));
-    }
-    let path = if configured.is_absolute() {
-        configured.to_path_buf()
-    } else {
-        backend.join(configured)
-    };
-    std::path::absolute(path)
-        .map_err(|error| validation(format!("无法解析 verification.python_program：{error}")))
-}
-
-fn artifact_source(path: &Path, label: &str) -> AppResult<ArtifactSource> {
-    let artifact = super::proof_file::stable_artifact(path, label).map_err(validation)?;
-    Ok(ArtifactSource {
-        path: artifact.path,
-        bytes: artifact.bytes,
-        sha256: artifact.sha256,
-    })
-}
-
 fn capture_command(
     command: &mut Command,
-    stdin: &[u8],
+    input: Vec<u8>,
     timeout: Duration,
 ) -> AppResult<CapturedOutput> {
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    let started = Instant::now();
     let mut child = command
         .spawn()
         .map_err(|_| validation("无法启动恢复核验子进程"))?;
-    let write_result = child
+    let mut stdin = child
         .stdin
         .take()
-        .ok_or_else(|| validation("无法写入恢复核验子进程"))?
-        .write_all(stdin);
-    if write_result.is_err() {
-        let _ = child.kill();
-        let _ = child.wait();
+        .ok_or_else(|| validation("无法写入恢复核验子进程"))?;
+    let writer = thread::spawn(move || stdin.write_all(&input));
+    let output = wait_with_output(&mut child, started, timeout)?;
+    if writer
+        .join()
+        .map_err(|_| validation("写入恢复核验子进程失败"))?
+        .is_err()
+        && output.status.success()
+    {
         return Err(validation("无法写入恢复核验子进程"));
     }
-    wait_with_output(&mut child, timeout)
+    Ok(output)
 }
 
-fn wait_with_output(child: &mut Child, timeout: Duration) -> AppResult<CapturedOutput> {
+fn wait_with_output(
+    child: &mut Child,
+    started: Instant,
+    timeout: Duration,
+) -> AppResult<CapturedOutput> {
     let stdout = child
         .stdout
         .take()
@@ -373,20 +302,21 @@ fn wait_with_output(child: &mut Child, timeout: Duration) -> AppResult<CapturedO
         .ok_or_else(|| validation("恢复核验子进程缺少 stderr"))?;
     let stdout = thread::spawn(move || read_bounded_output(stdout));
     let stderr = thread::spawn(move || read_bounded_output(stderr));
-    let started = Instant::now();
     let status = loop {
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|_| validation("等待恢复核验子进程失败"))?
-        {
-            break status;
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if started.elapsed() < timeout => thread::sleep(Duration::from_millis(25)),
+            observed => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let reason = if observed.is_err() {
+                    "等待恢复核验子进程失败"
+                } else {
+                    "恢复核验子进程超时"
+                };
+                return Err(validation(reason));
+            }
         }
-        if started.elapsed() >= timeout {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(validation("恢复核验子进程超时"));
-        }
-        thread::sleep(Duration::from_millis(25));
     };
     let stdout = stdout
         .join()
@@ -400,7 +330,6 @@ fn wait_with_output(child: &mut Child, timeout: Duration) -> AppResult<CapturedO
     Ok(CapturedOutput {
         status,
         stdout: stdout.0,
-        stderr: stderr.0,
     })
 }
 

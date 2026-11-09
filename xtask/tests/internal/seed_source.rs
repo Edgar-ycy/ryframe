@@ -4,11 +4,8 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use serde_json::Value;
-
 use super::{
     cli::{CheckCommand, Command, RecoveryCommand, SeedSourceOperation, SeedSourceOptions, parse},
-    recovery::seed_source_protocol_at,
     workspace::root_dir,
 };
 
@@ -206,47 +203,6 @@ fn rejects_paths_outside_local_tests_parent_jumps_missing_inputs_and_links() {
     fs::remove_file(&linked).unwrap();
     #[cfg(windows)]
     fs::remove_dir(&linked).unwrap();
-}
-
-#[test]
-fn source_registration_and_rebind_cannot_fall_back_to_python_protocol() {
-    let fixture = Fixture::new();
-    for (operation, request) in [("source-register", false), ("source-rebind", true)] {
-        let options = parse_source(&fixture, operation, request, true).unwrap();
-        let error = seed_source_protocol_at(&options, &root_dir()).unwrap_err();
-        assert!(error.to_string().contains("仅通过原生 Rust"));
-    }
-}
-
-#[test]
-fn private_protocol_has_exact_fields_paths_only_and_rechecks_inputs() {
-    let fixture = Fixture::new();
-    let options = parse_source(&fixture, "source-generation-start", true, true).unwrap();
-    let payload = seed_source_protocol_at(&options, &root_dir()).unwrap();
-    assert!(!payload.contains("must-not-enter-protocol"));
-    assert!(!payload.contains(['\n', '\r', '\0']));
-    let value: Value = serde_json::from_str(&payload).unwrap();
-    assert_eq!(value["format_version"], 1);
-    assert_eq!(value["kind"], "ryframe-xtask-recovery-seed-source");
-    assert_eq!(value.as_object().unwrap().len(), 4);
-    assert_eq!(
-        value["native_tool"],
-        crate::check::python_suite::native_tool_binding().unwrap()
-    );
-    assert_eq!(value["request"]["operation"], "source-generation-start");
-    assert_eq!(
-        value["request"]["run_dir"],
-        fixture.directory.to_str().unwrap()
-    );
-    assert_eq!(
-        value["request"]["request"],
-        fixture.request.to_str().unwrap()
-    );
-    assert_eq!(value["request"]["write"], true);
-    assert_eq!(value["request"].as_object().unwrap().len(), 5);
-
-    fs::remove_file(&fixture.request).unwrap();
-    assert!(seed_source_protocol_at(&options, &root_dir()).is_err());
 }
 
 fn source_arguments(fixture: &Fixture, operation: &str, request: bool, write: bool) -> Vec<String> {

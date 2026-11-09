@@ -182,15 +182,6 @@ pub(crate) fn verify(coordinator: &Path, descriptor: &Value) -> Result<Value> {
     Ok(window.publication().clone())
 }
 
-/// 运行来源只持有 P 时，清单必须在 P 同级固定位置，仍执行同一完整来源核验。
-pub(in crate::recovery) fn verify_for_root(root: &Path, descriptor: &Value) -> Result<Value> {
-    let window = root_window(root, descriptor)?;
-    let selected = require_root(root, window.publication());
-    let after = window.verify();
-    window::finish([selected, after])?;
-    Ok(window.publication().clone())
-}
-
 fn local_window(coordinator: &Path, descriptor: &Value) -> Result<Window> {
     exact(descriptor, &["path", "bytes", "sha256"], "执行源码清单绑定")?;
     let path = Path::new(descriptor["path"].as_str().ok_or("执行源码绑定路径缺失")?);

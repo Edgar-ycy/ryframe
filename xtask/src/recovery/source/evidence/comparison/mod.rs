@@ -10,10 +10,50 @@ use std::{
 };
 
 mod adapter;
+pub(in crate::recovery) mod arm;
 mod arms;
 mod generation;
-mod published;
+pub(in crate::recovery) mod published;
 mod shape;
+
+/// 同一 seed 账本的发布来源；完整证据与实际目标侧存储各自复核。
+pub(crate) fn shared_export_source(backend: &Path, run: &Path, state: &Value) -> Result<Value> {
+    use crate::{
+        cli::CloneSide,
+        recovery::clone::native::{
+            lifecycle::state::attempts, resources::storage::registered,
+            seed::protocol::guards::rebind::live,
+        },
+    };
+    let rebinds = attempts(state)?
+        .iter()
+        .filter(|row| row["stage"] == "seed-runtime" && row["mode"] == "source-rebind")
+        .collect::<Vec<_>>();
+    let [rebind] = rebinds.as_slice() else {
+        return Err("seed 导出必须先完成唯一显式 source-rebind".into());
+    };
+    let source = super::running::history::predecessor(backend, run, state)?;
+    if rebind["status"] != "passed"
+        || source["source_rebind"] != rebind["result"]
+        || source["source_rebind"].is_null()
+    {
+        return Err("seed 导出来源不属于当前 run 的冻结重绑定".into());
+    }
+    let resolved = generation::resolve(backend, &source, state)?;
+    if resolved["source_generation"].is_null() {
+        return Err("seed 导出必须消费已发布 source-generation".into());
+    }
+    let storage = registered::current(backend, run, CloneSide::Target)?
+        .ok_or("seed 导出缺少已登记目标侧存储")?;
+    if storage != resolved["storage"]["storage"] {
+        return Err("实际 seed 存储与同一冻结重绑定不同".into());
+    }
+    live::quiet(
+        backend,
+        &json!({"registration":source["registration"],"request":source["request"]}),
+    )?;
+    Ok(resolved)
+}
 
 /// 复制后消费者复用已发布源/代次/导出的同一权威，不重建另一套来源模型。
 pub(crate) fn copy_source(backend: &Path, manifest: &Value) -> Result<Value> {

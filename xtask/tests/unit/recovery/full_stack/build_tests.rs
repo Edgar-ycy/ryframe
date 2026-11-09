@@ -145,9 +145,6 @@ impl Port for Cargo<'_> {
                 "target":{"name":name,"kind":["bin"]},"executable":executable})
         ))
     }
-    fn ready(&mut self, _: &str) -> Result<bool> {
-        panic!("构建不访问网络")
-    }
     fn sleep(&mut self, _: Duration) -> Result<()> {
         panic!("构建不重试")
     }
@@ -326,6 +323,57 @@ fn cargo_events_reject_missing_duplicate_other_workspace_and_wrong_kind() {
     ] {
         assert!(artifact(root, "ryframe", &output).is_err());
     }
+}
+
+#[test]
+fn runtime_registration_reuses_verified_receipts_only_for_the_selected_configurations() {
+    use crate::recovery::fixture_control::artifact::runtime;
+
+    let fixture = Fixture::new();
+    let context = &fixture.context;
+    fixture.write_pair(&fixture.pair());
+    let mut port = cargo(context);
+    run(&context.root, &context.output, &mut |program, args| {
+        port.command(program, args, None)
+    })
+    .unwrap();
+
+    let other = context.output.join("other");
+    for directory in [&context.output, &other] {
+        for (name, id) in [("config", 3), ("worker-config", 2)] {
+            let config = directory.join(name);
+            fs::create_dir_all(&config).unwrap();
+            fs::write(
+                config.join("app.test.toml"),
+                format!(
+                    "scope_id='runtime-test'\nsnowflake_worker_id={id}\n[jobs]\nmode='external'\nhealth_host='127.0.0.1'\nhealth_port=18081\n"
+                ),
+            )
+            .unwrap();
+        }
+    }
+    let paths = ["runtime.json", "runtime-evidence.json"].map(|name| context.output.join(name));
+    let bytes = || paths.each_ref().map(|path| fs::read(path).unwrap());
+
+    let registered = context.register_runtime().unwrap();
+    let original = bytes();
+    assert_eq!(context.register_runtime().unwrap(), registered);
+    assert_eq!(bytes(), original);
+
+    for path in &paths {
+        fs::remove_file(path).unwrap();
+    }
+    runtime::register(
+        &context.root,
+        &context.output,
+        &other.join("config"),
+        &other.join("worker-config"),
+    )
+    .unwrap();
+    let rebound = bytes();
+    let error = context.register_runtime().unwrap_err().to_string();
+    assert!(error.contains("未绑定当前选定"));
+    assert_eq!(bytes(), rebound);
 }
 
 #[test]

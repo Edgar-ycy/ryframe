@@ -316,6 +316,124 @@ fn registered_target_lifecycle_selects_native_handoff_and_rejects_python_or_extr
 }
 
 #[test]
+fn seed_retirement_requires_current_prepare_and_preserves_the_original_api_generation() {
+    use super::observation::retirement::Retirement;
+    use crate::recovery::clone::native::{lifecycle::stage, seed};
+
+    let fixture = Fixture::new();
+    fixture.published_runtime();
+    let backend = &fixture.backend;
+    let run = &fixture.run;
+    let post = seed::history::post(backend, run, None, None, false).unwrap();
+    let original = document::read(&fixture.runtime.join("handoff.json")).unwrap();
+    let runtime = document::read(&fixture.runtime.join("runtime.json")).unwrap();
+    let api = publish_original_api_generation(&fixture, &runtime);
+    let scope = &runtime["scope_id"];
+    let registration = run.join("seed-runtime.json");
+    document::write_new(&registration, &json!({
+        "format_version":1,"kind":"devex-clone-seed-runtime","run_manifest":state::manifest_binding(run).unwrap(),
+        "post_copy":post.descriptor,"post_verify":null,"identity_plan":null,"identity_state":null,
+        "identity_tool":null,"api_process":common::binding(&api).unwrap(),"node":null
+    })).unwrap();
+    let register = json!({"status":"seed_runtime_registered","registration":common::binding(&registration).unwrap()});
+    stage::run_named(
+        backend,
+        run,
+        "seed-runtime",
+        "register",
+        &Published(register),
+    )
+    .unwrap();
+    let load = || Retirement::load(backend, run, &post, &state::load(run, true).unwrap());
+    assert!(load().is_err());
+    let seed_runtime = run.join("seed-runtime/runtime");
+    fs::create_dir_all(&seed_runtime).unwrap();
+    for name in ["runtime.json", "binaries.json"] {
+        fs::copy(fixture.runtime.join(name), seed_runtime.join(name)).unwrap();
+    }
+    let handoff = seed_runtime.join("handoff.json");
+    document::write_new(&handoff, &json!({
+        "registration":common::binding(&registration).unwrap(),
+        "api_environment":post.request["api_environment"],"backend_build":post.request["backend_build"],
+        "original_api":common::binding(&api).unwrap(),"scope_id":scope,"api_url":original["api_url"],
+        "runtime":common::binding(&seed_runtime.join("runtime.json")).unwrap(),
+        "binaries":common::binding(&seed_runtime.join("binaries.json")).unwrap()
+    })).unwrap();
+    let prepared =
+        json!({"status":"seed_runtime_prepared","handoff":common::binding(&handoff).unwrap()});
+    let prepare = || {
+        stage::run_named(
+            backend,
+            run,
+            "seed-runtime",
+            "prepare",
+            &Published(prepared.clone()),
+        )
+        .unwrap()
+    };
+    prepare();
+    assert!(load().unwrap().is_some());
+    let api_before = fs::read(&api).unwrap();
+    document::write_replace(&api, &json!({})).unwrap();
+    assert!(load().is_err());
+    fs::write(&api, api_before).unwrap();
+    let unexpected = seed_runtime.join("worker.json");
+    document::write_new(&unexpected, &json!({})).unwrap();
+    assert!(load().is_err());
+    fs::remove_file(&unexpected).unwrap();
+    assert!(
+        stage::run_named(
+            backend,
+            run,
+            "seed-runtime",
+            "prepare",
+            &Published(Value::Null)
+        )
+        .is_err()
+    );
+    assert!(seed::runtime_model::inputs(backend, run).is_ok());
+    assert!(load().is_err());
+    prepare();
+    assert!(
+        stage::run_named(
+            backend,
+            run,
+            "seed-runtime",
+            "start",
+            &Published(Value::Null)
+        )
+        .is_err()
+    );
+    assert!(load().is_err());
+}
+
+fn publish_original_api_generation(fixture: &Fixture, runtime: &Value) -> PathBuf {
+    let directory =
+        crate::recovery::fixture_control::portable_path(&fixture.runtime.canonicalize().unwrap());
+    let api = fixture.runtime.join("api.json");
+    let executable = &runtime["artifacts"]["api"]["path"];
+    let identity = json!({"pid":40101,"started":"100","executable":executable});
+    let scope = &runtime["scope_id"];
+    document::write_new(
+        &api,
+        &json!({"format_version":1,"role":"api","scope_id":scope,"identity":identity}),
+    )
+    .unwrap();
+    document::write_new(
+        &fixture.runtime.join("api-tree.json"),
+        &json!({
+            "format_version":2,"kind":"full-stack-process-tree","runtime_directory":directory,
+            "role":"api","scope_id":scope,"operation_id":"00000000000000000000000000000001",
+            "process":identity,"group_id":40102,
+            "supervisor":{"pid":40102,"started":"99","executable":executable},
+            "monitor":{"pid":40103,"started":"98","executable":executable}
+        }),
+    )
+    .unwrap();
+    api
+}
+
+#[test]
 fn missing_active_registration_fails_real_stage_releases_generation_and_never_starts_api() {
     let fixture = Fixture::new();
     fixture.registration_file();
@@ -688,7 +806,7 @@ fn frozen_published_product_root_keeps_coordinator_evidence_and_cleanup_independ
         super::registration::cleanup_runtime(&fixture.backend, &fixture.run, &post).unwrap(),
         runtime,
     );
-    let mut changed = runtime.clone();
+    let mut changed = runtime;
     changed["backend_root"] = json!(published.backend);
     fs::write(
         fixture.runtime.join("runtime.json"),
@@ -783,7 +901,7 @@ fn v2_product_build_uses_registered_bridge_root_for_prepare_and_frozen_handoff()
     let copied = path.with_file_name("unregistered.json");
     fs::write(&copied, &before).unwrap();
     assert!(scope.registered_product_root(&copied, &build).is_err());
-    let mut changed = build.clone();
+    let mut changed = build;
     changed["build"]["jobs"] = json!("different");
     assert!(scope.registered_product_root(&path, &changed).is_err());
     let mut wrong_bridge =

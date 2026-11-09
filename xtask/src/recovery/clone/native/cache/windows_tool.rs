@@ -95,6 +95,17 @@ pub(super) fn verify_registered(backend: &Path, expected: &Value) -> Result<()> 
     local::verify_registered(&settings)
 }
 
+#[cfg(windows)]
+pub(super) fn verify_frozen(expected: &Value) -> Result<()> {
+    validate(expected)?;
+    let settings = ryframe_config::WindowsRedisSettings {
+        program: document::text(&expected["path"], "原 Windows Redis 程序")?.into(),
+        sha256: document::text(&expected["sha256"], "原 Windows Redis 程序摘要")?.into(),
+        dlls: serde_json::from_value(expected["dlls"].clone())?,
+    };
+    local::verify_registered(&settings)
+}
+
 fn program_path(path: &str) -> bool {
     let Some((drive, rest)) = path.split_at_checked(3) else {
         return false;

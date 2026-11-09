@@ -69,7 +69,7 @@ impl Role {
         format!("{}-control.lock", self.name())
     }
 
-    pub(super) fn archive(self) -> String {
+    pub(in crate::recovery) fn archive(self) -> String {
         format!("{}-control-receipts", self.name())
     }
 

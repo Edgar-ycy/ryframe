@@ -59,8 +59,8 @@ class RestoreImages:
 
     @contextmanager
     def control(self):
-        execution, _ = execution_backend(self.backend, self.arm["target"])
-        with artifact_sources(execution, self.arm["request"]["build_bridges"]), target_storage_control(
+        execution_backend(self.backend, self.arm["target"])
+        with artifact_sources(self.backend, self.arm["request"]["build_bridges"]), target_storage_control(
                 self.backend, Path(self.plan["work_dir"]), self.arm["manifest"]):
             yield self
 

@@ -161,13 +161,13 @@ pub(super) fn name(root: &Path, path: &Path) -> Result<String> {
     Ok(if text.is_empty() { ".".into() } else { text })
 }
 
-pub(super) struct StableFile {
+pub(in crate::recovery) struct StableFile {
     pub(super) held: HeldFile,
     modified: std::time::SystemTime,
     identity: (u64, u64),
 }
 impl StableFile {
-    pub(super) fn open(path: &Path) -> Result<Self> {
+    pub(in crate::recovery) fn open(path: &Path) -> Result<Self> {
         crate::recovery::runtime::dataset_authority::reads::file(path)?;
         let before = fs::symlink_metadata(path).map_err(|_| fail("无法读取文件身份"))?;
         let modified = before
@@ -196,7 +196,7 @@ impl StableFile {
         }
         Ok(bytes)
     }
-    pub(super) fn facts(&self) -> Result<Value> {
+    pub(in crate::recovery) fn facts(&self) -> Result<Value> {
         self.verify()?;
         let modified = match self.modified.duration_since(std::time::UNIX_EPOCH) {
             Ok(value) => value.as_nanos().to_string(),
@@ -207,7 +207,7 @@ impl StableFile {
             "device":self.identity.0,"inode":self.identity.1,"mtime_ns":modified}),
         )
     }
-    pub(super) fn verify(&self) -> Result<()> {
+    pub(in crate::recovery) fn verify(&self) -> Result<()> {
         self.held.verify()?;
         let metadata =
             fs::symlink_metadata(&self.held.path).map_err(|_| fail("文件身份不可读取"))?;

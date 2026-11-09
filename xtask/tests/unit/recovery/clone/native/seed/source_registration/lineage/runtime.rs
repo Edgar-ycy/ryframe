@@ -6,9 +6,15 @@ use std::{
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
-use super::{collect, contract};
-use crate::recovery::clone::native::{
-    digest, target_verify::input::request_configuration::python_configuration_hash,
+use super::{collect_bound, contract};
+use crate::recovery::{
+    clone::native::{
+        cache::handoff::history::{Producer, active},
+        digest,
+        resources::common,
+        target_verify::input::request_configuration::python_configuration_hash,
+    },
+    full_stack::worker::role::Role,
 };
 
 struct Fixture {
@@ -93,7 +99,8 @@ impl Fixture {
     }
 
     fn read(&self) -> crate::Result<Value> {
-        collect(&self.backend, &self.runtime)
+        let binding = common::binding(&self.runtime.join("runtime.json"))?;
+        collect_bound(&self.backend, &self.backend, &self.runtime, &binding)
     }
 }
 
@@ -345,4 +352,334 @@ fn configuration_digest_uses_resolved_directory_in_the_python_payload() {
         expected
     );
     assert_eq!(fixture.receipt["api_configuration_sha256"], expected);
+}
+
+fn publish_runtime_binaries(fixture: &Fixture) {
+    let api = &fixture.receipt["artifacts"]["api"]["path"];
+    let worker = &fixture.receipt["artifacts"]["worker"]["path"];
+    fs::write(
+        fixture.runtime.join("binaries.json"),
+        serde_json::to_vec(&json!({
+            "ryframe":api,"ryframe-worker":worker,"ryframe-reset":api,"ryframe-migrate":api
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn native_producer_projects_both_roles_and_keeps_exact_repeated_events() {
+    use crate::recovery::clone::native::seed::runtime_pair::StopKind;
+    let fixture = Fixture::new();
+    publish_runtime_binaries(&fixture);
+    let history = fixture.runtime.join("producer-history.json");
+    let api_url = "http://127.0.0.1:18210/readyz";
+    let worker_url = fixture.receipt["worker_ready_url"].as_str().unwrap();
+    let api_token = "b".repeat(32);
+    let worker_token = "c".repeat(32);
+    let api = Producer::new(
+        &fixture.backend,
+        &fixture.runtime,
+        &fixture.receipt,
+        Role::Api,
+        &api_token,
+        api_url,
+    )
+    .unwrap();
+    let worker = Producer::new(
+        &fixture.backend,
+        &fixture.runtime,
+        &fixture.receipt,
+        Role::Worker,
+        &worker_token,
+        worker_url,
+    )
+    .unwrap();
+
+    assert_pending_api_intent(&fixture, &history, &api, &worker);
+
+    let api_identity = json!({"pid":424243,"started":"12345678901234567891",
+        "executable":fixture.receipt["artifacts"]["api"]["path"]});
+    let worker_identity = json!({"pid":424244,"started":"12345678901234567892",
+        "executable":fixture.receipt["artifacts"]["worker"]["path"]});
+    for (role, token, identity, producer) in [
+        ("api", &api_token, &api_identity, &api),
+        ("worker", &worker_token, &worker_identity, &worker),
+    ] {
+        producer.intent().unwrap();
+        fs::write(fixture.runtime.join(format!("{role}-{token}.log")), "").unwrap();
+        fs::write(fixture.runtime.join(format!("{role}.json")), serde_json::to_vec(&json!({
+            "format_version":1,"role":role,"scope_id":fixture.receipt["scope_id"],"identity":identity
+        })).unwrap()).unwrap();
+        producer.started(identity).unwrap();
+        let started = fs::read(&history).unwrap();
+        producer.started(identity).unwrap();
+        assert_eq!(fs::read(&history).unwrap(), started);
+    }
+
+    assert!(worker.started(&api_identity).is_err());
+    for (role, token, identity, url) in [
+        (Role::Api, &api_token, &api_identity, api_url),
+        (Role::Worker, &worker_token, &worker_identity, worker_url),
+    ] {
+        let selected = active(&fixture.backend, &fixture.backend, &fixture.runtime, role)
+            .unwrap()
+            .unwrap();
+        assert_eq!(selected.token, *token);
+        assert_eq!(selected.identity, *identity);
+        assert_eq!(selected.ready_url, url);
+    }
+    assert!(worker.stopped(&api_identity, || Ok(())).is_err());
+    worker.stopped(&worker_identity, || Ok(())).unwrap();
+    StopKind::StartupRollback
+        .publish(&api, &api_identity, || Ok(()))
+        .unwrap();
+    let closed = fs::read(&history).unwrap();
+    worker.stopped(&worker_identity, || Ok(())).unwrap();
+    StopKind::StartupRollback
+        .publish(&api, &api_identity, || Ok(()))
+        .unwrap();
+    assert!(api.stopped(&api_identity, || Ok(())).is_err());
+    assert_eq!(fs::read(&history).unwrap(), closed);
+    for role in [Role::Api, Role::Worker] {
+        assert!(
+            active(&fixture.backend, &fixture.backend, &fixture.runtime, role)
+                .unwrap()
+                .is_none()
+        );
+    }
+    assert_eq!(
+        fixture.read().unwrap()["generations"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+}
+
+fn assert_pending_api_intent(
+    fixture: &Fixture,
+    history: &Path,
+    api: &Producer<'_>,
+    worker: &Producer<'_>,
+) {
+    api.intent().unwrap();
+    let pending = fs::read(history).unwrap();
+    api.intent().unwrap();
+    assert!(worker.intent().is_err());
+    assert!(fixture.read().is_err());
+    assert!(
+        active(
+            &fixture.backend,
+            &fixture.backend,
+            &fixture.runtime,
+            Role::Api
+        )
+        .is_err()
+    );
+    assert_eq!(fs::read(history).unwrap(), pending);
+}
+
+#[test]
+fn verified_external_product_is_separate_from_the_history_directory() {
+    let mut fixture = Fixture::new();
+    let product = fixture.backend.join(".local-tests/product");
+    fs::create_dir(&product).unwrap();
+    let product = super::canonical(&product).unwrap();
+    fixture.receipt["backend_root"] = json!(product);
+    fixture.history["events"]
+        .as_array_mut()
+        .unwrap()
+        .pop()
+        .unwrap();
+    fixture.publish();
+    assert!(fixture.read().is_err());
+    let binding = common::binding(&fixture.runtime.join("runtime.json")).unwrap();
+    let lineage = collect_bound(&fixture.backend, &product, &fixture.runtime, &binding).unwrap();
+    assert_eq!(lineage["runtime"], binding);
+    use crate::recovery::{
+        clone::native::cache::handoff::history::active, full_stack::worker::role::Role,
+    };
+    let selected = active(&fixture.backend, &product, &fixture.runtime, Role::Api)
+        .unwrap()
+        .unwrap();
+    assert_eq!(selected.identity, fixture.role["identity"]);
+    assert!(
+        active(
+            &fixture.backend,
+            &fixture.backend,
+            &fixture.runtime,
+            Role::Api
+        )
+        .is_err()
+    );
+    let other = fixture.backend.join(".local-tests/other-product");
+    fs::create_dir(&other).unwrap();
+    assert!(collect_bound(&fixture.backend, &other, &fixture.runtime, &binding).is_err());
+    let copied = fixture.runtime.join("runtime-copy.json");
+    fs::copy(fixture.runtime.join("runtime.json"), &copied).unwrap();
+    let misplaced = common::binding(&copied).unwrap();
+    assert!(collect_bound(&fixture.backend, &product, &fixture.runtime, &misplaced).is_err());
+    fs::write(
+        fixture.runtime.join("runtime.json"),
+        serde_json::to_vec_pretty(&fixture.receipt).unwrap(),
+    )
+    .unwrap();
+    assert!(collect_bound(&fixture.backend, &product, &fixture.runtime, &binding).is_err());
+}
+
+#[test]
+fn source_lineage_collects_published_post_and_seed_contracts_for_the_external_product() {
+    use crate::recovery::clone::native::{json as document, lifecycle::state, seed};
+
+    let mut fixture = Fixture::new();
+    let product = fixture.backend.join(".local-tests/product");
+    fs::create_dir(&product).unwrap();
+    let product = super::canonical(&product).unwrap();
+    fixture.receipt["backend_root"] = json!(product);
+    fixture.publish();
+    publish_runtime_binaries(&fixture);
+    let run = fixture.runtime.parent().unwrap().parent().unwrap();
+    let write = |path: &Path, value: &Value| {
+        document::write_new(path, value).unwrap();
+        common::binding(path).unwrap()
+    };
+    let build = write(&run.join("product.json"), &json!({"fixture":true}));
+    write(&run.join("manifest.json"), &json!({"fixture":true}));
+    state::initialize(run).unwrap();
+    let stage = |name, mode, result: &Value| {
+        let (number, _) = state::begin(run, name, mode, &json!({})).unwrap();
+        state::finish(run, number, Some(result), None).unwrap();
+    };
+    let post = json!({"backend_build":build});
+    let registration = write(&run.join("post-copy.json"), &post);
+    stage(
+        "post-copy",
+        "register",
+        &json!({"status":"post_copy_registered","registration":registration}),
+    );
+    let runtime = common::binding(&fixture.runtime.join("runtime.json")).unwrap();
+    let binaries = common::binding(&fixture.runtime.join("binaries.json")).unwrap();
+    let handoff = write(
+        &fixture.runtime.join("handoff.json"),
+        &json!({
+            "registration":registration,"runtime":runtime,"binaries":binaries,"worker_started":false
+        }),
+    );
+    stage(
+        "post-copy",
+        "prepare",
+        &json!({"status":"post_copy_api_prepared","handoff":handoff,"worker_started":false}),
+    );
+    let seed_runtime = run.join("seed-runtime/runtime");
+    fs::create_dir_all(&seed_runtime).unwrap();
+    let seed_contract = write(&seed_runtime.join("runtime.json"), &fixture.receipt);
+    let intent = &fixture.history["events"][0];
+    fs::write(seed_runtime.join(intent["log"].as_str().unwrap()), "").unwrap();
+    write(
+        &seed_runtime.join("producer-history.json"),
+        &json!({
+            "format_version":1,"kind":"devex-clone-producer-history","scope_id":"fixture-scope",
+            "runtime_directory":seed_runtime,"events":[intent,
+                {"sequence":1,"time_ns":101,"event":"start-failed","role":"api","token":intent["token"],
+                "error_type":"RuntimeError","log":intent["log"]}]
+        }),
+    );
+    stage("seed-runtime", "prepare", &json!({"fixture":true}));
+    let saved = state::load(run, true).unwrap();
+    let post = seed::history::post(&fixture.backend, run, None, None, true).unwrap();
+    let inputs = seed::runtime_model::Inputs {
+        runtime: seed_runtime,
+        handoff: json!({"backend_build":build,"runtime":seed_contract}),
+        environment: json!({"APP_ENV":"test"}),
+    };
+    let collect = |product| {
+        super::super::collect(
+            &fixture.backend,
+            run,
+            &Value::Null,
+            product,
+            &saved,
+            &post,
+            &inputs,
+        )
+    };
+    let records = collect(&product).unwrap();
+    assert_eq!(records["runtimes"][0]["runtime"], runtime);
+    assert_eq!(records["runtimes"][1]["runtime"], seed_contract);
+    assert!(collect(&fixture.backend).is_err());
+    fs::write(inputs.runtime.join("runtime.json"), "{}").unwrap();
+    assert!(collect(&product).is_err());
+}
+
+#[test]
+fn native_producer_keeps_unknown_start_even_when_a_log_exists() {
+    use crate::recovery::{
+        clone::native::{
+            cache::handoff::history::{Producer, pending_start},
+            resources::common,
+        },
+        full_stack::worker::role::Role,
+    };
+    let fixture = Fixture::new();
+    publish_runtime_binaries(&fixture);
+    let token = "d".repeat(32);
+    let producer = Producer::new(
+        &fixture.backend,
+        &fixture.runtime,
+        &fixture.receipt,
+        Role::Worker,
+        &token,
+        fixture.receipt["worker_ready_url"].as_str().unwrap(),
+    )
+    .unwrap();
+    let history = fixture.runtime.join("producer-history.json");
+    producer.intent().unwrap();
+    let pending = fs::read(&history).unwrap();
+    assert!(fixture.read().is_err());
+
+    fs::write(fixture.runtime.join(format!("worker-{token}.log")), "").unwrap();
+    let intent = pending_start(&fixture.backend, &fixture.runtime, &fixture.receipt)
+        .unwrap()
+        .unwrap();
+    assert_eq!(intent.role, Role::Worker);
+    assert_eq!(intent.token, token);
+    assert_eq!(
+        intent.ready_url,
+        fixture.receipt["worker_ready_url"].as_str().unwrap()
+    );
+    assert_eq!(intent.binding, common::binding(&history).unwrap());
+    assert!(
+        producer
+            .stopped(&fixture.role["identity"], || Ok(()))
+            .is_err()
+    );
+    assert_eq!(fs::read(&history).unwrap(), pending);
+    assert!(fixture.read().is_err());
+}
+
+#[test]
+fn missing_history_does_not_hide_orphaned_role_evidence() {
+    use crate::recovery::{
+        clone::native::cache::handoff::history::active, full_stack::worker::role::Role,
+    };
+    let fixture = Fixture::new();
+    publish_runtime_binaries(&fixture);
+    let observe = || {
+        active(
+            &fixture.backend,
+            &fixture.backend,
+            &fixture.runtime,
+            Role::Worker,
+        )
+    };
+    fs::remove_file(fixture.runtime.join("producer-history.json")).unwrap();
+    assert!(observe().is_err());
+    fs::remove_file(fixture.runtime.join("api.json")).unwrap();
+    fs::remove_file(fixture.runtime.join(format!("api-{}.log", "a".repeat(32)))).unwrap();
+    assert!(observe().unwrap().is_none());
+    let lock = fixture.runtime.join("worker-control.lock");
+    fs::create_dir(&lock).unwrap();
+    assert!(observe().is_err());
+    assert!(lock.is_dir());
 }

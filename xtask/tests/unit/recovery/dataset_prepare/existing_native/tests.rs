@@ -2,6 +2,24 @@ use super::{clone, common, source};
 use serde_json::{Value, json};
 use std::{ffi::OsString, path::Path};
 
+#[test]
+fn tracked_openapi_snapshot_stays_bound_without_relaxing_managed_inputs() {
+    let local = crate::workspace::root_dir().join(".local-tests");
+    std::fs::create_dir_all(&local).unwrap();
+    let fixture = tempfile::tempdir_in(local).unwrap();
+    let root = crate::recovery::fixture_control::portable_path(fixture.path());
+    std::fs::create_dir_all(root.join(".local-tests")).unwrap();
+    std::fs::create_dir_all(root.join("openapi")).unwrap();
+    let path = root.join("openapi/openapi.json");
+    std::fs::write(&path, br#"{"openapi":"3.1.0"}"#).unwrap();
+    assert!(common::Snapshot::read(&root, &path, 1024, "受管计划").is_err());
+    let (snapshot, contract) = common::Snapshot::openapi(&root).unwrap();
+    assert_eq!(contract["openapi"], "3.1.0");
+    snapshot.unchanged(&root).unwrap();
+    std::fs::write(&path, br#"{"openapi":"3.0.0"}"#).unwrap();
+    assert!(snapshot.unchanged(&root).is_err());
+}
+
 fn descriptor(root: &Path, name: &str) -> Value {
     json!({"path":root.join(name),"bytes":1,"sha256":"a".repeat(64)})
 }
@@ -40,11 +58,12 @@ fn lineage() -> Value {
 fn source_lineage_preserves_full_scale_and_rejects_scope_or_aggregate_drift() {
     let valid = lineage();
     source::validate_lineage(&valid).unwrap();
-    let mutations: [fn(&mut Value); 4] = [
+    let mutations: [fn(&mut Value); 5] = [
         |value: &mut Value| value["scopes"]["current_source_scope_id"] = json!("other"),
         |value: &mut Value| value["scale"]["records"] = json!(99_999),
         |value: &mut Value| value["tenants"][1]["tenant_id"] = json!("current-01"),
         |value: &mut Value| value["objects"]["probe"]["target_key"] = json!("other/probe"),
+        |value: &mut Value| value["objects"]["probe"]["target_key"] = json!("current/other"),
     ];
     for mutation in mutations {
         let mut invalid = valid.clone();
@@ -55,6 +74,40 @@ fn source_lineage_preserves_full_scale_and_rejects_scope_or_aggregate_drift() {
     invalid["tenants"][0]["secret_key"] = json!("must-not-leak");
     let error = source::validate_lineage(&invalid).unwrap_err().to_string();
     assert!(!error.contains("must-not-leak"));
+}
+
+#[test]
+fn source_lineage_probe_presence_and_counts_must_agree() {
+    let historical = lineage();
+    let mut current = historical.clone();
+    current["scale"]["verified_objects"] = json!(256);
+    current["objects"]["verified_objects"] = json!(256);
+    current["objects"]["probe"] = Value::Null;
+    source::validate_lineage(&current).unwrap();
+
+    for (section, count) in [("scale", 257), ("objects", 257), ("objects", 255)] {
+        let mut invalid = current.clone();
+        invalid[section]["verified_objects"] = json!(count);
+        assert!(source::validate_lineage(&invalid).is_err());
+    }
+    let mut invalid = current.clone();
+    invalid["objects"]["probe"] = historical["objects"]["probe"].clone();
+    assert!(source::validate_lineage(&invalid).is_err());
+    let mut invalid = historical.clone();
+    invalid["objects"]["probe"] = Value::Null;
+    assert!(source::validate_lineage(&invalid).is_err());
+    let mut invalid = historical.clone();
+    invalid["objects"]["probe"] = json!([
+        historical["objects"]["probe"],
+        historical["objects"]["probe"]
+    ]);
+    assert!(source::validate_lineage(&invalid).is_err());
+    let mut invalid = current.clone();
+    invalid["objects"]["business_objects"] = json!(255);
+    assert!(source::validate_lineage(&invalid).is_err());
+    let mut invalid = current;
+    invalid["objects"].as_object_mut().unwrap().remove("probe");
+    assert!(source::validate_lineage(&invalid).is_err());
 }
 
 #[test]
