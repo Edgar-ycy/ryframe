@@ -63,7 +63,7 @@ impl BootstrapFixture {
         fs::write(self.directory.path().join("test_bound_probe.py"), source).unwrap();
         let binding = if bound {
             Some(
-                python_suite::binding(Path::new(env!("CARGO_BIN_EXE_xtask")))
+                crate::rate_limit::tool_binding(Path::new(env!("CARGO_BIN_EXE_xtask")))
                     .unwrap()
                     .unwrap(),
             )

@@ -22,7 +22,7 @@ pub(super) struct LifecycleRuntime {
 impl LifecycleRuntime {
     pub(super) fn new(backend: &Path) -> Result<Self> {
         let executable = std::env::current_exe()?;
-        let tool = crate::check::python_suite::binding(&executable)?
+        let tool = crate::rate_limit::tool_binding(&executable)?
             .ok_or("服务生命周期需要明确原生工具绑定")?;
         Ok(Self {
             backend: backend.to_path_buf(),
@@ -74,7 +74,7 @@ impl LifecycleRuntime {
 
     fn verify_tool(&self) -> Result<()> {
         check(
-            self.tool == crate::check::python_suite::native_tool_binding()?,
+            self.tool == crate::rate_limit::current_tool_binding()?,
             "原生cache原语当前工具字节或身份变化；保留现场",
         )
     }

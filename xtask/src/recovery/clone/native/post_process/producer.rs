@@ -417,7 +417,7 @@ fn prepare(
             seed.request["identity_tool"].clone(),
         ),
         None => {
-            let tool = crate::check::python_suite::native_tool_binding()?;
+            let tool = crate::rate_limit::current_tool_binding()?;
             (
                 &context.post.request,
                 &context.post.descriptor,

@@ -50,7 +50,7 @@ impl<'a> Controller<'a> {
             )?,
             controller,
             request: successor.clone(),
-            tool: crate::check::python_suite::native_tool_binding()?,
+            tool: crate::rate_limit::current_tool_binding()?,
         };
         value.checkpoint()?;
         Ok(value)
@@ -89,7 +89,7 @@ impl<'a> Controller<'a> {
             || lock_identity != self.lock_identity
             || controller != self.controller
             || common::binding(&self.run.join("state.json"))? != self.state_binding
-            || crate::check::python_suite::native_tool_binding()? != self.tool
+            || crate::rate_limit::current_tool_binding()? != self.tool
             || source::current(self.backend)?
                 != state::attempts(&saved)?.last().ok_or("重绑定阶段消失")?["sources"]
         {

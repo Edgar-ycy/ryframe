@@ -1,8 +1,6 @@
 use std::path::Path;
 
-use serde_json::{Value, json};
-
-use crate::{Result, process::run as run_process, recovery::clone::native::digest};
+use crate::{Result, process::run as run_process};
 
 use super::{
     PYTHON_TEST_ARGS,
@@ -17,7 +15,7 @@ pub(super) fn run(root: &Path) -> Result<()> {
         let program = python::selected_program(root)?;
         let program = program.to_str().ok_or("Python 入口路径必须为 UTF-8。")?;
         let executable = std::env::current_exe()?;
-        let binding = binding(&executable)?;
+        let binding = crate::rate_limit::tool_binding(&executable)?;
         let arguments = arguments(binding.as_deref());
         let arguments = arguments.iter().map(String::as_str).collect::<Vec<_>>();
         run_process(root, program, &arguments)
@@ -41,34 +39,4 @@ pub(crate) fn arguments(binding: Option<&str>) -> Vec<String> {
             .map(|argument| (*argument).to_owned()),
     );
     arguments
-}
-
-pub(crate) fn binding(executable: &Path) -> Result<Option<String>> {
-    let path = executable.to_str().ok_or("当前检查工具路径不是 UTF-8")?;
-    let path = path.strip_prefix(r"\\?\").unwrap_or(path);
-    // 既有 Windows 二进制保护仅支持本机盘符；正式入口由必需构造器拒绝其他布局。
-    if cfg!(windows) && (path.starts_with("UNC\\") || path.starts_with(r"\\")) {
-        return Ok(None);
-    }
-    if digest::linked_path(executable)?
-        .into_iter()
-        .any(|linked| linked)
-    {
-        return Ok(None);
-    }
-    let observed = digest::file(executable)?;
-    Ok(Some(serde_json::to_string(&json!({
-        "format_version": 1,
-        "kind": "ryframe-native-rate-limit-tool",
-        "path": path,
-        "bytes": observed.bytes,
-        "sha256": observed.sha256,
-    }))?))
-}
-
-pub(crate) fn native_tool_binding() -> Result<Value> {
-    let executable = std::env::current_exe()?;
-    let binding = crate::check::python_suite::binding(&executable)?
-        .ok_or("Python 原生调用要求显式绑定无链接的本机当前 xtask 工具")?;
-    Ok(serde_json::from_str(&binding)?)
 }

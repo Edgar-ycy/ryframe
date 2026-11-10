@@ -757,7 +757,7 @@ fn python_json(root: &Path, script: &str, arguments: &[&Path]) -> Value {
 }
 
 fn python_output(root: &Path, script: &str, arguments: &[&Path]) -> std::process::Output {
-    let tool = crate::check::python_suite::binding(Path::new(env!("CARGO_BIN_EXE_xtask")))
+    let tool = crate::rate_limit::tool_binding(Path::new(env!("CARGO_BIN_EXE_xtask")))
         .unwrap()
         .expect("维护收据互验必须绑定当前原生工具");
     let script = format!(

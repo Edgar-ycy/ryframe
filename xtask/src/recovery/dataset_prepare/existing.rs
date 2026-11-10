@@ -23,7 +23,7 @@ pub(in crate::recovery) struct Options {
 
 pub(super) fn ownership(inputs: &Inputs) -> Result<()> {
     let request = json!({"format_version":1,"kind":"ryframe-xtask-recovery-reference","request":{"backend_dir":inputs.root,"format_version":1,"operation":"check-existing","plan":inputs.plan_path,"side":inputs.side,"write":false}});
-    let tool = crate::check::python_suite::native_tool_binding()?;
+    let tool = crate::rate_limit::current_tool_binding()?;
     let program = tool["path"].as_str().ok_or("原生协调器路径缺失")?;
     let payload = json!({"operation":"reference-readonly",
         "arguments":{"raw":serde_json::to_string(&request)?},"write":false});
@@ -39,7 +39,7 @@ pub(super) fn ownership(inputs: &Inputs) -> Result<()> {
         Some(&serde_json::to_vec(&payload)?),
         Duration::from_secs(60),
     )?;
-    if crate::check::python_suite::native_tool_binding()? != tool {
+    if crate::rate_limit::current_tool_binding()? != tool {
         return Err("原生协调器绑定在 ownership 检查期间变化".into());
     }
     if !output.status.success() {

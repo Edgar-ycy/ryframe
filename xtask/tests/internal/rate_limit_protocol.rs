@@ -173,7 +173,7 @@ fn hidden_binary_is_absent_from_help_and_reads_the_request_from_stdin() {
 #[test]
 fn python_bound_tool_reloads_configuration_without_starting_cargo() {
     let executable = Path::new(env!("CARGO_BIN_EXE_xtask"));
-    let Some(binding) = super::check::python_suite::binding(executable).unwrap() else {
+    let Some(binding) = crate::rate_limit::tool_binding(executable).unwrap() else {
         // 链接或 UNC 布局保留原入口；不能伪造为本机受保护二进制。
         return;
     };

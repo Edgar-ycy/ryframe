@@ -337,7 +337,7 @@ fn absent_ledger_lock(ledger: &Path) -> Result<()> {
     }
 }
 fn coordinator_tool() -> Result<Value> {
-    let binding = crate::check::python_suite::native_tool_binding()?;
+    let binding = crate::rate_limit::current_tool_binding()?;
     let path = document::text(&binding["path"], "当前原生工具路径")?;
     if !Path::new(path).is_absolute() {
         return Err("协调器工具必须是当前显式绝对路径".into());

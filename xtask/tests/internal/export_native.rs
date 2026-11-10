@@ -583,7 +583,7 @@ result = verify_capture(
 print(result["status"])
 "#;
     let script = script.replace("%s", &sha(b"data"));
-    let native_tool = crate::check::python_suite::binding(Path::new(env!("CARGO_BIN_EXE_xtask")))
+    let native_tool = crate::rate_limit::tool_binding(Path::new(env!("CARGO_BIN_EXE_xtask")))
         .unwrap()
         .expect("兼容校验必须显式绑定当前原生工具");
     let output = Command::new("python")

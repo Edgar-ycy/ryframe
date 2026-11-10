@@ -128,7 +128,7 @@ fn validate_binding(backend: &Path, tool: &Value) -> Result<()> {
         "原生cache原语backend与当前操作工作区不同",
     )?;
     check(
-        *tool == crate::check::python_suite::native_tool_binding()?,
+        *tool == crate::rate_limit::current_tool_binding()?,
         "原生cache原语native_tool与当前执行文件不同",
     )
 }
@@ -228,7 +228,7 @@ mod tests {
     #[test]
     fn cache_primitive_rejects_other_operations_foreign_backend_and_changed_self_binding() {
         let backend = crate::workspace::root_dir();
-        let tool = crate::check::python_suite::native_tool_binding().unwrap();
+        let tool = crate::rate_limit::current_tool_binding().unwrap();
         let envelope = json!({"format_version":1,"kind":"ryframe-fixture-service-primitive",
             "backend":backend,"native_tool":tool,"operation":"cache-start","arguments":{}});
         let mut wrong = envelope.clone();

@@ -94,7 +94,7 @@ fn producer(backend: &Path, directory: &Path, facts: &Value, historical: bool) -
     let private: BTreeMap<String, String> =
         serde_json::from_value(facts["environment"]["environment"].clone())?;
     let environment = environment::configured(&private)?;
-    let tool = crate::check::python_suite::native_tool_binding()?;
+    let tool = crate::rate_limit::current_tool_binding()?;
     producer::Inputs {
         backend,
         execution: Path::new(document::text(&facts["execution"], "来源执行树")?),

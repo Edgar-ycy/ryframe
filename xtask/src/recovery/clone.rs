@@ -51,7 +51,7 @@ pub(crate) fn protocol(command: &CloneCommand, root: &Path) -> Result<String> {
                 .into(),
         );
     }
-    let native_tool = crate::check::python_suite::native_tool_binding()?;
+    let native_tool = crate::rate_limit::current_tool_binding()?;
     let payload = serde_json::to_string(&json!({
         "format_version": 1,
         "kind": "ryframe-xtask-recovery-clone",

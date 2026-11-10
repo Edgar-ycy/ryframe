@@ -80,7 +80,7 @@ impl<'a, T: Transport> Session<'a, T> {
             )?,
             &[],
         )?;
-        let binding = crate::check::python_suite::native_tool_binding()?;
+        let binding = crate::rate_limit::current_tool_binding()?;
         let tool = PathBuf::from(document::text(&binding["path"], "当前原生协调工具")?);
         let guard = ProcessGuard::acquire(&run)?;
         let owner = RunLock::claim(&run)?;

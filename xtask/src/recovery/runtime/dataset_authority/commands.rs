@@ -18,7 +18,7 @@ pub(in crate::recovery::runtime) fn current_tools(
 ) -> Result<Value> {
     let program = path(&json!(portable_path(executable)))?;
     inputs.protect(&program)?;
-    let binding = crate::check::python_suite::binding(executable)?
+    let binding = crate::rate_limit::tool_binding(executable)?
         .ok_or("恢复前端服务要求当前本机协调器的无链接原生程序")?;
     let binding = strict::parse_fragment(&binding, "恢复前端服务工具")?;
     let inventory = source::capture(backend)?;
@@ -120,7 +120,7 @@ pub(in crate::recovery::runtime) fn verify_direct(
     let tools = &request["tools"];
     let server = tool_descriptor(tools)?;
     inputs.protect(&server.path)?;
-    let current = crate::check::python_suite::binding(&std::env::current_exe()?)?
+    let current = crate::rate_limit::tool_binding(&std::env::current_exe()?)?
         .ok_or("恢复前端服务要求当前正式协调器的原生工具绑定")?;
     let current = strict::parse_fragment(&current, "恢复前端服务工具")?;
     check(
