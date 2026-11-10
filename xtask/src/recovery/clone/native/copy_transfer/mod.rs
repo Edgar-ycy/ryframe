@@ -16,5 +16,5 @@ pub(super) mod steps;
 mod target_port;
 pub(crate) mod verify_target_objects;
 
-pub(super) use runner::Runner;
+pub(crate) use runner::Runner;
 pub(crate) use target_port::ReferenceTarget;

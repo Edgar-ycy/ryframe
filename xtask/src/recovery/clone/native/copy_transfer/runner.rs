@@ -28,7 +28,7 @@ use crate::{Result, cli::CloneSide};
 
 mod io;
 
-pub(in crate::recovery::clone::native) struct Runner;
+pub(crate) struct Runner;
 
 impl StageRunner for Runner {
     fn preflight(&self, request: &StageRequest<'_>) -> Result<()> {

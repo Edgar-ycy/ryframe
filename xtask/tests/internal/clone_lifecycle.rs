@@ -759,9 +759,23 @@ fn linked_manifest_is_rejected() {
 }
 
 #[test]
-fn stage_python_copy_preflight_uses_the_typed_resource_protocol() {
+fn native_copy_preflight_uses_registered_inputs_without_lock_or_attempt() {
     let fixture = Fixture::new();
+    let mut manifest = read_json(&fixture.manifest);
+    for (field, name) in [
+        ("source_export", "source-export.json"),
+        ("initialized", "initialized.json"),
+    ] {
+        let evidence = fixture.local.join(field);
+        fs::create_dir(&evidence).unwrap();
+        let path = evidence.join(name);
+        fs::rename(fixture.local.join(name), &path).unwrap();
+        manifest[field] = binding(&path);
+    }
+    write_json(&fixture.manifest, &manifest);
     fixture.init().unwrap();
+    let before = snapshot(&fixture.local);
+    let runner = native::copy_transfer::Runner;
     let request = stage::StageRequest {
         backend: &fixture.backend,
         run_dir: &fixture.run,
@@ -769,26 +783,17 @@ fn stage_python_copy_preflight_uses_the_typed_resource_protocol() {
         mode: "run",
         attempt: None,
     };
-    let mut protocol: Value = serde_json::from_str(
-        &crate::target_stage_protocol::protocol(&request, "preflight").unwrap(),
-    )
-    .unwrap();
-    // libtest 不承载原生私有入口；适配夹具显式绑定同次构建的正式 xtask。
-    let native = crate::check::python_suite::binding(Path::new(env!("CARGO_BIN_EXE_xtask")))
-        .unwrap()
-        .unwrap();
-    protocol["native_tool"] = serde_json::from_str(&native).unwrap();
-    let output = crate::process_tests::command_output_with_input(
-        &fixture.backend,
-        "python",
-        &["-B", "tools/python/devex_clone.py", "--private-stdin"],
-        &serde_json::to_vec(&protocol).unwrap(),
-    )
-    .unwrap();
-    let value: Value = serde_json::from_str(output.trim()).unwrap();
-    assert_eq!(value["status"], "stage_operation_preflight_ready");
-    assert_eq!(value["stage"], "copy");
-    assert_eq!(value["mode"], "run");
+    stage::StageRunner::preflight(&runner, &request).unwrap();
+    let error = stage::StageRunner::execute(&runner, &request).unwrap_err();
+    assert_eq!(error.to_string(), "复制必须由持锁的正式阶段执行");
+    let allocated = stage::StageRequest {
+        attempt: Some(1),
+        ..request
+    };
+    let error = stage::StageRunner::preflight(&runner, &allocated).unwrap_err();
+    assert_eq!(error.to_string(), "复制只读预检必须在申请阶段序号之前执行");
+    assert_eq!(snapshot(&fixture.local), before);
+    assert!(!fixture.copy.exists());
     assert!(!fixture.run.join("run.lock").exists());
     assert_eq!(fixture.state()["attempts"], json!([]));
 }
