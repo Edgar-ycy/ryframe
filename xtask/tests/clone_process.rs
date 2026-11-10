@@ -98,6 +98,46 @@ fn malformed_requests_exit_two_before_starting_python() {
 }
 
 #[test]
+fn post_copy_verify_rejects_substituted_inputs_before_execution() {
+    let fixture = Fixture::new();
+    let input = fixture.directory.join("input.json");
+    fs::write(&input, b"{}").unwrap();
+    let run_dir = fixture.directory.to_str().unwrap();
+    let input_path = input.to_str().unwrap();
+
+    for flag in ["--request", "--producer-binding"] {
+        let arguments = [
+            "check",
+            "recovery",
+            "clone",
+            "post-copy",
+            "--run-dir",
+            run_dir,
+            "--operation",
+            "verify",
+            flag,
+            input_path,
+            "--write",
+        ]
+        .map(str::to_owned);
+        let result = invoke(&arguments);
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert_eq!(result.status.code(), Some(2), "{flag}: {stderr}");
+        assert!(
+            stderr.contains("post-copy 的 request 或 producer binding 与操作不匹配"),
+            "{flag}: {stderr}"
+        );
+        assert!(result.stdout.is_empty(), "{flag}");
+    }
+    let files = fs::read_dir(&fixture.directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<_>>();
+    assert_eq!(files, [input.clone()]);
+    assert_eq!(fs::read(input).unwrap(), b"{}");
+}
+
+#[test]
 fn valid_status_uses_native_path_and_ignores_inherited_protocol() {
     let fixture = Fixture::new();
     let arguments = status_arguments(&fixture.directory);
