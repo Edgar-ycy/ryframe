@@ -40,19 +40,7 @@ pub(crate) struct HeldFile {
 
 impl HeldFile {
     pub(crate) fn open(path: &Path) -> Result<Self> {
-        no_links(path)?;
-        let mut options = OpenOptions::new();
-        options.read(true);
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::OpenOptionsExt;
-            options.share_mode(1);
-        }
-        let mut file = options.open(path).map_err(|_| FILE_ERROR)?;
-        if !file.metadata().map_err(|_| FILE_ERROR)?.is_file() {
-            return Err(FILE_ERROR.into());
-        }
-        let identity = Identity::for_file(path, &file)?;
+        let (mut file, identity) = open_data_file(path)?;
         let parent = Identity::open(path.parent().ok_or(FILE_ERROR)?, true)?;
         identity.verify(path)?;
         let (bytes, sha256) = fingerprint(&mut file)?;
@@ -99,11 +87,10 @@ impl HeldFile {
         if !held.same(&self.identity) {
             return Err(FILE_ERROR.into());
         }
-        let current = Self::open(&self.path)?;
-        if !self.identity.same(&current.identity)
-            || current.bytes != self.bytes
-            || current.sha256 != self.sha256
-        {
+        let (mut file, identity) = open_data_file(&self.path)?;
+        identity.verify(&self.path)?;
+        let (bytes, sha256) = fingerprint(&mut file)?;
+        if !self.identity.same(&identity) || bytes != self.bytes || sha256 != self.sha256 {
             return Err(
                 "consumer 文件内容漂移：保留证据并使用一致的源码、配置和绑定重新执行。".into(),
             );
@@ -157,6 +144,23 @@ pub(super) fn digest_valid(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn open_data_file(path: &Path) -> Result<(File, Identity)> {
+    no_links(path)?;
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.share_mode(1);
+    }
+    let file = options.open(path).map_err(|_| FILE_ERROR)?;
+    if !file.metadata().map_err(|_| FILE_ERROR)?.is_file() {
+        return Err(FILE_ERROR.into());
+    }
+    let identity = Identity::for_file(path, &file)?;
+    Ok((file, identity))
 }
 
 fn fingerprint(file: &mut File) -> Result<(u64, String)> {
