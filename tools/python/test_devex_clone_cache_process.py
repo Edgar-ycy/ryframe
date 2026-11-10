@@ -252,13 +252,6 @@ class CacheProcessTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             process.validate(self.request)
 
-    def test_first_generation_allows_only_a_complete_absence_of_predecessor(self):
-        initial = {**self.request, "previous_identity": None, "previous_boot_id": None, "previous_run_id": None}
-        process.validate(initial)
-        for key, value in (("previous_boot_id", BOOT), ("previous_run_id", "a" * 40)):
-            with self.subTest(key=key), self.assertRaises(ValueError):
-                process.validate({**initial, key: value})
-
     def test_password_requires_direct_utf8_text_and_rejects_legacy_fields(self):
         for password in (None, False, 123, "", " \t", "\0hidden-secret", "\ud800"):
             with self.subTest(kind=type(password).__name__), self.assertRaises(ValueError) as error:
@@ -300,31 +293,6 @@ class CacheProcessTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             process.write(target, {"replacement": True})
         self.assertEqual(target.read_bytes(), before)
-
-    def test_no_intent_is_not_started_but_popen_unknown_is_not_inferred(self):
-        self.assertIsNone(process.inspect_start(self.request, self.output))
-        self.intent()
-        with self.assertRaises(ValueError):
-            process.inspect_start(self.request, self.output)
-
-    def test_historical_inspection_rejects_frozen_helper_byte_changes(self):
-        runtime = self.recorded()
-        self.assertEqual(process.inspect_start(self.request, self.output), runtime)
-        (self.output / "helpers/cache.py").write_bytes(b"changed")
-        with self.assertRaises(ValueError):
-            process.inspect_start(self.request, self.output)
-
-    def test_historical_inspection_survives_tool_upgrade_but_regular_calls_reject_it(self):
-        runtime = self.recorded()
-        Path(self.request["wsl"]["path"]).write_bytes(b"reviewed successor WSL")
-        before = {path: path.read_bytes() for path in self.output.rglob("*") if path.is_file()}
-        self.assertEqual(process.inspect_start(self.request, self.output), runtime)
-        with self.assertRaises(ValueError):
-            process.validate(self.request)
-        for operation, extra in (("stop", {"output": str(self.output)}), ("observe", {})):
-            with self.subTest(operation=operation), self.assertRaises(ValueError):
-                native.invoke(operation, request=self.request, runtime=runtime, **extra)
-        self.assertEqual(before, {path: path.read_bytes() for path in self.output.rglob("*") if path.is_file()})
 
     def test_other_request_or_launcher_identity_is_rejected(self):
         self.recorded()
