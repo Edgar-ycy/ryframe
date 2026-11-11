@@ -41,7 +41,7 @@ pub(crate) const FIXTURE_CONTROL_USAGE: &str = concat!(
     "  environment plan --review <文件> --execution-source <文件> --maintenance-build <文件> [--side seed|base|candidate]\n",
     "  environment prepare --review <文件> --execution-source <文件> --maintenance-build <文件> [--side seed|base|candidate] --output <新目录> [--secrets-dir <目录>] --write\n",
     "  environment review --review <文件> --output <新文件> --write\n",
-    "  environment rotate-secrets --fixture <文件> --output <新目录> --write\n",
+    "  environment rotate-secrets --fixture <文件> --output <新目录> [--credential administrator|jwt] [--secrets-dir <目录>] --write\n",
     "  environment bootstrap-secrets --source-fixture <文件> --source-secrets <目录> --fixture <文件> --write\n",
     "  review --template <文件> --execution-source <文件> --future-root <新目录> --id <ID> --api-port <端口> --worker-port <端口> --frontend-port <端口> --rustfs-api-port <端口> --rustfs-console-port <端口> --redis-port <端口> --output <新文件> --write\n",
     "  request --environment <文件> --service-run <目录> --id <ID> --side seed|base|candidate --output <新文件> --write\n",

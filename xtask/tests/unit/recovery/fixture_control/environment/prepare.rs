@@ -178,6 +178,8 @@ impl PrepareFixture {
             &FixtureEnvironmentCommand::RotateSecrets {
                 fixture: fixture.receipt.clone(),
                 output: explicit.clone(),
+                credential: crate::cli::FixtureSecretCredential::Administrator,
+                secrets_dir: None,
             },
         )
         .unwrap();

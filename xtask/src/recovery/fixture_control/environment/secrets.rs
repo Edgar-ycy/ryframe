@@ -1,7 +1,10 @@
 //! 只生成或复制隔离秘密文件，不启动服务或写入远端资源。
 use super::super::write_new;
 use super::protocol::GuardError;
-use crate::{Result, cli::FixtureEnvironmentCommand};
+use crate::{
+    Result,
+    cli::{FixtureEnvironmentCommand, FixtureSecretCredential},
+};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde_json::{Value, json};
 use std::{fs, path::Path};
@@ -21,9 +24,19 @@ pub(crate) fn run_with(
     mut after_sync: impl FnMut(&Path) -> Result<()>,
 ) -> Result<Value> {
     match command {
-        FixtureEnvironmentCommand::RotateSecrets { fixture, output } => {
-            rotate(root, fixture, output, &mut after_sync)?
-        }
+        FixtureEnvironmentCommand::RotateSecrets {
+            fixture,
+            output,
+            credential,
+            secrets_dir,
+        } => rotate(
+            root,
+            fixture,
+            output,
+            *credential,
+            secrets_dir.as_deref(),
+            &mut after_sync,
+        )?,
         FixtureEnvironmentCommand::BootstrapSecrets {
             source_fixture,
             source_secrets,
@@ -47,10 +60,12 @@ fn rotate(
     root: &Path,
     fixture: &Path,
     output: &Path,
+    credential: FixtureSecretCredential,
+    secrets_dir: Option<&Path>,
     after_sync: &mut impl FnMut(&Path) -> Result<()>,
 ) -> Result<()> {
     let fixture = facts::Fixture::open(root, fixture)?;
-    let source = files::Frozen::open(root, &fixture.execution, None)?;
+    let source = files::Frozen::open(root, &fixture.execution, secrets_dir)?;
     facts::output(root, &fixture.execution, output)?;
     let mut contents = source.contents.clone();
     let mut random = [0_u8; 32];
@@ -58,12 +73,22 @@ fn rotate(
         .secure_random
         .fill(&mut random)
         .map_err(|_| "安全密码随机数生成失败，未创建输出目录")?;
-    let password = format!("Aa1!{}", URL_SAFE_NO_PAD.encode(random));
-    super::guards::reset_password(&json!({"admin_password":password}))?;
-    contents.insert(
-        "reset-admin-password.txt".into(),
-        format!("{password}\n").into_bytes(),
-    );
+    let encoded = URL_SAFE_NO_PAD.encode(random);
+    let (name, value) = match credential {
+        FixtureSecretCredential::Administrator => {
+            let password = format!("Aa1!{encoded}");
+            super::guards::reset_password(&json!({"admin_password":password}))?;
+            ("reset-admin-password.txt", password)
+        }
+        FixtureSecretCredential::Jwt => {
+            let name = "jwt-secret.txt";
+            if std::str::from_utf8(&contents[name]).is_ok_and(|source| source.trim() == encoded) {
+                return Err("生成的 JWT 密钥与源密钥相同，未创建输出目录".into());
+            }
+            (name, encoded)
+        }
+    };
+    contents.insert(name.into(), format!("{value}\n").into_bytes());
     fs::create_dir(output)?;
     let mut stage = "复制秘密文件";
     let result = (|| {

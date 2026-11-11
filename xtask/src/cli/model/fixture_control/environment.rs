@@ -10,6 +10,12 @@ pub(crate) struct FixtureEnvironmentInputs {
     pub(crate) side: FixtureSide,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FixtureSecretCredential {
+    Administrator,
+    Jwt,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum FixtureEnvironmentCommand {
     Help,
@@ -26,6 +32,8 @@ pub(crate) enum FixtureEnvironmentCommand {
     RotateSecrets {
         fixture: PathBuf,
         output: PathBuf,
+        credential: FixtureSecretCredential,
+        secrets_dir: Option<PathBuf>,
     },
     BootstrapSecrets {
         source_fixture: PathBuf,

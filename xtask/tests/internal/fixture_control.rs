@@ -11,8 +11,9 @@ use super::{
     cli::{
         CheckCommand, Command, FIXTURE_CONTROL_USAGE, FixtureArtifactCommand,
         FixtureControlCommand, FixtureEnvironmentCommand, FixtureRequestCommand,
-        FixtureRetentionCommand, FixtureReviewCommand, FixtureServicesCommand,
-        FixtureSourcePairCommand, FixtureSuccessorCommand, RecoveryCommand, parse,
+        FixtureRetentionCommand, FixtureReviewCommand, FixtureSecretCredential,
+        FixtureServicesCommand, FixtureSourcePairCommand, FixtureSuccessorCommand, RecoveryCommand,
+        parse,
     },
     workspace::root_dir,
 };
@@ -386,16 +387,6 @@ fn parses_every_environment_operation_into_typed_requests() {
             ],
         ),
         (
-            "rotate-secrets",
-            vec![
-                "--fixture".to_owned(),
-                text(&fixture.input),
-                "--output".to_owned(),
-                text(&fixture.path("new secrets")),
-                "--write".to_owned(),
-            ],
-        ),
-        (
             "bootstrap-secrets",
             vec![
                 "--source-fixture".to_owned(),
@@ -411,6 +402,44 @@ fn parses_every_environment_operation_into_typed_requests() {
     for (operation, values) in cases {
         let parsed = parse_control(command("environment", Some(operation), values)).unwrap();
         assert!(matches!(parsed, FixtureControlCommand::Environment(_)));
+    }
+
+    let output = fixture.path("new secrets");
+    for (choice, credential, secrets_dir) in [
+        (None, FixtureSecretCredential::Administrator, None),
+        (
+            Some("administrator"),
+            FixtureSecretCredential::Administrator,
+            None,
+        ),
+        (
+            Some("jwt"),
+            FixtureSecretCredential::Jwt,
+            Some(fixture.controlled_dir.clone()),
+        ),
+    ] {
+        let mut values = vec![
+            "--fixture".to_owned(),
+            text(&fixture.input),
+            "--output".to_owned(),
+            text(&output),
+            "--write".to_owned(),
+        ];
+        if let Some(choice) = choice {
+            values.extend(["--credential".to_owned(), choice.to_owned()]);
+        }
+        if let Some(directory) = &secrets_dir {
+            values.extend(["--secrets-dir".to_owned(), text(directory)]);
+        }
+        let parsed = parse_control(command("environment", Some("rotate-secrets"), values)).unwrap();
+        assert!(matches!(
+            parsed,
+            FixtureControlCommand::Environment(FixtureEnvironmentCommand::RotateSecrets {
+                fixture: actual_fixture, output: actual_output,
+                credential: actual_credential, secrets_dir: actual_secrets_dir
+            }) if actual_fixture == fixture.input && actual_output == output
+                && actual_credential == credential && actual_secrets_dir == secrets_dir
+        ));
     }
 }
 
@@ -832,7 +861,7 @@ fn rejects_ambiguous_write_options_and_invalid_paths_before_dispatch() {
         assert!(parse_control(arguments.clone()).is_err(), "{arguments:?}");
     }
 
-    let missing_write = command(
+    let mut rotate = command(
         "environment",
         Some("rotate-secrets"),
         vec![
@@ -842,7 +871,13 @@ fn rejects_ambiguous_write_options_and_invalid_paths_before_dispatch() {
             text(&fixture.path("secrets")),
         ],
     );
-    assert!(parse_control(missing_write).is_err());
+    assert!(parse_control(rotate.clone()).is_err());
+    rotate.extend([
+        "--write".to_owned(),
+        "--credential".to_owned(),
+        "redis".to_owned(),
+    ]);
+    assert!(parse_control(rotate).is_err());
 }
 
 #[test]

@@ -1,12 +1,13 @@
 //! 真实 Git 快照和普通文件验证秘密文件生产入口，不启动服务。
 use super::super::{
-    cli::FixtureEnvironmentCommand as Command,
+    cli::{FixtureEnvironmentCommand as Command, FixtureSecretCredential},
     recovery::{
         clone::native::{json as document, source},
         fixture_control::environment::secrets,
     },
 };
-use serde_json::json;
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
@@ -59,6 +60,8 @@ impl Fixture {
         Command::RotateSecrets {
             fixture: self.source.clone(),
             output: self.rotated(),
+            credential: FixtureSecretCredential::Administrator,
+            secrets_dir: None,
         }
     }
     fn bootstrap(&self) -> Command {
@@ -159,7 +162,6 @@ fn native_rotate_then_bootstrap_preserves_raw_files_and_receipt_bindings() {
     assert_eq!(password.len(), 48);
     assert!(&password[..4] == b"Aa1!", "密码前缀必须满足约定");
     assert!(password[47] == b'\n', "密码文件必须以换行结束");
-    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     assert!(
         URL_SAFE_NO_PAD
             .decode(&password[4..47])
@@ -184,6 +186,46 @@ fn native_rotate_then_bootstrap_preserves_raw_files_and_receipt_bindings() {
         assert_eq!(receipt["source_files"][name], rotated["files"][name]);
     }
     assert!(secrets::run(&fixture.root, &fixture.bootstrap()).is_err());
+    assert_jwt_rotation(&fixture, &rotated);
+}
+
+fn assert_jwt_rotation(fixture: &Fixture, rotated: &Value) {
+    let source = fixture.rotated();
+    let output = source.with_file_name("JWT秘密集");
+    let command = Command::RotateSecrets {
+        fixture: fixture.source.clone(),
+        output: output.clone(),
+        credential: FixtureSecretCredential::Jwt,
+        secrets_dir: Some(source.clone()),
+    };
+    assert_eq!(
+        secrets::run(&fixture.root, &command).unwrap(),
+        json!({"status":"generated","services_started":false,"remote_writes":0})
+    );
+    let receipt = document::read(&output.join("secret-set.json")).unwrap();
+    assert_eq!(receipt.as_object().unwrap().len(), 5);
+    assert_eq!(receipt["format_version"], 1);
+    assert_eq!(receipt["kind"], "reference-fixture-secret-set");
+    assert_eq!(receipt["status"], "generated");
+    assert_eq!(receipt["source"], rotated["files"]);
+    assert_eq!(receipt["files"].as_object().unwrap().len(), NAMES.len());
+    for name in NAMES {
+        assert_binding(&receipt["source"][name], &source.join(name));
+        assert_binding(&receipt["files"][name], &output.join(name));
+        let original = fs::read(source.join(name)).unwrap();
+        let published = fs::read(output.join(name)).unwrap();
+        if name == "jwt-secret.txt" {
+            assert!(published != original, "必须替换 JWT 密钥");
+            assert!(published.ends_with(b"\n"), "JWT 文件必须以换行结束");
+            assert!(
+                URL_SAFE_NO_PAD
+                    .decode(&published[..published.len() - 1])
+                    .is_ok_and(|bytes| bytes.len() == 32)
+            );
+        } else {
+            assert!(published == original, "其他秘密文件必须逐字节保持：{name}");
+        }
+    }
 }
 
 #[test]
@@ -201,6 +243,8 @@ fn native_secrets_reject_failed_sources_drift_and_wrong_directory_without_publis
     let wrong = Command::RotateSecrets {
         fixture: fixture.source.clone(),
         output: fixture.root.join(".local-tests/外部"),
+        credential: FixtureSecretCredential::Administrator,
+        secrets_dir: None,
     };
     assert!(secrets::run(&fixture.root, &wrong).is_err());
     let raw = fs::read(&fixture.source).unwrap();

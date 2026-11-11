@@ -1,5 +1,8 @@
 use crate::{
-    cli::{CliError, FixtureEnvironmentCommand, FixtureEnvironmentInputs, FixtureFileOutput},
+    cli::{
+        CliError, FixtureEnvironmentCommand, FixtureEnvironmentInputs, FixtureFileOutput,
+        FixtureSecretCredential,
+    },
     local_test_path::LocalTestPathKind,
 };
 
@@ -76,11 +79,22 @@ fn parse_review(args: &[String]) -> Result<FixtureEnvironmentCommand, CliError> 
 }
 
 fn parse_rotate(args: &[String]) -> Result<FixtureEnvironmentCommand, CliError> {
-    let options = ParsedOptions::parse(args, &["--fixture", "--output"])?;
+    let options = ParsedOptions::parse(
+        args,
+        &["--fixture", "--output", "--credential", "--secrets-dir"],
+    )?;
     require_write(&options, "environment rotate-secrets")?;
+    let credential = match options.optional("--credential") {
+        None | Some("administrator") => FixtureSecretCredential::Administrator,
+        Some("jwt") => FixtureSecretCredential::Jwt,
+        Some(_) => return Err(CliError::new("--credential 必须是 administrator 或 jwt")),
+    };
     Ok(FixtureEnvironmentCommand::RotateSecrets {
         fixture: options.path("--fixture", LocalTestPathKind::ExistingFile)?,
         output: new_directory(options.require("--output")?, "--output")?,
+        credential,
+        secrets_dir: options
+            .optional_path("--secrets-dir", LocalTestPathKind::ExistingDirectory)?,
     })
 }
 
