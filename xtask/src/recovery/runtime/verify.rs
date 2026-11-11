@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use super::{
     build,
     dataset_authority::{
-        check, commands,
+        b0, check, commands,
         cross::{self, RuntimeDocuments},
         environment,
         inputs::Inputs,
@@ -100,6 +100,8 @@ pub(super) fn online(
         "value":launch, "previous":null, "commands":commands, "number":launch["generation"],
     }))?;
     environment::verify_launch(inputs, request)?;
+    let generation_directory = path(&launch["runtime_directory"])?;
+    environment::verify_projected(inputs, request, &generation_directory)?;
     let build_environment = registered_build_environment(inputs, request, &documents.backend)?;
     let backend = backend_sources(
         root,
@@ -138,7 +140,8 @@ pub(super) fn online(
             )? == backend,
             "恢复运行核验期间后端源码发生变化",
         )?;
-        environment::verify_launch(inputs, request)
+        environment::verify_launch(inputs, request)?;
+        environment::verify_projected(inputs, request, &generation_directory)
     })();
     let readiness = finish(observation, after)?;
     Ok(Observed {
@@ -332,7 +335,7 @@ impl Frontend {
             ),
             "恢复前端构建收据未绑定固定生产文件",
         )?;
-        let proof = if commands::b0_runtime_source(authority) {
+        let proof = if b0::matches(authority) {
             Self::B0(Box::new(frontend_build::b0::validate(&root, None, head)?))
         } else {
             Self::Current(Box::new(frontend_build::validate(&root, None, Some(head))?))

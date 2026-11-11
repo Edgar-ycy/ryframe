@@ -67,11 +67,11 @@ fn only_the_exact_legacy_source_selects_the_b0_frontend_receipt() {
     value["backend_adapter_contract"] = json!("legacy-stable-readiness-b0-v1");
     value["backend_product_sha"] = json!("815c5eafb09d4b493319d255fb7ab88ddd02c8b6");
     value["backend_execution_sha"] = json!("c05114bcdf5c369cd74087db6317ce3c8f89bee8");
-    assert!(!commands::b0_runtime_source(&value));
+    assert!(!b0::matches(&value));
     value["frontend_sha"] = json!("0087ea2ecf62530d042b9e52f5c950fb34c66d78");
-    assert!(commands::b0_runtime_source(&value));
+    assert!(b0::matches(&value));
     value["backend_execution_sha"] = json!("e".repeat(40));
-    assert!(!commands::b0_runtime_source(&value));
+    assert!(!b0::matches(&value));
 }
 
 #[test]

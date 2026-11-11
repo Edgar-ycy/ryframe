@@ -219,7 +219,7 @@ fn stop_locked(
         &snapshot.observed,
         |generation, role, observed| {
             snapshot.check(bound, owner, &directory)?;
-            generation::verify_directory(&directory, &generation["roles"])?;
+            generation::verify_directory(&directory, &generation["roles"], &generation["request"])?;
             stop_role(backend, &directory, generation, role, observed, || {
                 immutable.finish(Ok(()))?;
                 snapshot.check(bound, owner, &directory)

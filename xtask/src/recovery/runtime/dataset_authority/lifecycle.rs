@@ -47,6 +47,7 @@ pub(super) fn verify(
         "恢复启动未绑定同一生命周期中的 running 代次",
     )?;
     let directory = path(&launch.value["runtime_directory"])?;
+    super::environment::verify_projected(inputs, &launch.value["request"], &directory)?;
     check(
         launch.path == directory.join("runtime-launch.json"),
         "恢复启动路径不属于登记代次",

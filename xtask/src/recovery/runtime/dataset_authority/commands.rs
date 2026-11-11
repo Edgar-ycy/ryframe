@@ -136,23 +136,22 @@ pub(in crate::recovery::runtime) fn expected(request: &Value, current: &Value) -
     request_commands(request, &current["frontend_server"]["path"])
 }
 
-pub(in crate::recovery::runtime) fn b0_runtime_source(authority: &Value) -> bool {
-    authority["frontend_sha"] == b0::HEAD
-        && authority["backend_adapter_contract"] == "legacy-stable-readiness-b0-v1"
-        && authority["backend_product_sha"] == "815c5eafb09d4b493319d255fb7ab88ddd02c8b6"
-        && authority["backend_execution_sha"] == "c05114bcdf5c369cd74087db6317ce3c8f89bee8"
-}
-
 fn request_commands(request: &Value, frontend_program: &Value) -> Result<Value> {
     let mut commands = json!({});
+    let legacy = super::b0::matches(&request["authority"]);
     for role in ["api", "worker"] {
         path(&request["artifacts"][role]["executable"])?;
         path(&request["environment"]["configurations"][role]["directory"])?;
-        commands[role] = json!([
-            request["artifacts"][role]["executable"],
-            "--config-dir",
-            request["environment"]["configurations"][role]["directory"]
-        ]);
+        let executable = &request["artifacts"][role]["executable"];
+        commands[role] = if legacy {
+            json!([executable])
+        } else {
+            json!([
+                executable,
+                "--config-dir",
+                request["environment"]["configurations"][role]["directory"]
+            ])
+        };
     }
     commands["frontend"] = frontend_command(request, frontend_program)?;
     Ok(commands)
@@ -181,7 +180,7 @@ pub(super) fn frontend_command(request: &Value, executable: &Value) -> Result<Va
     )?;
     let frontend = authority["frontend_sha"] == b0::HEAD;
     let adapter = authority["backend_adapter_contract"] == "legacy-stable-readiness-b0-v1";
-    let b0 = b0_runtime_source(authority);
+    let b0 = super::b0::matches(authority);
     check(
         b0 || !(frontend || adapter),
         "恢复 B0 前端服务必须绑定精确历史产品、执行树和适配合同",

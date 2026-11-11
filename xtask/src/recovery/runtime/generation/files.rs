@@ -104,7 +104,10 @@ pub(super) fn names(directory: &Path) -> Result<BTreeSet<String>> {
 pub(in crate::recovery::runtime) fn generation_directory(
     directory: &Path,
     roles: &Value,
+    request: &Value,
 ) -> Result<()> {
+    use crate::recovery::runtime::dataset_authority::b0;
+
     safe(directory)?;
     if !directory.try_exists()? {
         return Ok(());
@@ -114,6 +117,12 @@ pub(in crate::recovery::runtime) fn generation_directory(
         "恢复运行代次目录不是普通目录",
     )?;
     let mut allowed = BTreeSet::from([LAUNCH.to_owned()]);
+    let legacy = if b0::matches(&request["authority"]) {
+        [b0::config_directory("api"), b0::config_directory("worker")]
+    } else {
+        [None, None]
+    };
+    allowed.extend(legacy.into_iter().flatten().map(str::to_owned));
     for role in ROLES {
         let operation = text(&roles[role]["operation_id"])?;
         allowed.extend([
@@ -134,6 +143,32 @@ pub(in crate::recovery::runtime) fn generation_directory(
     for name in actual {
         let path = directory.join(name);
         safe(&path)?;
+        if legacy
+            .into_iter()
+            .flatten()
+            .any(|item| path.file_name().is_some_and(|name| name == item))
+        {
+            check(
+                fs::symlink_metadata(&path)?.is_dir(),
+                "B0 配置快照必须是普通目录",
+            )?;
+            let entries = names(&path)?;
+            check(
+                entries
+                    .iter()
+                    .all(|name| matches!(name.as_str(), "app.toml" | "app.test.toml")),
+                "B0 配置快照包含未登记文件",
+            )?;
+            for entry in entries {
+                let file = path.join(entry);
+                safe(&file)?;
+                check(
+                    fs::symlink_metadata(&file)?.is_file(),
+                    "B0 配置快照包含非普通文件",
+                )?;
+            }
+            continue;
+        }
         check(
             fs::symlink_metadata(path)?.is_file(),
             "恢复运行进程树目录包含非普通文件",

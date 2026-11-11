@@ -64,18 +64,19 @@ pub(super) fn validate(value: &Value) -> Result<()> {
         "恢复产品和执行路径不符合适配关系",
     )?;
     document::binding_shape(&value["environment"]["document"], "恢复环境文件")?;
+    let legacy = super::b0::matches(&value["authority"]);
     for role in ["api", "worker"] {
-        configuration(&value["environment"]["configurations"][role])?;
+        configuration(&value["environment"]["configurations"][role], legacy)?;
     }
     Ok(())
 }
 
-fn configuration(value: &Value) -> Result<()> {
-    strict::exact(
-        value,
-        &["directory", "files", "environment_sha256"],
-        "恢复请求配置快照",
-    )?;
+fn configuration(value: &Value, legacy: bool) -> Result<()> {
+    let mut fields = vec!["directory", "files", "environment_sha256"];
+    if legacy {
+        fields.push("legacy");
+    }
+    strict::exact(value, &fields, "恢复请求配置快照")?;
     let directory = path(&value["directory"])?;
     document::digest(&value["environment_sha256"], "恢复请求环境摘要")?;
     let files = strict::object(&value["files"], "恢复请求配置文件")?;
@@ -93,6 +94,38 @@ fn configuration(value: &Value) -> Result<()> {
             &serde_json::json!({"path":directory.join(name),"bytes":binding["bytes"],"sha256":binding["sha256"]}),
             "恢复请求配置文件",
         )?;
+    }
+    if legacy {
+        legacy_configuration(&value["legacy"])?;
+    }
+    Ok(())
+}
+
+fn legacy_configuration(value: &Value) -> Result<()> {
+    strict::exact(
+        value,
+        &["worker_id", "password_variables", "files"],
+        "B0 启动配置合同",
+    )?;
+    check(
+        value["worker_id"]
+            .as_i64()
+            .is_some_and(|id| (0..=1023).contains(&id))
+            && value["password_variables"] == serde_json::json!(super::b0::PASSWORD_VARIABLES),
+        "B0 启动配置仅接受已登记实例编号和三个历史密码变量名",
+    )?;
+    let files = strict::exact(
+        &value["files"],
+        &["app.toml", "app.test.toml"],
+        "B0 启动配置文件",
+    )?;
+    for file in files.values() {
+        strict::exact(file, &["bytes", "sha256"], "B0 启动配置文件描述")?;
+        check(
+            file["bytes"].as_u64().is_some_and(|bytes| bytes > 0),
+            "B0 启动配置必须非空",
+        )?;
+        document::digest(&file["sha256"], "B0 启动配置摘要")?;
     }
     Ok(())
 }

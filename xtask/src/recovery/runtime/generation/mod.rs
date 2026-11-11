@@ -259,7 +259,7 @@ fn validate_generation(
             "恢复运行角色状态无效",
         )?;
     }
-    files::generation_directory(&directory, &value["roles"])?;
+    files::generation_directory(&directory, &value["roles"], &value["request"])?;
     receipts::generation_receipts(value, &directory, commands)
 }
 

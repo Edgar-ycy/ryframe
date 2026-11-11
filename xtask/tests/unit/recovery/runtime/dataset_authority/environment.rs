@@ -177,3 +177,72 @@ fn rejects_wrong_private_binding_outside_configuration_duplicate_id_and_bad_toml
     fixture.write_private(&outside);
     assert!(capture(&mut Inputs::new(&fixture.root), &request, &fixture.target()).is_err());
 }
+
+#[test]
+fn frozen_b0_receipt_binds_private_role_files_and_only_backend_child_gets_legacy_variables() {
+    use std::process::Command;
+
+    let fixture = Fixture::new();
+    let mut request = fixture.request();
+    request["authority"]["frontend_sha"] = json!(crate::recovery::frontend_build::b0::HEAD);
+    request["authority"]["backend_adapter_contract"] = json!("legacy-stable-readiness-b0-v1");
+    request["authority"]["backend_product_sha"] = json!("815c5eafb09d4b493319d255fb7ab88ddd02c8b6");
+    request["authority"]["backend_execution_sha"] =
+        json!("c05114bcdf5c369cd74087db6317ce3c8f89bee8");
+    let mut inputs = Inputs::new(&fixture.root);
+    let example_password = "synthetic-b0-db-password";
+    for directory in [&fixture.api, &fixture.worker] {
+        let file = directory.join("app.test.toml");
+        let mut contents = fs::read_to_string(&file).unwrap();
+        for (key, mode) in [
+            ("shared", "shared"),
+            ("dedicated-a", "dedicated"),
+            ("dedicated-b", "dedicated"),
+        ] {
+            contents.push_str(&format!(
+                "\n[[tenant_data.targets]]\nkey = '{key}'\nmode = '{mode}'\nkind = 'mysql'\npassword = '{example_password}'\n"
+            ));
+        }
+        fs::write(file, contents).unwrap();
+    }
+    request["environment"] = capture(&mut inputs, &request, &fixture.target()).unwrap();
+    let proof = request["environment"].to_string();
+    assert!(!proof.contains(example_password) && !proof.contains(TOKEN));
+    assert_eq!(
+        request["environment"]["configurations"]["api"]["legacy"]["worker_id"],
+        2
+    );
+    assert_eq!(
+        request["environment"]["configurations"]["worker"]["legacy"]["worker_id"],
+        3
+    );
+    let generation = fixture.root.join(".local-tests/generation");
+    fs::create_dir(&generation).unwrap();
+    materialize(&mut inputs, &request, &generation).unwrap();
+    assert!(materialize(&mut inputs, &request, &generation).is_err());
+    let projected = generation.join("b0-config-api/app.test.toml");
+    let body = fs::read_to_string(&projected).unwrap();
+    assert!(!body.contains(example_password) && !body.contains("snowflake_worker_id"));
+    let mut product = Command::new("api-fixture");
+    configure(&mut inputs, &request, &generation, "api", &mut product).unwrap();
+    let environment = product.get_envs().collect::<BTreeMap<_, _>>();
+    let value = |name: &str| environment[std::ffi::OsStr::new(name)].unwrap();
+    assert_eq!(
+        value("APP_CONFIG_DIR"),
+        generation.join("b0-config-api").as_os_str()
+    );
+    assert_eq!(value("SNOWFLAKE_WORKER_ID"), "2");
+    for variable in super::super::b0::PASSWORD_VARIABLES {
+        assert_eq!(value(variable), example_password);
+    }
+    let mut other = Command::new("not-a-backend-fixture");
+    configure(&mut inputs, &request, &generation, "frontend", &mut other).unwrap();
+    assert_eq!(other.get_envs().count(), 0);
+    request["authority"]["frontend_sha"] = json!("b".repeat(40));
+    configure(&mut inputs, &request, &generation, "api", &mut other).unwrap();
+    assert_eq!(other.get_envs().count(), 0);
+    request["authority"]["frontend_sha"] = json!(crate::recovery::frontend_build::b0::HEAD);
+    drop(inputs);
+    fs::write(projected, b"modified\n").unwrap();
+    assert!(verify_projected(&mut Inputs::new(&fixture.root), &request, &generation).is_err());
+}

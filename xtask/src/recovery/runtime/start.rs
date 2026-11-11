@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 use super::{
     bind::ownership::{Owner, control_root},
-    dataset_authority::{check, inputs::Inputs, reads::Window},
+    dataset_authority::{check, environment, inputs::Inputs, reads::Window},
     generation::ROLES,
     registration::backend_root,
     stop,
@@ -92,6 +92,9 @@ fn launch_roles(
     state: &mut State,
     attempts: &mut Vec<(&'static str, launch::Attempt)>,
 ) -> Result<Value> {
+    owner.check()?;
+    environment::materialize(inputs, &prepared.request, state.directory())?;
+    owner.check()?;
     for role in ROLES {
         inputs.finish(Ok(()))?;
         let attempt = launch::Attempt::new(backend, state, role)?;

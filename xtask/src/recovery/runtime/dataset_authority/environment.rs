@@ -10,6 +10,12 @@ use crate::{
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, path::Path};
 
+#[path = "environment/legacy.rs"]
+mod legacy;
+#[path = "environment/legacy_runtime.rs"]
+mod legacy_runtime;
+pub(in crate::recovery::runtime) use legacy_runtime::{configure, materialize, verify_projected};
+
 pub(in crate::recovery::runtime) fn capture(
     inputs: &mut Inputs,
     request: &Value,
@@ -127,7 +133,8 @@ fn role(
         evidence
     };
     let snapshot = request_configuration::configuration_files(base, environment, Some(declared))?;
-    let table = table(&directory)?;
+    let merged = table(&directory)?;
+    let table = serde_json::to_value(&merged)?;
     let endpoint = crate::recovery::inputs::domain::endpoint(
         &request["authority"][format!("{role}_endpoint")],
         "恢复角色端点",
@@ -159,33 +166,19 @@ fn role(
     )?;
     let (directory, files) = snapshot;
     let digest = digest::plan_hash(&json!({"APP_ENV":"test"}))?;
-    Ok((
-        id,
-        json!({"directory":directory,"files":files,"environment_sha256":digest}),
-    ))
+    let mut result = json!({"directory":directory,"files":files,"environment_sha256":digest});
+    if super::b0::matches(&request["authority"]) {
+        result["legacy"] = legacy_runtime::recipe(&legacy::project(merged)?);
+    }
+    Ok((id, result))
 }
 
-fn table(directory: &Path) -> Result<Value> {
-    let mut merged = toml::Table::new();
+fn table(directory: &Path) -> Result<toml::Table> {
     for name in ["app.toml", "app.test.toml"] {
-        let path = directory.join(name);
-        super::reads::optional(&path)?;
-        if name == "app.toml" && !path.try_exists()? {
-            continue;
-        }
-        let text = std::fs::read_to_string(&path)?;
-        let table: toml::Table = toml::from_str(&text).map_err(|_| "恢复角色 TOML 配置无法解析")?;
-        for (key, value) in table {
-            if let (Some(toml::Value::Table(existing)), toml::Value::Table(incoming)) =
-                (merged.get_mut(&key), &value)
-            {
-                existing.extend(incoming.clone());
-            } else {
-                merged.insert(key, value);
-            }
-        }
+        super::reads::optional(&directory.join(name))?;
     }
-    Ok(serde_json::to_value(toml::Value::Table(merged))?)
+    ryframe_config::AppConfig::read_document(directory, ryframe_config::Environment::Test)
+        .map_err(|_| "恢复角色 TOML 配置无法安全加载".into())
 }
 
 #[cfg(test)]

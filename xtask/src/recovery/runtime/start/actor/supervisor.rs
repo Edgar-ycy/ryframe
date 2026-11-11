@@ -109,6 +109,13 @@ fn spawn(actor: &Actor) -> Result<Child> {
         .stdout(log_file.try_clone()?)
         .stderr(log_file);
     restrict_environment(&mut command, actor.role != "frontend");
+    environment::configure(
+        &mut inputs,
+        &actor.request,
+        &actor.directory,
+        actor.role,
+        &mut command,
+    )?;
     actor.verify_start()?;
     check(actor.control()?.is_none(), "恢复产品在启动前已被取消")?;
     inputs.finish(Ok(()))?;
