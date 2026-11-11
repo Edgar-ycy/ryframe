@@ -217,8 +217,6 @@ runpy.run_path(sys.argv[0],run_name='__main__')
             evidence = root / "input.json"
             evidence.write_text("{}", encoding="utf-8")
             bad = {**registered, "sha256": "0" * 64}
-            monitoring = {"format_version":1,"kind":"monitoring-preflight","backend":str(ROOT),
-                          "runtime":str(evidence),"target":str(evidence)}
             for binding in (None, bad):
                 def envelope(value):
                     result = {key:item for key,item in value.items() if key != "native_tool"}
@@ -230,12 +228,10 @@ runpy.run_path(sys.argv[0],run_name='__main__')
                     ("restore_reference.py", [*tool_args,"--stdin"], json.dumps({"format_version":1,
                         "kind":"ryframe-xtask-recovery-reference","request":{"backend_dir":str(ROOT),
                         "format_version":1,"operation":"check-existing","plan":str(evidence),"side":"source","write":False}})),
-                    ("restore_monitoring_authority.py", [], envelope(monitoring)),
                     ("devex_provenance.py", [], envelope({})),
                 ]
                 diagnostics = {
                     "restore_reference.py": (2, "restore_reference_protocol_error：私有参数协议无效。"),
-                    "restore_monitoring_authority.py": (1, "正式恢复预检失败：ValueError；请核对 runtime verify 的来源与代次证据"),
                 }
                 for script, arguments, payload in cases:
                     with self.subTest(script=script, missing=binding is None):

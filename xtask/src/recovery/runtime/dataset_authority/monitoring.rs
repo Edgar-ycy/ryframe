@@ -48,3 +48,7 @@ fn authority_result(verified: &VerifiedTarget) -> Result<Value> {
         "source_generation":verified.lineage["source_generation"], "dataset_lineage":verified.lineage["dataset_lineage"],
     }))
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/unit/recovery/runtime/dataset_authority/monitoring.rs"]
+mod tests;

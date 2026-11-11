@@ -119,3 +119,7 @@ pub(crate) fn verify(backend: &Path, runtime_path: &Path, target_path: &Path) ->
     target.assert_unchanged()?;
     inputs.finish(Ok(value))
 }
+
+#[cfg(test)]
+#[path = "../../../tests/unit/recovery/monitoring/preflight.rs"]
+mod tests;
