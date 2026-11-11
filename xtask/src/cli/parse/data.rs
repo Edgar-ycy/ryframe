@@ -124,6 +124,16 @@ fn parse_restore(args: &[String]) -> Result<RestoreCommand, CliError> {
                 runtime_receipt: options.take_runner_file("--runtime-receipt", &runtime)?,
                 target_plan: options.take_file("--target-plan")?,
                 runner_root,
+                config_dir: options
+                    .take_optional_scalar("--config-dir")?
+                    .map(|value| {
+                        validate_data_path(
+                            value.into(),
+                            "--config-dir",
+                            DataPathRole::ExternalDirectory,
+                        )
+                    })
+                    .transpose()?,
                 restore_config_dir: options.take_directory("--restore-config-dir")?,
             });
             options.require_write()?;

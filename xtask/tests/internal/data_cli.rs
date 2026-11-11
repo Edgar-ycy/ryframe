@@ -436,19 +436,33 @@ fn parses_every_restore_operation_into_typed_requests() {
             }
         )))
     );
+    let mut expected = RestoreVerifyOptions {
+        id: RESTORE_ID.into(),
+        proof: runner.receipt(RESTORE_PROOF),
+        tests_receipt: runner.receipt(RESTORE_TESTS),
+        runtime_receipt: runner.receipt(RESTORE_RUNTIME),
+        target_plan: fixture.path("target.json").into(),
+        runner_root: runner.root().to_path_buf(),
+        config_dir: None,
+        restore_config_dir: config.into(),
+    };
+    let mut verify = runner.verify_args(&fixture);
     assert_eq!(
-        parse(runner.verify_args(&fixture)).unwrap().command,
+        parse(verify.clone()).unwrap().command,
         Command::Data(DataCommand::Restore(RestoreCommand::Verify(
-            RestoreVerifyOptions {
-                id: RESTORE_ID.into(),
-                proof: runner.receipt(RESTORE_PROOF),
-                tests_receipt: runner.receipt(RESTORE_TESTS),
-                runtime_receipt: runner.receipt(RESTORE_RUNTIME),
-                target_plan: fixture.path("target.json").into(),
-                runner_root: runner.root().to_path_buf(),
-                restore_config_dir: config.into(),
-            }
+            expected.clone()
         )))
+    );
+    let source_config = runner.root().join("source registry");
+    fs::create_dir(&source_config).unwrap();
+    verify.extend([
+        "--config-dir".into(),
+        source_config.to_string_lossy().into_owned(),
+    ]);
+    expected.config_dir = Some(source_config);
+    assert_eq!(
+        parse(verify).unwrap().command,
+        Command::Data(DataCommand::Restore(RestoreCommand::Verify(expected)))
     );
 }
 
@@ -487,6 +501,28 @@ fn restore_verify_requires_exact_runner_receipts_and_coordinator_plan() {
     let runner_target = runner.root().join(".local-tests/target.json");
     fs::write(&runner_target, b"{}\n").unwrap();
     reject("--target-plan", &runner_target);
+
+    for source_config in [
+        PathBuf::from("relative-config"),
+        runner.root().join("missing-config"),
+        runner.receipt(RESTORE_PROOF),
+        runner.root().join(".."),
+    ] {
+        let mut args = valid.clone();
+        args.extend([
+            "--config-dir".into(),
+            source_config.to_string_lossy().into_owned(),
+        ]);
+        rejects_owned(args);
+    }
+    let mut duplicate = valid.clone();
+    duplicate.extend([
+        "--config-dir".into(),
+        backend.path("config"),
+        "--config-dir".into(),
+        backend.path("backup"),
+    ]);
+    rejects_owned(duplicate);
 
     fs::remove_file(runner.receipt(RESTORE_RUNTIME)).unwrap();
     rejects_owned(valid);
@@ -698,6 +734,10 @@ fn linked_data_paths_are_rejected_when_the_platform_can_create_a_link() {
         "--output".into(),
         linked.join("target.json").to_string_lossy().into_owned(),
     ]);
+    let runner = RestoreRunner::new();
+    let mut verify = runner.verify_args(&fixture);
+    verify.extend(["--config-dir".into(), linked.to_string_lossy().into_owned()]);
+    rejects_owned(verify);
     #[cfg(unix)]
     fs::remove_file(&linked).unwrap();
     #[cfg(windows)]

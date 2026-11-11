@@ -99,33 +99,43 @@ fn restore_commands_rebuild_every_required_path_without_forwarding_raw_argv() {
             "config",
         ])
     );
+    let mut options = RestoreVerifyOptions {
+        id: "drill-1".into(),
+        proof: "proof.json".into(),
+        tests_receipt: "tests.json".into(),
+        runtime_receipt: "runtime.json".into(),
+        target_plan: "target.json".into(),
+        runner_root: "runner".into(),
+        config_dir: None,
+        restore_config_dir: "config".into(),
+    };
+    let expected = strings(&[
+        "restore-verify",
+        "--id",
+        "drill-1",
+        "--proof",
+        "proof.json",
+        "--tests-receipt",
+        "tests.json",
+        "--runtime-receipt",
+        "runtime.json",
+        "--target-plan",
+        "target.json",
+        "--runner-root",
+        "runner",
+        "--restore-config-dir",
+        "config",
+    ]);
     assert_eq!(
-        restore_arguments(&RestoreCommand::Verify(RestoreVerifyOptions {
-            id: "drill-1".into(),
-            proof: "proof.json".into(),
-            tests_receipt: "tests.json".into(),
-            runtime_receipt: "runtime.json".into(),
-            target_plan: "target.json".into(),
-            runner_root: "runner".into(),
-            restore_config_dir: "config".into(),
-        })),
-        strings(&[
-            "restore-verify",
-            "--id",
-            "drill-1",
-            "--proof",
-            "proof.json",
-            "--tests-receipt",
-            "tests.json",
-            "--runtime-receipt",
-            "runtime.json",
-            "--target-plan",
-            "target.json",
-            "--runner-root",
-            "runner",
-            "--restore-config-dir",
-            "config",
-        ])
+        restore_arguments(&RestoreCommand::Verify(options.clone())),
+        expected
+    );
+    options.config_dir = Some("D:/来源 config".into());
+    let mut with_source = strings(&["--config-dir", "D:/来源 config"]);
+    with_source.extend(expected);
+    assert_eq!(
+        restore_arguments(&RestoreCommand::Verify(options)),
+        with_source
     );
 }
 

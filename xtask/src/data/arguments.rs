@@ -81,23 +81,30 @@ pub(crate) fn restore_arguments(command: &RestoreCommand) -> Vec<String> {
             "--restore-config-dir".into(),
             path_argument(&options.restore_config_dir),
         ],
-        RestoreCommand::Verify(options) => vec![
-            "restore-verify".into(),
-            "--id".into(),
-            options.id.clone(),
-            "--proof".into(),
-            path_argument(&options.proof),
-            "--tests-receipt".into(),
-            path_argument(&options.tests_receipt),
-            "--runtime-receipt".into(),
-            path_argument(&options.runtime_receipt),
-            "--target-plan".into(),
-            path_argument(&options.target_plan),
-            "--runner-root".into(),
-            path_argument(&options.runner_root),
-            "--restore-config-dir".into(),
-            path_argument(&options.restore_config_dir),
-        ],
+        RestoreCommand::Verify(options) => {
+            let mut arguments = Vec::new();
+            if let Some(directory) = &options.config_dir {
+                arguments.extend(["--config-dir".into(), path_argument(directory)]);
+            }
+            arguments.extend([
+                "restore-verify".into(),
+                "--id".into(),
+                options.id.clone(),
+                "--proof".into(),
+                path_argument(&options.proof),
+                "--tests-receipt".into(),
+                path_argument(&options.tests_receipt),
+                "--runtime-receipt".into(),
+                path_argument(&options.runtime_receipt),
+                "--target-plan".into(),
+                path_argument(&options.target_plan),
+                "--runner-root".into(),
+                path_argument(&options.runner_root),
+                "--restore-config-dir".into(),
+                path_argument(&options.restore_config_dir),
+            ]);
+            arguments
+        }
     }
 }
 

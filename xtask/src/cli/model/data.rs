@@ -65,6 +65,7 @@ pub(crate) struct RestoreVerifyOptions {
     pub(crate) runtime_receipt: PathBuf,
     pub(crate) target_plan: PathBuf,
     pub(crate) runner_root: PathBuf,
+    pub(crate) config_dir: Option<PathBuf>,
     pub(crate) restore_config_dir: PathBuf,
 }
 
