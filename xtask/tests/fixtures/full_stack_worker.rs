@@ -27,7 +27,16 @@ fn main() {
     let config = Path::new(&args[1]);
     let root = config.parent().unwrap();
     let (started_marker, host, port) = listener(config);
-    let mode = fs::read_to_string(root.join("mode")).unwrap();
+    let role_mode = root.join(if started_marker == "worker-started" {
+        "worker-mode"
+    } else {
+        "api-mode"
+    });
+    let mode = if role_mode.exists() {
+        fs::read_to_string(role_mode).unwrap()
+    } else {
+        fs::read_to_string(root.join("mode")).unwrap()
+    };
     fs::write(root.join(started_marker), std::process::id().to_string()).unwrap();
     if mode.starts_with("tree") {
         let mut child = Command::new(env::current_exe().unwrap());

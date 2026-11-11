@@ -62,11 +62,8 @@ fn failed_unpublished_seed_registration_allows_explicit_resume_only_without_prod
 }
 
 #[test]
-fn formal_fixed_request_modes_refuse_python_dispatch_and_bad_options_without_stage_writes() {
-    use crate::{
-        cli::{CloneCommand, PostCopyOperation, PostCopyOptions},
-        recovery::clone,
-    };
+fn formal_fixed_request_modes_reject_bad_options_without_stage_writes() {
+    use crate::cli::{PostCopyOperation, PostCopyOptions};
     let (_temporary, backend, run) = formal_fixture();
     let input = run.parent().unwrap().join("input.json");
     let original = fs::read(run.join("state.json")).unwrap();
@@ -95,12 +92,6 @@ fn formal_fixed_request_modes_refuse_python_dispatch_and_bad_options_without_sta
             },
             producer_binding: None,
         };
-        assert!(
-            clone::protocol(&CloneCommand::PostCopy(options.clone()), &backend)
-                .unwrap_err()
-                .to_string()
-                .contains("原生持锁正式入口")
-        );
         let error = super::entry::run(&backend, &options)
             .unwrap_err()
             .to_string();

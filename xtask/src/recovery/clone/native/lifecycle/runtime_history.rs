@@ -10,6 +10,14 @@ use std::{fs, io::ErrorKind, path::Path};
 pub(super) const FILE: &str = "producer-history.json";
 
 pub(super) fn stopped(directory: &Path, scope: &str, role: &str, identity: &Value) -> Result<()> {
+    publish(
+        directory,
+        scope,
+        json!({"event":"stopped","role":role,"identity":identity}),
+    )
+}
+
+pub(super) fn publish(directory: &Path, scope: &str, event: Value) -> Result<()> {
     let path = directory.join(FILE);
     let (before, mut value) = match fs::symlink_metadata(&path) {
         Ok(_) => {
@@ -32,14 +40,11 @@ pub(super) fn stopped(directory: &Path, scope: &str, role: &str, identity: &Valu
     {
         return Err("原生产者历史与当前 scope 或运行目录不符，拒绝覆盖".into());
     }
-    history::append(
-        &mut value,
-        json!({"event":"stopped","role":role,"identity":identity}),
-    )?;
+    history::append(&mut value, event)?;
     if let Some(before) = before {
         validate_absolute_path(&path, LocalTestPathKind::ExistingFile)?;
         if digest::file(&path)? != before {
-            return Err("原生产者历史在停止事件发布前变化，保留现场".into());
+            return Err("原生产者历史在事件发布前变化，保留现场".into());
         }
         document::write_replace(&path, &value)
     } else {

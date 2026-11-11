@@ -4,12 +4,9 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use super::{
-    cli::{
-        CacheOperation, CheckCommand, CloneCommand, CloneEffect, CloneRole, CloneRuntimeOperation,
-        Command, PostCopyOperation, RecoveryCommand, SeedRuntimeOperation, StorageOperation, parse,
-    },
-    recovery::clone::protocol,
+use super::cli::{
+    CacheOperation, CheckCommand, CloneCommand, CloneEffect, CloneRole, CloneRuntimeOperation,
+    Command, PostCopyOperation, RecoveryCommand, SeedRuntimeOperation, StorageOperation, parse,
 };
 
 static NEXT: AtomicUsize = AtomicUsize::new(1);
@@ -72,7 +69,7 @@ impl Drop for Fixture {
 }
 
 #[test]
-fn copy_lock_recovery_uses_the_native_evidence_write_entry() {
+fn copy_lock_recovery_requires_explicit_write() {
     let fixture = Fixture::new();
     let args = [
         "recover-copy",
@@ -86,13 +83,6 @@ fn copy_lock_recovery_uses_the_native_evidence_write_entry() {
     authorized.push("--write");
     let command = fixture.parse(&authorized).unwrap();
     assert!(matches!(command, CloneCommand::RecoverCopy { .. }));
-    assert_eq!(command.effect(), CloneEffect::EvidenceWrite);
-    assert!(
-        protocol(&command, &super::workspace::root_dir())
-            .unwrap_err()
-            .to_string()
-            .contains("Rust 原生入口")
-    );
 }
 
 #[test]
@@ -224,7 +214,6 @@ fn parses_service_controls_without_ambiguous_roles_or_requests() {
             "status",
         ])
         .unwrap();
-    assert!(protocol(&cache, &super::workspace::root_dir()).is_err());
     assert!(
         matches!(cache, CloneCommand::Cache(value) if value.operation == CacheOperation::Status)
     );
@@ -309,12 +298,6 @@ fn parses_post_copy_and_non_source_seed_operations_with_exact_inputs() {
         .unwrap();
     assert!(
         matches!(&seed, CloneCommand::SeedRuntime(value) if value.operation == SeedRuntimeOperation::ArmInput)
-    );
-    assert!(
-        protocol(&seed, &super::workspace::root_dir())
-            .unwrap_err()
-            .to_string()
-            .contains("Rust 正式入口")
     );
     assert!(matches!(
         fixture.parse(&[
@@ -443,11 +426,6 @@ fn assert_native_seed_runtime_modes(fixture: &Fixture) {
         assert!(
             matches!(&parsed, CloneCommand::SeedRuntime(value) if value.operation == operation)
         );
-        let error = protocol(&parsed, &super::workspace::root_dir()).unwrap_err();
-        assert!(
-            error.to_string().contains("Rust 正式入口"),
-            "{mode}: {error}"
-        );
     }
 }
 
@@ -516,94 +494,80 @@ fn classifies_observation_and_resource_mutations_precisely() {
         ),
     ];
     for (arguments, expected) in cases {
-        assert_eq!(fixture.parse(&arguments).unwrap().effect(), expected);
+        let effect = match fixture.parse(&arguments).unwrap() {
+            CloneCommand::Stage { stage, .. } => stage.effect(),
+            CloneCommand::Runtime(options) => options.operation.effect(),
+            CloneCommand::PostCopy(options) => options.operation.effect(),
+            CloneCommand::SeedRuntime(options) => options.operation.effect(),
+            CloneCommand::Cache(options) => options.operation.effect(),
+            command => panic!("意外的复制命令：{command:?}"),
+        };
+        assert_eq!(effect, expected);
     }
 }
 
 #[test]
-fn private_protocol_binds_exact_paths_and_rechecks_file_identity() {
+fn parses_clone_init_bridge_and_maintenance_with_exact_paths() {
     let fixture = Fixture::new();
-    let command = fixture
-        .parse(&[
+    let run_dir = fixture.directory.join("new-run");
+    assert_eq!(
+        fixture.parse(&[
             "init",
             "--manifest",
             Fixture::value(&fixture.first),
             "--run-dir",
-            Fixture::value(&fixture.directory.join("new-run")),
+            Fixture::value(&run_dir),
             "--write",
-        ])
-        .unwrap();
-    let payload = protocol(&command, &super::workspace::root_dir()).unwrap();
-    let value: serde_json::Value = serde_json::from_str(&payload).unwrap();
-    assert_eq!(value["format_version"], 1);
-    assert_eq!(value["kind"], "ryframe-xtask-recovery-clone");
-    assert_eq!(value["request"]["command"], "init");
-    assert_eq!(value["request"]["effect"], "evidence-write");
-    assert_eq!(value["request"]["write"], true);
-    assert_eq!(
-        PathBuf::from(value["request"]["options"]["manifest"].as_str().unwrap()),
-        fixture.first
+        ]),
+        Ok(CloneCommand::Init {
+            manifest: fixture.first.clone(),
+            run_dir,
+        })
     );
 
-    fs::remove_file(&fixture.first).unwrap();
-    assert!(protocol(&command, &super::workspace::root_dir()).is_err());
-}
+    let bridge = fixture.directory.join("bridge.json");
+    assert_eq!(
+        fixture.parse(&[
+            "bridge",
+            "--build",
+            Fixture::value(&fixture.first),
+            "--inventory",
+            Fixture::value(&fixture.second),
+            "--output",
+            Fixture::value(&bridge),
+            "--write",
+        ]),
+        Ok(CloneCommand::Bridge {
+            build: fixture.first.clone(),
+            inventory: fixture.second.clone(),
+            output: bridge,
+        })
+    );
 
-#[test]
-fn native_offline_commands_never_construct_a_python_protocol() {
-    let fixture = Fixture::new();
-    let output = fixture.directory.join("native-plan.json");
-    for command in [
-        fixture
-            .parse(&[
-                "plan",
-                "--input",
-                Fixture::value(&fixture.first),
-                "--output",
-                Fixture::value(&output),
-                "--write",
-            ])
-            .unwrap(),
-        fixture
-            .parse(&["verify", "--plan", Fixture::value(&fixture.first)])
-            .unwrap(),
-        fixture
-            .parse(&[
-                "bridge",
-                "--build",
-                Fixture::value(&fixture.first),
-                "--inventory",
-                Fixture::value(&fixture.second),
-                "--output",
-                Fixture::value(&fixture.directory.join("bridge.json")),
-                "--write",
-            ])
-            .unwrap(),
-        fixture
-            .parse(&[
-                "maintenance",
-                "--operation",
-                "build",
-                "--output",
-                Fixture::value(&fixture.directory.join("maintenance")),
-                "--write",
-            ])
-            .unwrap(),
-        fixture
-            .parse(&[
-                "maintenance",
-                "--operation",
-                "verify",
-                "--output",
-                Fixture::value(&fixture.first),
-            ])
-            .unwrap(),
-    ] {
-        assert!(
-            protocol(&command, &super::workspace::root_dir())
-                .unwrap_err()
-                .to_string()
-                .contains("Rust 原生")
-        );
-    }
+    let maintenance = fixture.directory.join("maintenance");
+    assert_eq!(
+        fixture.parse(&[
+            "maintenance",
+            "--operation",
+            "build",
+            "--output",
+            Fixture::value(&maintenance),
+            "--write",
+        ]),
+        Ok(CloneCommand::MaintenanceBuild {
+            output: maintenance
+        })
+    );
+    assert_eq!(
+        fixture.parse(&[
+            "maintenance",
+            "--operation",
+            "verify",
+            "--output",
+            Fixture::value(&fixture.first),
+        ]),
+        Ok(CloneCommand::MaintenanceVerify {
+            output: fixture.first.clone()
+        })
+    );
 }

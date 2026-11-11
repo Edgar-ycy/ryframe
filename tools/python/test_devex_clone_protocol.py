@@ -69,7 +69,6 @@ class CloneProtocolTests(unittest.TestCase):
             ("init", {"manifest": str(self.file), "run_dir": str(self.new_run)}, True),
             ("status", {"run_dir": str(self.run)}, False),
             ("stage", {"run_dir": str(self.run), "stage": "copy", "mode": "resume"}, True),
-            ("runtime", {"run_dir": str(self.run), "side": "target", "operation": "status", "roles": ["api"]}, False),
             ("recover", {"run_dir": str(self.run), "owner_binding": str(self.file)}, True),
             ("post-copy", {"run_dir": str(self.run), "operation": "verify", "request": None, "producer_binding": None}, True),
             ("seed-runtime", {"run_dir": str(self.run), "operation": "close", "request": None, "producer_binding": None}, True),
@@ -85,7 +84,6 @@ class CloneProtocolTests(unittest.TestCase):
         cases = [
             ("stage", {"stage": "copy", "mode": "reconcile"}, "evidence-write"),
             ("stage", {"stage": "copy", "mode": "resume"}, "business-write"),
-            ("runtime", {"operation": "recover"}, "evidence-write"),
             ("post-copy", {"operation": "reconcile"}, "evidence-write"),
             ("post-copy", {"operation": "schedules"}, "business-write"),
             ("seed-runtime", {"operation": "quotas-reconcile"}, "evidence-write"),
@@ -99,11 +97,6 @@ class CloneProtocolTests(unittest.TestCase):
         cases = []
         for mode in ("run", "reconcile", "resume"):
             cases.append(("stage", {"run_dir": str(self.run), "stage": "copy", "mode": mode}, True))
-        for operation in ("start", "stop", "status", "recover"):
-            cases.append(("runtime", {
-                "run_dir": str(self.run), "side": "source", "operation": operation,
-                "roles": ["api", "worker"],
-            }, operation != "status"))
         for operation in ("schedules", "reconcile", "verify", "recover-session"):
             cases.append(("post-copy", {
                 "run_dir": str(self.run), "operation": operation,
@@ -128,6 +121,28 @@ class CloneProtocolTests(unittest.TestCase):
                 self.assertEqual(request.command, command)
                 self.assertEqual(request.write, write)
 
+    def test_private_stdin_rejects_both_retired_runtime_sides_before_path_access(self):
+        effects = {"start": "business-write", "stop": "business-write",
+                   "status": "read-only", "recover": "evidence-write"}
+        for side in ("source", "target"):
+            for operation, effect in effects.items():
+                payload = self.payload("status", {"run_dir": str(self.run)}, False)
+                payload["request"].update(
+                    command="runtime", effect=effect, write=operation != "status",
+                    options={"run_dir": str(self.run), "side": side, "operation": operation,
+                             "roles": ["api", "worker"]},
+                )
+                source = json.dumps(payload)
+                stdin = SimpleNamespace(buffer=BytesIO(source.encode("utf-8")))
+                with self.subTest(side=side, operation=operation), patch("sys.stdin", stdin), \
+                        patch.object(protocol, "_existing_metadata") as metadata, \
+                        patch.object(cli, "dispatch") as dispatch, redirect_stderr(StringIO()):
+                    with self.assertRaisesRegex(protocol.CloneProtocolError, "command 取值无效"):
+                        protocol.decode(source)
+                    self.assertEqual(devex_clone.main(["--private-stdin"]), 2)
+                metadata.assert_not_called()
+                dispatch.assert_not_called()
+
     def test_rejects_duplicate_unknown_and_non_absolute_inputs(self):
         valid = json.dumps(self.payload("status", {"run_dir": str(self.run)}, False))
         invalid = [
@@ -135,9 +150,6 @@ class CloneProtocolTests(unittest.TestCase):
             valid.replace('"format_version": 1,', '"format_version": 1, "format_version": 1,'),
             json.dumps(self.payload("status", {"run_dir": "relative"}, False)),
             json.dumps(self.payload("status", {"run_dir": str(self.run), "extra": 1}, False)),
-            json.dumps(self.payload("runtime", {"run_dir": str(self.run), "side": "target", "operation": "status", "roles": ["api", "api"]}, False)),
-            json.dumps(self.payload("runtime", {"run_dir": str(self.run), "side": "target", "operation": "status", "roles": [{}]}, False)),
-            json.dumps(self.payload("runtime", {"run_dir": str(self.run), "side": "target", "operation": "stop", "roles": ["api"]}, False)),
             json.dumps(self.payload("seed-runtime", {"run_dir": str(self.run), "operation": "source-export", "request": None, "producer_binding": None}, True)),
             json.dumps(self.payload("stage", {"run_dir": str(self.run), "stage": "target-verify", "mode": "resume"}, True)),
         ]

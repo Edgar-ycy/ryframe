@@ -10,11 +10,9 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import devex_clone_post as post
 import devex_clone_post_process as process
-import devex_clone_run as run
 import devex_clone_seed as seed
 import test_devex_clone_post as fixtures
 from devex_clone_capture import read_json, write_json
-from process_environment import Environments
 from devex_clone_run_state import begin, bind_controller_attempt, binding, finish, load_state, run_lock
 
 
@@ -151,12 +149,10 @@ class AmendmentTests(unittest.TestCase):
         self.assertEqual(process.historical_producer_request(
                          self.backend, self.directory, "post-copy", self.base), self.request)
 
-    def test_old_prepare_cannot_start_amended_runtime(self):
-        self.publish()
-        with patch("devex_clone_runtime.control") as control, self.assertRaises(ValueError):
-            run.run_runtime(self.backend, self.value, Environments({}, {}), "target", "start", ("api",),
-                            run_directory=self.directory)
-        control.assert_not_called()
+    def test_old_prepare_cannot_supply_amended_runtime_inputs(self):
+        active = self.publish()
+        with self.assertRaisesRegex(ValueError, "活动 post-copy 登记没有对应的新 prepare"):
+            post.runtime_inputs(self.backend, self.directory, descriptor=active.descriptor)
 
     def test_new_prepare_and_seed_bind_active_registration_and_runtime(self):
         active = self.publish()

@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 PROTOCOL_KIND = "ryframe-xtask-recovery-clone"
 COMMANDS = {
-    "plan", "verify", "init", "status", "stage", "runtime", "recover",
+    "plan", "verify", "init", "status", "stage", "recover",
     "post-copy", "seed-runtime",
 }
 
@@ -124,7 +124,6 @@ def _validate_paths(backend, command, options):
         "init": (("manifest", "existing-file"), ("run_dir", "new-directory")),
         "status": (("run_dir", "existing-directory"),),
         "stage": (("run_dir", "existing-directory"),),
-        "runtime": (("run_dir", "existing-directory"),),
         "recover": (("run_dir", "existing-directory"), ("owner_binding", "existing-file")),
         "post-copy": (("run_dir", "existing-directory"), ("request", "existing-file"),
                       ("producer_binding", "existing-file")),
@@ -163,10 +162,6 @@ def effect(command, options):
     if command == "stage":
         return ("business-write" if options["stage"] == "copy"
                 and options["mode"] != "reconcile" else "evidence-write")
-    if command == "runtime":
-        if options["operation"] == "status":
-            return "read-only"
-        return "evidence-write" if options["operation"] == "recover" else "business-write"
     if command == "post-copy":
         return ("evidence-write" if options["operation"] in {
             "register", "amend", "prepare", "reconcile", "verify",
@@ -211,21 +206,6 @@ def _base(command, options):
         return {"run_dir": _path(options["run_dir"], "run_dir"),
                 "owner_binding": _path(options["owner_binding"], "owner_binding")}
     return None
-
-
-def _runtime(options):
-    _exact(options, {"run_dir", "side", "operation", "roles"}, "runtime options")
-    roles = options["roles"]
-    if (not isinstance(roles, list) or not roles or len(roles) > 2
-            or any(not isinstance(role, str) or role not in {"api", "worker"} for role in roles)
-            or len(set(roles)) != len(roles)):
-        raise CloneProtocolError("clone 私有协议 roles 必须是无重复的 api/worker 列表")
-    return {
-        "run_dir": _path(options["run_dir"], "run_dir"),
-        "side": _enum(options["side"], {"source", "target"}, "side"),
-        "operation": _enum(options["operation"], {"start", "stop", "status", "recover"}, "operation"),
-        "roles": roles,
-    }
 
 
 def _post_copy(options):
@@ -303,7 +283,6 @@ def decode(source: str):
     decoded = _base(command, options)
     if decoded is None:
         decoded = {
-            "runtime": _runtime,
             "post-copy": _post_copy,
             "seed-runtime": _seed_runtime,
         }[command](options)

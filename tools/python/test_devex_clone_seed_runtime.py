@@ -274,15 +274,21 @@ class RuntimeTests(unittest.TestCase):
                     runtime.execute_seed(self.backend, self.directory, {}, "register", number, request)
                 self.assertEqual(execute.call_count, 0 if executable is None else 1)
 
-    def test_registered_identity_source_cannot_restart_and_overwrite_old_api(self):
-        import devex_clone_run as run
-
+    def test_registered_identity_source_rejects_a_replaced_original_api_receipt(self):
         self.register()
-        old = binding(self.old / "api.json")
-        with patch("devex_clone_post.runtime_inputs", return_value=({"runtime_dir": str(self.old), "api_url": "http://127.0.0.1:18210"}, self.api)), patch("devex_clone_runtime.control") as control, self.assertRaises(ValueError):
-            run.run_runtime(self.backend, {}, None, "target", "start", ("api",), run_directory=self.directory)
-        control.assert_not_called()
-        self.assertEqual(binding(self.old / "api.json"), old)
+        api = self.old / "api.json"
+        active = SimpleNamespace(request=self.post, runtime=self.old)
+        with patch.object(fixtures.seed, "post_registration", return_value=active):
+            plan, _ = runtime.identity_inputs(self.backend, self.directory, self.request, self.post)
+            self.assertEqual(plan, self.plan)
+            receipt = read_json(api)
+            receipt["identity"]["started"] = "223"
+            api.write_text(json.dumps(receipt), encoding="utf-8")
+            replacement = binding(api)
+            self.assertNotEqual(replacement, self.request["api_process"])
+            with self.assertRaisesRegex(ValueError, "身份计划必须保留原 API"):
+                runtime.identity_inputs(self.backend, self.directory, self.request, self.post)
+            self.assertEqual(binding(api), replacement)
 
 
 if __name__ == "__main__":

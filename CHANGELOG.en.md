@@ -14,6 +14,8 @@
 
 - Rust now stops API and Worker processes for legacy copy runs. It checks all selected process identities before stopping them in reverse order and retains the original v1 producer history.
 
+- Rust now starts API and Worker processes for legacy copy runs. It checks the copy ledger before starting a target, retains the original role order and startup history, and reclaims only processes created by the failed invocation.
+
 - Post-copy Worker stop observations accept mixed Windows separators in the original outer lock receipt when they identify the same real directory, and preserve the original receipt bytes.
 
 - Final recovery registration uses the Rust verifier issued by the formal data command to independently check browser business proof, database authority, and the original runtime generation. The binding is valid while the same build source lock is held.

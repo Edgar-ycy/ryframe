@@ -5,6 +5,7 @@ use super::{
 };
 use crate::{
     Result,
+    cli::CloneRuntimeOperation,
     local_test_path::{LocalTestPathKind, validate_absolute_path},
     recovery::fixture_control::read_json,
 };
@@ -141,14 +142,20 @@ impl Original {
     }
 }
 
-/// stop 调用方持有 runtime-control.guard，外层锁只在显式释放时清理。
+/// 启停调用方持有 runtime-control.guard，外层锁只在显式释放时清理。
 pub(super) struct Active(Original);
 
 impl Active {
-    pub(super) fn claim(directory: &Path) -> Result<Self> {
+    pub(super) fn claim(directory: &Path, operation: CloneRuntimeOperation) -> Result<Self> {
+        if !matches!(
+            operation,
+            CloneRuntimeOperation::Start | CloneRuntimeOperation::Stop
+        ) {
+            return Err("外层运行控制锁只接受启动和停止".into());
+        }
         let runtime = directory.to_str().ok_or("外层控制器运行目录必须是 UTF-8")?;
         let owner = json!({"format_version":1,"kind":"devex-clone-runtime-lock",
-            "identity":identity::current()?,"runtime_directory":runtime,"operation":"stop",
+            "identity":identity::current()?,"runtime_directory":runtime,"operation":operation.as_str(),
             "token":uuid::Uuid::new_v4().simple().to_string()});
         let runtime_inode = same_runtime(&owner["runtime_directory"], directory)?;
         let path = directory.join("worker-control.lock");

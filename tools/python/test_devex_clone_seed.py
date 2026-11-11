@@ -238,10 +238,9 @@ class SeedTests(unittest.TestCase):
     def test_failed_start_cannot_be_masked_by_successful_stop(self):
         self.stage("seed-runtime", "start", error=ValueError("failed"))
         self.stage("seed-runtime", "stop", {"status": "stopped"})
-        context = SimpleNamespace(directory_root=self.directory, backend=self.backend)
-        with patch("devex_clone_runtime.control") as control, self.assertRaises(ValueError):
-            runtime.start(context, self.request, 999)
-        control.assert_not_called()
+        self.assertEqual(seed.latest(self.directory, "seed-runtime", {"stop"})["status"], "passed")
+        with self.assertRaisesRegex(ValueError, "最新必需阶段尚未通过"):
+            seed.latest(self.directory, "seed-runtime", {"start"})
 
 
 class IdentityEvidenceAdapterTests(unittest.TestCase):

@@ -5,10 +5,8 @@ use std::path::Path;
 use crate::{
     Result,
     cli::{
-        CloneCommand, CloneRuntimeOperation, FreshTargetCommand, RecoveryCommand,
-        SeedSourceOperation, SeedSourceOptions,
+        CloneCommand, FreshTargetCommand, RecoveryCommand, SeedSourceOperation, SeedSourceOptions,
     },
-    process::{protocol_stdin, run_with_stdin},
     workspace::root_dir,
 };
 
@@ -56,13 +54,6 @@ pub(crate) fn run(command: &RecoveryCommand, frontend_dir: &Path) -> Result<()> 
         RecoveryCommand::Monitoring(command) => monitoring::run(command, &root_dir()),
         RecoveryCommand::DatasetPrepare(command) => dataset_prepare::run(command, &root_dir()),
     }
-}
-
-fn clone_stdin(payload: &str) -> Result<std::process::Stdio> {
-    if payload.len() > 64 * 1024 {
-        return Err("复制私有协议超过 64 KiB".into());
-    }
-    protocol_stdin(Some(payload.as_bytes()))
 }
 
 fn run_seed_source(options: &SeedSourceOptions) -> Result<()> {
@@ -122,20 +113,25 @@ fn run_clone(command: &CloneCommand) -> Result<()> {
             println!("{}", crate::cli::CLONE_USAGE);
             Ok(())
         }
-        CloneCommand::Runtime(options)
-            if options.operation == CloneRuntimeOperation::Start
-                && !clone::native::cache::handoff::selected(&root, options)? =>
-        {
-            let payload = clone::protocol(command, &root)?;
-            run_with_stdin(
-                &root,
-                "python",
-                &["-B", "tools/python/devex_clone.py", "--private-stdin"],
-                clone_stdin(&payload)?,
-            )
-        }
         _ => clone::native::run(command, &root),
     }
+}
+
+pub(crate) fn run_clone_exec_if_requested() -> Option<i32> {
+    use clone::native::lifecycle::runtime_spawn;
+    let mut arguments = std::env::args().skip(1);
+    if arguments.next()?.as_str() != runtime_spawn::EXEC_ENTRY {
+        return None;
+    }
+    Some(
+        match runtime_spawn::run_exec(&arguments.collect::<Vec<_>>()) {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("旧复制运行产品启动失败：{error}");
+                1
+            }
+        },
+    )
 }
 
 fn run_fresh_target(command: &FreshTargetCommand) -> Result<()> {

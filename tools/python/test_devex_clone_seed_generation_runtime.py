@@ -106,7 +106,7 @@ class GenerationRuntimeTests(unittest.TestCase):
             stack.enter_context(patch.object(runtime, 'native_invoke', return_value=(SimpleNamespace(returncode=0), {"ok": True, "result": {"value": self.evidence["physical_binding"]}})))
             process = stack.enter_context(patch.object(runtime, "process_identity", side_effect=lambda pid: self.identities.get(pid)))
             listener = stack.enter_context(patch.object(runtime, "verify_listener"))
-            ready = stack.enter_context(patch("devex_clone_runtime._ready", return_value=True))
+            ready = stack.enter_context(patch.object(runtime, "_ready", return_value=True))
             yield registered, process, listener, ready
 
     def verify(self, live=False):

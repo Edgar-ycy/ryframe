@@ -1,11 +1,8 @@
 //! 正式交接入口、真实控制互斥与失败前零启动；完整服务交接另由隔离场景验收。
 use super::{locks, run, selected};
 use crate::{
-    cli::{CloneCommand, CloneRole, CloneRuntimeOperation, CloneRuntimeOptions, CloneSide},
-    recovery::clone::{
-        self,
-        native::{json as document, lifecycle::state, resources::common},
-    },
+    cli::{CloneRole, CloneRuntimeOperation, CloneRuntimeOptions, CloneSide},
+    recovery::clone::native::{json as document, lifecycle::state, resources::common},
 };
 use serde_json::{Value, json};
 use std::{fs, path::PathBuf};
@@ -279,13 +276,12 @@ impl crate::recovery::clone::native::lifecycle::stage::StageRunner for Published
 }
 
 #[test]
-fn registered_target_lifecycle_selects_native_handoff_and_rejects_python_or_extra_roles() {
+fn registered_target_lifecycle_selects_native_handoff_and_rejects_extra_roles() {
     let fixture = Fixture::new();
     let mut options = fixture.options();
     assert!(!selected(&fixture.backend, &options).unwrap());
     fixture.registration_file();
     assert!(selected(&fixture.backend, &options).unwrap());
-    assert!(clone::protocol(&CloneCommand::Runtime(options.clone()), &fixture.backend).is_err());
     let original = fs::read(fixture.run.join("state.json")).unwrap();
     options.roles.push(CloneRole::Worker);
     assert!(
@@ -309,9 +305,6 @@ fn registered_target_lifecycle_selects_native_handoff_and_rejects_python_or_extr
     ] {
         options.operation = operation;
         assert!(selected(&fixture.backend, &options).unwrap());
-        assert!(
-            clone::protocol(&CloneCommand::Runtime(options.clone()), &fixture.backend).is_err()
-        );
     }
 }
 

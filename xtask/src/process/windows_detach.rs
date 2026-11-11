@@ -3,11 +3,19 @@ use crate::Result;
 #[cfg(windows)]
 use std::path::Path;
 #[cfg(windows)]
-use winsafe::{HPROCESS, STARTUPINFO, co, prelude::kernel_Hprocess};
+use winsafe::{HPROCESS, STARTUPINFO, co, guard::CloseHandlePiGuard, prelude::kernel_Hprocess};
 
 /// 从已约束环境的跳板启动持久进程，继承当前环境与工作目录，不继承句柄。
 #[cfg(windows)]
 pub(crate) fn spawn_detached(executable: &Path, args: &[&str]) -> Result<u32> {
+    Ok(spawn_detached_with_handle(executable, args)?.dwProcessId)
+}
+
+#[cfg(windows)]
+pub(crate) fn spawn_detached_with_handle(
+    executable: &Path,
+    args: &[&str],
+) -> Result<CloseHandlePiGuard> {
     let executable = executable.to_str().ok_or("持久进程程序路径不是 UTF-8")?;
     let line = command_line(executable, args);
     let mut startup = STARTUPINFO::default();
@@ -31,7 +39,7 @@ pub(crate) fn spawn_detached(executable: &Path, args: &[&str]) -> Result<u32> {
         Err(co::ERROR::ACCESS_DENIED) => create(base, &mut startup)?,
         Err(error) => return Err(error.into()),
     };
-    Ok(child.dwProcessId)
+    Ok(child)
 }
 
 fn command_line(executable: &str, args: &[&str]) -> String {

@@ -159,6 +159,9 @@ fn run_hidden_handlers() -> bool {
 }
 
 fn run_recovery_hidden_handlers() {
+    if let Some(code) = recovery::run_clone_exec_if_requested() {
+        std::process::exit(code);
+    }
     if let Some(code) =
         recovery::runtime::dataset_authority::verify_existing::run_hidden_if_requested()
     {

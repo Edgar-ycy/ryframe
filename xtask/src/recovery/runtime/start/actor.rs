@@ -240,6 +240,10 @@ pub(in crate::recovery) fn restrict_environment(command: &mut Command, product_b
 
 pub(in crate::recovery) fn system_environment()
 -> impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)> {
+    std::env::vars_os().filter(|(key, _)| system_environment_key(&key.to_string_lossy()))
+}
+
+pub(in crate::recovery) fn system_environment_key(key: &str) -> bool {
     const SYSTEM: &[&str] = &[
         "APPDATA",
         "COMMONPROGRAMFILES",
@@ -269,12 +273,8 @@ pub(in crate::recovery) fn system_environment()
         "USERPROFILE",
         "WINDIR",
     ];
-    std::env::vars_os().filter(|(key, _)| {
-        let upper = key.to_string_lossy().to_ascii_uppercase();
-        SYSTEM.contains(&upper.as_str())
-            || upper.starts_with("PROCESSOR_")
-            || upper.starts_with("LC_")
-    })
+    let upper = key.to_ascii_uppercase();
+    SYSTEM.contains(&upper.as_str()) || upper.starts_with("PROCESSOR_") || upper.starts_with("LC_")
 }
 
 pub(crate) fn run_hidden_if_requested() -> Option<i32> {

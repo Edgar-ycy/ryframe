@@ -172,10 +172,12 @@ fn completed_parent_reaps_descendants_before_returning_and_keeps_unrelated_tree(
                         .into())
                     }
                 } else {
-                    process::run_with_stdin(
+                    process::run_with_stdio(
                         &root,
                         executable.to_str().unwrap(),
                         &args,
+                        &[],
+                        &[],
                         stdin_file(&root, &input),
                     )
                 }
@@ -404,7 +406,7 @@ fn run_long_tree(root: &Path, executable: &str, capture: bool) -> super::Result<
             .into())
         }
     } else {
-        process::run_with_stdin(root, executable, &args, stdin_file(root, &input))
+        process::run_with_stdio(root, executable, &args, &[], &[], stdin_file(root, &input))
     }
 }
 

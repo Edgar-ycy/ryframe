@@ -480,31 +480,6 @@ def run_copy(backend: Path, directory: Path, value: dict, environment: Environme
         return _run_copy_locked(backend, directory, value, environment, mode, storage_run)
 
 
-def run_runtime(backend: Path, value: dict, environment: Environments, side: str, operation: str, roles: tuple,
-                *, run_directory: Path | None = None) -> dict:
-    from devex_clone_runtime import control, observe
-
-    if side == "target" and run_directory is not None and (run_directory / "post-copy.json").exists():
-        raise ValueError("已登记post-copy目标API生命周期必须使用原生完整树控制入口")
-
-    if side == "source":
-        request = read_json(bound_file(backend, value["source_request"]))
-        runtime = request["source"]
-    else:
-        initial_file = bound_file(backend, value["initialized"])
-        initial = (initialization_history(backend, initial_file)[0] if operation == "start"
-                   else read_json(initial_file))
-        runtime = initial["generation"]["selected"]
-        if operation == "start":
-            if run_directory is None:
-                raise ValueError("目标启动必须绑定当前统一验收目录")
-            require_target_copy(backend, run_directory, value, roles)
-    with environment.use(side):
-        if operation == "status":
-            return observe(backend, Path(runtime["runtime_dir"]), roles, runtime["api_url"])
-        return control(backend, Path(runtime["runtime_dir"]), operation, roles, runtime["api_url"])
-
-
 def require_target_copy(backend: Path, directory: Path, value: dict, roles: tuple):
     from devex_clone_ledger import CloneLedger
 
@@ -544,7 +519,7 @@ def require_target_copy(backend: Path, directory: Path, value: dict, roles: tupl
     return verified
 
 
-def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple = ("api", "worker"),
+def execute(backend: Path, directory: Path, stage: str, mode: str,
             *, producer_binding: dict | None = None,
             seed_request: Path | None = None) -> dict:
     from source_fingerprints import artifact_sources, current_execution_source
@@ -553,7 +528,7 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
         raise ValueError("登记、准备和环境修订必须使用原生持锁正式入口")
     if stage in {"export", "target-verify"}:
         raise ValueError("导出和目标复核必须使用原生 Rust 入口")
-    if stage in {"runtime-source", "runtime-target"} and mode in {"stop", "recover"}:
+    if stage in {"runtime-source", "runtime-target"}:
         raise ValueError(f"复制运行 {mode} 由 Rust 正式入口执行")
     if stage == "seed-runtime" and mode == "arm-input":
         raise ValueError("ARM 输入签发必须使用 Rust 正式入口")
@@ -609,9 +584,6 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
                     from devex_clone_seed_runtime import execute_seed
 
                     result = execute_seed(backend, directory, value, mode, number, seed_request, producer_binding)
-                elif stage in {"runtime-source", "runtime-target"} and mode in {"start", "status"}:
-                    result = run_runtime(backend, value, environment, stage.removeprefix("runtime-"), mode, roles,
-                                         run_directory=directory)
                 else:
                     raise ValueError("阶段与执行模式不匹配")
                 if not cleanup and (read_manifest(backend, directory) != value or current_execution_source(backend) != sources):

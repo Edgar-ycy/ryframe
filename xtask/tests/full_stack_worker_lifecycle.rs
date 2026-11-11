@@ -1,4 +1,6 @@
 //! API/Worker 的真实进程、取消与完整成员回收场景；不接触共享服务。
+#[path = "full_stack_worker/legacy_start.rs"]
+mod legacy_start;
 #[path = "full_stack_worker/legacy_stop.rs"]
 mod legacy_stop;
 #[path = "support/process_liveness.rs"]

@@ -1,7 +1,6 @@
 """统一入口的阶段隔离、失败续跑与来源证据；不连接外部服务。"""
 from contextlib import contextmanager, nullcontext
 import json
-import os
 from pathlib import Path
 from types import SimpleNamespace
 import sys
@@ -196,31 +195,19 @@ class RunTests(unittest.TestCase):
                 protect.assert_not_called()
                 continuation.assert_not_called()
 
-    def test_runtime_start_delegates_with_the_registered_side_environment(self):
-        value = dict(self.value)
-        runtime = {"runtime_dir": str(self.local / "runtime"), "api_url": "http://127.0.0.1:18210"}
-        value["source_request"] = self.file("runtime-request", {"source": runtime})
-
-        def start(*_args):
-            self.assertEqual(os.environ["SIDE"], "source")
-            return {"state": "running"}
-
-        with patch("devex_clone_runtime.control", side_effect=start) as control:
-            result = run.run_runtime(self.backend, value, run.environments(self.backend, value), "source", "start", ("api",))
-        control.assert_called_once_with(self.backend, Path(runtime["runtime_dir"]), "start", ("api",), runtime["api_url"])
-        self.assertEqual(result, {"state": "running"})
-
-    def test_retired_runtime_stop_is_rejected_before_paths_or_locks(self):
+    def test_retired_runtime_is_rejected_before_paths_or_locks(self):
         original = {path: path.read_bytes() for path in self.directory.iterdir() if path.is_file()}
         with patch.object(cli, "evidence_path") as evidence, patch.object(run, "process_guard") as guard:
             for side in ("source", "target"):
-                with self.subTest(side=side):
-                    args = SimpleNamespace(command="runtime", operation="stop", side=side, run_dir=self.directory,
-                                           roles=("api", "worker"), write=True)
-                    with self.assertRaisesRegex(ValueError, "Rust 正式入口"):
-                        cli.dispatch(args, self.backend)
-                    with self.assertRaisesRegex(ValueError, "Rust 正式入口"):
-                        run.execute(self.backend, self.directory, "runtime-" + side, "stop")
+                for operation in ("start", "stop", "status", "recover"):
+                    with self.subTest(side=side, operation=operation):
+                        args = SimpleNamespace(command="runtime", operation=operation, side=side,
+                                               run_dir=self.directory, roles=("api", "worker"),
+                                               write=operation != "status")
+                        with self.assertRaisesRegex(ValueError, "Rust 正式入口"):
+                            cli.dispatch(args, self.backend)
+                        with self.assertRaisesRegex(ValueError, "Rust 正式入口"):
+                            run.execute(self.backend, self.directory, "runtime-" + side, operation)
         evidence.assert_not_called()
         guard.assert_not_called()
         self.assertEqual({path: path.read_bytes() for path in self.directory.iterdir() if path.is_file()}, original)

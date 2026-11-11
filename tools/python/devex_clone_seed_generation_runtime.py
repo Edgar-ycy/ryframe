@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 import os
 from pathlib import Path
 import time
+import urllib.error
+import urllib.request
 import uuid
 
 from devex_clone_capture import read_json, write_json
@@ -31,6 +33,19 @@ from restore_runtime_evidence import timestamp
 
 ROLES = ("api", "worker")
 EXTRA_FILES = ("binaries.json", "runtime.json")
+
+
+def _ready(url: str) -> bool:
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *_args, **_kwargs):
+            return None
+
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    try:
+        with opener.open(url, timeout=1) as response:
+            return response.status == 200
+    except (OSError, urllib.error.URLError):
+        return False
 
 
 def process_record(runtime: Path, role: str, scope: str) -> dict:
@@ -72,8 +87,6 @@ def registered_inputs(backend: Path, request: dict) -> tuple[Path, dict]:
 
 
 def verify_running_evidence(backend: Path, output: Path, request: dict, selected: dict, physical: dict, *, live: bool) -> dict:
-    from devex_clone_runtime import _ready
-
     generation_directory(output)
     execution, build = registered_inputs(backend, request)
     evidence = read_json(output / "running-evidence.json")
@@ -268,8 +281,6 @@ class GenerationRuntime:
             require_closed_port(url)
 
     def start(self, checkpoint):
-        from devex_clone_runtime import _ready
-
         for role in ROLES:
             checkpoint()
             require_closed_port(self.urls[role])

@@ -11,7 +11,7 @@ use super::{
 };
 use crate::{
     Result,
-    cli::{CloneRole, CloneRuntimeOptions, CloneSide},
+    cli::{CloneRole, CloneRuntimeOperation, CloneRuntimeOptions, CloneSide},
     recovery::{
         clone::native::{
             cache::handoff,
@@ -79,7 +79,7 @@ impl StageRunner for Runner<'_> {
             "已登记运行目录",
         )?))?;
         let guard = ProcessGuard::acquire_named(&directory, "runtime-control.guard")?;
-        let active = Active::claim(&directory)?;
+        let active = Active::claim(&directory, CloneRuntimeOperation::Stop)?;
         let result = (|| {
             let context = Context::load(request.backend, &selected)?;
             if context.directory != directory {

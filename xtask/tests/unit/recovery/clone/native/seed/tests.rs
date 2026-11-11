@@ -86,7 +86,7 @@ fn registered_seed_matches_published_run_and_does_not_write_runtime_or_ledger() 
 }
 
 #[test]
-fn seed_register_rejects_interpreter_dispatch_and_missing_input_without_stage_writes() {
+fn seed_register_rejects_missing_input_without_stage_writes() {
     use crate::cli::{CloneCommand, SeedRuntimeOperation, SeedRuntimeOptions};
     let fixture = Fixture::new();
     let before = fs::read(fixture.run.join("state.json")).unwrap();
@@ -98,12 +98,6 @@ fn seed_register_rejects_interpreter_dispatch_and_missing_input_without_stage_wr
     };
     let command = CloneCommand::SeedRuntime(options);
     assert!(
-        crate::recovery::clone::protocol(&command, &fixture.backend)
-            .unwrap_err()
-            .to_string()
-            .contains("原生持锁正式入口")
-    );
-    assert!(
         crate::recovery::clone::native::run(&command, &fixture.backend)
             .unwrap_err()
             .to_string()
@@ -114,7 +108,7 @@ fn seed_register_rejects_interpreter_dispatch_and_missing_input_without_stage_wr
 }
 
 #[test]
-fn seed_mutations_and_recovery_reject_interpreter_dispatch_and_invalid_inputs_without_writes() {
+fn seed_mutations_and_recovery_reject_invalid_inputs_without_writes() {
     use crate::cli::{CloneCommand, SeedRuntimeOperation, SeedRuntimeOptions};
     let fixture = Fixture::new();
     let before = fs::read(fixture.run.join("state.json")).unwrap();
@@ -137,12 +131,6 @@ fn seed_mutations_and_recovery_reject_interpreter_dispatch_and_invalid_inputs_wi
             request: Some(fixture.run.join("manifest.json")),
             producer_binding: None,
         });
-        assert!(
-            crate::recovery::clone::protocol(&command, &fixture.backend)
-                .unwrap_err()
-                .to_string()
-                .contains("原生持锁正式入口")
-        );
         let error = crate::recovery::clone::native::run(&command, &fixture.backend)
             .unwrap_err()
             .to_string();

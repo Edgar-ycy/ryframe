@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-pub(crate) const CLONE_USAGE: &str = "用法：cargo xtask check recovery clone <plan|verify|init|status|stage|runtime|recover|recover-copy|bridge|post-copy|seed-runtime|storage|cache|maintenance> ...\n  plan --input <.local-tests 内清单> --output <.local-tests 内新计划> --write\n  verify --plan <.local-tests 内计划>\n  init --manifest <.local-tests 内清单> --run-dir <.local-tests 内新目录> --write\n  status --run-dir <.local-tests 内运行目录>\n  recover-copy --run-dir <.local-tests 内运行目录> --owner-binding <.local-tests 内复制持有人绑定> --write\n  stage --run-dir <.local-tests 内运行目录> --stage <export|target-verify|copy> --mode <run|reconcile|resume> --write\n  bridge --build <构建收据> --inventory <来源清单> --output <.local-tests 内新桥接文件> --write\n  maintenance --operation build --output <.local-tests 内新目录> --write\n  maintenance --operation verify --output <维护构建目录或 build.json>\n  storage --run-dir <.local-tests 内运行目录> --side <source|target> --operation <restart|status|stop|recover> [--request <.local-tests 内请求>] [--write]\n\nplan/verify、bridge、maintenance build/verify、两种复制阶段的 init/status/stage、死亡控制器 recover 和 storage 由 Rust 原生状态机执行。plan/verify、bridge 和 init/status 只读本地输入，不连接业务资源；export 和 target-verify 分别由原生 Rust 执行：export 读取已登记的数据库与对象存储并写出新导出证据，target-verify 只读核验目标数据库、对象与 Redis 并发布本地证据；storage 按显式操作读取或管理已登记的 RustFS 进程与端口。copy 由 Rust 执行资源操作，并持有锁、attempt、来源终检、失败证据与结果发布。cache 正式入口由 Rust 直接执行固定阶段、资源与进程端口；已登记 post-copy 的 target/start/API 固定交接由同一 Rust 进程持有目标 Generation，并复用原生监督启动；同一已登记API的status/stop/recover核对原生完整树、精确停止并回收原外层锁，未完成操作保留且不重放；post-copy register/prepare/amend由同一Rust正式阶段持有存储锁、真实Generation和复制账本保护，登记固定请求、只读准备双角色私有配置或以原生失败/关闭历史发布下一环境修订代次；recover-copy 复核原控制器退出、直接命令终态及实际锁归属，只回收该会话的本地锁，未知写入仍须显式 reconcile；post-copy 业务和 seed-runtime 操作由 Rust 执行。clone runtime status 由 Rust 只读核对来源或未登记目标的原运行收据、创建身份和监听。clone runtime recover 由 Rust 仅核对并回收原外层控制锁。对应的 start/stop 仍使用既有私有 Python 协议。maintenance build 只通过统一进程层以 Cargo 离线模式启动本地构建；bridge 严格校验既有构建收据、完整来源清单、构建产物与当前产品输入后 create-new 写出复用审计。storage 保留 RustFS 固定请求、数据目录身份、原始启动与进程身份、端口、日志、失败和未知收据；status 只读，restart/stop/recover 必须显式 --write。";
+pub(crate) const CLONE_USAGE: &str = "用法：cargo xtask check recovery clone <plan|verify|init|status|stage|runtime|recover|recover-copy|bridge|post-copy|seed-runtime|storage|cache|maintenance> ...\n  plan --input <.local-tests 内清单> --output <.local-tests 内新计划> --write\n  verify --plan <.local-tests 内计划>\n  init --manifest <.local-tests 内清单> --run-dir <.local-tests 内新目录> --write\n  status --run-dir <.local-tests 内运行目录>\n  recover-copy --run-dir <.local-tests 内运行目录> --owner-binding <.local-tests 内复制持有人绑定> --write\n  stage --run-dir <.local-tests 内运行目录> --stage <export|target-verify|copy> --mode <run|reconcile|resume> --write\n  bridge --build <构建收据> --inventory <来源清单> --output <.local-tests 内新桥接文件> --write\n  maintenance --operation build --output <.local-tests 内新目录> --write\n  maintenance --operation verify --output <维护构建目录或 build.json>\n  storage --run-dir <.local-tests 内运行目录> --side <source|target> --operation <restart|status|stop|recover> [--request <.local-tests 内请求>] [--write]\n\nplan/verify、bridge、maintenance build/verify、两种复制阶段的 init/status/stage、死亡控制器 recover 和 storage 由 Rust 原生状态机执行。plan/verify、bridge 和 init/status 只读本地输入，不连接业务资源；export 和 target-verify 分别由原生 Rust 执行：export 读取已登记的数据库与对象存储并写出新导出证据，target-verify 只读核验目标数据库、对象与 Redis 并发布本地证据；storage 按显式操作读取或管理已登记的 RustFS 进程与端口。copy 由 Rust 执行资源操作，并持有锁、attempt、来源终检、失败证据与结果发布。cache 正式入口由 Rust 直接执行固定阶段、资源与进程端口；已登记 post-copy 的 target/start/API 固定交接由同一 Rust 进程持有目标 Generation，并复用原生监督启动；同一已登记API的status/stop/recover核对原生完整树、精确停止并回收原外层锁，未完成操作保留且不重放；post-copy register/prepare/amend由同一Rust正式阶段持有存储锁、真实Generation和复制账本保护，登记固定请求、只读准备双角色私有配置或以原生失败/关闭历史发布下一环境修订代次；recover-copy 复核原控制器退出、直接命令终态及实际锁归属，只回收该会话的本地锁，未知写入仍须显式 reconcile；post-copy 业务和 seed-runtime 操作由 Rust 执行。clone runtime 的旧单进程 start/stop 由 Rust 按登记的产品与创建身份执行，status 只读核对来源或未登记目标的原运行收据、创建身份和监听，recover 仅核对并回收原外层控制锁。maintenance build 只通过统一进程层以 Cargo 离线模式启动本地构建；bridge 严格校验既有构建收据、完整来源清单、构建产物与当前产品输入后 create-new 写出复用审计。storage 保留 RustFS 固定请求、数据目录身份、原始启动与进程身份、端口、日志、失败和未知收据；status 只读，restart/stop/recover 必须显式 --write。";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CloneEffect {
@@ -10,14 +10,6 @@ pub(crate) enum CloneEffect {
 }
 
 impl CloneEffect {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::ReadOnly => "read-only",
-            Self::EvidenceWrite => "evidence-write",
-            Self::BusinessWrite => "business-write",
-        }
-    }
-
     pub(crate) const fn requires_write(self) -> bool {
         !matches!(self, Self::ReadOnly)
     }
@@ -374,47 +366,4 @@ pub(crate) enum CloneCommand {
     MaintenanceVerify {
         output: PathBuf,
     },
-}
-
-impl CloneCommand {
-    pub(crate) const fn name(&self) -> &'static str {
-        match self {
-            Self::Help => "help",
-            Self::Plan { .. } => "plan",
-            Self::Verify { .. } => "verify",
-            Self::Init { .. } => "init",
-            Self::Status { .. } => "status",
-            Self::Stage { .. } => "stage",
-            Self::Runtime(_) => "runtime",
-            Self::Recover { .. } => "recover",
-            Self::RecoverCopy { .. } => "recover-copy",
-            Self::Bridge { .. } => "bridge",
-            Self::PostCopy(_) => "post-copy",
-            Self::SeedRuntime(_) => "seed-runtime",
-            Self::Storage(_) => "storage",
-            Self::Cache(_) => "cache",
-            Self::MaintenanceBuild { .. } | Self::MaintenanceVerify { .. } => "maintenance",
-        }
-    }
-
-    pub(crate) const fn effect(&self) -> CloneEffect {
-        match self {
-            Self::Help
-            | Self::Verify { .. }
-            | Self::Status { .. }
-            | Self::MaintenanceVerify { .. } => CloneEffect::ReadOnly,
-            Self::Plan { .. }
-            | Self::Init { .. }
-            | Self::Recover { .. }
-            | Self::RecoverCopy { .. }
-            | Self::Bridge { .. }
-            | Self::MaintenanceBuild { .. } => CloneEffect::EvidenceWrite,
-            Self::Stage { stage, .. } => stage.effect(),
-            Self::Runtime(options) => options.operation.effect(),
-            Self::PostCopy(options) => options.operation.effect(),
-            Self::SeedRuntime(options) => options.operation.effect(),
-            Self::Storage(options) => options.operation.effect(),
-            Self::Cache(options) => options.operation.effect(),
-        }
-    }
 }
