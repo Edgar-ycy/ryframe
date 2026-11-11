@@ -29,9 +29,17 @@ impl Fixture {
         let reference = document::read(&reference, &backend, "参考夹具").unwrap();
         let target = document::read(&target, &backend, "目标夹具").unwrap();
         let registration = evidence.join("registration.json");
+        let configuration =
+            super::super::dataset_authority::configuration_registration::sidecar(&registration)
+                .unwrap();
+        fs::create_dir(&configuration).unwrap();
+        let environment = configuration.join("environment.json");
+        write_new(&environment, &json!({"fixture":"runtime-environment"})).unwrap();
+        let environment = document::read(&environment, &backend, "运行环境夹具").unwrap();
         write_new(&registration, &json!({
-            "format_version":1,"kind":"restore-runtime-registration","remote_writes":0,
+            "format_version":2,"kind":"restore-runtime-registration","remote_writes":0,
             "reference_plan":document::binding(&reference),"target_plan":document::binding(&target),
+            "runtime_environment":document::binding(&environment),
             "observation":{"runtime":{"exists":false,"entries":[],"anchor":{
                 "path":evidence,"device":1,"inode":1,"created_ns":1}},
                 "ports_idle":["api","worker","frontend"]},

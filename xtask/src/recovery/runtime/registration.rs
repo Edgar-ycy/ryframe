@@ -13,7 +13,7 @@ use super::{
         ownership::{Owner, control_root},
         validate_output,
     },
-    dataset_authority::reads::Window,
+    dataset_authority::{configuration_registration, reads::Window},
     verify::same_path,
 };
 use crate::{
@@ -32,6 +32,7 @@ const ROLES: [&str; 3] = ["api", "worker", "frontend"];
 #[derive(Debug, PartialEq, Eq)]
 struct Snapshot {
     directory: PathBuf,
+    configuration: configuration_registration::Source,
     receipt: Value,
 }
 
@@ -54,12 +55,21 @@ pub(super) fn verify_not_started(
     backend: &Path,
     reference: &Path,
     target: &Path,
+    registration_path: &Path,
     registration: &Value,
 ) -> Result<()> {
-    if Snapshot::observe(backend, reference, target)?.receipt != *registration {
+    let mut observed = Snapshot::observe(backend, reference, target)?;
+    let environment = &registration["runtime_environment"];
+    observed.receipt["runtime_environment"] = environment.clone();
+    if observed.receipt != *registration {
         return Err("fresh target 运行目录或三端口不再保持登记的零进程状态".into());
     }
-    Ok(())
+    configuration_registration::verify(
+        backend,
+        registration_path,
+        environment,
+        &observed.configuration,
+    )
 }
 
 fn register(
@@ -72,6 +82,9 @@ fn register(
         let before = observe()?;
         let output = validate_output(backend, selected_output)?;
         require_outside_runtime(&output, &before.directory)?;
+        let configuration = configuration_registration::sidecar(&output)?;
+        require_outside_runtime(&configuration, &before.directory)?;
+        require_outside_runtime(&before.directory, &configuration)?;
         let control = control_root(backend)?;
         let digest = document::digest(&before.receipt["target_plan"]["sha256"], "目标计划摘要")?;
         Owner::with(&control, &format!("register:{digest}"), |owner| {
@@ -90,8 +103,12 @@ fn register_locked(
     window: &Window,
     observe: &impl Fn() -> Result<Snapshot>,
 ) -> Result<Value> {
+    owner.check()?;
+    let environment = before.configuration.publish(backend, output)?;
+    let mut receipt = before.receipt.clone();
+    receipt["runtime_environment"] = environment.clone();
     let mut published = false;
-    publish_verified(output, &before.receipt, || {
+    publish_verified(output, &receipt, || {
         owner.check()?;
         let current = observe().map_err(|error| -> Box<dyn std::error::Error> {
             if published {
@@ -104,6 +121,7 @@ fn register_locked(
         if current != *before {
             return Ok(false);
         }
+        configuration_registration::verify(backend, output, &environment, &current.configuration)?;
         if !published {
             if validate_output(backend, output)? != output {
                 return Err("恢复运行登记输出路径在持锁期间发生变化".into());
@@ -113,7 +131,7 @@ fn register_locked(
         window.finish(Ok(true))
     })?;
     let current = document::read(output, backend, "恢复运行登记")?;
-    if current.raw != document::canonical_bytes(&before.receipt)? {
+    if current.raw != document::canonical_bytes(&receipt)? {
         return Err("恢复运行登记发布后字节变化，保留现场".into());
     }
     owner.check()?;
@@ -140,8 +158,9 @@ impl Snapshot {
         target.assert_unchanged()?;
         Ok(Self {
             directory,
+            configuration: configuration_registration::Source::from_target(&chain.arm.target)?,
             receipt: json!({
-                "format_version":1, "kind":"restore-runtime-registration",
+                "format_version":2, "kind":"restore-runtime-registration",
                 "reference_plan":document::binding(&chain.reference),
                 "target_plan":document::binding(&target),
                 "observation":{"runtime":runtime,"ports_idle":ports_idle},

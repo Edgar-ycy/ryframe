@@ -82,7 +82,7 @@ impl Prepared {
             "paths":{"bindings":bindings.path,"backend_build":backend_build.path,"frontend_build":frontend_build.path},
             "digests":{"bindings":bindings.sha256(),"backend_build":backend_build.sha256(),"frontend_build":frontend_build.sha256()},
         });
-        request["environment"] = environment::capture(inputs, &request, &target)?;
+        request["environment"] = environment::capture(inputs, &request)?;
         let commands = commands::expected(&request, &request["tools"])?;
         let frontend_files = frontend_build::recovery_request(&json!({
             "action":"artifacts","root":frontend_root,"value":null,"expected_head":null,"inventory":null,

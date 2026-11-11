@@ -1,5 +1,5 @@
 //! 登记绑定必须来自 launch，不能采用备份的原参考计划替代恢复目标。
-use super::{check, inputs::Inputs, path};
+use super::{check, configuration_registration, inputs::Inputs, path};
 use crate::{
     Result,
     recovery::{
@@ -53,12 +53,13 @@ pub(in crate::recovery::runtime) fn read_binding(
             "reference_plan",
             "target_plan",
             "observation",
+            "runtime_environment",
             "remote_writes",
         ],
         "恢复运行登记",
     )?;
     check(
-        value["format_version"] == 1
+        value["format_version"] == 2
             && value["kind"] == "restore-runtime-registration"
             && value["remote_writes"].as_u64() == Some(0)
             && value["target_plan"] == binding["target_plan"],
@@ -88,5 +89,6 @@ pub(in crate::recovery::runtime) fn read_binding(
         "恢复运行登记未记录空目录和三端空闲",
     )?;
     inputs.bound(&value["target_plan"])?;
+    configuration_registration::read(inputs, registration)?;
     inputs.bound(&value["reference_plan"])
 }

@@ -15,6 +15,7 @@ use super::{
     dataset_authority::{
         commands,
         inputs::Inputs,
+        path,
         reads::{self, Window},
         registration::read_binding,
     },
@@ -136,6 +137,7 @@ impl Bound {
             backend,
             &self.reference,
             &self.target,
+            &path(&self.binding["registration"]["path"])?,
             &self.registration,
         )?;
         self.require_registered_directory(backend)

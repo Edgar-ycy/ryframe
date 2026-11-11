@@ -14,6 +14,7 @@ struct Fixture {
     output: PathBuf,
     reference: PathBuf,
     target: PathBuf,
+    configuration: PathBuf,
 }
 
 impl Fixture {
@@ -41,6 +42,13 @@ impl Fixture {
         fs::create_dir(&receipts).unwrap();
         let reference = dir.join("reference.json");
         let target = dir.join("target.json");
+        let configuration = dir.join("config");
+        fs::create_dir(&configuration).unwrap();
+        fs::write(
+            configuration.join("app.test.toml"),
+            b"scope_id = \"fixture\"\nsnowflake_worker_id = 3\n[monitor]\nmetrics_bearer_token = \"fixture-token\"\n",
+        )
+        .unwrap();
         fs::write(&reference, b"{\"reference\":true}\n").unwrap();
         fs::write(&target, b"{\"target\":true}\n").unwrap();
         Self {
@@ -51,6 +59,7 @@ impl Fixture {
             output: receipts.join("registration.json"),
             reference,
             target,
+            configuration,
         }
     }
 
@@ -58,10 +67,24 @@ impl Fixture {
         let (directory, runtime) = runtime_observation(&self.backend, &self.runtime)?;
         let reference = document::read(&self.reference, &self.backend, "参考计划夹具")?;
         let target = document::read(&self.target, &self.backend, "目标计划夹具")?;
+        use crate::recovery::clone::native::target_verify::input::request_configuration::{
+            configuration_files, configuration_identity,
+        };
+        let environment = std::collections::BTreeMap::from([("APP_ENV".into(), "test".into())]);
+        let (configuration, files) = configuration_files(
+            &self.configuration,
+            &environment,
+            Some(&json!(self.configuration)),
+        )?;
+        let sha256 = configuration_identity(&configuration, &files)?;
         Ok(Snapshot {
             directory,
+            configuration: configuration_registration::Source {
+                directory: configuration,
+                sha256,
+            },
             receipt: json!({
-                "format_version":1,"kind":"restore-runtime-registration",
+                "format_version":2,"kind":"restore-runtime-registration",
                 "reference_plan":document::binding(&reference),
                 "target_plan":document::binding(&target),
                 "observation":{"runtime":runtime,"ports_idle":ROLES},
@@ -95,7 +118,21 @@ fn register_rechecks_three_times_with_the_original_owner_and_never_overwrites() 
     assert!(!fixture.runtime.exists());
     assert_eq!(reply["status"], "runtime_registered_not_started");
     let saved = document::read(&fixture.output, &fixture.backend, "新登记").unwrap();
-    assert_eq!(saved.value, expected.receipt);
+    let mut observed = saved.value.clone();
+    let private = observed
+        .as_object_mut()
+        .unwrap()
+        .remove("runtime_environment")
+        .unwrap();
+    assert_eq!(observed, expected.receipt);
+    configuration_registration::verify(
+        &fixture.backend,
+        &fixture.output,
+        &private,
+        &expected.configuration,
+    )
+    .unwrap();
+    assert!(!saved.value.to_string().contains("fixture-token"));
     assert_eq!(reply["registration"], document::binding(&saved));
     assert_eq!(saved.value["observation"]["runtime"]["exists"], false);
     assert_eq!(
@@ -132,10 +169,22 @@ fn register_preserves_the_published_receipt_after_a_late_observation_fails() {
     .unwrap_err();
     assert!(error.to_string().contains("保留登记文件"));
     assert!(error.to_string().contains("端口观察失败"));
-    assert_eq!(
-        fs::read(&fixture.output).unwrap(),
-        document::canonical_bytes(&before.receipt).unwrap()
-    );
+    let mut saved = document::read(&fixture.output, &fixture.backend, "失败后保留的登记")
+        .unwrap()
+        .value;
+    let private = saved
+        .as_object_mut()
+        .unwrap()
+        .remove("runtime_environment")
+        .unwrap();
+    assert_eq!(saved, before.receipt);
+    configuration_registration::verify(
+        &fixture.backend,
+        &fixture.output,
+        &private,
+        &before.configuration,
+    )
+    .unwrap();
     assert!(!fixture.control.join(REGISTRATION_LOCK).exists());
 }
 

@@ -10,6 +10,7 @@ struct Fixture {
     _temporary: tempfile::TempDir,
     root: PathBuf,
     execution: PathBuf,
+    registration: PathBuf,
     private: PathBuf,
     api: PathBuf,
     worker: PathBuf,
@@ -26,9 +27,11 @@ impl Fixture {
         let root = portable_path(&temporary.path().canonicalize().unwrap());
         let execution = root.join("execution");
         let evidence = root.join(".local-tests/evidence");
-        let private = evidence.join("environment.json");
+        let registration = evidence.join("registration.json");
+        let configuration = configuration_registration::sidecar(&registration).unwrap();
+        let private = configuration.join("environment.json");
         let api = execution.join("api");
-        let worker = evidence.join("worker");
+        let worker = configuration.join("worker");
         for role in [&api, &worker] {
             fs::create_dir_all(role).unwrap();
             fs::write(
@@ -41,6 +44,7 @@ impl Fixture {
             _temporary: temporary,
             root,
             execution,
+            registration,
             private,
             api,
             worker,
@@ -48,6 +52,7 @@ impl Fixture {
         fixture.api_toml(2, 12341);
         fixture.worker_toml(3, 12342);
         fixture.write_private(&fixture.api);
+        fixture.write_registration();
         fixture
     }
 
@@ -64,14 +69,24 @@ impl Fixture {
     }
 
     fn request(&self) -> Value {
+        let registration = document::read(&self.registration, &self.root, "运行登记夹具").unwrap();
         json!({"authority":{"scope_id":SCOPE,"api_endpoint":"http://127.0.0.1:12341/readyz",
             "worker_endpoint":"http://127.0.0.1:12342/readyz","frontend_endpoint":"http://127.0.0.1:12343"},
+            "registration":{"registration":document::binding(&registration)},
             "roots":{"backend_execution":self.execution},"tools":{"coordinator_root":self.root}})
     }
 
-    fn target(&self) -> Value {
+    fn write_registration(&self) {
+        fs::write(
+            &self.registration,
+            serde_json::to_vec(&json!({"runtime_environment":self.environment_binding()})).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn environment_binding(&self) -> Value {
         let document = document::read(&self.private, &self.root, "隔离测试环境").unwrap();
-        json!({"fresh_target":{"environment":document::binding(&document)}})
+        document::binding(&document)
     }
 
     fn api_toml(&self, id: i64, port: u16) {
@@ -95,12 +110,11 @@ impl Fixture {
 fn captures_both_exact_role_snapshots_and_existing_verifiers_consume_the_same_value() {
     let fixture = Fixture::new();
     fs::write(fixture.api.join("app.dev.toml"), b"unselected = true\n").unwrap();
-    let target = fixture.target();
     let mut request = fixture.request();
     let mut inputs = Inputs::new(&fixture.root);
-    let snapshot = capture(&mut inputs, &request, &target).unwrap();
+    let snapshot = capture(&mut inputs, &request).unwrap();
     assert!(request.get("environment").is_none());
-    assert_eq!(snapshot["document"], target["fresh_target"]["environment"]);
+    assert_eq!(snapshot["document"], fixture.environment_binding());
     for (role, directory, names) in [
         (
             "api",
@@ -134,48 +148,47 @@ fn captures_both_exact_role_snapshots_and_existing_verifiers_consume_the_same_va
     }
     assert!(!snapshot.to_string().contains(TOKEN));
     request["environment"] = snapshot;
-    verify(&mut inputs, &request, &target).unwrap();
-    verify_launch(&mut inputs, &request).unwrap();
+    verify(&mut inputs, &request).unwrap();
 
     fs::write(fixture.worker.join("extra.toml"), b"unselected = true\n").unwrap();
-    assert!(verify(&mut inputs, &request, &target).is_err());
+    assert!(verify(&mut inputs, &request).is_err());
     fs::remove_file(fixture.worker.join("extra.toml")).unwrap();
     fs::write(fixture.api.join("app.dev.toml"), b"unselected = fals\n").unwrap();
-    assert!(verify(&mut inputs, &request, &target).is_err());
-    assert!(verify_launch(&mut inputs, &request).is_err());
+    assert!(verify(&mut inputs, &request).is_err());
     fs::remove_file(fixture.api.join("app.dev.toml")).unwrap();
-    assert!(verify(&mut inputs, &request, &target).is_err());
+    assert!(verify(&mut inputs, &request).is_err());
 }
 
 #[test]
 fn rejects_wrong_private_binding_outside_configuration_duplicate_id_and_bad_toml() {
     let fixture = Fixture::new();
     let request = fixture.request();
-    let mut wrong = fixture.target();
-    wrong["fresh_target"]["environment"]["sha256"] = json!("0".repeat(64));
-    assert!(capture(&mut Inputs::new(&fixture.root), &request, &wrong).is_err());
+    let mut wrong = request.clone();
+    wrong["registration"]["registration"]["sha256"] = json!("0".repeat(64));
+    assert!(capture(&mut Inputs::new(&fixture.root), &wrong).is_err());
 
-    let target = fixture.target();
     let mut wrong_scope = request.clone();
     wrong_scope["authority"]["scope_id"] = json!("other-scope");
-    assert!(capture(&mut Inputs::new(&fixture.root), &wrong_scope, &target).is_err());
+    assert!(capture(&mut Inputs::new(&fixture.root), &wrong_scope).is_err());
 
     fixture.worker_toml(2, 12342);
-    let result = capture(&mut Inputs::new(&fixture.root), &request, &target).unwrap_err();
+    let result = capture(&mut Inputs::new(&fixture.root), &request).unwrap_err();
     assert!(result.to_string().contains("实例编号必须不同"));
     fixture.worker_toml(3, 12343);
-    assert!(capture(&mut Inputs::new(&fixture.root), &request, &target).is_err());
+    assert!(capture(&mut Inputs::new(&fixture.root), &request).is_err());
     fixture.worker_toml(3, 12342);
 
     fs::write(fixture.api.join("app.test.toml"), format!("[{TOKEN}\n")).unwrap();
-    let result = capture(&mut Inputs::new(&fixture.root), &request, &target).unwrap_err();
+    let result = capture(&mut Inputs::new(&fixture.root), &request).unwrap_err();
     assert!(!result.to_string().contains(TOKEN));
     fixture.api_toml(2, 12341);
 
     let outside = fixture.root.join("unregistered");
     fs::create_dir(&outside).unwrap();
     fixture.write_private(&outside);
-    assert!(capture(&mut Inputs::new(&fixture.root), &request, &fixture.target()).is_err());
+    assert!(capture(&mut Inputs::new(&fixture.root), &request).is_err());
+    fixture.write_registration();
+    assert!(capture(&mut Inputs::new(&fixture.root), &fixture.request()).is_err());
 }
 
 #[test]
@@ -205,7 +218,7 @@ fn frozen_b0_receipt_binds_private_role_files_and_only_backend_child_gets_legacy
         }
         fs::write(file, contents).unwrap();
     }
-    request["environment"] = capture(&mut inputs, &request, &fixture.target()).unwrap();
+    request["environment"] = capture(&mut inputs, &request).unwrap();
     let proof = request["environment"].to_string();
     assert!(!proof.contains(example_password) && !proof.contains(TOKEN));
     assert_eq!(

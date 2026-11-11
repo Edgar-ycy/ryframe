@@ -73,7 +73,7 @@ fn wait_monitor(actor: &Actor, supervisor: &Value) -> Result<Option<Value>> {
 
 fn spawn(actor: &Actor) -> Result<Child> {
     let mut inputs = Inputs::new(&actor.backend);
-    environment::verify_launch(&mut inputs, &actor.request)?;
+    environment::verify(&mut inputs, &actor.request)?;
     let commands = crate::recovery::runtime::dataset_authority::commands::verify_direct(
         &actor.request,
         &mut inputs,

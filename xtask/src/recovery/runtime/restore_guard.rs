@@ -80,6 +80,7 @@ impl Bound {
                 backend,
                 &self.reference.path,
                 &self.target.path,
+                &self.registration.path,
                 &self.registration.value,
             )?;
             let (runtime, _) = runtime_target(&self.reference.value, &self.target.value)?;

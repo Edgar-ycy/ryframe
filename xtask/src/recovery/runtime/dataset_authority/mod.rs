@@ -73,7 +73,7 @@ fn produce(
         &chain.backup.manifest,
         &documents,
     )?;
-    environment::verify(inputs, &documents.launch.value["request"], &verified)?;
+    environment::verify(inputs, &documents.launch.value["request"])?;
     lifecycle::verify(inputs, &documents.launch, &chain.reference.value, &tools)?;
     let dataset = lineage::extract(inputs, &chain.backup.result)?;
     let selected = &chain.reference.value["target"];
@@ -91,6 +91,7 @@ fn produce(
 pub(super) mod b0;
 pub(crate) mod business;
 pub(crate) mod commands;
+pub(super) mod configuration_registration;
 pub(super) mod cross;
 pub(super) mod environment;
 pub(super) mod inputs;
@@ -101,6 +102,7 @@ pub(in crate::recovery) mod monitoring;
 pub(crate) mod reads;
 pub(super) mod registration;
 pub(super) mod request_shape;
+mod role_configuration;
 pub(super) mod schema;
 #[cfg(test)]
 #[path = "../../../../tests/unit/recovery/runtime/dataset_authority.rs"]

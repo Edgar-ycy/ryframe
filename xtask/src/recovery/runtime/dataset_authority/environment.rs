@@ -1,5 +1,5 @@
 //! 采集并核验目标计划的私有环境及实际 TOML 启动快照。
-use super::{check, inputs::Inputs, path};
+use super::{check, configuration_registration, inputs::Inputs, path};
 use crate::{
     Result,
     recovery::{
@@ -16,46 +16,15 @@ mod legacy;
 mod legacy_runtime;
 pub(in crate::recovery::runtime) use legacy_runtime::{configure, materialize, verify_projected};
 
-pub(in crate::recovery::runtime) fn capture(
-    inputs: &mut Inputs,
-    request: &Value,
-    target: &Value,
-) -> Result<Value> {
-    let document = inputs.bound(&target["fresh_target"]["environment"])?;
+pub(in crate::recovery::runtime) fn capture(inputs: &mut Inputs, request: &Value) -> Result<Value> {
+    let registration = inputs.bound(&request["registration"]["registration"])?;
+    let document = configuration_registration::read(inputs, &registration)?;
     configuration(request, &document)
 }
 
-pub(super) fn verify(inputs: &mut Inputs, request: &Value, target: &Value) -> Result<()> {
-    let binding = &target["fresh_target"]["environment"];
+pub(in crate::recovery::runtime) fn verify(inputs: &mut Inputs, request: &Value) -> Result<()> {
     check(
-        request["environment"]["document"] == *binding,
-        "恢复启动环境未绑定目标私有环境",
-    )?;
-    check(
-        capture(inputs, request, target)? == request["environment"],
-        "恢复启动角色配置快照发生漂移",
-    )
-}
-
-pub(in crate::recovery::runtime) fn verify_launch(
-    inputs: &mut Inputs,
-    request: &Value,
-) -> Result<()> {
-    let descriptor = &request["environment"]["document"];
-    let binding = document::binding_shape(descriptor, "恢复环境绑定")?;
-    let coordinator = path(&request["tools"]["coordinator_root"])?;
-    crate::local_test_path::validate_local_test_path(
-        &binding.path,
-        &coordinator,
-        crate::local_test_path::LocalTestPathKind::ExistingFile,
-    )?;
-    let document = inputs.read(&binding.path)?;
-    check(
-        document::binding(&document) == *descriptor,
-        "恢复运行私有配置与启动请求不一致",
-    )?;
-    check(
-        configuration(request, &document)? == request["environment"],
+        capture(inputs, request)? == request["environment"],
         "恢复启动角色配置快照发生漂移",
     )
 }
