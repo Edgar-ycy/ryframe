@@ -117,9 +117,9 @@ pub(crate) fn run_capture(
     let export = common::binding(&options.source_export_result)?;
     let value = capture(&json!({"backend":backend,"b0_backend":options.b0_backend,
         "b0_adapter_backend":options.b0_adapter_backend,"b0_frontend":options.b0_frontend,
-        "b0_backend_build":options.b0_backend_build,"b0_frontend_build":options.b0_frontend_build,
+        "b0_backend_build":options.b0_backend_build,"b0_backend_environment":options.b0_backend_environment,"b0_frontend_build":options.b0_frontend_build,
         "b1_backend":options.b1_backend,"b1_frontend":options.b1_frontend,
-        "b1_backend_build":options.b1_backend_build,"b1_frontend_build":options.b1_frontend_build,
+        "b1_backend_build":options.b1_backend_build,"b1_backend_environment":options.b1_backend_environment,"b1_frontend_build":options.b1_frontend_build,
         "source_export_result":export,"reconstruct_adapter":true}))?;
     if common::binding(&options.source_export_result)? != export {
         return Err("导出结果在采集期间变化".into());
@@ -167,10 +167,12 @@ const INPUTS: &[&str] = &[
     "b0_adapter_backend",
     "b0_frontend",
     "b0_backend_build",
+    "b0_backend_environment",
     "b0_frontend_build",
     "b1_backend",
     "b1_frontend",
     "b1_backend_build",
+    "b1_backend_environment",
     "b1_frontend_build",
     "source_export_result",
     "reconstruct_adapter",
@@ -258,7 +260,7 @@ pub(crate) fn capture(args: &Value) -> Result<Value> {
         return Err("比较来源采集期间源码、构建或共享导出变化".into());
     }
     Ok(
-        json!({"format_version":1,"kind":"restore-comparison-sources","source_export":export,"arms":{"b0":b0,"b1":b1}}),
+        json!({"format_version":2,"kind":"restore-comparison-sources","source_export":export,"arms":{"b0":b0,"b1":b1}}),
     )
 }
 
@@ -268,9 +270,9 @@ pub(crate) fn verify(backend: &Path, value: &Value, read_only: bool) -> Result<V
     let b1 = &value["arms"]["b1"];
     let args = json!({"backend":backend,"b0_backend":b0["roots"]["source_backend"],
         "b0_adapter_backend":b0["roots"]["execution_backend"],"b0_frontend":b0["roots"]["frontend"],
-        "b0_backend_build":b0["builds"]["backend"]["path"],"b0_frontend_build":b0["builds"]["frontend"]["path"],
+        "b0_backend_build":b0["builds"]["backend"]["path"],"b0_backend_environment":b0["backend_environment"]["path"],"b0_frontend_build":b0["builds"]["frontend"]["path"],
         "b1_backend":b1["roots"]["source_backend"],"b1_frontend":b1["roots"]["frontend"],
-        "b1_backend_build":b1["builds"]["backend"]["path"],"b1_frontend_build":b1["builds"]["frontend"]["path"],
+        "b1_backend_build":b1["builds"]["backend"]["path"],"b1_backend_environment":b1["backend_environment"]["path"],"b1_frontend_build":b1["builds"]["frontend"]["path"],
         "source_export_result":value["source_export"]["result"],"reconstruct_adapter":!read_only});
     if capture(&args)? != *value {
         return Err("双版本源码、构建或共享导出与来源清单不一致".into());

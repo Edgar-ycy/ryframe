@@ -74,6 +74,26 @@ fn reference_product_and_bindings_native_chains_succeed() {
     assert_eq!(bindings["record"], read_json(&fixture.record));
     assert_eq!(bindings["manifest"]["id"], reference["id"]);
     assert_eq!(bindings["manifest"]["source_sha"], "a".repeat(40));
+
+    let original = fs::read(&fixture.comparison_sources).unwrap();
+    let comparison = read_value(&fixture.comparison_sources);
+    for (role, diagnostic) in [
+        ("backend", "路径必须位于当前后端 .local-tests"),
+        ("frontend", "本侧执行根的固定 dist 路径"),
+    ] {
+        let mut swapped = comparison.clone();
+        swapped["arms"]["b0"]["builds"][role] = comparison["arms"]["b1"]["builds"][role].clone();
+        fs::write(
+            &fixture.comparison_sources,
+            serde_json::to_vec(&swapped).unwrap(),
+        )
+        .unwrap();
+        let error = product::build(&fixture.backend, &fixture.product_options(None))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(diagnostic), "{error}");
+    }
+    fs::write(&fixture.comparison_sources, original).unwrap();
 }
 
 #[test]

@@ -13,32 +13,36 @@ use super::super::super::model::{
     SourceVerifyOptions, is_source_runtime_output,
 };
 
-const NAMED: [&str; 13] = [
+const NAMED: [&str; 15] = [
     "--source-generation",
     "--output",
     "--b0-backend",
     "--b0-adapter-backend",
     "--b0-frontend",
     "--b0-backend-build",
+    "--b0-backend-environment",
     "--b0-frontend-build",
     "--b1-backend",
     "--b1-frontend",
     "--b1-backend-build",
+    "--b1-backend-environment",
     "--b1-frontend-build",
     "--source-export-result",
     "--receipt",
 ];
 
-const CAPTURE_NAMED: [&str; 11] = [
+const CAPTURE_NAMED: [&str; 13] = [
     "--output",
     "--b0-backend",
     "--b0-adapter-backend",
     "--b0-frontend",
     "--b0-backend-build",
+    "--b0-backend-environment",
     "--b0-frontend-build",
     "--b1-backend",
     "--b1-frontend",
     "--b1-backend-build",
+    "--b1-backend-environment",
     "--b1-frontend-build",
     "--source-export-result",
 ];
@@ -215,6 +219,12 @@ fn comparison_capture(values: &BTreeMap<&str, &str>) -> Result<SourceCommand, Cl
             LocalTestPathKind::ExistingFile,
             "B0 后端构建收据",
         )?,
+        b0_backend_environment: local_path(
+            required(values, "--b0-backend-environment")?,
+            &b0_adapter_backend,
+            LocalTestPathKind::ExistingFile,
+            "B0 后端构建环境",
+        )?,
         b0_frontend_build: frontend_receipt(
             required(values, "--b0-frontend-build")?,
             &b0_frontend,
@@ -228,6 +238,12 @@ fn comparison_capture(values: &BTreeMap<&str, &str>) -> Result<SourceCommand, Cl
             &b1_backend,
             LocalTestPathKind::ExistingFile,
             "B1 后端构建收据",
+        )?,
+        b1_backend_environment: local_path(
+            required(values, "--b1-backend-environment")?,
+            &b1_backend,
+            LocalTestPathKind::ExistingFile,
+            "B1 后端构建环境",
         )?,
         b1_frontend_build: frontend_receipt(
             required(values, "--b1-frontend-build")?,

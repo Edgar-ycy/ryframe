@@ -13,7 +13,6 @@ use super::cli::{
 use super::clone_lifecycle_tests::arm_storage_bindings;
 use super::recovery::inputs::{product, reference};
 use chrono::{SecondsFormat, Utc};
-type Object = serde_json::Map<String, Value>;
 
 static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
 
@@ -764,19 +763,6 @@ fn export_identity(
 
 fn write_comparison(backend: &Path, root: &Path, path: &Path, export: &Value) {
     let arm = |name: &str, head: &str, adapter: Value| {
-        let bindings = [
-            (
-                "backend",
-                write_value(root, &format!("{name}-backend.json"), &json!({"ok": true})),
-            ),
-            (
-                "frontend",
-                write_value(root, &format!("{name}-frontend.json"), &json!({"ok": true})),
-            ),
-        ]
-        .into_iter()
-        .map(|(role, path)| (role.to_owned(), binding(&path)))
-        .collect::<Object>();
         let inventory = inventory(head);
         let source_root = root.join(name).join("source");
         let execution_root = if name == "b1" {
@@ -784,15 +770,25 @@ fn write_comparison(backend: &Path, root: &Path, path: &Path, export: &Value) {
         } else {
             root.join(name).join("execution")
         };
+        let environment_dir = execution_root.join(".local-tests");
+        fs::create_dir_all(&environment_dir).unwrap();
+        let environment = write_value(&environment_dir, "environment.json", &json!({"ok": true}));
+        let backend_build = write_value(&environment_dir, "build.json", &json!({"ok": true}));
+        let frontend_root = root.join(name).join("frontend");
+        let frontend_output = frontend_root.join("dist/.vite");
+        fs::create_dir_all(&frontend_output).unwrap();
+        let frontend_build =
+            write_value(&frontend_output, "restore-build.json", &json!({"ok": true}));
         json!({
             "roots": {
                 "source_backend": source_root.to_string_lossy(),
                 "execution_backend": execution_root.to_string_lossy(),
-                "frontend": root.join(name).join("frontend").to_string_lossy(),
+                "frontend": frontend_root.to_string_lossy(),
             },
             "sources": {"backend": inventory, "frontend": inventory},
             "execution_sources": {"backend": inventory, "frontend": inventory},
-            "builds": bindings,
+            "builds": {"backend": binding(&backend_build), "frontend": binding(&frontend_build)},
+            "backend_environment": binding(&environment),
             "adapter": adapter,
             "source_export_result_sha256": export["result"]["sha256"],
             "source_export_identity_sha256": export["identity_sha256"],
@@ -814,7 +810,7 @@ fn write_comparison(backend: &Path, root: &Path, path: &Path, export: &Value) {
         root,
         "comparison.json",
         &json!({
-            "format_version": 1,
+            "format_version": 2,
             "kind": "restore-comparison-sources",
             "source_export": export,
             "arms": {"b0": arm("b0", &"b".repeat(40), adapter), "b1": arm("b1", &"c".repeat(40), Value::Null)},

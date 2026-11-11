@@ -25,17 +25,18 @@ pub(super) fn read(
     backend: &Document,
     frontend: &Document,
     authority: &Value,
+    environment: &Value,
 ) -> Result<Value> {
     let roots = bind(selected, execution, backend, frontend, authority)?;
     build::source::repository(coordinator)?;
-    let before = backend_sources(coordinator, selected, &backend.value, authority)?;
+    let before = backend_sources(coordinator, selected, backend, authority, environment)?;
     let proof = Frontend::capture(&selected.source_frontend, frontend, authority)?;
     check(
         proof.inventory()["source"]["snapshot"]["head"] == authority["frontend_sha"],
         "恢复运行前端来源不同于登记的精确提交",
     )?;
     check(
-        backend_sources(coordinator, selected, &backend.value, authority)? == before,
+        backend_sources(coordinator, selected, backend, authority, environment)? == before,
         "恢复启动核验期间后端源码、构建上下文或产物发生变化",
     )?;
     proof.verify()?;

@@ -101,7 +101,17 @@ fn validate_capture(options: &SourceComparisonCaptureOptions, root: &Path) -> Re
         &options.b1_backend,
         LocalTestPathKind::ExistingFile,
     )?;
+    local(
+        &options.b0_backend_environment,
+        &options.b0_adapter_backend,
+        LocalTestPathKind::ExistingFile,
+    )?;
     frontend_receipt(&options.b0_frontend_build, &options.b0_frontend)?;
+    local(
+        &options.b1_backend_environment,
+        &options.b1_backend,
+        LocalTestPathKind::ExistingFile,
+    )?;
     frontend_receipt(&options.b1_frontend_build, &options.b1_frontend)?;
     local(
         &options.source_export_result,

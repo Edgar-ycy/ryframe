@@ -297,7 +297,9 @@ fn comparison_arguments(fixture: &Fixture) -> Vec<String> {
         })
         .collect::<Vec<_>>();
     let b0_build = write(&roots[1].join(".local-tests"), "build.json");
+    let b0_environment = write(&roots[1].join(".local-tests"), "environment.json");
     let b1_build = write(&roots[3].join(".local-tests"), "build.json");
+    let b1_environment = write(&roots[3].join(".local-tests"), "environment.json");
     let b0_frontend_build = write(&roots[2].join("dist/.vite"), "restore-build.json");
     let b1_frontend_build = write(&roots[4].join("dist/.vite"), "restore-build.json");
     vec![
@@ -313,6 +315,8 @@ fn comparison_arguments(fixture: &Fixture) -> Vec<String> {
         text(&roots[2]),
         "--b0-backend-build".into(),
         text(&b0_build),
+        "--b0-backend-environment".into(),
+        text(&b0_environment),
         "--b0-frontend-build".into(),
         text(&b0_frontend_build),
         "--b1-backend".into(),
@@ -321,6 +325,8 @@ fn comparison_arguments(fixture: &Fixture) -> Vec<String> {
         text(&roots[4]),
         "--b1-backend-build".into(),
         text(&b1_build),
+        "--b1-backend-environment".into(),
+        text(&b1_environment),
         "--b1-frontend-build".into(),
         text(&b1_frontend_build),
         "--source-export-result".into(),
@@ -482,6 +488,15 @@ fn rejects_invalid_runtime_values_and_source_relationships() {
     let b0 = option_value(&duplicate_sources, "--b0-backend");
     replace_option(&mut duplicate_sources, "--b1-frontend", b0);
     assert!(parse(duplicate_sources).is_err());
+
+    let mut swapped_environment = comparison_arguments(&fixture);
+    let b1_environment = option_value(&swapped_environment, "--b1-backend-environment");
+    let index = swapped_environment
+        .iter()
+        .position(|value| value == "--b0-backend-environment")
+        .unwrap();
+    swapped_environment[index + 1] = b1_environment;
+    assert!(parse(swapped_environment).is_err());
 
     let mut wrong_receipt = comparison_arguments(&fixture);
     replace_option(

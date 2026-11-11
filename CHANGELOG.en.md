@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Formal B0/B1 comparison, startup, and runtime verification use each side's registered backend build environment to check the original receipt, tool versions, and build artifacts.
+
 - Clarify how to merge the database topology TOML fragment into the application configuration, and document connection pool timeout units, defaults, and scope for the primary, replicas, and named sources.
 
 - The formal copy stage runs initial copy, explicit reconciliation and resume in Rust. It checks the complete before-image and ledger intent before writes, and publishes data completion only after independent checks of the four databases, five buckets and Redis.

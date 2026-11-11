@@ -12,7 +12,7 @@ use crate::{
         clone::native::digest,
         frontend_build,
         inputs::{
-            chain::Chain,
+            chain::{self, Chain},
             document::{self, Document},
             target_plan,
         },
@@ -62,6 +62,9 @@ impl Prepared {
             &chain.backup.manifest,
         )?;
         bound.check_stop_authority(&authority)?;
+        let build_environment = &chain::source_arm(&chain)?["backend_environment"];
+        let environment_binding = document::binding_shape(build_environment, "已登记后端构建环境")?;
+        inputs.protect(&environment_binding.path)?;
         let roots = sources::read(
             backend,
             &options.sources,
@@ -69,6 +72,7 @@ impl Prepared {
             &backend_build,
             &frontend_build,
             &authority,
+            build_environment,
         )?;
         let tools = commands::current_tools(backend, &std::env::current_exe()?, inputs)?;
         let mut request = json!({

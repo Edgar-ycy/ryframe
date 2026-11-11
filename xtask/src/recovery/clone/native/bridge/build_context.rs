@@ -6,6 +6,10 @@ use sha2::{Digest, Sha256};
 
 use crate::{Result, recovery::clone::native::digest};
 
+#[path = "build_context/environment.rs"]
+mod environment;
+pub(crate) use environment::verify_registered;
+
 #[cfg(test)]
 #[path = "../../../../../tests/unit/recovery/clone/native/bridge/build_context.rs"]
 mod tests;
@@ -173,6 +177,14 @@ fn version(root: &Path, executable: &str, argument: &str) -> Result<String> {
     let output = command
         .output()
         .map_err(|error| version_diagnostic(executable, argument, VersionFailure::Spawn(&error)))?;
+    version_output(executable, argument, output)
+}
+
+fn version_output(
+    executable: &str,
+    argument: &str,
+    output: std::process::Output,
+) -> Result<String> {
     if !output.status.success() {
         return Err(
             version_diagnostic(executable, argument, VersionFailure::Exit(output.status)).into(),
@@ -190,6 +202,7 @@ fn version(root: &Path, executable: &str, argument: &str) -> Result<String> {
 // formatter 只接受结构化原因；原始 I/O 错误正文和进程输出不参与格式化。
 enum VersionFailure<'a> {
     Spawn(&'a std::io::Error),
+    Probe,
     Exit(std::process::ExitStatus),
     InvalidUtf8,
     Empty,
@@ -210,6 +223,7 @@ fn version_diagnostic(executable: &str, argument: &str, failure: VersionFailure<
         VersionFailure::Exit(status) => {
             format!("未成功退出；ExitStatus={status}，code={:?}", status.code())
         }
+        VersionFailure::Probe => "未能在限定时间内完成版本探测或确认进程树回收".into(),
         VersionFailure::InvalidUtf8 => "命令成功退出，但版本标准输出不是有效 UTF-8".into(),
         VersionFailure::Empty => "命令成功退出，但版本标准输出为空或仅含空白".into(),
     };

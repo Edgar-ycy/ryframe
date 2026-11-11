@@ -15,22 +15,39 @@ pub(super) fn inventory(root: &Path, expected: Option<&str>) -> Result<Value> {
     Ok(source::inventory_value(&inventory))
 }
 
-fn backend(root: &Path, receipt_path: &Path, inventory: &Value) -> Result<(Value, Value)> {
+fn backend(
+    root: &Path,
+    receipt_path: &Path,
+    environment_path: &Path,
+    inventory: &Value,
+) -> Result<(Value, Value, Value)> {
     common::common_file(root, receipt_path, "比较后端构建收据")?;
     let binding = common::binding(receipt_path)?;
     let value = common::read_bound(root, &binding, "比较后端构建收据")?;
     bridge::verify_build(root, receipt_path, &value)?;
-    if value["kind"] != "restore-backend-build"
-        || value["sources"]["full"] != *inventory
-        || value["build"] != bridge::build_context::current(root)?
-    {
-        return Err("比较后端构建与当前完整源码、命令或工具链不同".into());
+    if value["kind"] != "restore-backend-build" || value["sources"]["full"] != *inventory {
+        return Err("比较后端构建与当前完整源码不同".into());
     }
+    let environment =
+        crate::recovery::inputs::document::read(environment_path, root, "比较后端构建环境")?;
+    let head = document::text(&inventory["source"]["snapshot"]["head"], "后端执行提交")?;
+    bridge::build_context::verify_registered(
+        root,
+        environment_path,
+        head,
+        &binding,
+        &value["build"],
+    )?;
+    environment.assert_unchanged()?;
     bridge::verify_build(root, receipt_path, &value)?;
     if common::binding(receipt_path)? != binding {
         return Err("比较后端构建收据在核验期间变化".into());
     }
-    Ok((value, binding))
+    Ok((
+        value,
+        binding,
+        crate::recovery::inputs::document::binding(&environment),
+    ))
 }
 
 fn frontend(root: &Path, receipt: &Path, inventory: &Value, b0: bool) -> Result<Value> {
@@ -69,9 +86,10 @@ pub(super) fn capture(
     let product_inventory = inventory(&product, b0.then_some(adapter::BACKEND))?;
     let execution_inventory = inventory(&execution, b0.then_some(adapter::COMMIT))?;
     let frontend_inventory = inventory(&front, b0.then_some(adapter::FRONTEND))?;
-    let (build, backend_binding) = backend(
+    let (build, backend_binding, environment_binding) = backend(
         &execution,
         &path(&args[format!("{prefix}_backend_build")])?,
+        &path(&args[format!("{prefix}_backend_environment")])?,
         &execution_inventory,
     )?;
     let frontend_binding = frontend(
@@ -91,6 +109,7 @@ pub(super) fn capture(
         "sources":{"backend":product_inventory,"frontend":frontend_inventory},
         "execution_sources":{"backend":execution_inventory,"frontend":frontend_inventory},
         "builds":{"backend":backend_binding,"frontend":frontend_binding},
+        "backend_environment":environment_binding,
         "adapter":if b0 { adapter::evidence(backend_root, reconstruct)? } else { Value::Null },
         "source_export_result_sha256":export["result"]["sha256"],
         "source_export_identity_sha256":export["identity_sha256"]}),

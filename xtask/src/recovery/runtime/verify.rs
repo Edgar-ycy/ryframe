@@ -26,7 +26,7 @@ use crate::{
         clone::native::{json as strict, source},
         fixture_control::services::lifecycle::readonly::process,
         frontend_build::{self, files::StableFile},
-        inputs::{document, domain},
+        inputs::{comparison, document, domain},
     },
 };
 
@@ -100,7 +100,14 @@ pub(super) fn online(
         "value":launch, "previous":null, "commands":commands, "number":launch["generation"],
     }))?;
     environment::verify_launch(inputs, request)?;
-    let backend = backend_sources(root, sources, &documents.backend.value, supplied)?;
+    let build_environment = registered_build_environment(inputs, request, &documents.backend)?;
+    let backend = backend_sources(
+        root,
+        sources,
+        &documents.backend,
+        supplied,
+        &build_environment,
+    )?;
     let frontend = Frontend::capture(&sources.source_frontend, &documents.frontend, supplied)?;
     let product = if backend["product"].is_null() {
         &backend["inventory"]
@@ -122,7 +129,13 @@ pub(super) fn online(
         processes.verify(runtime)?;
         frontend.verify()?;
         check(
-            backend_sources(root, sources, &documents.backend.value, supplied)? == backend,
+            backend_sources(
+                root,
+                sources,
+                &documents.backend,
+                supplied,
+                &build_environment,
+            )? == backend,
             "恢复运行核验期间后端源码发生变化",
         )?;
         environment::verify_launch(inputs, request)
@@ -133,6 +146,31 @@ pub(super) fn online(
         processes: processes.value,
         readiness,
     })
+}
+
+fn registered_build_environment(
+    inputs: &mut Inputs,
+    request: &Value,
+    backend: &document::Document,
+) -> Result<Value> {
+    let target = inputs.bound(&request["registration"]["target_plan"])?;
+    let comparison = inputs.bound(&target.value["comparison_sources"])?;
+    let side = strict::text(&target.value["target_side"], "恢复目标侧")?;
+    let arm = comparison::arm(&comparison.value, side)?;
+    check(
+        comparison.value["format_version"] == 2
+            && comparison.value["kind"] == "restore-comparison-sources"
+            && target.value["comparison_arm_sha256"] == document::hash(arm)?
+            && arm["roots"]["execution_backend"] == request["roots"]["backend_execution"]
+            && arm["execution_sources"]["backend"]["source"]["snapshot"]["head"]
+                == request["authority"]["backend_execution_sha"]
+            && arm["builds"]["backend"] == document::binding(backend),
+        "恢复运行与已登记的单侧后端构建环境不同",
+    )?;
+    let environment = &arm["backend_environment"];
+    let binding = document::binding_shape(environment, "已登记后端构建环境")?;
+    inputs.protect(&binding.path)?;
+    Ok(environment.clone())
 }
 
 fn verify_paths(runtime: &Value, sources: &RuntimeSources, bindings: &Path) -> Result<()> {
@@ -240,13 +278,18 @@ fn verify_authority(
 pub(super) fn backend_sources(
     root: &Path,
     sources: &RuntimeSources,
-    receipt: &Value,
+    receipt: &document::Document,
     authority: &Value,
+    environment: &Value,
 ) -> Result<Value> {
     let execution = &sources.source_backend;
     let expected = &authority["backend_execution_sha"];
-    build::request(&json!({"action":"verify","root":execution,
-        "value":{"receipt":receipt,"expected_head":expected}}))?;
+    build::verify_registered(
+        execution,
+        receipt,
+        strict::text(expected, "后端执行来源")?,
+        environment,
+    )?;
     let inventory = build::source::registered(
         root,
         execution,
@@ -261,8 +304,8 @@ pub(super) fn backend_sources(
     };
     let product = source::validate_inventory(product)?;
     check(
-        receipt["sources"]["full"] == inventory["inventory"]
-            && receipt["sources"]["product"] == source::backend_domains(&product)?["product"]
+        receipt.value["sources"]["full"] == inventory["inventory"]
+            && receipt.value["sources"]["product"] == source::backend_domains(&product)?["product"]
             && authority["backend_product_sha"] == product.source.snapshot.head,
         "恢复构建未保持登记的后端产品或执行来源",
     )?;

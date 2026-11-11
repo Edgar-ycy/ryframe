@@ -151,11 +151,7 @@ fn validate_shape(backend: &Path, value: &Value, plan: &Value) -> Result<()> {
         &["source_backend", "execution_backend", "frontend"],
         "产品执行 roots",
     )?;
-    exact(
-        execution.get("builds").unwrap(),
-        &["backend", "frontend"],
-        "产品执行 builds",
-    )?;
+    super::comparison::validate_builds(&value["product_execution"])?;
     let side = text(target.get("target_side").unwrap(), "目标计划侧别")?;
     if target.get("format_version") != Some(&Value::from(1))
         || target.get("kind").and_then(Value::as_str) != Some("restore-reference-target-plan")
@@ -188,8 +184,6 @@ fn validate_shape(backend: &Path, value: &Value, plan: &Value) -> Result<()> {
         fresh.get("environment").unwrap(),
         fresh.get("inventory").unwrap(),
         maintenance.get("build").unwrap(),
-        &execution["builds"]["backend"],
-        &execution["builds"]["frontend"],
     ] {
         super::document::bound_file(backend, descriptor, "目标计划绑定")?;
     }

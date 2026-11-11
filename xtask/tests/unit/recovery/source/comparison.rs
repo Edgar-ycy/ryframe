@@ -175,10 +175,10 @@ fn manifest(root: &Path) -> Value {
         json!({"roots":{"source_backend":root.join(if b0 {"base"} else {"candidate"}),
         "execution_backend":root.join(if b0 {"adapter"} else {"candidate"}),"frontend":root.join(if b0 {"front0"} else {"front1"})},
         "sources":{"backend":inventory,"frontend":inventory},"execution_sources":{"backend":inventory,"frontend":inventory},
-        "builds":{"backend":descriptor,"frontend":descriptor},"adapter":if b0 {adapter::expected(json!(1))} else {Value::Null},
+        "builds":{"backend":descriptor,"frontend":descriptor},"backend_environment":descriptor,"adapter":if b0 {adapter::expected(json!(1))} else {Value::Null},
         "source_export_result_sha256":export["result"]["sha256"],"source_export_identity_sha256":export["identity_sha256"]})
     };
-    json!({"format_version":1,"kind":"restore-comparison-sources","source_export":export,"arms":{"b0":arm(true),"b1":arm(false)}})
+    json!({"format_version":2,"kind":"restore-comparison-sources","source_export":export,"arms":{"b0":arm(true),"b1":arm(false)}})
 }
 
 #[test]
@@ -195,6 +195,8 @@ fn strict_manifest_rejects_shared_export_substitution_missing_adapter_and_unknow
         ),
         ("/source_export/origin_attempt", json!(true)),
         ("/format_version", json!(true)),
+        ("/format_version", json!(1)),
+        ("/arms/b1/backend_environment", Value::Null),
     ] {
         let mut invalid = value.clone();
         *invalid.pointer_mut(pointer).unwrap() = replacement;

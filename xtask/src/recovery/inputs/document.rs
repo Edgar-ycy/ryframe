@@ -49,7 +49,7 @@ pub(crate) fn read(path: &Path, backend: &Path, label: &str) -> Result<Document>
     read_native(path, label)
 }
 
-fn read_native(path: &Path, label: &str) -> Result<Document> {
+pub(super) fn read_native(path: &Path, label: &str) -> Result<Document> {
     crate::recovery::runtime::dataset_authority::reads::file(path)?;
     let metadata =
         fs::symlink_metadata(path).map_err(|error| format!("{label}必须是普通文件：{error}"))?;

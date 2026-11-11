@@ -8,7 +8,7 @@ mod arm;
 pub(crate) mod backup;
 pub(crate) mod bindings;
 pub(crate) mod chain;
-mod comparison;
+pub(in crate::recovery) mod comparison;
 pub(crate) mod document;
 pub(in crate::recovery) mod domain;
 pub(crate) use domain::canonical_endpoint;

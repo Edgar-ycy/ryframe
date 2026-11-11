@@ -21,11 +21,12 @@ const B0_ADAPTER_PATCH_SHA256: &str =
     "28ad29f21ca9fd58356d059700bcc871172466e0a62286c5ccdbf68b1ed3fba3";
 
 const MANIFEST_FIELDS: [&str; 4] = ["format_version", "kind", "source_export", "arms"];
-const ARM_FIELDS: [&str; 7] = [
+const ARM_FIELDS: [&str; 8] = [
     "roots",
     "sources",
     "execution_sources",
     "builds",
+    "backend_environment",
     "adapter",
     "source_export_result_sha256",
     "source_export_identity_sha256",
@@ -47,7 +48,7 @@ const EXPORT_FIELDS: [&str; 12] = [
 
 pub(crate) fn validate(backend: &Path, document: &Document) -> Result<Value> {
     let manifest = exact(&document.value, &MANIFEST_FIELDS, "双版本来源清单")?;
-    if manifest.get("format_version") != Some(&Value::from(1))
+    if manifest.get("format_version") != Some(&Value::from(2))
         || manifest.get("kind").and_then(Value::as_str) != Some("restore-comparison-sources")
     {
         return Err("双版本来源清单版本或类型无效".into());
@@ -160,15 +161,9 @@ fn validate_arm(backend: &Path, name: &str, value: &Value, export: &Value) -> Re
     {
         crate::recovery::clone::native::source::validate_inventory(inventory)?;
     }
-    let builds = exact(
-        arm.get("builds").unwrap(),
-        &["backend", "frontend"],
-        "arm 构建",
-    )?;
-    for (role, binding) in builds {
-        super::document::bound_file(backend, binding, &format!("{name} {role} 构建"))?;
-        super::document::binding_shape(binding, "arm 构建")?;
-    }
+    let execution_root = Path::new(text(&roots["execution_backend"], "执行工作树")?);
+    super::document::bound_file(execution_root, &arm["backend_environment"], "后端构建环境")?;
+    validate_builds(value)?;
     if arm.get("source_export_result_sha256")
         != export.get("result").and_then(|value| value.get("sha256"))
         || arm.get("source_export_identity_sha256") != export.get("identity_sha256")
@@ -181,6 +176,30 @@ fn validate_arm(backend: &Path, name: &str, value: &Value, export: &Value) -> Re
         || arm.get("sources") != arm.get("execution_sources")
     {
         return Err("B1 不得携带 B0 工具适配或不同执行来源".into());
+    }
+    Ok(())
+}
+
+pub(super) fn validate_builds(value: &Value) -> Result<()> {
+    use crate::local_test_path::{LocalTestPathKind, validate_absolute_path};
+
+    let roots = &value["roots"];
+    let execution = Path::new(text(&roots["execution_backend"], "后端执行根")?);
+    validate_absolute_path(execution, LocalTestPathKind::ExistingDirectory)?;
+    let frontend = Path::new(text(&roots["frontend"], "前端执行根")?);
+    validate_absolute_path(frontend, LocalTestPathKind::ExistingDirectory)?;
+    let builds = exact(&value["builds"], &["backend", "frontend"], "产品执行构建")?;
+    super::document::bound_file(execution, &builds["backend"], "后端构建收据")?;
+
+    let expected = frontend.join("dist/.vite/restore-build.json");
+    let recorded = super::document::binding_shape(&builds["frontend"], "前端构建收据")?;
+    if recorded.path != expected {
+        return Err("前端构建收据必须位于本侧执行根的固定 dist 路径".into());
+    }
+    validate_absolute_path(&recorded.path, LocalTestPathKind::ExistingFile)?;
+    let observed = super::document::read_native(&recorded.path, "前端构建收据")?;
+    if super::document::binding(&observed) != builds["frontend"] {
+        return Err("前端构建收据与本侧登记描述不一致".into());
     }
     Ok(())
 }

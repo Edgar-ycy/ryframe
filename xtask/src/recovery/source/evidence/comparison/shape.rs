@@ -30,7 +30,7 @@ pub(super) fn validate(value: &Value) -> Result<()> {
         &["format_version", "kind", "source_export", "arms"],
         "比较来源清单",
     )?;
-    if value["format_version"].as_u64() != Some(1) || value["kind"] != "restore-comparison-sources"
+    if value["format_version"].as_u64() != Some(2) || value["kind"] != "restore-comparison-sources"
     {
         return Err("比较来源清单版本或类型无效".into());
     }
@@ -102,6 +102,7 @@ fn arm(name: &str, value: &Value, export: &Value) -> Result<()> {
             "sources",
             "execution_sources",
             "builds",
+            "backend_environment",
             "adapter",
             "source_export_result_sha256",
             "source_export_identity_sha256",
@@ -122,6 +123,7 @@ fn arm(name: &str, value: &Value, export: &Value) -> Result<()> {
             source::validate_inventory(&value[field][role])?;
         }
     }
+    binding(&value["backend_environment"])?;
     document::exact(&value["builds"], &["backend", "frontend"], "比较构建绑定")?;
     for role in ["backend", "frontend"] {
         binding(&value["builds"][role])?;

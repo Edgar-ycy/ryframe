@@ -218,6 +218,28 @@ fn backend(root: &Path, directory: &Path, port: &mut impl Port) -> Result<Value>
     )
 }
 
+pub(super) fn verify_registered(
+    root: &Path,
+    receipt: &crate::recovery::inputs::document::Document,
+    expected: &str,
+    descriptor: &Value,
+) -> Result<()> {
+    use crate::recovery::inputs::document;
+    let (environment, input) = document::bound_file(root, descriptor, "后端登记构建环境")?;
+    let context = &receipt.value["build"];
+    source::verify(root, &receipt.value, expected, context)?;
+    bridge::build_context::verify_registered(
+        root,
+        &environment.path,
+        expected,
+        &document::binding(receipt),
+        context,
+    )?;
+    source::verify(root, &receipt.value, expected, context)?;
+    input.assert_unchanged()?;
+    receipt.assert_unchanged()
+}
+
 fn verify(root: &Path, receipt: &Value, expected: &str, port: &mut impl Port) -> Result<()> {
     let context = port.context(root)?;
     source::verify(root, receipt, expected, &context)?;
