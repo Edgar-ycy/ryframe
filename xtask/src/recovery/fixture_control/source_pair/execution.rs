@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 
 use crate::{
     Result,
+    frontend_origin::scan,
     local_test_path::{LocalTestPathKind, validate_absolute_path, validate_local_test_path},
     recovery::clone::native::{json::exact, source},
 };
@@ -123,7 +124,7 @@ fn root_receipt_observed(
         (false, "frontend") => &[".local-tests", "node_modules", "dist"],
         _ => return Err("执行源码侧无效".into()),
     };
-    require_exact_files(root, root, &files, managed)?;
+    require_exact_files(root, &files, managed)?;
     let receipt = json!({
         "path": super::super::path_text_canonical(root, "执行源码根")?,
         "head": inventory.source.snapshot.head,
@@ -134,11 +135,30 @@ fn root_receipt_observed(
     Ok(receipt)
 }
 
-fn require_exact_files(
+fn require_exact_files(root: &Path, files: &BTreeSet<&str>, managed: &[&str]) -> Result<()> {
+    let mut paths = Vec::new();
+    collect_source_files(root, root, managed, &mut paths)?;
+    // 目录由原读取窗口登记；独立文件的完整路径核验复用有界读取，活跃窗口保持串行。
+    scan::ordered(&paths, |path| {
+        validate_absolute_path(path, LocalTestPathKind::ExistingFile)?;
+        let relative = path
+            .strip_prefix(root)?
+            .to_str()
+            .ok_or("源码路径必须为 UTF-8")?
+            .replace('\\', "/");
+        window::check(
+            files.contains(relative.as_str()),
+            "独立源码根混入清单外文件、运行配置或构建产物",
+        )
+    })?;
+    Ok(())
+}
+
+fn collect_source_files(
     root: &Path,
     directory: &Path,
-    files: &BTreeSet<&str>,
     managed: &[&str],
+    paths: &mut Vec<PathBuf>,
 ) -> Result<()> {
     for entry in crate::recovery::runtime::dataset_authority::reads::entries(directory)? {
         let entry = entry?;
@@ -159,17 +179,9 @@ fn require_exact_files(
                 // 此处只分离 Git 源码与受管资产；资产内容和内部链接由各自 guard 负责。
                 continue;
             }
-            require_exact_files(root, &path, files, managed)?;
+            collect_source_files(root, &path, managed, paths)?;
         } else {
-            validate_absolute_path(&path, LocalTestPathKind::ExistingFile)?;
-            let name = path
-                .strip_prefix(root)?
-                .to_str()
-                .ok_or("源码路径必须为 UTF-8")?
-                .replace('\\', "/");
-            if !files.contains(name.as_str()) {
-                return Err("独立源码根混入清单外文件、运行配置或构建产物".into());
-            }
+            paths.push(path);
         }
     }
     Ok(())

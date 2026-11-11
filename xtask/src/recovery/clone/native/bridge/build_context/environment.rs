@@ -254,10 +254,7 @@ fn first_executable(root: &Path, path: &str, name: &str) -> Result<PathBuf> {
                 if matches!(
                     error.kind(),
                     std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
-                ) =>
-            {
-                ()
-            }
+                ) => {}
             Err(_) => return Err("无法核对登记 PATH 的工具位置".into()),
         }
     }

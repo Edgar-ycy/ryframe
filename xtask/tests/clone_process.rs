@@ -133,7 +133,7 @@ fn post_copy_verify_rejects_substituted_inputs_before_execution() {
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .collect::<Vec<_>>();
-    assert_eq!(files, [input.clone()]);
+    assert_eq!(files.as_slice(), std::slice::from_ref(&input));
     assert_eq!(fs::read(input).unwrap(), b"{}");
 }
 
