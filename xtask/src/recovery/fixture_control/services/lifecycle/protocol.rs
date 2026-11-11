@@ -82,23 +82,7 @@ fn dispatch(input: &[u8]) -> Result<Value> {
     crate::recovery::clone::native::json::parse_fragment(raw, "生命周期请求")?;
     let value: Request = serde_json::from_str(raw)?;
     check(value.format_version == 1, "生命周期协议版本无效")?;
-    check(
-        if value.operation == "status" {
-            !value.write
-        } else {
-            value.write
-        },
-        "服务状态只读；生命周期操作必须显式指定 --write",
-    )?;
-    check(
-        ["status", "close", "recover", "reconcile", "restart"].contains(&value.operation.as_str()),
-        "未知生命周期操作",
-    )?;
-    check(
-        ["recover", "reconcile", "restart"].contains(&value.operation.as_str())
-            == value.owner.is_some(),
-        "生命周期 owner 与操作不一致",
-    )?;
+    super::validate_operation(&value.operation, value.owner.is_some(), value.write)?;
     for path in [&value.review, &value.environment] {
         crate::local_test_path::validate_local_test_path(
             path,

@@ -6,6 +6,7 @@ pub(super) fn validate(backend: &Path, operation: &str, args: &Value) -> Result<
     let fields: &[&str] = match operation {
         "review-successor" => &["previous", "review"],
         "cache-status" | "cache-external-termination" => &["request", "runtime", "effective"],
+        "cache-handoff-markers" => &["request", "runtime", "markers"],
         "storage-running" => &["identity", "request"],
         "storage-closed" => &["request"],
         "members-wait" => &["tree"],

@@ -13,6 +13,9 @@ use crate::{
 use serde_json::{Value, json};
 use std::{io::ErrorKind, path::Path};
 
+#[path = "observe/handoff.rs"]
+pub(super) mod handoff;
+
 const RUNTIME_FIELDS: &[&str] = &[
     "format_version",
     "request_sha256",

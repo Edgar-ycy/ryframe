@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use super::{
     super::{
         digest,
-        lifecycle::{lock::ProcessGuard, state},
+        lifecycle::{lock::ProcessGuard, manifest::fixture_storage, state},
     },
     common, producers,
 };
@@ -36,6 +36,7 @@ pub(crate) fn preflight(backend: &Path, run_dir: &Path, options: &StorageOptions
                     }
                 }
                 model::validate(backend, run_dir, &manifest, options.side, &request)?;
+                transferred(backend, run_dir, &manifest, options.side, &request)?;
                 registered::require_previous_stopped(backend, run_dir, &request, &descriptor, None)
             } else {
                 let filename = options
@@ -60,6 +61,7 @@ pub(crate) fn preflight(backend: &Path, run_dir: &Path, options: &StorageOptions
                     "存储重启请求",
                 )?;
                 model::validate(backend, run_dir, &manifest, options.side, &request)?;
+                transferred(backend, run_dir, &manifest, options.side, &request)?;
                 for key in ["api_url", "console_url"] {
                     common::require_closed_port(
                         request
@@ -132,6 +134,7 @@ pub(crate) fn execute(
         );
     }
     let private_environment = private.private;
+    let handoff = transferred(backend, run_dir, &manifest, options.side, &request)?;
     let mut guard = || {
         if registered::active(backend, run_dir, mode, number, options.side)? != controller
             || registered::registration(backend, run_dir, options.side)?
@@ -158,7 +161,7 @@ pub(crate) fn execute(
         number,
         &mut guard,
     )?;
-    Ok(json!({
+    let mut result = json!({
         "status": "storage_restarted",
         "side": options.side.as_str(),
         "request": descriptor,
@@ -174,7 +177,26 @@ pub(crate) fn execute(
         "reconciliation_required": true,
         "resources_deleted": false,
         "restore_qualified": false,
-    }))
+    });
+    if let Some(handoff) = handoff {
+        common::bound_file(backend, &handoff, "存储重启的 RustFS 移交结果")?;
+        result["fixture_handoff"] = handoff;
+    }
+    Ok(result)
+}
+
+fn transferred(
+    backend: &Path,
+    run: &Path,
+    manifest: &Value,
+    side: CloneSide,
+    request: &Value,
+) -> Result<Option<Value>> {
+    if side == CloneSide::Target && manifest["copy_stage"] == "source_to_seed" {
+        fixture_storage::rustfs_handoff(backend, run, request)
+    } else {
+        Ok(None)
+    }
 }
 
 pub(crate) fn status(backend: &Path, run_dir: &Path, side: CloneSide) -> Result<Value> {

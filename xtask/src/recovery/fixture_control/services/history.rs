@@ -9,6 +9,8 @@ use crate::{Result, recovery::clone::native::lifecycle::state};
 pub(super) mod evidence;
 #[path = "history/generation.rs"]
 mod generation;
+#[path = "history/handoff.rs"]
+mod handoff;
 #[path = "history/prefix.rs"]
 pub(super) mod prefix;
 #[path = "history/protocol.rs"]
@@ -72,8 +74,9 @@ pub(crate) fn validate(run: &Path, value: &Value, ready: bool, settled: bool) ->
     for (index, item) in attempts.iter().enumerate().skip(boundary) {
         let mode = text(item, "mode")?;
         check(
-            item["stage"] == STAGE && ["close", "recover", "reconcile", "restart"].contains(&mode),
-            "夹具服务仅允许明确 close/recover/reconcile/restart 生命周期追加",
+            item["stage"] == STAGE
+                && ["close", "recover", "reconcile", "restart", "handoff-rustfs"].contains(&mode),
+            "夹具服务生命周期阶段无效",
         )?;
         if item["status"] != "passed" {
             history["unsettled"]
@@ -102,6 +105,7 @@ pub(crate) fn validate(run: &Path, value: &Value, ready: bool, settled: bool) ->
         )?;
         match mode {
             "close" => close(run, index + 1, item, &result, &mut history)?,
+            "handoff-rustfs" => handoff::validate(run, index + 1, item, &result, &mut history)?,
             "recover" => recover(run, index + 1, item, &result, &mut history)?,
             "reconcile" => {
                 evidence::reconcile(run, index + 1, attempts, item, &result, &mut history)?
@@ -182,7 +186,9 @@ fn close(
         }
     }
     history["closed"] = json!(true);
-    history["restart_predecessor"] = item["result"].clone();
+    if history["rustfs_handoff"].is_null() {
+        history["restart_predecessor"] = item["result"].clone();
+    }
     Ok(())
 }
 
@@ -242,7 +248,7 @@ fn restart(
         "夹具服务未和解失败阶段后不能重启",
     )?;
     check(
-        !history["restart_predecessor"].is_null(),
+        !history["restart_predecessor"].is_null() && history["rustfs_handoff"].is_null(),
         "夹具服务重启必须紧接明确的正常关闭或外部终止核对",
     )?;
     check(

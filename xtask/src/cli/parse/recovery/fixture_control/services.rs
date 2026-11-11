@@ -27,12 +27,13 @@ pub(super) fn parse(args: &[String]) -> Result<FixtureServicesCommand, CliError>
     if matches!(
         operation,
         FixtureServiceOperation::Reconcile
+            | FixtureServiceOperation::HandoffRustfs
             | FixtureServiceOperation::Recover
             | FixtureServiceOperation::Restart
     ) != owner_binding.is_some()
     {
         return Err(CliError::new(
-            "services reconcile/recover/restart 必须指定 --owner-binding，其他操作不接受该参数",
+            "services reconcile/recover/restart/handoff-rustfs 必须指定 --owner-binding，其他操作不接受该参数",
         ));
     }
     Ok(FixtureServicesCommand::Run(FixtureServicesOptions {
@@ -50,6 +51,7 @@ fn service_operation(value: &str) -> Result<FixtureServiceOperation, CliError> {
         "buckets" => Ok(FixtureServiceOperation::Buckets),
         "status" => Ok(FixtureServiceOperation::Status),
         "close" => Ok(FixtureServiceOperation::Close),
+        "handoff-rustfs" => Ok(FixtureServiceOperation::HandoffRustfs),
         "reconcile" => Ok(FixtureServiceOperation::Reconcile),
         "recover" => Ok(FixtureServiceOperation::Recover),
         "restart" => Ok(FixtureServiceOperation::Restart),

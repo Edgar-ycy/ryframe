@@ -6,7 +6,7 @@ use super::lifecycle::stage::{self, StageRequest, StageRunner};
 use crate::{Result, cli::CloneCommand};
 
 pub(crate) mod common;
-mod origin;
+pub(super) mod origin;
 mod producers;
 pub(crate) mod storage;
 

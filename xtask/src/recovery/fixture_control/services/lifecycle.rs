@@ -24,6 +24,8 @@ mod close;
 mod context;
 #[path = "lifecycle/controller_recovery.rs"]
 mod controller_recovery;
+#[path = "lifecycle/handoff.rs"]
+mod handoff;
 #[path = "lifecycle/ledger.rs"]
 mod ledger;
 #[path = "lifecycle/model.rs"]
@@ -68,6 +70,21 @@ pub(in crate::recovery) use tree_control::observe_recovery_process;
 pub(in crate::recovery) use tree_control::stop_recovery_process;
 
 use model::{Context, binding, check, read, text};
+
+const OWNER_OPERATIONS: &[&str] = &["recover", "reconcile", "restart", "handoff-rustfs"];
+
+fn validate_operation(operation: &str, owner: bool, write: bool) -> Result<()> {
+    let needs_owner = OWNER_OPERATIONS.contains(&operation);
+    check(
+        needs_owner || matches!(operation, "status" | "close"),
+        "未知夹具生命周期操作",
+    )?;
+    check(
+        (operation == "status") != write,
+        "服务状态只读；生命周期写入必须显式指定 --write",
+    )?;
+    check(needs_owner == owner, "生命周期 owner 与操作不一致")
+}
 
 pub(super) trait Runtime {
     fn call(&mut self, operation: &str, arguments: Value) -> Result<Value>;
@@ -126,18 +143,7 @@ pub(super) fn execute_with(
     owner: Option<&Path>,
     write: bool,
 ) -> Result<Value> {
-    check(
-        if operation == "status" { !write } else { write },
-        "服务状态只读；生命周期写入必须显式指定 --write",
-    )?;
-    check(
-        ["status", "close", "reconcile", "recover", "restart"].contains(&operation),
-        "未知夹具生命周期操作",
-    )?;
-    check(
-        (["recover", "reconcile", "restart"].contains(&operation)) == owner.is_some(),
-        "recover/reconcile/restart 必须绑定明确 owner；close 不接受 owner",
-    )?;
+    validate_operation(operation, owner.is_some(), write)?;
     let value = runtime.call(
         "context",
         json!({"review":review,"environment":environment}),
@@ -146,6 +152,7 @@ pub(super) fn execute_with(
     match operation {
         "status" => status::run(runtime, &context),
         "close" => close::run(runtime, &context),
+        "handoff-rustfs" => handoff::run(runtime, &context, owner.ok_or("RustFS 移交缺少 owner")?),
         "reconcile" => reconcile::run(runtime, &context, owner.ok_or("和解缺少 owner")?),
         "recover" => recover::run(runtime, &context, owner.ok_or("恢复缺少 owner")?),
         "restart" => restart::run(runtime, &context, owner.ok_or("重启缺少 owner")?),

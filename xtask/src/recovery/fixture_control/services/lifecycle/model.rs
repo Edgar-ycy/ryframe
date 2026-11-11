@@ -163,7 +163,7 @@ impl Context {
                 continue;
             }
             let number = item["number"].as_u64().ok_or("生命周期编号无效")?;
-            if ["close", "reconcile", "restart"]
+            if ["close", "reconcile", "restart", "handoff-rustfs"]
                 .iter()
                 .any(|mode| item["mode"] == *mode)
             {

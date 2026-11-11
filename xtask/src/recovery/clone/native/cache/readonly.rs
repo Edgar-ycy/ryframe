@@ -23,6 +23,22 @@ pub(crate) fn status(
     }
 }
 
+pub(in crate::recovery) fn handoff_markers(
+    backend: &Path,
+    request: &Value,
+    runtime: &Value,
+    markers: &Value,
+) -> Result<Value> {
+    super::require_windows(request)?;
+    #[cfg(windows)]
+    return super::windows::handoff_markers(backend, request, runtime, markers);
+    #[cfg(not(windows))]
+    {
+        let _ = (backend, runtime, markers);
+        Err("RustFS 移交的 Redis 标记核对只支持本机 Windows".into())
+    }
+}
+
 pub(in crate::recovery) fn external_termination(
     backend: &Path,
     request: &Value,

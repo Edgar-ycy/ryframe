@@ -32,6 +32,69 @@ impl Fixture {
     }
 }
 
+/// 以原 RustFS 进程收据定位夹具，已移交时只允许接续指定复制账本。
+pub(in crate::recovery) fn rustfs_handoff(
+    backend: &Path,
+    copy: &Path,
+    request: &Value,
+) -> Result<Option<Value>> {
+    use crate::recovery::clone::native::resources::common;
+
+    let process = &request["previous"]["process_receipt"];
+    let path = bound_file(backend, process, "存储重启原进程收据", true)?;
+    let Some(service) = path
+        .parent()
+        .filter(|path| path.ends_with("rustfs"))
+        .and_then(Path::parent)
+    else {
+        return Ok(None);
+    };
+    let manifest_path = service.join("manifest.json");
+    let Some(manifest) =
+        crate::recovery::clone::native::resources::origin::receipt_file(&manifest_path)?
+    else {
+        return Ok(None);
+    };
+    if manifest["kind"] != "reference-fixture-service-run" {
+        return Ok(None);
+    }
+    history::validate_manifest(&manifest)?;
+    let current = common::binding(&service.join("state.json"))?;
+    let value = state::load(service, true)?;
+    let fixture = history::validate(service, &value, true, true)?;
+    let descriptor = &fixture["rustfs_handoff"];
+    if descriptor.is_null() {
+        return Ok(None);
+    }
+    let handoff = common::read_bound(backend, descriptor, "RustFS 移交结果")?;
+    if Path::new(text(&handoff["copy_state"]["path"], "移交复制账本")?) != copy.join("state.json")
+    {
+        return Err("RustFS 已移交其他复制账本".into());
+    }
+    let observed = state::historical(copy, &handoff["copy_state"], true)?;
+    let proof = common::read_bound(
+        backend,
+        &handoff["evidence"]["rustfs"],
+        "RustFS 移交整树收据",
+    )?;
+    let last = observed["historical_attempts"]
+        .as_u64()
+        .and_then(|count| count.checked_sub(1))
+        .and_then(|index| usize::try_from(index).ok())
+        .and_then(|index| observed["state"]["attempts"].get(index))
+        .ok_or("RustFS 移交的复制账本前缀无关闭结果")?;
+    if fixture["closed"] != false
+        || value["manifest"] != common::binding(&manifest_path)?
+        || last["result"] != handoff["seed_close"]
+        || proof["tree"]["process"] != request["previous"]["identity"]
+        || proof["data_directory"] != request["data_directory"]
+        || common::binding(&service.join("state.json"))? != current
+    {
+        return Err("RustFS 重启的原代次、数据目录或移交账本不一致".into());
+    }
+    Ok(Some(descriptor.clone()))
+}
+
 /// None 只表示摘要已核定的清单不是夹具服务清单。
 pub(crate) fn resolve(
     backend: &Path,
@@ -163,6 +226,7 @@ fn select(
     if (active || effective.is_none())
         && (current["closed"] != false
             || !current["external_recovery"].is_null()
+            || !current["rustfs_handoff"].is_null()
             || generation != &current["active_generation"])
     {
         return Err("arm 夹具当前代次不可用或与原有效代次不同".into());

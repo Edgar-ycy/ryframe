@@ -101,6 +101,7 @@ pub(super) fn run(command: &FixtureControlCommand, root: &Path) -> Result<()> {
                 }
                 FixtureServiceOperation::Status
                 | FixtureServiceOperation::Close
+                | FixtureServiceOperation::HandoffRustfs
                 | FixtureServiceOperation::Reconcile
                 | FixtureServiceOperation::Recover
                 | FixtureServiceOperation::Restart => services::lifecycle::execute(

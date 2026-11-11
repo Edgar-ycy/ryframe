@@ -6,6 +6,7 @@ pub(super) fn run(runtime: &mut dyn Runtime, context: &Context) -> Result<Value>
         return partial::close(runtime, context, &initial);
     }
     let history = context.history(true)?;
+    let recipient_guard = super::handoff::lock_recipient(context, &history)?;
     context.no_unknown()?;
     check(
         controller(runtime, context)?.is_null(),
@@ -27,6 +28,10 @@ pub(super) fn run(runtime: &mut dyn Runtime, context: &Context) -> Result<Value>
     let _guard = ProcessGuard::acquire(&context.run)?;
     owned(context, |owner| {
         context.guard(None)?;
+        if let Some(guard) = &recipient_guard {
+            guard.check()?;
+            observation::closed(&services["requests"]["rustfs"])?;
+        }
         stage(
             context,
             "close",

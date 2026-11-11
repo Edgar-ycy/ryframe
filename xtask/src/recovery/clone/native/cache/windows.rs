@@ -20,6 +20,7 @@ mod start;
 mod stop;
 mod supervisor;
 
+pub(super) use observe::handoff::handoff_markers;
 pub(super) use observe::{
     external_termination, inspect, inspect_reboot, observe, predecessor_reboot,
     predecessor_request, reboot_exit, status,

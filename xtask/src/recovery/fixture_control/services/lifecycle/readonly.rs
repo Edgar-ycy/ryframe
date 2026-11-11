@@ -38,6 +38,7 @@ pub(super) fn handles(operation: &str) -> bool {
         operation,
         "review-successor"
             | "cache-status"
+            | "cache-handoff-markers"
             | "cache-external-termination"
             | "storage-running"
             | "storage-closed"
@@ -95,6 +96,10 @@ impl NativeRuntime {
                     (!args["effective"].is_null()).then_some(&args["effective"]),
                 )
                 .map_err(|_| model::error("Windows Redis 外部终止证据核对失败。核对冻结收据、原进程身份和独占回环端口，保留现场，禁止自动重放")),
+            "cache-handoff-markers" => crate::recovery::clone::native::cache::readonly::handoff_markers(
+                &self.backend, &args["request"], &args["runtime"], &args["markers"],
+            )
+            .map_err(|_| model::error("RustFS 移交无法核对原 Redis 代次及 owner/sentinel；保留现场")),
             "review-successor" => {
                 let (code, result) =
                     crate::recovery::fixture_control::environment::protocol::execute(

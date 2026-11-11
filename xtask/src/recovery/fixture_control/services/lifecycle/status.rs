@@ -31,6 +31,15 @@ pub(super) fn run(runtime: &mut dyn Runtime, context: &Context) -> Result<Value>
         "new-scenario"
     } else if history["initial_complete"] != true {
         initial(runtime, context, &mut partial_close_rejection)?
+    } else if !history["rustfs_handoff"].is_null() {
+        let services = registered(runtime, context, true)?;
+        let closed = history["closed"] == true;
+        observations = super::handoff::observe_retired(runtime, &services, closed)?;
+        if closed {
+            "new-scenario"
+        } else {
+            "clone-storage"
+        }
     } else {
         let services = registered(runtime, context, true)?;
         observations = observe(runtime, &services)?;
@@ -73,6 +82,9 @@ pub(super) fn run(runtime: &mut dyn Runtime, context: &Context) -> Result<Value>
         "next_operation":next,"remote_writes":0});
     if let Some(rejection) = partial_close_rejection {
         status["partial_close_rejection"] = rejection;
+    }
+    if !history["rustfs_handoff"].is_null() {
+        status["rustfs_handoff"] = history["rustfs_handoff"].clone();
     }
     Ok(status)
 }
