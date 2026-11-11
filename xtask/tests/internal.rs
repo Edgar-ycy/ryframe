@@ -44,6 +44,8 @@ mod resource;
 mod session_pacing;
 #[path = "../src/source_edit.rs"]
 mod source_edit;
+#[path = "../src/source_scan.rs"]
+mod source_scan;
 #[path = "../src/watch.rs"]
 mod watch;
 #[path = "../src/workspace.rs"]

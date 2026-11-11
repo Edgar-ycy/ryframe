@@ -61,13 +61,16 @@ fn parallel_and_protected_serial_source_scans_preserve_complete_results_and_guar
         );
     }
     let parallel_source = source::capture(root).unwrap();
-    let parallel_manifest = manifest::capture(root).unwrap();
+    let parallel_manifest = manifest::capture(root, true).unwrap();
     assert_eq!(parallel_source.files.len(), 18);
     assert_eq!(parallel_manifest.as_array().unwrap().len(), 18);
     let window = reads::Window::begin().unwrap();
     assert!(reads::is_active());
     assert_eq!(source::capture(root).unwrap(), parallel_source);
-    assert_eq!(manifest::capture(root).unwrap(), parallel_manifest);
+    assert_eq!(
+        manifest::capture(root, !reads::is_active()).unwrap(),
+        parallel_manifest
+    );
     // finish 会取出读取集合并再次采集完整来源；窗口仍须保持串行和完整保护。
     window.finish(Ok(())).unwrap();
     let changed = std::fs::write(root.join("inputs/来源-00.txt"), b"changed");
@@ -80,9 +83,9 @@ fn parallel_and_protected_serial_source_scans_preserve_complete_results_and_guar
         br#"{"format_version":1,"files":["missing"],"trees":[],"excluded_directories":[]}"#,
     )
     .unwrap();
-    assert!(manifest::capture(root).is_err());
+    assert!(manifest::capture(root, true).is_err());
     let window = reads::Window::begin().unwrap();
-    assert!(manifest::capture(root).is_err());
+    assert!(manifest::capture(root, !reads::is_active()).is_err());
     assert!(window.finish(Ok(())).is_ok());
 }
 

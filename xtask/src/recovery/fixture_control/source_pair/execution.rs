@@ -8,9 +8,12 @@ use serde_json::{Value, json};
 
 use crate::{
     Result,
-    frontend_origin::scan,
     local_test_path::{LocalTestPathKind, validate_absolute_path, validate_local_test_path},
-    recovery::clone::native::{json::exact, source},
+    recovery::{
+        clone::native::{json::exact, source},
+        runtime::dataset_authority::reads,
+    },
+    source_scan,
 };
 
 use super::super::{file_binding, read_json, write_new};
@@ -139,7 +142,7 @@ fn require_exact_files(root: &Path, files: &BTreeSet<&str>, managed: &[&str]) ->
     let mut paths = Vec::new();
     collect_source_files(root, root, managed, &mut paths)?;
     // 目录由原读取窗口登记；独立文件的完整路径核验复用有界读取，活跃窗口保持串行。
-    scan::ordered(&paths, |path| {
+    source_scan::ordered(&paths, !reads::is_active(), |path| {
         validate_absolute_path(path, LocalTestPathKind::ExistingFile)?;
         let relative = path
             .strip_prefix(root)?
@@ -160,7 +163,7 @@ fn collect_source_files(
     managed: &[&str],
     paths: &mut Vec<PathBuf>,
 ) -> Result<()> {
-    for entry in crate::recovery::runtime::dataset_authority::reads::entries(directory)? {
+    for entry in reads::entries(directory)? {
         let entry = entry?;
         let path = entry.path();
         let name = entry.file_name();

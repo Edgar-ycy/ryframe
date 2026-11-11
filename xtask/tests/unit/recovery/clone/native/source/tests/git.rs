@@ -257,7 +257,7 @@ fn intermediate_junction_is_rejected_before_file_read() {
         fixture.0.join(crate::frontend_origin::sources::POLICY),
         br#"{"format_version":1,"files":["Cargo.toml","linked/Cargo.toml"],"trees":[],"excluded_directories":[]}"#,
     ).unwrap();
-    let manifest = crate::frontend_origin::manifest::capture(&fixture.0);
+    let manifest = crate::frontend_origin::manifest::capture(&fixture.0, true);
     fs::remove_dir(&junction).unwrap();
     assert!(observed.is_err());
     assert!(manifest.is_err());

@@ -9,9 +9,9 @@ use serde_json::{Value, json};
 use std::path::Path;
 
 #[cfg(test)]
-pub(crate) fn capture(root: &Path) -> Result<Value> {
+pub(crate) fn capture(root: &Path, parallel: bool) -> Result<Value> {
     let paths = sources::discover(root)?;
-    let entries = super::scan::ordered(&paths, |relative| {
+    let entries = crate::source_scan::ordered(&paths, parallel, |relative| {
         let path = root.join(relative);
         if digest::linked_path(&path)?.contains(&true) {
             return Err("观察器来源不能经过链接".into());

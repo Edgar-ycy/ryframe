@@ -1,11 +1,12 @@
 //! 完整来源逐项读取：最多四个短生命周期线程，按输入顺序合并。
-use crate::{Result, recovery::runtime::dataset_authority::reads};
+use crate::Result;
 
 pub(crate) fn ordered<T: Sync, R: Send>(
     items: &[T],
+    parallel: bool,
     read: impl Fn(&T) -> Result<R> + Sync,
 ) -> Result<Vec<R>> {
-    if reads::is_active() || items.len() < 2 {
+    if !parallel || items.len() < 2 {
         return items.iter().map(read).collect();
     }
     std::thread::scope(|scope| {

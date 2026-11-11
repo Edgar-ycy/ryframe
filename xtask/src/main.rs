@@ -27,6 +27,7 @@ mod release;
 mod resource;
 mod session_pacing;
 mod source_edit;
+mod source_scan;
 mod watch;
 mod workspace;
 

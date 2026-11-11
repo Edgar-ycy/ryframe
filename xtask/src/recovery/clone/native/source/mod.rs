@@ -10,7 +10,7 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
 use super::{digest, json as native_json};
-use crate::Result;
+use crate::{Result, recovery::runtime::dataset_authority::reads, source_scan};
 
 mod domains;
 pub(crate) mod protocol;
@@ -304,7 +304,7 @@ fn file_inventory(root: &Root) -> Result<(Vec<FileRecord>, SourceGuard)> {
     )?)?;
     paths.sort();
     paths.dedup();
-    let entries = crate::frontend_origin::scan::ordered(&paths, |raw| {
+    let entries = source_scan::ordered(&paths, !reads::is_active(), |raw| {
         let relative = std::str::from_utf8(raw).map_err(|_| "源码路径必须为 UTF-8")?;
         let Some(path) = source_file(root, relative, true)? else {
             return Ok(None);
