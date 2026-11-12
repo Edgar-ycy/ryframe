@@ -126,9 +126,7 @@ pub(super) fn online(
     let files = &documents.frontend.value["files"];
     require_frontend_files(files)?;
     let processes = observe_processes(runtime, &commands, inputs)?;
-    let observation = probe(runtime, files);
-    let after = (|| {
-        processes.verify(runtime)?;
+    let readiness = probe_and_recheck(runtime, files, &processes, || {
         frontend.verify()?;
         check(
             backend_sources(
@@ -142,8 +140,7 @@ pub(super) fn online(
         )?;
         environment::verify(inputs, request)?;
         environment::verify_projected(inputs, request, &generation_directory)
-    })();
-    let readiness = finish(observation, after)?;
+    })?;
     Ok(Observed {
         documents,
         processes: processes.value,
@@ -441,6 +438,17 @@ fn probe(runtime: &Value, files: &Value) -> Result<Value> {
     probes::request(&json!({"role":"worker","url":endpoints["worker"]}))?;
     probes::request(&json!({"role":"frontend","url":endpoints["frontend"],"files":files}))?;
     Ok(readiness)
+}
+
+fn probe_and_recheck(
+    runtime: &Value,
+    files: &Value,
+    processes: &Processes,
+    verify_sources: impl FnOnce() -> Result<()>,
+) -> Result<Value> {
+    let observation = probe(runtime, files);
+    let after = processes.verify(runtime).and_then(|()| verify_sources());
+    finish(observation, after)
 }
 
 fn require_frontend_files(files: &Value) -> Result<()> {

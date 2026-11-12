@@ -148,3 +148,50 @@ fn precheck_and_exit_failure_preserve_original_failure_without_replay() {
     assert!(!failure.to_string().contains("私有探测诊断"));
     assert!(!fixture.control.join(REGISTRATION_LOCK).exists());
 }
+
+#[test]
+fn successful_restore_body_cannot_leave_an_unregistered_runtime_file() {
+    let fixture = Fixture::new();
+    let runtime = fixture.control.join("evidence/runtime");
+    let foreign = runtime.join("foreign.json");
+    let payload = json!({"fixture":"unregistered runtime file"});
+    let (_, registered) = registration::runtime_observation(&fixture.backend, &runtime).unwrap();
+    assert_eq!(registered["exists"], false);
+    let owner_path = fixture.control.join(REGISTRATION_LOCK).join("owner.json");
+    let checks = Cell::new(0);
+    let writes = Cell::new(0);
+
+    let error = with_checked_owner(
+        &fixture.control,
+        &fixture.binding,
+        |owner| {
+            owner.check()?;
+            checks.set(checks.get() + 1);
+            let (_, observed) = registration::runtime_observation(&fixture.backend, &runtime)?;
+            assert_eq!(observed, registered);
+            Ok(())
+        },
+        |_| {
+            assert!(owner_path.is_file());
+            let contender: Result<()> =
+                Owner::with(&fixture.control, "runtime-start:fixture", |_| {
+                    panic!("恢复正文持有登记锁时不能进入另一操作")
+                });
+            assert!(contender.is_err());
+            writes.set(writes.get() + 1);
+            fs::create_dir(&runtime)?;
+            write_new(&foreign, &payload)?;
+            Ok(())
+        },
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("fresh target 运行目录已出现"));
+    assert_eq!(checks.get(), 2);
+    assert_eq!(writes.get(), 1);
+    assert_eq!(
+        fs::read(&foreign).unwrap(),
+        document::canonical_bytes(&payload).unwrap()
+    );
+    assert!(!fixture.control.join(REGISTRATION_LOCK).exists());
+}

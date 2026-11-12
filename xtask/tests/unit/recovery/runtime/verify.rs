@@ -151,3 +151,205 @@ fn direct_verify_requires_bound_authority_and_preserves_exact_reply() {
         })
     );
 }
+
+#[cfg(any(windows, target_os = "linux"))]
+mod online_probes {
+    use super::*;
+    use crate::recovery::clone::native::resources::common;
+    use sha2::{Digest, Sha256};
+    use std::{
+        fs,
+        io::{Read, Write},
+        net::TcpListener,
+        thread::{self, JoinHandle},
+        time::{Duration, Instant},
+    };
+
+    fn respond<T: Send + 'static>(
+        listener: &TcpListener,
+        path: &'static str,
+        content_type: &'static str,
+        body: &'static [u8],
+        before_response: impl FnOnce() -> T + Send + 'static,
+    ) -> JoinHandle<T> {
+        let listener = listener.try_clone().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(45);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                        assert!(Instant::now() < deadline, "没有收到恢复探针请求");
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("恢复探针测试监听失败：{error}"),
+                }
+            };
+            drop(listener);
+            stream.set_nonblocking(false).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            stream
+                .set_write_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut byte = [0];
+            while !request.ends_with(b"\r\n\r\n") {
+                stream.read_exact(&mut byte).unwrap();
+                request.push(byte[0]);
+                assert!(request.len() < 8192, "恢复探针请求过长");
+            }
+            let request = std::str::from_utf8(&request).unwrap();
+            assert!(request.starts_with(&format!("GET {path} HTTP/1.1\r\n")));
+            let outcome = before_response();
+            write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+            stream.write_all(body).unwrap();
+            outcome
+        })
+    }
+
+    #[derive(Clone, Copy)]
+    enum DuringProbe {
+        Unchanged,
+        ReplaceReceipt,
+        CloseWorkerListener,
+    }
+
+    #[test]
+    fn successful_http_probes_still_require_the_original_listener_and_receipt() {
+        for change in [
+            DuringProbe::Unchanged,
+            DuringProbe::ReplaceReceipt,
+            DuringProbe::CloseWorkerListener,
+        ] {
+            exercise(change);
+        }
+    }
+
+    fn exercise(change: DuringProbe) {
+        let root = crate::workspace::root_dir();
+        let local = root.join(".local-tests");
+        fs::create_dir_all(&local).unwrap();
+        let runtime_dir = tempfile::Builder::new()
+            .prefix("runtime-probe-recheck-")
+            .tempdir_in(local)
+            .unwrap();
+        let api = TcpListener::bind("127.0.0.1:0").unwrap();
+        let worker = TcpListener::bind("127.0.0.1:0").unwrap();
+        let frontend = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoints = json!({
+            "api":format!("http://{}/readyz", api.local_addr().unwrap()),
+            "worker":format!("http://{}/readyz", worker.local_addr().unwrap()),
+            "frontend":format!("http://{}", frontend.local_addr().unwrap()),
+        });
+        let identity = common::process_identity(std::process::id())
+            .unwrap()
+            .unwrap();
+        let runtime = runtime_fixture(&root, runtime_dir.path(), endpoints, &identity);
+        let window = Window::direct().unwrap();
+        let mut inputs = Inputs::new(&root);
+        let commands = json!({"frontend":[identity["executable"]]});
+        let processes = observe_processes(&runtime, &commands, &mut inputs).unwrap();
+        assert_eq!(processes.value["worker"]["identity"], identity);
+        let api_reply = br#"{"status":"ready","mysql":"up","redis":"up","object_storage":"up"}"#;
+        let api_response = respond(&api, "/readyz", "application/json", api_reply, || {});
+        let worker_response = respond(&worker, "/readyz", "text/plain", b"", || {});
+        let mut worker = Some(worker);
+        let close_during_probe = if matches!(change, DuringProbe::CloseWorkerListener) {
+            worker.take()
+        } else {
+            None
+        };
+        let worker_receipt = runtime_dir.path().join("worker.json");
+        let receipt_before = fs::read(&worker_receipt).unwrap();
+        let mut changed_receipt = receipt_before.clone();
+        let first_digit = changed_receipt
+            .iter_mut()
+            .find(|byte| **byte == b'1')
+            .unwrap();
+        *first_digit = b'2';
+        let frontend_body = b"<main>restore</main>";
+        let frontend_response = respond(
+            &frontend,
+            "/index.html",
+            "text/html",
+            frontend_body,
+            move || {
+                drop(close_during_probe);
+                if matches!(change, DuringProbe::ReplaceReceipt) {
+                    Some(fs::write(worker_receipt, changed_receipt))
+                } else {
+                    None
+                }
+            },
+        );
+        let files = json!([
+            {"path":"index.html","bytes":frontend_body.len(),"sha256":hex::encode(Sha256::digest(frontend_body))},
+            {"path":".vite/manifest.json","bytes":2,"sha256":hex::encode(Sha256::digest(b"{}"))},
+        ]);
+        let readiness = probe_and_recheck(&runtime, &files, &processes, || Ok(()));
+        api_response.join().unwrap();
+        worker_response.join().unwrap();
+        let write_result = frontend_response.join().unwrap();
+        let result = window.finish(inputs.finish(readiness));
+        match change {
+            DuringProbe::Unchanged => {
+                assert_eq!(
+                    result.unwrap(),
+                    serde_json::from_slice::<Value>(api_reply).unwrap()
+                );
+            }
+            DuringProbe::ReplaceReceipt => {
+                let attempt = write_result.unwrap();
+                if cfg!(windows) {
+                    assert_eq!(attempt.unwrap_err().raw_os_error(), Some(32));
+                    assert_eq!(
+                        fs::read(runtime_dir.path().join("worker.json")).unwrap(),
+                        receipt_before
+                    );
+                    assert_eq!(
+                        result.unwrap(),
+                        serde_json::from_slice::<Value>(api_reply).unwrap()
+                    );
+                } else {
+                    attempt.unwrap();
+                    assert!(result.unwrap_err().to_string().contains("被替换或修改"));
+                }
+            }
+            DuringProbe::CloseWorkerListener => {
+                assert_eq!(
+                    result.unwrap_err().to_string(),
+                    "监听所有者不同于登记内核进程；核对绑定端点与服务进程"
+                );
+            }
+        }
+        drop(worker);
+    }
+
+    fn runtime_fixture(root: &Path, directory: &Path, endpoints: Value, identity: &Value) -> Value {
+        let executable = path(&identity["executable"]).unwrap();
+        let facts = StableFile::open(&executable).unwrap().facts().unwrap();
+        let artifact =
+            json!({"executable":executable,"bytes":facts["bytes"],"sha256":facts["sha256"]});
+        let mut runtime = json!({
+            "paths":{"runtime_dir":directory},
+            "restore":{"scope_id":"restore-probe-test"},
+            "endpoints":endpoints,
+            "backend":{"artifacts":{"api":artifact,"worker":artifact}},
+            "processes":{},
+        });
+        for role in generation::ROLES {
+            let receipt = directory.join(format!("{role}.json"));
+            strict::write_new(&receipt, &json!({
+                "format_version":1,"role":role,"scope_id":"restore-probe-test","identity":identity,
+            })).unwrap();
+            let saved = document::read(&receipt, root, "探针进程收据").unwrap();
+            runtime["processes"][role] = json!({
+                "identity":identity,"receipt_path":receipt,"receipt_sha256":saved.sha256(),
+            });
+        }
+        runtime
+    }
+}
