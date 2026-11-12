@@ -12,10 +12,8 @@ use crate::{
     },
 };
 use native::{
-    bridge::scope::Scope,
-    cache::handoff::locks::Storage,
-    copy_transfer::{ReferenceTarget, mysql},
-    export::transport::SystemTransport,
+    bridge::scope::Scope, cache::handoff::locks::Storage, copy_transfer::ReferenceTarget,
+    export::transport::SystemTransport, s3,
 };
 
 #[path = "restore/database_images.rs"]
@@ -30,6 +28,8 @@ mod inputs;
 mod object_images;
 #[path = "restore/object_write.rs"]
 mod object_write;
+#[path = "restore/writes.rs"]
+mod writes;
 
 use inputs::Snapshot;
 
@@ -204,7 +204,17 @@ impl Execution<'_> {
                 self.capture(phase, expected, &runtime, evidence)
             },
             || {
-                self.write(tasks, &runtime)?;
+                writes::Writes {
+                    storage: self.target.inputs(),
+                    work: self.stage.work,
+                    backup_root: &self.snapshot.root,
+                    plan: &self.snapshot.chain.reference.value,
+                    manifest: &self.snapshot.manifest.value,
+                }
+                .run(tasks, &SystemTransport, s3::put_if_absent, &|| {
+                    runtime()?;
+                    self.check()
+                })?;
                 inventory::verify_artifacts(&self.snapshot.root, &self.snapshot.manifest.value)
             },
             evidence,
@@ -234,49 +244,6 @@ impl Execution<'_> {
         images::capture(self, phase, expected, &observe, evidence)?;
         self.target.check()?;
         runtime()
-    }
-
-    fn write(&self, tasks: &Value, runtime: &dyn Fn() -> Result<()>) -> Result<()> {
-        for task in native::json::array(tasks, "参考恢复授权任务")? {
-            let checkpoint = || {
-                runtime()?;
-                self.check()
-            };
-            checkpoint()?;
-            let artifact = model::bound_artifact(&json!({
-                "root":self.snapshot.root,"manifest":self.snapshot.manifest.value,
-                "relative":task["relative"],
-            }))?;
-            let plan = &self.snapshot.chain.reference.value;
-            if task["kind"] == "database" {
-                mysql::reference::write(
-                    &self.target.inputs(),
-                    &mysql::reference::Write {
-                        backup_root: &self.snapshot.root,
-                        work: self.stage.work,
-                        task,
-                        artifact: &artifact,
-                        mysql: &plan["tools"]["mysql"],
-                    },
-                    &SystemTransport,
-                    &checkpoint,
-                )?;
-            } else {
-                object_write::create(
-                    &object_write::Create {
-                        backend: self.stage.backend,
-                        work: self.stage.work,
-                        artifact_root: &self.snapshot.root,
-                        task,
-                        artifact: &artifact,
-                        target_s3: &plan["target"]["s3"],
-                        scope: text(&plan["target"]["scope_id"])?,
-                    },
-                    &checkpoint,
-                )?;
-            }
-        }
-        Ok(())
     }
 }
 

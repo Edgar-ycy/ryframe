@@ -125,6 +125,24 @@ fn with_checked_owner<T>(
     )
 }
 
+#[cfg(test)]
+pub(crate) fn with_fixture_owner<T>(
+    control: &Path,
+    binding: &Value,
+    verify: impl Fn() -> Result<()>,
+    body: impl FnOnce(&dyn Fn() -> Result<Value>) -> Result<T>,
+) -> Result<T> {
+    with_checked_owner(
+        control,
+        binding,
+        |owner| {
+            owner.check()?;
+            verify()
+        },
+        body,
+    )
+}
+
 #[derive(Debug)]
 struct AfterFailure {
     cause: Box<dyn Error>,

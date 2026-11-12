@@ -26,11 +26,7 @@ pub(super) struct Create<'a> {
     pub(super) scope: &'a str,
 }
 
-pub(super) fn create(spec: &Create<'_>, checkpoint: &dyn Fn() -> Result<()>) -> Result<Value> {
-    send_once(spec, checkpoint, s3::put_if_absent)
-}
-
-fn send_once(
+pub(super) fn send_once(
     spec: &Create<'_>,
     checkpoint: &dyn Fn() -> Result<()>,
     send: impl FnOnce(PutRequest) -> Result<Value>,

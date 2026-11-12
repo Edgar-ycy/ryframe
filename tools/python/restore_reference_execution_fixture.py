@@ -11,7 +11,7 @@ from restore_runtime_evidence import read_json_document
 
 def guards(test):
     test.events, test.locked = [], False
-    test.before_hook = test.checkpoint_hook = test.image_error = None
+    test.before_hook = test.image_error = None
 
     def registration(_backend, path, descriptor):
         document = read_json_document(path)
@@ -28,8 +28,6 @@ def guards(test):
             test.assertTrue(test.locked)
             documents[0].assert_unchanged()
             test.events.append("checkpoint")
-            if test.checkpoint_hook:
-                test.checkpoint_hook()
             return {"registration": reference.document_binding(documents[0]), "target_plan": descriptor}
         try:
             yield checkpoint

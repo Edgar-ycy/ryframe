@@ -147,17 +147,6 @@ class RestoreExecutionTests(unittest.TestCase):
         self.assertEqual(receipt["status"], "failed")
         self.assertEqual(set(receipt["resource_images"]), {"before"})
 
-    def test_checkpoint_failure_immediately_before_database_prevents_any_write(self):
-        def check():
-            if self.events.count("checkpoint") == 4:
-                raise ValueError("三端口不再空闲")
-        self.checkpoint_hook = check
-        tools = Mock()
-        with self.assertRaisesRegex(ValueError, "三端口"):
-            reference.execute(self.args, self.plan, self.backend, tools, self.work)
-        tools.restore_database.assert_not_called()
-        tools.create_object_if_absent.assert_not_called()
-
     def test_registration_drift_or_resource_image_output_collision_prevents_preflight(self):
         original = self.registration_path.read_bytes()
         self.registration_path.write_text('{"wrong":true}', encoding="utf-8")
@@ -171,26 +160,6 @@ class RestoreExecutionTests(unittest.TestCase):
         tools.restore_database.assert_not_called()
         tools.create_object_if_absent.assert_not_called()
         self.assertFalse((self.work / "restore-base.json").exists())
-
-    def test_each_write_has_a_checkpoint_inside_the_runtime_lock(self):
-        def write(*_args, **_kwargs):
-            self.assertTrue(self.locked)
-            self.assertEqual(self.events[-1], "checkpoint")
-            self.events.append("write")
-        tools = Mock()
-        tools.restore_database.side_effect = write
-        tools.create_object_if_absent.side_effect = write
-        reference.execute(self.args, self.plan, self.backend, tools, self.work)
-        self.assertEqual(self.events.count("write"), 5)
-
-    def test_artifact_drift_between_databases_stops_before_the_next_write(self):
-        tools = Mock()
-        next_path = self.root / "databases/shared.sql"
-        tools.restore_database.side_effect = lambda *_: next_path.write_bytes(next_path.read_bytes() + b"\n")
-        with self.assertRaisesRegex(ValueError, "当前产物字节"):
-            reference.execute(self.args, self.plan, self.backend, tools, self.work)
-        self.assertEqual(tools.restore_database.call_count, 1)
-        tools.create_object_if_absent.assert_not_called()
 
 
 if __name__ == "__main__":
