@@ -193,7 +193,7 @@ cargo migrate -- --config-dir <directory> tenant-data ownership-adopt --target <
 cargo migrate -- --config-dir <directory> tenant-data ownership-adopt --target <key> --apply .local-tests/tenant-ownership.json --write
 ```
 
-先停止 API、Worker、scheduler 和其他生产者，并在绑定配置声明 `reset.services_stopped=true`。该字段在本命令中仅确认运维停止边界，不执行 reset，也不是自动取得的进程停止证明。`--plan` 只显示任务图；不带写入选项的预览只读数据库并输出计划。计划只允许保存到当前后端 `.local-tests` 的新文件。先审阅物理 UUID/schema、scope、配置指纹、完整结构/账本、归属前像及 fence/placement 绑定，再显式 apply。未知对象、部分初始化、在途或不能解释的 fence/placement、配置漂移及已有归属冲突均拒绝；命令不会修复业务数据或重放历史 DDL。
+先停止 API、Worker、scheduler 和其他生产者，并在绑定配置声明 `reset.services_stopped=true`。该字段在本命令中仅确认运维停止边界，不执行 reset，也不是自动取得的进程停止证明。`--plan` 只显示任务图；不带写入选项的预览只读数据库并输出计划。计划只允许保存到当前后端 `.local-tests` 的新文件。执行 `--output ... --write` 时，命令会按需创建缺失的父目录。示例中的 `.local-tests` 路径用于保存命令生成的接管计划。先审阅物理 UUID/schema、scope、配置指纹、完整结构/账本、归属前像及 fence/placement 绑定，再显式 apply。未知对象、部分初始化、在途或不能解释的 fence/placement、配置漂移及已有归属冲突均拒绝；命令不会修复业务数据或重放历史 DDL。
 
 物理 `ownership-adopt` 与业务 `adopt --module` 分开：后者只接管业务迁移账本，前者要求适用业务账本和结构已经有效。提交结果未知时先 inspect 原计划核对完整前后像，不修改计划、不自动重放。独立控制库与目标库的一致性依赖外部生产者停止边界，不宣称跨库原子提交。
 
