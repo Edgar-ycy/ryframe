@@ -71,9 +71,12 @@ impl Fixture {
 fn creation_is_exclusive_bound_and_preserved_on_unknown_result() {
     let f = Fixture::new();
     let receipt = create_intent(&f.root, &f.binding, &f.request).unwrap();
+    let path = creation_path(&f.root);
+    let original_bytes = fs::read(&path).unwrap();
     assert!(create_intent(&f.root, &f.binding, &f.request).is_err());
-    files::bound(&creation_path(&f.root), &receipt).unwrap();
-    let original = files::document(&creation_path(&f.root)).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), original_bytes);
+    files::bound(&path, &receipt).unwrap();
+    let original = files::document(&path).unwrap();
     validate_creation(&original, &f.root, &f.binding).unwrap();
     for (field, replacement) in [
         ("format_version", json!(true)),
@@ -84,7 +87,30 @@ fn creation_is_exclusive_bound_and_preserved_on_unknown_result() {
         value[field] = replacement;
         assert!(validate_creation(&value, &f.root, &f.binding).is_err());
     }
+    fs::write(&path, b"{\"partial\":").unwrap();
+    assert!(create_intent(&f.root, &f.binding, &f.request).is_err());
+    assert_eq!(fs::read(path).unwrap(), b"{\"partial\":");
     assert!(!f.root.exists());
+}
+
+#[test]
+fn generation_request_rejects_invalid_commands_and_boolean_numbers_before_writes() {
+    let fixture = Fixture::new();
+    let mut args = json!({
+        "action":"new-generation", "root":fixture.root, "binding":fixture.binding,
+        "value":fixture.request, "previous":null, "commands":fixture.commands, "number":1,
+    });
+    assert_eq!(request(&args).unwrap()["status"], "starting");
+    args["number"] = json!(true);
+    assert!(request(&args).is_err());
+    args["number"] = json!(1);
+    args["commands"]["frontend"] = json!(["relative-program"]);
+    assert!(request(&args).is_err());
+    args["commands"] = fixture.commands;
+    args["unexpected"] = json!(true);
+    assert!(request(&args).is_err());
+    assert!(!fixture.root.exists());
+    assert!(!creation_path(&fixture.root).exists());
 }
 #[test]
 fn state_preserves_first_directory_cut_and_rejects_unknown_files_and_stale_preimage() {

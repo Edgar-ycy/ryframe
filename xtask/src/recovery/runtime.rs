@@ -23,13 +23,13 @@ pub(crate) mod dataset_authority;
 #[path = "runtime/frontend_site.rs"]
 pub(crate) mod frontend_site;
 #[path = "runtime/generation/mod.rs"]
-pub(crate) mod generation;
+mod generation;
 #[path = "runtime/live_verify.rs"]
 pub(in crate::recovery) mod live_verify;
 #[path = "runtime/performance.rs"]
 pub(crate) mod performance;
 #[path = "runtime/probes.rs"]
-pub(crate) mod probes;
+mod probes;
 
 #[path = "runtime/recover.rs"]
 mod recover;

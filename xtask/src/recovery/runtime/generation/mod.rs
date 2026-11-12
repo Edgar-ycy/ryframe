@@ -20,14 +20,7 @@ pub(super) const ROLES: [&str; 3] = ["api", "worker", "frontend"];
 pub(super) const STATE: &str = "lifecycle.json";
 pub(super) const LAUNCH: &str = "runtime-launch.json";
 
-pub(crate) fn writes(args: &Value) -> bool {
-    matches!(
-        args["action"].as_str(),
-        Some("create-intent" | "save-state" | "write-launch")
-    )
-}
-
-pub(crate) fn request(args: &Value) -> Result<Value> {
+pub(super) fn request(args: &Value) -> Result<Value> {
     strict::exact(
         args,
         &[
@@ -63,10 +56,6 @@ pub(crate) fn request(args: &Value) -> Result<Value> {
                 &args["binding"],
                 commands,
             )?;
-            Ok(value.clone())
-        }
-        "validate-creation" => {
-            validate_creation(value, &root, &args["binding"])?;
             Ok(value.clone())
         }
         "create-intent" => create_intent(&root, &args["binding"], value),

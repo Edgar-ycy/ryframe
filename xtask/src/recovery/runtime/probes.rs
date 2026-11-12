@@ -15,7 +15,7 @@ use crate::{Result, recovery::clone::native::json as strict};
 #[path = "../../../tests/unit/recovery/runtime/probes/tests.rs"]
 mod tests;
 
-pub(crate) fn request(args: &Value) -> Result<Value> {
+pub(super) fn request(args: &Value) -> Result<Value> {
     runtime(args)?.block_on(controlled(args, async {
         let _ = tokio::signal::ctrl_c().await;
     }))

@@ -122,8 +122,6 @@ fn require_write_authorization(request: &Value) -> Result<()> {
             request["operation"].as_str().ok_or("比较操作无效")?,
             &request["arguments"],
         )?
-    } else if request["operation"] == "runtime-generation" {
-        crate::recovery::runtime::generation::writes(&request["arguments"])
     } else {
         matches!(
             request["operation"].as_str(),
@@ -223,8 +221,6 @@ fn dispatch(request: &Value) -> Result<Value> {
         Some("runtime-cache-observation") => cache::observation(args),
         Some("runtime-cache-receipt") => ready::policy::cache_attempt::receipt(args),
         Some("runtime-cache-resume") => ready::policy::cache_attempt::resume(args),
-        Some("runtime-probe") => crate::recovery::runtime::probes::request(args),
-        Some("runtime-generation") => crate::recovery::runtime::generation::request(args),
         Some(operation)
             if operation.starts_with("reference-")
                 || operation == "source-reference-projection" =>

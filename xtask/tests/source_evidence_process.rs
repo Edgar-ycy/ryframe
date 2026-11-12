@@ -1,6 +1,7 @@
 use std::{
     fs,
     io::Write,
+    net::TcpListener,
     path::Path,
     process::{Command, Stdio},
 };
@@ -44,6 +45,60 @@ fn malformed_secret_bearing_requests_have_sanitized_failure_and_no_retry_permiss
         assert_eq!(response["error"]["automatic_retry_permitted"], false);
     }
     assert!(!invoke(b"{}", &["--unexpected"]).status.success());
+}
+
+#[test]
+fn retired_runtime_operations_cannot_publish_intent_or_probe_a_listener() {
+    let base = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join(".local-tests/source-evidence-process");
+    fs::create_dir_all(&base).unwrap();
+    let coordinator = tempfile::tempdir_in(base).unwrap();
+    let local = coordinator.path().join(".local-tests");
+    fs::create_dir(&local).unwrap();
+    let root = local.join("runtime");
+    let intent = local.join("runtime.runtime-create.json");
+    let descriptor =
+        |name: &str| json!({"path":local.join(name),"bytes":2,"sha256":"a".repeat(64)});
+    let binding = json!({"registration":descriptor("registration.json"),
+        "target_plan":descriptor("target-plan.json")});
+    let tool = Path::new(env!("CARGO_BIN_EXE_xtask"));
+    let mut generation = json!({"operation":"runtime-generation","write":false,"arguments":{
+        "action":"new-generation","root":root,"binding":binding,"previous":null,"number":1,
+        "commands":{"api":[tool],"worker":[tool],"frontend":[tool]},
+        "value":{"registration":binding,"runtime_directory":root,
+            "tools":{"coordinator_root":coordinator.path()},"authority":{"scope_id":"test-runtime"}}
+    }});
+    assert_rejected_operation(&generation, "来源证据操作无效");
+    generation["write"] = json!(true);
+    generation["arguments"]["action"] = json!("create-intent");
+    generation["arguments"]["commands"] = Value::Null;
+    assert_rejected_operation(&generation, "来源证据写入授权与操作不一致");
+    assert!(!intent.exists() && !root.exists());
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let probe = json!({"operation":"runtime-probe","write":false,"arguments":{
+        "role":"worker","url":format!("http://{}/readyz", listener.local_addr().unwrap()),
+    }});
+    assert_rejected_operation(&probe, "来源证据操作无效");
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+}
+
+fn assert_rejected_operation(request: &Value, diagnostic: &str) {
+    let output = invoke(&serde_json::to_vec(request).unwrap(), &[]);
+    assert!(!output.status.success());
+    assert!(output.stderr.is_empty());
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["ok"], false);
+    assert_eq!(value["error"]["remote_write_may_have_occurred"], false);
+    assert_eq!(value["error"]["automatic_retry_permitted"], false);
+    let message = value["error"]["message"].as_str().unwrap();
+    assert!(message.contains(diagnostic), "{message}");
 }
 
 #[test]
@@ -199,17 +254,29 @@ fn physical_binding_reads_selected_plaintext_files_and_ignores_legacy_environmen
     let temporary = tempfile::tempdir_in(base).unwrap();
     let root = temporary.path();
     fs::create_dir(root.join(".local-tests")).unwrap();
-    let directory = root.join("中文 隔离配置");
+    let directory = root.join(".local-tests/中文 隔离配置");
     fs::create_dir(&directory).unwrap();
     let defaults = root.join(".local-tests/client.cnf");
     fs::write(&defaults,"[client]\nhost=127.0.0.1\nport=3306\nuser=fixture\npassword=private-secret\nssl-mode=REQUIRED\n").unwrap();
     let configuration = "scope_id='source-process'\n[database.primary]\nhost='127.0.0.1'\nport=3306\ndatabase='fixture'\nusername='fixture'\npassword='private-secret'\ntls_mode='required'\n[object_storage]\nbackend='rustfs'\nendpoint='http://127.0.0.1:29000'\nregion='us-east-1'\naccess_key='private-access'\nsecret_key='private-object'\nuse_ssl=false\n";
     let file = directory.join("app.test.toml");
     fs::write(&file, configuration).unwrap();
-    let request = json!({"operation":"physical-binding","write":false,"arguments":{
+    let bind_configuration = || {
+        let request = json!({"operation":"reference-configuration-binding","write":false,
+            "arguments":{"backend":root,"binding":null,"directory":directory,"app_env":"test"}});
+        let output = invoke(&serde_json::to_vec(&request).unwrap(), &[]);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+        response["result"]["value"].clone()
+    };
+    let mut request = json!({"operation":"physical-binding","write":false,"arguments":{
         "backend":root,"evidence_root":root,"config_dir":directory,"app_env":"test",
         "source":{"scope_id":"source-process","databases":[{"key":"shared-control","kind":"combined","mode":"shared","database":"fixture","server_uuid":"server-fixture","defaults_file":defaults,"defaults_sha256":hex::encode(Sha256::digest(fs::read(&defaults).unwrap()))}],
-        "s3":{"endpoint":"http://127.0.0.1:29000","region":"us-east-1","access_key":"private-access","secret_key":"private-object"}}}});
+        "s3":{"configuration":bind_configuration()}}}});
     let output = invoke(&serde_json::to_vec(&request).unwrap(), &[]);
     assert!(
         output.status.success(),
@@ -235,16 +302,19 @@ fn physical_binding_reads_selected_plaintext_files_and_ignores_legacy_environmen
     }
     assert_eq!(fs::read_to_string(&file).unwrap(), configuration);
     assert!(!directory.join("app.toml").exists());
+    let mut retired = request.clone();
+    retired["arguments"]["source"]["s3"] = json!({
+        "endpoint":"http://127.0.0.1:29000","region":"us-east-1",
+        "access_key":"private-access","secret_key":"private-object",
+    });
+    assert_rejected_operation(&retired, "来源对象文件绑定字段缺失或包含未知字段");
     fs::write(
         &file,
         configuration.replace("source-process", "other-scope"),
     )
     .unwrap();
-    assert!(
-        !invoke(&serde_json::to_vec(&request).unwrap(), &[])
-            .status
-            .success()
-    );
+    request["arguments"]["source"]["s3"]["configuration"] = bind_configuration();
+    assert_rejected_operation(&request, "目标环境与计划 scope 必须明确一致");
     fs::write(&file, "password='private-secret' invalid").unwrap();
     let failure = invoke(&serde_json::to_vec(&request).unwrap(), &[]);
     assert!(!failure.status.success());

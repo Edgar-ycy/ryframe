@@ -161,6 +161,9 @@ fn parses_runtime_build_registration_and_start_into_typed_requests() {
         "12.5",
         "--write",
     ]));
+    let mut without_write = start.clone();
+    without_write.pop();
+    assert!(parse(without_write).is_err());
     let RecoveryCommand::Runtime(RuntimeCommand::Start(start)) = parsed_recovery(start) else {
         panic!("start 没有解析为结构化请求")
     };
