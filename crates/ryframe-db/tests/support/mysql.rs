@@ -1,6 +1,8 @@
 //! MySQL 真实协议测试共用的精确隔离 fixture；只有显式文件配置才连接外部服务。
 use futures_util::FutureExt;
-use ryframe_config::{AppConfig, DbConnection, DbTlsMode, Environment, SqlLogLevel};
+use ryframe_config::{
+    AppConfig, DatabaseConfig, DbConnection, DbTlsMode, Environment, SqlLogLevel,
+};
 use ryframe_db::connection;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement, sqlx};
 use std::{
@@ -35,12 +37,16 @@ impl MySqlTestConfiguration {
         self.config.scope_id.as_str()
     }
 
+    pub(crate) fn database(&self) -> &DatabaseConfig {
+        &self.config.database
+    }
+
     pub(crate) fn connection(
         &self,
         database: &str,
         tls_mode: Option<DbTlsMode>,
     ) -> Result<DbConnection, String> {
-        connection_config(&self.config.database.primary, database, tls_mode)
+        connection_config(&self.database().primary, database, tls_mode)
     }
 }
 
@@ -52,24 +58,29 @@ struct MySqlFixture {
 }
 
 impl MySqlFixture {
-    async fn create(test_name: &str) -> Result<Self, String> {
+    async fn create(
+        test_name: &str,
+        scope: &str,
+        connection: &DbConnection,
+        expected_server_uuid: Option<&str>,
+    ) -> Result<Self, String> {
         let root = workspace_root(Path::new(env!("CARGO_MANIFEST_DIR")))?;
-        let config = MySqlTestConfiguration::load()?;
-        let schema = unique_schema(config.scope_id(), test_name);
+        let schema = unique_schema(scope, test_name);
         validate_schema(&schema)?;
-        let admin_config = config.connection("mysql", None)?;
-        let schema_config = config.connection(&schema, None)?;
+        let admin_config = connection_config(connection, "mysql", None)?;
+        let schema_config = connection_config(connection, &schema, None)?;
         let pool = connection::connect(&admin_config)
             .await
             .map_err(|_| "连接 MySQL 管理库失败，未创建 schema".to_owned())?;
         let mut admin = AdminSession::acquire(pool).await?;
         let prepared = Self::prepare(
             &mut admin,
-            &config,
+            scope,
             &schema,
             test_name,
             &schema_config,
             &root,
+            expected_server_uuid,
         )
         .await;
         match prepared {
@@ -93,17 +104,23 @@ impl MySqlFixture {
 
     async fn prepare(
         admin: &mut AdminSession,
-        config: &MySqlTestConfiguration,
+        scope: &str,
         schema: &str,
         test_name: &str,
         schema_config: &DbConnection,
         root: &Path,
+        expected_server_uuid: Option<&str>,
     ) -> Result<(DatabaseConnection, Ownership, Evidence), String> {
         let identity = admin.identity().await?;
+        if expected_server_uuid
+            .is_some_and(|expected| !identity.server_uuid.eq_ignore_ascii_case(expected))
+        {
+            return Err("fixture 管理连接实例与只读预检不符，尚未获取锁或建库".into());
+        }
         admin.lock(schema).await?;
         let plan = Plan {
             schema: schema.to_owned(),
-            scope: config.scope_id().to_owned(),
+            scope: scope.to_owned(),
             test: test_name.to_owned(),
             identity,
         };
@@ -298,7 +315,24 @@ where
         return;
     }
 
-    let fixture = MySqlFixture::create(test_name)
+    let config = MySqlTestConfiguration::load().unwrap_or_else(|error| panic!("{error}"));
+    let primary = config
+        .connection("mysql", None)
+        .unwrap_or_else(|error| panic!("{error}"));
+    run_mysql_test_with_configuration(test_name, config.scope_id(), &primary, None, test).await;
+}
+
+pub(crate) async fn run_mysql_test_with_configuration<F, Fut>(
+    test_name: &str,
+    scope: &str,
+    connection: &DbConnection,
+    expected_server_uuid: Option<&str>,
+    test: F,
+) where
+    F: FnOnce(DatabaseConnection) -> Fut,
+    Fut: Future<Output = Result<(), String>>,
+{
+    let fixture = MySqlFixture::create(test_name, scope, connection, expected_server_uuid)
         .await
         .unwrap_or_else(|error| panic!("{error}"));
     let database = fixture.database.clone();
@@ -354,7 +388,7 @@ where
     }
 }
 
-fn connection_config(
+pub(crate) fn connection_config(
     primary: &DbConnection,
     database: &str,
     tls_mode: Option<DbTlsMode>,
