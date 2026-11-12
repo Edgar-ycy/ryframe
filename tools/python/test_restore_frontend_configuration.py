@@ -7,7 +7,6 @@ import json
 import os
 from pathlib import Path
 import stat
-import subprocess
 import sys
 import unittest
 from unittest.mock import patch
@@ -122,12 +121,6 @@ class FrontendConfigurationTests(unittest.TestCase):
         write_json(self.root / ".local-tests/frontend-tools.json", {})
         self.safe_failure(lambda: verify_frontend_inputs(self.root, self.build), "不同")
 
-    def test_before_after_detects_byte_change_even_without_semantic_change(self):
-        inputs = verify_frontend_inputs(self.root, self.build)
-        with (self.root / "config/app.dev.toml").open("a", encoding="utf-8") as file:
-            file.write("# 漂移\n")
-        self.safe_failure(inputs.assert_unchanged, "漂移")
-
     def test_toml_duplicate_unknown_private_and_utf8_errors_do_not_leak(self):
         selected = self.root / "config/app.dev.toml"
         malformed = [
@@ -212,23 +205,6 @@ class FrontendConfigurationTests(unittest.TestCase):
         write_json(self.root / "dist/build-identity.json", {"frontend_commit": "0" * 40})
         self.safe_failure(lambda: verify_frontend_inputs(self.root, self.build), "身份")
 
-    def test_source_identity_accepts_json_number_one_point_zero_with_real_fixture(self):
-        source = self.root / IDENTITY
-        write_json(source, {"format_version": 1.0, "frontend_commit": self.head})
-        self.assertIn(b'"format_version": 1.0', source.read_bytes())
-        build = frontend_context(self.root)
-        inputs = verify_frontend_inputs(self.root, build, expected_head=self.head)
-        self.assertEqual(inputs.identity["frontend_commit"], self.head)
-        self.assertEqual(inputs.identity["source_file"], build["identity"]["source_file"])
-        save_receipt(self.root)
-        validate_registered_frontend(self.root, self.head)
-
-    def test_source_identity_rejects_bool_nonintegral_nonfinite_and_other_versions(self):
-        for version in (True, False, 1.5, float("nan"), float("inf"), float("-inf"), 0, 2, "1"):
-            write_json(self.root / IDENTITY, {"format_version": version, "frontend_commit": self.head})
-            with self.subTest(kind=type(version).__name__):
-                self.safe_failure(lambda: frontend_context(self.root))
-
     def test_generic_development_is_allowed_but_not_registered_formal(self):
         write_json(self.root / IDENTITY, {"format_version": 1, "frontend_commit": "development"})
         write_json(self.root / "dist/build-identity.json", {"frontend_commit": "development"})
@@ -255,61 +231,6 @@ class FrontendConfigurationTests(unittest.TestCase):
             build = copy.deepcopy(self.build)
             mutate(build)
             self.safe_failure(lambda: validate_frontend_build_context(build))
-
-    def test_v3_receipt_float_version_and_integer_byte_numbers_use_real_artifacts(self):
-        artifact = self.root / "dist/assets/one-byte.bin"
-        artifact.parent.mkdir(parents=True, exist_ok=True)
-        artifact.write_bytes(b"x")
-        file = save_receipt(self.root)
-        receipt = read_json_document(file).value
-        receipt["format_version"] = 3.0
-        for item in receipt["files"]:
-            item["bytes"] = float(item["bytes"])
-        write_json(file, receipt)
-        self.assertIn(b'"format_version": 3.0', file.read_bytes())
-        self.assertIn(b'"bytes": 1.0', file.read_bytes())
-        validate_frontend_build(self.root)
-        validate_registered_frontend(self.root, self.head)
-
-    def test_v3_receipt_invalid_numeric_types_ranges_and_nonfinite_values_are_rejected(self):
-        file = save_receipt(self.root)
-        original = read_json_document(file).value
-        for field, values in (
-            ("format_version", (True, False, 3.5, float("nan"), float("inf"), 2, 4, "3")),
-            (
-                "bytes",
-                (
-                    True,
-                    False,
-                    -1,
-                    1.5,
-                    9007199254740992,
-                    float(9007199254740992),
-                    float("nan"),
-                    float("inf"),
-                    float("-inf"),
-                    "1",
-                ),
-            ),
-        ):
-            for number in values:
-                value = copy.deepcopy(original)
-                if field == "bytes":
-                    value["files"][0][field] = number
-                else:
-                    value[field] = number
-                write_json(file, value)
-                with self.subTest(field=field, kind=type(number).__name__):
-                    self.safe_failure(lambda: validate_frontend_receipt(read_json_document(file).value))
-
-    def test_v3_receipt_safe_integer_schema_accepts_zero_and_inclusive_upper_boundary(self):
-        file = save_receipt(self.root)
-        receipt = read_json_document(file).value
-        for number in (0, -0.0, 9007199254740991, float(9007199254740991)):
-            receipt["files"][0]["bytes"] = number
-            write_json(file, receipt)
-            value = validate_frontend_receipt(read_json_document(file).value)
-            self.assertEqual(value["files"][0]["bytes"], number)
 
     def test_readonly_validation_preserves_all_file_bytes(self):
         save_receipt(self.root)
@@ -397,36 +318,6 @@ class FrontendConfigurationTests(unittest.TestCase):
         observed = verify_frontend_inputs(self.root, frontend_context(self.root))
         (self.root / ".local-tests/frontend-tools.json").unlink()
         self.safe_failure(observed.assert_unchanged, "漂移")
-
-    def test_contract_entry_executes_validator_and_redacts_private_toml(self):
-        save_receipt(self.root)
-        inventory = capture_inventory(self.root)
-        request = json.dumps({"frontend_inventories": [inventory], "backend_inventories": []})
-        from rate_limit_tool import tool_binding, verified_tool
-
-        binding = tool_binding()
-        command = [binding["path"], "__frontend-build-contract", "--frontend-dir", str(self.root)]
-        options = {
-            "input": request,
-            "text": True,
-            "encoding": "utf-8",
-            "capture_output": True,
-            "env": {**os.environ, "APP_ENV": "prod", "VITE_APP_API_ORIGIN": SECRET},
-        }
-        with verified_tool(binding):
-            result = subprocess.run(command, **options)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        value = json.loads(result.stdout)
-        self.assertEqual(value["frontend_build"]["configuration"], self.build["configuration"])
-        self.assertNotIn("environment_files", value)
-        (self.root / "config/app.dev.toml").write_text(f'password="{SECRET}"', encoding="utf-8")
-        with verified_tool(binding):
-            failure = subprocess.run(command, **options)
-        self.assertNotEqual(failure.returncode, 0)
-        self.assertEqual(failure.stdout, "")
-        self.assertNotIn(SECRET, failure.stderr)
-        self.assertIn("FrontendBuildRejected", failure.stderr)
-        self.assertIn("重新构建", failure.stderr)
 
     def test_rust_origin_normalization_preserves_frontend_url_semantics(self):
         for value, expected in (

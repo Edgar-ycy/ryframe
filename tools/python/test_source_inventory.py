@@ -1,6 +1,5 @@
 """来源清单临时适配的协议、身份入口和返回类型测试；算法覆盖由 Rust 承担。"""
 import hashlib
-import json
 from pathlib import Path
 import subprocess
 import sys
@@ -47,37 +46,6 @@ class SourceInventoryAdapterTests(unittest.TestCase):
             self.assertEqual(sources.git(Path("D:/source"), "ls-files", "-z"), b"raw\x00")
         self.assertEqual(run.call_args.args[0], ["git", "-C", "D:\\source", "ls-files", "-z"])
         self.assertEqual(run.call_args.kwargs["env"]["GIT_OPTIONAL_LOCKS"], "0")
-
-
-class FrontendBuildContractNativeTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        from frontend_receipt_fixture import prepare_frontend, save_receipt
-        from workspace_directory import WorkspaceDirectory
-        cls.backend = Path(__file__).resolve().parents[2]
-        cls.directory = WorkspaceDirectory(cls.backend / ".local-tests/python-unit", "source-contract-")
-        cls.addClassCleanup(cls.directory.cleanup)
-        cls.frontend = cls.directory.path
-        prepare_frontend(cls.frontend)
-        save_receipt(cls.frontend)
-
-    def execute_contract(self):
-        from rate_limit_tool import tool_binding, verified_tool
-        from source_inventory import capture_inventory
-
-        request = {"frontend_inventories": [capture_inventory(self.frontend)], "backend_inventories": []}
-        with verified_tool(tool_binding()) as executable:
-            return subprocess.run([executable, "__frontend-build-contract",
-                                   "--frontend-dir", str(self.frontend)], input=json.dumps(request).encode(),
-                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=1810, check=False)
-
-    def test_frontend_contract_uses_existing_full_origin_authority(self):
-        result = self.execute_contract()
-        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
-        value = json.loads(result.stdout)
-        self.assertEqual(len(value["frontend_domains"]), 1)
-        self.assertEqual(value["backend_domains"], [])
-        self.assertTrue(value["frontend_build"]["files"])
 
 
 if __name__ == "__main__":

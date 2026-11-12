@@ -1,4 +1,4 @@
-use super::{configuration, files, source, validate};
+use super::{configuration, files, model, source, validate};
 use serde_json::{Value, json};
 use std::{fs, path::Path, process::Command};
 
@@ -113,7 +113,7 @@ fn inferred_and_explicit_full_inventory_accept_real_clean_source_and_reject_mism
 }
 
 #[test]
-fn held_proof_rejects_private_tool_and_dist_drift_after_successful_validation() {
+fn held_proof_prevents_or_detects_changes_to_bound_files() {
     let temporary = fixture();
     let root = temporary.path();
     let tools = root.join(".local-tests/frontend-tools.json");
@@ -121,11 +121,156 @@ fn held_proof_rejects_private_tool_and_dist_drift_after_successful_validation() 
     let inventory = source::inventory_value(&source::capture(root).unwrap());
     let head = inventory["source"]["snapshot"]["head"].as_str().unwrap();
     write_receipt(root, head, &inventory);
+    let config = root.join("config/app.test.toml");
+    let artifact = root.join("dist/index.html");
+    let mut comment = fs::read(&config).unwrap();
+    comment.extend(b"# same configuration\n");
+    for (path, bytes) in [
+        (&tools, Some(b"{}\n".as_slice())),
+        (&tools, None),
+        (&artifact, Some(b"changed asset".as_slice())),
+        (&config, Some(comment.as_slice())),
+    ] {
+        let original = fs::read(path).unwrap();
+        let proof = validate(root, Some(&inventory), Some(head)).unwrap();
+        let result = match bytes {
+            Some(bytes) => fs::write(path, bytes),
+            None => fs::remove_file(path),
+        };
+        if cfg!(windows) {
+            assert_eq!(result.unwrap_err().raw_os_error(), Some(32));
+            assert_eq!(fs::read(path).unwrap(), original);
+            proof.verify().unwrap();
+        } else {
+            result.unwrap();
+            assert!(proof.verify().is_err());
+        }
+        drop(proof);
+        fs::write(path, original).unwrap();
+    }
+}
+
+#[test]
+fn held_proof_rejects_new_optional_configuration_and_dist_members() {
+    let temporary = fixture();
+    let root = temporary.path();
+    let inventory = source::inventory_value(&source::capture(root).unwrap());
+    let head = inventory["source"]["snapshot"]["head"].as_str().unwrap();
+    write_receipt(root, head, &inventory);
+    for name in [".local-tests/frontend-tools.json", "dist/extra.bin"] {
+        let path = root.join(name);
+        assert!(!path.exists());
+        let proof = validate(root, Some(&inventory), Some(head)).unwrap();
+        fs::write(&path, b"{}").unwrap();
+        assert!(proof.verify().is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"{}");
+        drop(proof);
+        fs::remove_file(path).unwrap();
+    }
+    validate(root, Some(&inventory), Some(head)).unwrap();
+}
+
+#[test]
+fn formal_receipt_accepts_integral_json_numbers_bound_to_real_files() {
+    let temporary = fixture();
+    let root = temporary.path();
+    let inventory = source::inventory_value(&source::capture(root).unwrap());
+    let head = inventory["source"]["snapshot"]["head"].as_str().unwrap();
+    fs::write(root.join("dist/one-byte.bin"), b"x").unwrap();
+    write_receipt(root, head, &inventory);
+
+    let identity = root.join(model::IDENTITY);
+    let original = format!(r#"{{"format_version":1.0,"frontend_commit":"{head}"}}"#);
+    fs::write(&identity, &original).unwrap();
+    let inputs = configuration::capture(root, "test").unwrap();
+    assert_eq!(inputs.identity["frontend_commit"], head);
+    drop(inputs);
+    let receipt_path = root.join("dist").join(files::RECEIPT);
+    let mut receipt = files::parse(&fs::read(&receipt_path).unwrap()).unwrap();
+    receipt["build"]["identity"] = configuration::capture(root, "test").unwrap().identity;
+    receipt["format_version"] = serde_json::from_str("3.0").unwrap();
+    for item in receipt["files"].as_array_mut().unwrap() {
+        let bytes = item["bytes"].as_u64().unwrap();
+        item["bytes"] = serde_json::from_str(&format!("{bytes}.0")).unwrap();
+    }
+    let serialized = serde_json::to_string(&receipt).unwrap();
+    assert!(serialized.contains(r#""format_version":3.0"#));
+    assert!(serialized.contains(r#""bytes":1.0"#));
+    fs::write(&receipt_path, &serialized).unwrap();
     let proof = validate(root, Some(&inventory), Some(head)).unwrap();
-    fs::write(&tools, "{}\n").unwrap();
-    assert!(proof.verify().is_err());
-    fs::write(&tools, "{}").unwrap();
-    let proof = validate(root, Some(&inventory), Some(head)).unwrap();
-    fs::write(root.join("dist/index.html"), "changed asset").unwrap();
-    assert!(proof.verify().is_err());
+    assert_eq!(proof.receipt, receipt);
+    proof.verify().unwrap();
+    assert_eq!(fs::read_to_string(&receipt_path).unwrap(), serialized);
+    assert_eq!(fs::read_to_string(&identity).unwrap(), original);
+    drop(proof);
+    for version in [
+        "true",
+        "false",
+        "0",
+        "2",
+        "1.5",
+        "\"1\"",
+        "NaN",
+        "Infinity",
+        "-Infinity",
+    ] {
+        fs::write(
+            &identity,
+            format!(r#"{{"format_version":{version},"frontend_commit":"{head}"}}"#),
+        )
+        .unwrap();
+        assert!(configuration::capture(root, "test").is_err(), "{version}");
+    }
+}
+
+#[test]
+fn receipt_numbers_enforce_safe_integer_boundaries() {
+    let temporary = fixture();
+    let root = temporary.path();
+    let inventory = source::inventory_value(&source::capture(root).unwrap());
+    let head = inventory["source"]["snapshot"]["head"].as_str().unwrap();
+    write_receipt(root, head, &inventory);
+    let original =
+        files::parse(&fs::read(root.join("dist").join(files::RECEIPT)).unwrap()).unwrap();
+    model::receipt(&original).unwrap();
+    for version in ["true", "false", "2", "4", "3.5", "\"3\""] {
+        let mut receipt = original.clone();
+        receipt["format_version"] = serde_json::from_str(version).unwrap();
+        assert!(model::receipt(&receipt).is_err(), "{version}");
+    }
+    for (bytes, expected) in [
+        ("0", Some(0_u64)),
+        ("-0.0", Some(0)),
+        ("9007199254740991", Some(9_007_199_254_740_991)),
+        ("9007199254740991.0", Some(9_007_199_254_740_991)),
+        ("9007199254740992", None),
+        ("9007199254740992.0", None),
+        ("-1", None),
+        ("1.5", None),
+        ("true", None),
+        ("false", None),
+        ("\"1\"", None),
+    ] {
+        let mut receipt = original.clone();
+        receipt["files"][0]["bytes"] = serde_json::from_str(bytes).unwrap();
+        assert_eq!(
+            model::receipt(&receipt).is_ok(),
+            expected.is_some(),
+            "{bytes}"
+        );
+        if let Some(expected) = expected {
+            assert_eq!(
+                model::normalized_files(&receipt["files"]).unwrap()[0]["bytes"],
+                expected
+            );
+        }
+    }
+    for value in ["NaN", "Infinity", "-Infinity"] {
+        let receipt = serde_json::to_string(&original).unwrap();
+        let invalid = receipt.replace(
+            r#""format_version":3"#,
+            &format!(r#""format_version":{value}"#),
+        );
+        assert!(files::parse(invalid.as_bytes()).is_err(), "{value}");
+    }
 }
