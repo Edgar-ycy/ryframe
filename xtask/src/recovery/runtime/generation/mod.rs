@@ -14,6 +14,7 @@ pub(in crate::recovery::runtime) mod receipts;
 mod tests;
 
 pub(super) use files::generation_directory as verify_directory;
+pub(super) use files::receipt_present;
 
 pub(super) const ROLES: [&str; 3] = ["api", "worker", "frontend"];
 pub(super) const STATE: &str = "lifecycle.json";

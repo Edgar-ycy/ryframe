@@ -19,8 +19,7 @@ use crate::{
             REGISTRATION_LOCK,
             bind::ownership::Owner,
             dataset_authority::check,
-            generation::{STATE, receipts},
-            status::optional_file,
+            generation::{STATE, receipt_present, receipts},
             stop,
         },
     },
@@ -80,7 +79,8 @@ impl Attempt {
             actor::require_identity(monitor)?;
             if let Some(tree) = self.tree()? {
                 let process_path = self.directory.join(format!("{}.json", self.role));
-                if optional_file(&process_path)? {
+                // 本次监督器可以在轮询之间首次发布收据，出现后按原身份合同读取。
+                if receipt_present(&process_path)? {
                     let (product, _) = receipts::process(&self.directory, self.role, &self.scope)?;
                     check(
                         self.ready()?.as_ref().is_some_and(|ready| {
@@ -268,7 +268,7 @@ impl Attempt {
             "{}-members-{}-ready.json",
             self.role, self.operation
         ));
-        if !optional_file(&path)? {
+        if !receipt_present(&path)? {
             return Ok(None);
         }
         let value = document::read(&path, &self.backend, "恢复角色原 monitor 归属")?.value;
@@ -310,7 +310,7 @@ impl Attempt {
     }
 
     fn tree(&self) -> Result<Option<Value>> {
-        if !optional_file(&self.directory.join(format!("{}-tree.json", self.role)))? {
+        if !receipt_present(&self.directory.join(format!("{}-tree.json", self.role)))? {
             return Ok(None);
         }
         let tree = receipts::tree(&self.directory, self.role, &self.scope)?;

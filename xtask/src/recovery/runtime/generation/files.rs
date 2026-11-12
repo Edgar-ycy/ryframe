@@ -8,10 +8,19 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeSet,
     fs,
-    io::Read,
+    io::{ErrorKind, Read},
     path::{Component, Path},
     time::SystemTime,
 };
+
+pub(in crate::recovery::runtime) fn receipt_present(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_file() && !digest::linked(&metadata) => Ok(true),
+        Ok(_) => Err("恢复运行状态收据必须是普通文件".into()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
 
 pub(super) fn safe(path: &Path) -> Result<()> {
     check(

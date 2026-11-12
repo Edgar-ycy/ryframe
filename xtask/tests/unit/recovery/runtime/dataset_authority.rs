@@ -99,6 +99,37 @@ fn parallel_and_protected_serial_source_scans_preserve_complete_results_and_guar
         )
         .unwrap();
     }
+    commit_source_fixture(root);
+    let parallel_source = source::capture(root).unwrap();
+    let parallel_manifest = manifest::capture(root, true).unwrap();
+    assert_eq!(parallel_source.files.len(), 18);
+    assert_eq!(parallel_manifest.as_array().unwrap().len(), 18);
+    let window = reads::Window::begin().unwrap();
+    assert!(reads::is_active());
+    assert_eq!(source::capture(root).unwrap(), parallel_source);
+    assert_eq!(
+        manifest::capture(root, !reads::is_active()).unwrap(),
+        parallel_manifest
+    );
+    // finish 会取出读取集合并再次采集完整来源；窗口仍须保持串行和完整保护。
+    window.finish(Ok(())).unwrap();
+    let changed = std::fs::write(root.join("inputs/来源-00.txt"), b"changed");
+    let checked = window.finish(Ok(()));
+    assert_eq!(checked.is_err(), changed.is_ok());
+    drop(window);
+    assert!(!reads::is_active());
+    std::fs::write(
+        root.join(sources::POLICY),
+        br#"{"format_version":1,"files":["missing"],"trees":[],"excluded_directories":[]}"#,
+    )
+    .unwrap();
+    assert!(manifest::capture(root, true).is_err());
+    let window = reads::Window::begin().unwrap();
+    assert!(manifest::capture(root, !reads::is_active()).is_err());
+    assert!(window.finish(Ok(())).is_ok());
+}
+
+fn commit_source_fixture(root: &std::path::Path) {
     for arguments in [
         vec!["init", "--quiet"],
         vec!["add", "."],
@@ -134,33 +165,6 @@ fn parallel_and_protected_serial_source_scans_preserve_complete_results_and_guar
                 .success()
         );
     }
-    let parallel_source = source::capture(root).unwrap();
-    let parallel_manifest = manifest::capture(root, true).unwrap();
-    assert_eq!(parallel_source.files.len(), 18);
-    assert_eq!(parallel_manifest.as_array().unwrap().len(), 18);
-    let window = reads::Window::begin().unwrap();
-    assert!(reads::is_active());
-    assert_eq!(source::capture(root).unwrap(), parallel_source);
-    assert_eq!(
-        manifest::capture(root, !reads::is_active()).unwrap(),
-        parallel_manifest
-    );
-    // finish 会取出读取集合并再次采集完整来源；窗口仍须保持串行和完整保护。
-    window.finish(Ok(())).unwrap();
-    let changed = std::fs::write(root.join("inputs/来源-00.txt"), b"changed");
-    let checked = window.finish(Ok(()));
-    assert_eq!(checked.is_err(), changed.is_ok());
-    drop(window);
-    assert!(!reads::is_active());
-    std::fs::write(
-        root.join(sources::POLICY),
-        br#"{"format_version":1,"files":["missing"],"trees":[],"excluded_directories":[]}"#,
-    )
-    .unwrap();
-    assert!(manifest::capture(root, true).is_err());
-    let window = reads::Window::begin().unwrap();
-    assert!(manifest::capture(root, !reads::is_active()).is_err());
-    assert!(window.finish(Ok(())).is_ok());
 }
 
 #[test]
@@ -196,16 +200,26 @@ fn optional_configuration_appearance_and_directory_additions_are_rejected() {
 
 #[test]
 fn native_frontend_tool_binding_rejects_coordinator_or_binary_drift() {
+    use crate::frontend_origin::sources;
+    use crate::recovery::fixture_control::portable_path;
+
     let directory = fixture();
-    let executable = directory.path().join("registered.exe");
-    let alternate = directory.path().join("alternate.exe");
+    let base = portable_path(&directory.path().canonicalize().unwrap());
+    let coordinator = base.join("coordinator");
+    std::fs::create_dir_all(coordinator.join("xtask")).unwrap();
+    std::fs::write(coordinator.join(sources::POLICY), br#"{"format_version":1,"files":["xtask/source-inventory.json"],"trees":[],"excluded_directories":[]}"#).unwrap();
+    commit_source_fixture(&coordinator);
+    let executable = base.join("registered.exe");
+    let alternate = base.join("alternate.exe");
     for file in [&executable, &alternate] {
         std::fs::write(file, b"same bytes").unwrap();
     }
-    let observed = digest::file(&executable).unwrap();
-    let current = json!({"coordinator_root":directory.path(),"coordinator_head":"a".repeat(40),
-        "inventory_sha256":"b".repeat(64),"frontend_server":{"path":executable,
-            "bytes":observed.bytes,"sha256":observed.sha256}});
+    let observe = || {
+        let mut inputs = inputs::Inputs::new(&coordinator);
+        let tools = commands::current_tools(&coordinator, &executable, &mut inputs);
+        inputs.finish(tools).unwrap()
+    };
+    let current = observe();
     commands::validate_tools(&current, &current).unwrap();
     let mut recorded = current.clone();
     recorded["frontend_server"]["path"] = json!(alternate);
@@ -219,6 +233,24 @@ fn native_frontend_tool_binding_rejects_coordinator_or_binary_drift() {
     let mut recorded = current.clone();
     recorded["inventory_sha256"] = json!("e".repeat(64));
     assert!(commands::validate_tools(&recorded, &current).is_err());
+    std::fs::write(&executable, b"new! bytes").unwrap();
+    let changed = observe();
+    assert_eq!(
+        changed["frontend_server"]["path"],
+        current["frontend_server"]["path"]
+    );
+    assert_eq!(
+        changed["frontend_server"]["bytes"],
+        current["frontend_server"]["bytes"]
+    );
+    assert_ne!(
+        changed["frontend_server"]["sha256"],
+        current["frontend_server"]["sha256"]
+    );
+    let error = commands::validate_tools(&current, &changed)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("原生程序及字节"), "{error}");
 }
 
 #[test]
@@ -272,6 +304,14 @@ fn native_frontend_argv_binds_receipt_and_only_allows_the_exact_b0_contract() {
     let b0 = commands::frontend_command(&request, &executable).unwrap();
     assert_eq!(b0[9], request["authority"]["frontend_sha"]);
     assert_eq!(b0[18], "--b0");
+    let mut changed = request.clone();
+    changed["authority"]["backend_execution_sha"] = json!("e".repeat(40));
+    assert!(commands::frontend_command(&changed, &executable).is_err());
+    for endpoint in ["http://[::1]:18180/readyz", "http://127.0.0.1:15174/readyz"] {
+        let mut changed = request.clone();
+        changed["authority"]["api_endpoint"] = json!(endpoint);
+        assert!(commands::frontend_command(&changed, &executable).is_err());
+    }
     request["authority"]["frontend_endpoint"] = json!("http://[::1]:15174");
     assert!(commands::frontend_command(&request, &executable).is_err());
 }

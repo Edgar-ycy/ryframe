@@ -1,4 +1,5 @@
 use super::*;
+use std::fs;
 
 #[test]
 fn status_derived_from_all_three_observations_preserves_terminal_states() {

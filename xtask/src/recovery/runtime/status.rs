@@ -1,9 +1,5 @@
 //! 在原恢复控制锁内观察正式运行代次，不发布生命周期或角色结果。
-use std::{
-    fs,
-    io::ErrorKind,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
@@ -19,7 +15,7 @@ use super::{
         reads::{self, Window},
         registration::read_binding,
     },
-    generation::{self, STATE},
+    generation::{self, STATE, receipt_present},
     registration::{self, backend_root, closed_roles, protocol_path, runtime_observation},
 };
 use crate::{
@@ -27,7 +23,7 @@ use crate::{
     cli::RuntimeControlInputs,
     local_test_path::{LocalTestPathKind, validate_local_test_path},
     recovery::{
-        clone::native::{digest, json as strict, target_verify::authority::require_closed},
+        clone::native::{json as strict, target_verify::authority::require_closed},
         inputs::document,
     },
 };
@@ -235,15 +231,6 @@ pub(super) fn optional_file(path: &Path) -> Result<bool> {
         return Err("恢复运行状态收据在观察期间出现或消失".into());
     }
     Ok(before)
-}
-
-fn receipt_present(path: &Path) -> Result<bool> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.is_file() && !digest::linked(&metadata) => Ok(true),
-        Ok(_) => Err("恢复运行状态收据必须是普通文件".into()),
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(error.into()),
-    }
 }
 
 fn derived_status<'a>(persisted: &'a str, roles: &Value) -> &'a str {

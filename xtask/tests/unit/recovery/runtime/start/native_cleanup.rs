@@ -11,8 +11,12 @@ use std::{net::TcpListener, process::Command, time::Duration};
 
 #[path = "native_frontend_fixture.rs"]
 mod native_frontend_fixture;
+#[path = "native_launch_authority.rs"]
+mod native_launch_authority;
 #[path = "native_live_owner.rs"]
 mod native_live_owner;
+#[path = "native_recover.rs"]
+mod native_recover;
 #[path = "native_stop.rs"]
 mod native_stop;
 #[path = "native_three_roles.rs"]

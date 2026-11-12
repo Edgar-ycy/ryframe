@@ -73,9 +73,15 @@ fn creation_is_exclusive_bound_and_preserved_on_unknown_result() {
     let receipt = create_intent(&f.root, &f.binding, &f.request).unwrap();
     assert!(create_intent(&f.root, &f.binding, &f.request).is_err());
     files::bound(&creation_path(&f.root), &receipt).unwrap();
-    let mut value = files::document(&creation_path(&f.root)).unwrap();
-    for replacement in [json!(true), json!(2)] {
-        value["generation"] = replacement;
+    let original = files::document(&creation_path(&f.root)).unwrap();
+    validate_creation(&original, &f.root, &f.binding).unwrap();
+    for (field, replacement) in [
+        ("format_version", json!(true)),
+        ("generation", json!(true)),
+        ("generation", json!(2)),
+    ] {
+        let mut value = original.clone();
+        value[field] = replacement;
         assert!(validate_creation(&value, &f.root, &f.binding).is_err());
     }
     assert!(!f.root.exists());
@@ -87,6 +93,9 @@ fn state_preserves_first_directory_cut_and_rejects_unknown_files_and_stale_preim
     let commands = json!([f.commands]);
     let previous = save_state(&f.root, &state, &f.binding, &Value::Null, &commands).unwrap();
     validate_state(&state, &f.root, &f.binding, &commands).unwrap();
+    let mut invalid = state.clone();
+    invalid["format_version"] = json!(true);
+    assert!(validate_state(&invalid, &f.root, &f.binding, &commands).is_err());
     assert!(save_state(&f.root, &state, &f.binding, &Value::Null, &commands).is_err());
     fs::write(f.root.join("foreign.json"), b"{}").unwrap();
     assert!(validate_state(&state, &f.root, &f.binding, &commands).is_err());
@@ -125,6 +134,10 @@ fn launch_publication_cut_accepts_only_complete_matching_trees() {
     let directory = f.root.join("generation-0001");
     let binding = receipts::write_launch(&directory, generation, &f.commands).unwrap();
     assert!(receipts::write_launch(&directory, generation, &f.commands).is_err());
+    let mut launch = files::document(&directory.join(LAUNCH)).unwrap();
+    receipts::validate_launch(&launch, &directory, &f.commands).unwrap();
+    launch["format_version"] = json!(true);
+    assert!(receipts::validate_launch(&launch, &directory, &f.commands).is_err());
     validate_generation(generation, &f.root, 1, &f.binding, &f.commands).unwrap();
     generation["status"] = json!("running");
     assert!(validate_generation(generation, &f.root, 1, &f.binding, &f.commands).is_err());
@@ -132,6 +145,12 @@ fn launch_publication_cut_accepts_only_complete_matching_trees() {
     validate_generation(generation, &f.root, 1, &f.binding, &f.commands).unwrap();
     let path = directory.join("api.json");
     let mut changed = files::document(&path).unwrap();
+    let scope = &generation["request"]["authority"]["scope_id"];
+    receipts::process(&directory, "api", scope).unwrap();
+    let mut invalid = changed.clone();
+    invalid["format_version"] = json!(true);
+    strict::write_replace(&path, &invalid).unwrap();
+    assert!(receipts::process(&directory, "api", scope).is_err());
     changed["identity"]["started"] = json!("101");
     strict::write_replace(&path, &changed).unwrap();
     assert!(validate_generation(generation, &f.root, 1, &f.binding, &f.commands).is_err());

@@ -16,9 +16,16 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_prefix(".tmp")
+    }
+
+    fn with_prefix(prefix: &str) -> Self {
         let local = crate::workspace::root_dir().join(".local-tests");
         fs::create_dir_all(&local).unwrap();
-        let work = tempfile::tempdir_in(&local).unwrap();
+        let work = tempfile::Builder::new()
+            .prefix(prefix)
+            .tempdir_in(local)
+            .unwrap();
         let backend =
             crate::recovery::fixture_control::portable_path(&work.path().canonicalize().unwrap());
         let control = backend.join(".local-tests");

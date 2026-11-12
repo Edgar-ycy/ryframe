@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Recovery startup allows its supervisor to publish process receipts for the first time while the controller is polling, and still verifies the receipts and process identities. The current Rust commands handle ordinary recovery startup, sources, and generations. Remove the corresponding legacy Python implementation.
+
 - Windows recovery acceptance restricts access to the B0 startup configuration directories before writing the two role configurations.
 
 - Remove the unused Python workbook parser while preserving the department fixture data and checks.

@@ -96,6 +96,12 @@ impl Fixture {
         .unwrap();
     }
 
+    fn rebind_private(&self, private: &Value) -> Value {
+        fs::write(&self.private, serde_json::to_vec(private).unwrap()).unwrap();
+        self.write_registration();
+        self.request()
+    }
+
     fn environment_binding(&self) -> Value {
         let document = document::read(&self.private, &self.root, "隔离测试环境").unwrap();
         document::binding(&document)
@@ -201,6 +207,120 @@ fn rejects_wrong_private_binding_outside_configuration_duplicate_id_and_bad_toml
     assert!(capture(&mut Inputs::new(&fixture.root), &request).is_err());
     fixture.write_registration();
     assert!(capture(&mut Inputs::new(&fixture.root), &fixture.request()).is_err());
+}
+
+#[test]
+fn rebound_private_document_rejects_retired_fields_nontext_token_and_relative_path() {
+    let fixture = Fixture::new();
+    let original = document::read(&fixture.private, &fixture.root, "隔离测试环境").unwrap();
+    let request = fixture.request();
+    let captured = capture(&mut Inputs::new(&fixture.root), &request).unwrap();
+    assert_eq!(captured["document"], document::binding(&original));
+
+    let with_field = |field: &str, value: Value| {
+        let mut private = original.value.clone();
+        private[field] = value;
+        private
+    };
+    let fields_error = "恢复私有环境字段缺失或包含未知字段";
+    for (case, private, expected) in [
+        (
+            "旧环境包装",
+            json!({"environment": original.value}),
+            fields_error,
+        ),
+        (
+            "旧任务模式",
+            with_field("APP_JOBS_MODE", json!("external")),
+            fields_error,
+        ),
+        (
+            "旧 scope 字段",
+            with_field("app_scope_id", json!(SCOPE)),
+            fields_error,
+        ),
+        (
+            "额外字段",
+            with_field("extra", json!("unexpected")),
+            fields_error,
+        ),
+        (
+            "布尔令牌",
+            with_field("metrics_bearer_token", json!(false)),
+            "恢复私有环境字段必须为字符串",
+        ),
+        (
+            "相对 API 配置目录",
+            with_field("api_config_dir", json!("relative-config")),
+            "恢复静态权威路径必须为无父目录跳转的绝对路径",
+        ),
+    ] {
+        let rebound = fixture.rebind_private(&private);
+        assert_ne!(rebound["registration"], request["registration"], "{case}");
+        let error = capture(&mut Inputs::new(&fixture.root), &rebound)
+            .unwrap_err()
+            .to_string();
+        assert!(!error.contains(TOKEN), "{case}");
+        assert_eq!(error, expected, "{case}");
+    }
+}
+
+#[test]
+fn verify_rejects_missing_selected_configuration_and_token_drift_without_echoing_tokens() {
+    const REPLACEMENT_TOKEN: &str = "synthetic-replacement-recovery-token";
+
+    let fixture = Fixture::new();
+    let mut previous = fixture.request();
+    previous["environment"] = capture(&mut Inputs::new(&fixture.root), &previous).unwrap();
+    verify(&mut Inputs::new(&fixture.root), &previous).unwrap();
+
+    let selected = fixture.api.join("app.test.toml");
+    let selected_bytes = fs::read(&selected).unwrap();
+    fs::remove_file(&selected).unwrap();
+    let missing = verify(&mut Inputs::new(&fixture.root), &previous)
+        .unwrap_err()
+        .to_string();
+    fs::write(&selected, selected_bytes).unwrap();
+    verify(&mut Inputs::new(&fixture.root), &previous).unwrap();
+
+    for directory in [&fixture.api, &fixture.worker] {
+        let common = directory.join("app.toml");
+        let original = fs::read_to_string(&common).unwrap();
+        assert!(original.contains(TOKEN));
+        fs::write(&common, original.replace(TOKEN, REPLACEMENT_TOKEN)).unwrap();
+    }
+    let mismatch = verify(&mut Inputs::new(&fixture.root), &previous)
+        .unwrap_err()
+        .to_string();
+
+    let mut private = document::read(&fixture.private, &fixture.root, "隔离测试环境")
+        .unwrap()
+        .value;
+    private["metrics_bearer_token"] = json!(REPLACEMENT_TOKEN);
+    let mut rebound = fixture.rebind_private(&private);
+    let current = capture(&mut Inputs::new(&fixture.root), &rebound).unwrap();
+    assert_ne!(previous["environment"]["document"], current["document"]);
+    for role in ["api", "worker"] {
+        assert_ne!(
+            previous["environment"]["configurations"][role]["files"]["app.toml"],
+            current["configurations"][role]["files"]["app.toml"],
+        );
+    }
+    rebound["environment"] = previous["environment"].take();
+    let drift = verify(&mut Inputs::new(&fixture.root), &rebound)
+        .unwrap_err()
+        .to_string();
+    rebound["environment"] = current;
+    verify(&mut Inputs::new(&fixture.root), &rebound).unwrap();
+
+    for (error, expected) in [
+        (missing, "目标配置目录缺少 app.test.toml"),
+        (mismatch, "恢复角色配置与 scope、端点、令牌或实例编号不同"),
+        (drift, "恢复启动角色配置快照发生漂移"),
+    ] {
+        assert!(!error.contains(TOKEN) && !error.contains(REPLACEMENT_TOKEN));
+        assert!(error.contains(expected), "{error}");
+    }
 }
 
 #[test]

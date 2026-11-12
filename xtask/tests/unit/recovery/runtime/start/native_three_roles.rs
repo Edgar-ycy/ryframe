@@ -59,7 +59,7 @@ fn start_cleanup_reclaims_published_api_tree_before_state_writeback() -> Result<
 }
 
 fn run_case(case: Case) -> Result<()> {
-    let mut fixture = Fixture::new();
+    let mut fixture = Fixture::with_prefix("运行 配置-");
     let frontend = Frontend::new()?;
     let result = run_fixture(&mut fixture, &frontend, case);
     if let Err(error) = result {
@@ -207,6 +207,7 @@ fn observe_and_stop(
     let launch_path = state.directory().join(LAUNCH);
     let published = fs::read(&launch_path)?;
     let receipt = strict::read(&launch_path)?;
+    check_public_configuration(fixture, &before, &published, &receipt)?;
     check(
         file_binding(fixture, &launch_path)? == *launch,
         "发布的原启动收据身份不同",
@@ -258,6 +259,39 @@ fn observe_and_stop(
         "公开停止未保留原启动收据或重签发布",
     )?;
     verify_closed(fixture, state, generation, case)
+}
+
+fn check_public_configuration(
+    fixture: &Fixture,
+    state: &[u8],
+    launch: &[u8],
+    receipt: &Value,
+) -> Result<()> {
+    for document in [state, launch] {
+        let text = std::str::from_utf8(document)?;
+        for credential in [
+            "synthetic-cleanup-token",
+            "synthetic-mysql-marker",
+            "synthetic-private-marker",
+        ] {
+            check(!text.contains(credential), "普通恢复收据包含隔离凭据")?;
+        }
+    }
+    for role in ["api", "worker"] {
+        let configuration = &fixture.request["environment"]["configurations"][role]["directory"];
+        let command = &receipt["processes"][role]["command"];
+        check(
+            *command
+                == json!([
+                    fixture.request["artifacts"][role]["executable"],
+                    "--config-dir",
+                    configuration
+                ])
+                && document::text(configuration, "恢复角色配置目录")?.contains("运行 配置-"),
+            "公开收据缺少独立角色的完整私有配置目录参数",
+        )?;
+    }
+    Ok(())
 }
 
 fn reject_unknown_generation_file(fixture: &Fixture, program: &Path, state: &State) -> Result<()> {

@@ -17,13 +17,15 @@ fn main() {
     }
     assert_eq!(args[0], "--config-dir");
     assert_eq!(env::var("APP_ENV").unwrap(), "test");
-    assert!(
-        !env::vars().any(|(key, _)| key.starts_with("APP_") && key != "APP_ENV"
+    assert!(!env::vars_os().any(|(key, _)| {
+        let key = key.to_string_lossy().to_ascii_uppercase();
+        (key.starts_with("APP_") && key != "APP_ENV")
             || key.starts_with("RYFRAME_")
             || key.starts_with("AWS_")
             || key.starts_with("VITE_")
-            || key.starts_with("SNOWFLAKE_"))
-    );
+            || key.starts_with("SNOWFLAKE_")
+            || key == "MYSQL_PWD"
+    }));
     let config = Path::new(&args[1]);
     let root = config.parent().unwrap();
     let (started_marker, host, port) = listener(config);
