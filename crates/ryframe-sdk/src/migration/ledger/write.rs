@@ -91,7 +91,7 @@ pub(in crate::migration) async fn record_in_session(
     }
     database.finish_mysql_root(true).await.map_err(|error| {
         AppError::Database(format!(
-            "业务账本提交结果未知：{error}；先核对完整前后像，不自动重放"
+            "业务账本提交结果未知。先核对完整前后像，不自动重放。底层错误 {error}"
         ))
     })
 }

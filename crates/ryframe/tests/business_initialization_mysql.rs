@@ -25,6 +25,8 @@ mod migration_guard;
 mod migration_targets;
 #[path = "business_initialization_mysql/ownership.rs"]
 mod ownership;
+#[path = "business_initialization_mysql/ownership_faults.rs"]
+mod ownership_faults;
 #[cfg(feature = "bin-api")]
 #[path = "business_initialization_mysql/replicas.rs"]
 mod replicas;

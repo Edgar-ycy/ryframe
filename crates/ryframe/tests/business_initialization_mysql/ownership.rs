@@ -6,6 +6,13 @@ use std::{
 };
 
 fn config(database: &str) -> Result<tempfile::TempDir, String> {
+    let connection = mysql::MySqlTestConfiguration::load()?.connection(database, None)?;
+    config_for(connection)
+}
+
+pub(super) fn config_for(
+    connection: ryframe_config::DbConnection,
+) -> Result<tempfile::TempDir, String> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
@@ -26,7 +33,6 @@ fn config(database: &str) -> Result<tempfile::TempDir, String> {
     let file = directory.path().join("app.toml");
     let source = fs::read_to_string(&file).map_err(message)?;
     let mut value: toml::Value = toml::from_str(&source).map_err(message)?;
-    let connection = mysql::MySqlTestConfiguration::load()?.connection(database, None)?;
     let primary = value["database"]["primary"]
         .as_table_mut()
         .ok_or("缺少primary")?;
@@ -84,7 +90,7 @@ fn command(directory: &Path, args: &[&str]) -> Command {
     command
 }
 
-fn run(directory: &Path, args: &[&str]) -> Output {
+pub(super) fn run(directory: &Path, args: &[&str]) -> Output {
     bounded(ManagedChild(Some(
         command(directory, args).spawn().unwrap(),
     )))
@@ -219,7 +225,26 @@ async fn cancelled_initialization_releases_both_migration_locks_on_the_original_
     .await;
 }
 
-struct ManagedChild(Option<std::process::Child>);
+pub(super) struct ManagedChild(Option<std::process::Child>);
+
+impl ManagedChild {
+    pub(super) fn start(directory: &Path, args: &[&str]) -> Result<Self, String> {
+        let child = command(directory, args).spawn().map_err(message)?;
+        Ok(Self(Some(child)))
+    }
+
+    pub(super) fn is_running(&mut self) -> Result<bool, String> {
+        Ok(self.0.as_mut().unwrap().try_wait().map_err(message)?.is_none())
+    }
+
+    pub(super) fn terminate(&mut self) -> Result<(), String> {
+        self.0.as_mut().unwrap().kill().map_err(message)
+    }
+
+    pub(super) fn output(self) -> Output {
+        bounded(self)
+    }
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn retained_root_rejects_nested_keeps_atomic_records_and_rejects_failed_commit_reuse() {

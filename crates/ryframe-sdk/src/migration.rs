@@ -219,7 +219,7 @@ fn database_error(error: sea_orm::DbErr) -> AppError {
 impl SeaOrmBusinessMigration {
     fn ledger_failure(&self, error: AppError) -> AppError {
         AppError::Database(format!(
-            "业务迁移 {}/{} 的 DDL 已执行并通过结构校验，但账本写入失败或提交结果未知：{error}；先核对权威账本与实际结构，不自动重放",
+            "业务迁移 {}/{} 的 DDL 已执行并通过结构校验，但账本写入失败或提交结果未知。先核对权威账本与实际结构，不自动重放。底层错误 {error}",
             self.module, self.id
         ))
     }

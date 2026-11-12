@@ -109,7 +109,12 @@ pub async fn apply_business_adoption(
     if let Err(error) = writes {
         return rollback_error(transaction, error, metadata_ddl_attempted).await;
     }
-    transaction.commit().await.map_err(|error| AppError::Database(format!("接管元数据提交结果未知：{error}；计划={}，业务表结构和数据未由本操作修改；先只读 inspect 原计划并核对完整前后像，不自动重放", plan.fingerprint)))?;
+    transaction.commit().await.map_err(|error| {
+        AppError::Database(format!(
+            "接管元数据提交结果未知。计划={}，本次操作仅登记接管账本。先只读 inspect 原计划并核对完整前后像，不自动重放。底层错误 {error}",
+            plan.fingerprint
+        ))
+    })?;
     Ok(BusinessAdoptionOutcome {
         already_applied: false,
         registered: selected.len(),

@@ -8,7 +8,7 @@
 
 `cargo migrate` 的失败诊断写入 stderr，标明实际阶段、已选择的配置文件、配置键和脱敏原因；成功输出保持原契约。连接或配置失败时尚未执行迁移；进入 `up` 或 `adopt --apply` 后，DDL 或账本可能已部分提交，不代表整体回滚。保留现场，修正原因后使用同一 `--config-dir` 和 `APP_ENV` 先执行 `status` 与 `verify`，不能自动重放写入；导出失败也须先核对已创建的目录、临时文件或目标文件。独立 MySQL 目标保留已脱敏的连接、健康及结构校验原因供内部诊断；公开 API 不包含该原因，无底层错误时不可据“不可用”猜测认证错误。租户数据访问返回 503 时，按 `request_id` 关联服务日志中的 `tenant_data_error` 分类，区分投影版本、目标、放置和连接预算；日志只保留安全原因，不自动重放写入；生成的业务持久化复用同一转换入口，事务内投影锁定也记录缺失或落后的具体版本。 建议命令均显式携带 `--config-dir` 目录占位，必须先替换为诊断中显示配置文件的父目录，再按当前 shell 正确引用；PowerShell 单引号内的单引号须写成两个单引号，不得照抄占位或省略目录后检查默认另一库。
 
-迁移路径使用 `control up` 新建或升级控制库；全新空物理库也可选下文完整 SQL 一次初始化；`control verify` 只校验账本、结构和编译期业务目录，新空库上不能代替初始化。首次初始化需要配置 `[bootstrap] admin_password`，API 与 Worker 启动时只校验，不执行 DDL。非生产默认 `jobs.mode="embedded"`，`cargo serve` 已消费后台任务；验证独立进程时按[开发指南](development.md#启动后端)创建 API／Worker 两份私有配置，均设置 `jobs.mode="external"`，采用不同实例编号并显式传入各自配置目录。每个 MySQL 租户目标都要先创建空库、登记配置并单独执行 `tenant-data up/verify`。
+迁移路径使用 `control up` 新建或升级控制库；全新空物理库也可选下文完整 SQL 一次初始化；`control verify` 只校验账本、结构和编译期业务目录，新空库上不能代替初始化。首次初始化需要配置 `[bootstrap] admin_password`，API 与 Worker 启动时只校验，不执行 DDL。非生产默认 `jobs.mode="embedded"`，`cargo serve` 已消费后台任务；验证独立进程时按[开发指南](development.md#启动后端)创建 API／Worker 两份私有配置，均设置 `jobs.mode="external"`，采用不同实例编号并显式传入各自配置目录。每个 MySQL 租户目标都要先创建空库、登记配置并单独执行 `tenant-data up/verify`。 首次 `up` 报告归属提交结果未知时，保留现场，用同一配置执行只读 `status` 和 `verify`，并从独立连接核对物理库及 `ryframe_resource_ownership` 中对应记录的 `scope_id` 和 marker。核对完成前不要重跑 `up`。
 
 ## 控制库初始化 SQL
 

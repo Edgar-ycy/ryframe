@@ -171,7 +171,7 @@ pub(super) async fn apply<P: ConnectionTrait>(
     if let Err(error) = result {
         if let Err(rollback) = tx.finish_mysql_root(false).await {
             return Err(format!(
-                "{error}；归属回滚也失败：{rollback}；先 inspect 原计划，不自动重放"
+                "归属回滚失败。先 inspect 原计划，不自动重放。操作错误 {error}。回滚错误 {rollback}"
             )
             .into());
         }
@@ -179,5 +179,7 @@ pub(super) async fn apply<P: ConnectionTrait>(
     }
     tx.finish_mysql_root(true)
         .await
-        .map_err(|error| format!("归属提交结果未知：{error}；先 inspect 原计划，不自动重放").into())
+        .map_err(|error| {
+            format!("归属提交结果未知。先 inspect 原计划，不自动重放。底层错误 {error}").into()
+        })
 }

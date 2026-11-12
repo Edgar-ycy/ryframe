@@ -102,7 +102,7 @@ pub async fn register_in_session(
     }
     database.finish_mysql_root(true).await.map_err(|error| {
         sea_orm::DbErr::Custom(format!(
-            "归属提交结果未知：{error}；先只读核对归属及初始化账本，不自动重放"
+            "归属提交结果未知。先只读核对归属及初始化账本，不自动重放。底层错误 {error}"
         ))
     })
 }

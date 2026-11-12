@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+- Add real MySQL initialization CLI regressions for session and migration-lock release after forced termination, and read-only reconciliation after an ownership commit succeeds but its response is lost.
+- Preserve instructions for checking ownership, ledgers, or adoption plans when connection addresses are redacted from migration and adoption diagnostics for unknown commits.
+
 - Formal B0/B1 comparison, startup, and runtime verification use each side's registered backend build environment to check the original receipt, tool versions, and build artifacts.
 
 - Clarify how to merge the database topology TOML fragment into the application configuration, and document connection pool timeout units, defaults, and scope for the primary, replicas, and named sources.
