@@ -10,7 +10,6 @@ from rate_limit_tool import install_binding, tool_binding
 
 ROOT = Path(__file__).resolve().parents[2]
 B0_HEAD = "0087ea2ecf62530d042b9e52f5c950fb34c66d78"
-B0_KIND = "restore-legacy-b0-frontend-build"
 B0_BACKEND_ADAPTER = "legacy-stable-readiness-b0-v1"
 
 

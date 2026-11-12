@@ -15,8 +15,6 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from process_sockets import endpoint
-from restore_build import validate_build_context
-from source_inventory import validate_build_source_domains
 from artifact_digests import filesystem_path
 
 MAX_JSON_BYTES = 16 * 1024 * 1024
@@ -265,16 +263,6 @@ def timestamp(value: object, label: str) -> str:
     return value
 
 
-def same_path(value: object, expected: Path, label: str) -> None:
-    if not isinstance(value, str) or not Path(value).is_absolute() or Path(value).absolute() != expected.absolute():
-        raise ValueError(f"恢复运行收据的 {label} 路径不匹配")
-
-
-def digest_matches(value: object, document: JsonDocument, label: str) -> None:
-    if not isinstance(value, str) or not HEX_64.fullmatch(value) or value != document.sha256:
-        raise ValueError(f"恢复运行收据的 {label} 摘要不匹配")
-
-
 def canonical_endpoint(url: object, path: str, label: str) -> str:
     if not isinstance(url, str):
         raise ValueError(f"{label}必须是字符串")
@@ -363,118 +351,3 @@ def process_document(path: Path, role: str, scope: str) -> tuple[JsonDocument, d
     ):
         raise ValueError("进程收据的版本、角色或隔离 scope 不匹配")
     return document, process_identity_record(receipt["identity"], f"{role} 进程身份")
-
-
-def validate_backend_receipt(receipt: object) -> dict:
-    value = exact_fields(
-        receipt,
-        {"format_version", "kind", "sources", "build", "artifacts"},
-        "后端构建收据",
-    )
-    if value["format_version"] != 2 or value["kind"] != "restore-backend-build":
-        raise ValueError("后端构建收据版本或类型不匹配")
-    validate_build_source_domains(value["sources"], "backend")
-    validate_build_context(value["build"])
-    artifacts = exact_fields(value["artifacts"], {"api", "worker"}, "后端构建产物")
-    for role in ("api", "worker"):
-        artifact = exact_fields(
-            artifacts[role],
-            {"executable", "command", "bytes", "sha256"},
-            f"{role} 构建产物",
-        )
-        if (
-            not isinstance(artifact["executable"], str)
-            or not Path(artifact["executable"]).is_absolute()
-            or not isinstance(artifact["command"], list)
-            or type(artifact["bytes"]) is not int
-            or artifact["bytes"] < 0
-            or not isinstance(artifact["sha256"], str)
-            or not HEX_64.fullmatch(artifact["sha256"])
-        ):
-            raise ValueError(f"{role} 构建产物字段无效")
-    return value
-
-
-def validate_runtime_receipt(receipt: object) -> dict:
-    value = exact_fields(
-        receipt,
-        {"format_version", "kind", "restore", "paths", "digests", "source", "endpoints", "backend", "frontend", "processes"},
-        "恢复运行收据",
-    )
-    if value["format_version"] != 3 or value["kind"] != "restore-runtime":
-        raise ValueError("恢复运行收据版本或类型不匹配")
-    restore = exact_fields(
-        value["restore"],
-        {"id", "backup_id", "plan_hash", "scope_id", "data_verified_at"},
-        "恢复绑定",
-    )
-    paths = exact_fields(
-        value["paths"],
-        {
-            "backend_product_root",
-            "backend_execution_root",
-            "frontend_root",
-            "runtime_dir",
-            "bindings",
-            "backend_build",
-            "frontend_build",
-            "launch",
-        },
-        "恢复路径绑定",
-    )
-    digests = exact_fields(
-        value["digests"], {"bindings", "backend_build", "frontend_build", "launch"}, "恢复摘要绑定"
-    )
-    source = exact_fields(
-        value["source"],
-        {
-            "backup_source_sha",
-            "backend_product_sha",
-            "backend_execution_sha",
-            "backend_adapter_contract",
-            "frontend_sha",
-        },
-        "恢复源码绑定",
-    )
-    endpoints = exact_fields(value["endpoints"], {"api", "worker", "frontend"}, "恢复端点绑定")
-    validate_authority(
-        {
-            "format_version": 2,
-            "kind": "restore-runtime-authority",
-            "restore_id": restore["id"],
-            "backup_id": restore["backup_id"],
-            "plan_hash": restore["plan_hash"],
-            "scope_id": restore["scope_id"],
-            "data_verified_at": restore["data_verified_at"],
-            "backup_source_sha": source["backup_source_sha"],
-            "backend_product_sha": source["backend_product_sha"],
-            "backend_execution_sha": source["backend_execution_sha"],
-            "backend_adapter_contract": source["backend_adapter_contract"],
-            "frontend_sha": source["frontend_sha"],
-            "api_endpoint": endpoints["api"],
-            "worker_endpoint": endpoints["worker"],
-            "frontend_endpoint": endpoints["frontend"],
-        }
-    )
-    if any(not isinstance(path, str) or not Path(path).is_absolute() for path in paths.values()):
-        raise ValueError("恢复运行收据必须保存绝对路径")
-    if any(not isinstance(digest, str) or not HEX_64.fullmatch(digest) for digest in digests.values()):
-        raise ValueError("恢复运行收据摘要无效")
-    processes = exact_fields(value["processes"], {"api", "worker", "frontend"}, "恢复进程绑定")
-    for role in ("api", "worker", "frontend"):
-        item = exact_fields(processes[role], {"receipt_path", "receipt_sha256", "identity"}, f"{role} 进程绑定")
-        if (
-            not isinstance(item["receipt_path"], str)
-            or not Path(item["receipt_path"]).is_absolute()
-            or not isinstance(item["receipt_sha256"], str)
-            or not HEX_64.fullmatch(item["receipt_sha256"])
-        ):
-            raise ValueError(f"{role} 进程收据路径或摘要无效")
-        process_identity_record(item["identity"], f"{role} 进程身份")
-    from restore_frontend_native import b0_runtime_source
-
-    validate_backend_receipt(value["backend"])
-    validate_frontend_receipt(value["frontend"], b0=b0_runtime_source(source))
-    if value["frontend"]["build"]["identity"]["frontend_commit"] != source["frontend_sha"]:
-        raise ValueError("恢复前端构建身份必须绑定权威前端精确 SHA")
-    return value

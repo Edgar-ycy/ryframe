@@ -258,54 +258,81 @@ mod online_probes {
     use std::{
         fs,
         io::{Read, Write},
-        net::TcpListener,
+        net::{TcpListener, TcpStream},
         thread::{self, JoinHandle},
         time::{Duration, Instant},
     };
 
+    type Response = (&'static str, &'static str, &'static [u8]);
+    const API_BODY: &[u8] =
+        br#"{"status":"ready","mysql":"up","redis":"up","object_storage":"up"}"#;
+    const API_RESPONSES: &[Response] = &[("/readyz", "application/json", API_BODY)];
+    const WORKER_RESPONSES: &[Response] = &[("/readyz", "text/plain", b"")];
+    const FRONTEND_RESPONSES: &[Response] = &[
+        ("/index.html", "text/html", b"<main>restore</main>"),
+        ("/app.js", "text/javascript", b"globalThis.ready=true"),
+        (
+            "/build-identity.json",
+            "application/json",
+            br#"{"revision":"fixture"}"#,
+        ),
+    ];
+
     fn respond<T: Send + 'static>(
         listener: &TcpListener,
-        path: &'static str,
-        content_type: &'static str,
-        body: &'static [u8],
-        before_response: impl FnOnce() -> T + Send + 'static,
+        responses: &'static [Response],
+        before_last_response: impl FnOnce() -> T + Send + 'static,
     ) -> JoinHandle<T> {
         let listener = listener.try_clone().unwrap();
         listener.set_nonblocking(true).unwrap();
         thread::spawn(move || {
             let deadline = Instant::now() + Duration::from_secs(45);
-            let mut stream = loop {
-                match listener.accept() {
-                    Ok((stream, _)) => break stream,
-                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                        assert!(Instant::now() < deadline, "没有收到恢复探针请求");
-                        thread::sleep(Duration::from_millis(5));
-                    }
-                    Err(error) => panic!("恢复探针测试监听失败：{error}"),
-                }
-            };
-            drop(listener);
-            stream.set_nonblocking(false).unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(5)))
-                .unwrap();
-            stream
-                .set_write_timeout(Some(Duration::from_secs(5)))
-                .unwrap();
-            let mut request = Vec::new();
-            let mut byte = [0];
-            while !request.ends_with(b"\r\n\r\n") {
-                stream.read_exact(&mut byte).unwrap();
-                request.push(byte[0]);
-                assert!(request.len() < 8192, "恢复探针请求过长");
+            let (&last, earlier) = responses.split_last().unwrap();
+            for &response in earlier {
+                let stream = request_at(&listener, response.0, deadline);
+                send_response(stream, response);
             }
-            let request = std::str::from_utf8(&request).unwrap();
-            assert!(request.starts_with(&format!("GET {path} HTTP/1.1\r\n")));
-            let outcome = before_response();
-            write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
-            stream.write_all(body).unwrap();
+            let stream = request_at(&listener, last.0, deadline);
+            drop(listener);
+            let outcome = before_last_response();
+            send_response(stream, last);
             outcome
         })
+    }
+
+    fn request_at(listener: &TcpListener, path: &str, deadline: Instant) -> TcpStream {
+        let mut stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < deadline, "没有收到恢复探针请求：{path}");
+                    thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => panic!("恢复探针测试监听失败：{error}"),
+            }
+        };
+        stream.set_nonblocking(false).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut request = Vec::new();
+        let mut byte = [0];
+        while !request.ends_with(b"\r\n\r\n") {
+            stream.read_exact(&mut byte).unwrap();
+            request.push(byte[0]);
+            assert!(request.len() < 8192, "恢复探针请求过长");
+        }
+        let request = std::str::from_utf8(&request).unwrap();
+        assert!(request.starts_with(&format!("GET {path} HTTP/1.1\r\n")));
+        stream
+    }
+
+    fn send_response(mut stream: TcpStream, (_, content_type, body): Response) {
+        write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+        stream.write_all(body).unwrap();
     }
 
     #[derive(Clone, Copy)]
@@ -313,6 +340,7 @@ mod online_probes {
         Unchanged,
         ReplaceReceipt,
         CloseWorkerListener,
+        StaleWorkerIdentity,
         AddWorkerConfiguration,
     }
 
@@ -322,6 +350,7 @@ mod online_probes {
             DuringProbe::Unchanged,
             DuringProbe::ReplaceReceipt,
             DuringProbe::CloseWorkerListener,
+            DuringProbe::StaleWorkerIdentity,
             DuringProbe::AddWorkerConfiguration,
         ] {
             exercise(change);
@@ -335,17 +364,13 @@ mod online_probes {
         fs::create_dir_all(&local).unwrap();
         let directory = tempfile::tempdir_in(local).unwrap();
         let listeners = [(); 3].map(|()| TcpListener::bind("127.0.0.1:0").unwrap());
-        let [api, worker, frontend] = listeners
-            .each_ref()
-            .map(|listener| listener.local_addr().unwrap());
         let identity = common::process_identity(std::process::id())
             .unwrap()
             .unwrap();
         let runtime = runtime_fixture(
             &root,
             directory.path(),
-            json!({"api":format!("http://{api}/readyz"),
-                "worker":format!("http://{worker}/readyz"),"frontend":format!("http://{frontend}")}),
+            role_endpoints(&listeners),
             &identity,
             &json!("process-drift"),
         );
@@ -393,18 +418,14 @@ mod online_probes {
             .prefix("runtime-probe-recheck-")
             .tempdir_in(local)
             .unwrap();
-        let api = TcpListener::bind("127.0.0.1:0").unwrap();
-        let worker = TcpListener::bind("127.0.0.1:0").unwrap();
-        let frontend = TcpListener::bind("127.0.0.1:0").unwrap();
-        let ports =
-            [&api, &worker, &frontend].map(|listener| listener.local_addr().unwrap().port());
+        let listeners = [(); 3].map(|()| TcpListener::bind("127.0.0.1:0").unwrap());
+        let ports = listeners
+            .each_ref()
+            .map(|listener| listener.local_addr().unwrap().port());
         let configuration = environment::tests::Fixture::with_ports(ports);
         let mut request = configuration.request();
-        let endpoints = json!({
-            "api":format!("http://{}/readyz", api.local_addr().unwrap()),
-            "worker":format!("http://{}/readyz", worker.local_addr().unwrap()),
-            "frontend":format!("http://{}", frontend.local_addr().unwrap()),
-        });
+        let endpoints = role_endpoints(&listeners);
+        let [api, worker, frontend] = listeners;
         let identity = common::process_identity(std::process::id())
             .unwrap()
             .unwrap();
@@ -420,11 +441,15 @@ mod online_probes {
         request["environment"] = environment::capture(&mut inputs, &request).unwrap();
         verify_role_configuration(&mut inputs, &request, runtime_dir.path()).unwrap();
         let commands = json!({"frontend":[identity["executable"]]});
-        let processes = observe_processes(&runtime, &commands, &mut inputs).unwrap();
+        let mut processes = observe_processes(&runtime, &commands, &mut inputs).unwrap();
         assert_eq!(processes.value["worker"]["identity"], identity);
-        let api_reply = br#"{"status":"ready","mysql":"up","redis":"up","object_storage":"up"}"#;
-        let api_response = respond(&api, "/readyz", "application/json", api_reply, || {});
-        let worker_response = respond(&worker, "/readyz", "text/plain", b"", || {});
+        if matches!(change, DuringProbe::StaleWorkerIdentity) {
+            // 用已验证的真实监听保持 PID 不变，仅让后验观察携带旧创建身份。
+            processes.value["worker"]["identity"]["started"] = json!("0");
+            assert_ne!(processes.value["worker"]["identity"], identity);
+        }
+        let api_response = respond(&api, API_RESPONSES, || {});
+        let worker_response = respond(&worker, WORKER_RESPONSES, || {});
         let mut worker = Some(worker);
         let close_during_probe = if matches!(change, DuringProbe::CloseWorkerListener) {
             worker.take()
@@ -439,30 +464,20 @@ mod online_probes {
             .find(|byte| **byte == b'1')
             .unwrap();
         *first_digit = b'2';
-        let frontend_body = b"<main>restore</main>";
         let additional_config = configuration.worker_directory().join("app.dev.toml");
         assert!(!additional_config.exists());
         let new_config = additional_config.clone();
-        let frontend_response = respond(
-            &frontend,
-            "/index.html",
-            "text/html",
-            frontend_body,
-            move || {
-                drop(close_during_probe);
-                match change {
-                    DuringProbe::ReplaceReceipt => Some(fs::write(worker_receipt, changed_receipt)),
-                    DuringProbe::AddWorkerConfiguration => {
-                        Some(fs::write(new_config, b"unselected = true\n"))
-                    }
-                    _ => None,
+        let frontend_response = respond(&frontend, FRONTEND_RESPONSES, move || {
+            drop(close_during_probe);
+            match change {
+                DuringProbe::ReplaceReceipt => Some(fs::write(worker_receipt, changed_receipt)),
+                DuringProbe::AddWorkerConfiguration => {
+                    Some(fs::write(new_config, b"unselected = true\n"))
                 }
-            },
-        );
-        let files = json!([
-            {"path":"index.html","bytes":frontend_body.len(),"sha256":hex::encode(Sha256::digest(frontend_body))},
-            {"path":".vite/manifest.json","bytes":2,"sha256":hex::encode(Sha256::digest(b"{}"))},
-        ]);
+                _ => None,
+            }
+        });
+        let files = frontend_files();
         let readiness = probe_and_recheck(&runtime, &files, &processes, || {
             verify_role_configuration(&mut inputs, &request, runtime_dir.path())
         });
@@ -473,15 +488,103 @@ mod online_probes {
         if matches!(change, DuringProbe::AddWorkerConfiguration) {
             assert_eq!(fs::read(additional_config).unwrap(), b"unselected = true\n");
         }
+        if matches!(change, DuringProbe::StaleWorkerIdentity) {
+            observe_listener(&runtime, "worker", &identity).unwrap();
+        }
+        if matches!(change, DuringProbe::Unchanged) {
+            assert_probe_reply(
+                &root,
+                runtime_dir.path(),
+                &runtime,
+                &files,
+                processes.value,
+                result.as_ref().unwrap().clone(),
+            );
+        }
         assert_recheck(
             change,
             result,
             write_result,
             &runtime_dir.path().join("worker.json"),
             &receipt_before,
-            api_reply,
+            API_BODY,
         );
-        drop(worker);
+    }
+
+    fn role_endpoints(listeners: &[TcpListener; 3]) -> Value {
+        let [api, worker, frontend] = listeners
+            .each_ref()
+            .map(|listener| listener.local_addr().unwrap());
+        json!({"api":format!("http://{api}/readyz"),
+            "worker":format!("http://{worker}/readyz"),"frontend":format!("http://{frontend}")})
+    }
+
+    fn frontend_files() -> Value {
+        let public = FRONTEND_RESPONSES
+            .iter()
+            .map(|(path, _, body)| (path.strip_prefix('/').unwrap(), *body));
+        Value::Array(
+            public
+                .chain([(".vite/manifest.json", b"{}".as_slice())])
+                .map(|(path, body)| {
+                    json!({"path":path,"bytes":body.len(),"sha256":hex::encode(Sha256::digest(body))})
+                })
+                .collect(),
+        )
+    }
+
+    fn assert_probe_reply(
+        root: &Path,
+        directory: &Path,
+        runtime: &Value,
+        files: &Value,
+        processes: Value,
+        readiness: Value,
+    ) {
+        let save = |name, value| {
+            let file = directory.join(name);
+            strict::write_new(&file, value).unwrap();
+            document::read(&file, root, "探针核验收据").unwrap()
+        };
+        let receipt = save("runtime.json", runtime);
+        let documents = RuntimeDocuments {
+            bindings: save("bindings.json", &json!({"record":"fixture"})),
+            backend: save("backend-build.json", &runtime["backend"]),
+            frontend: save("frontend-build.json", &json!({"files":files})),
+            launch: save(
+                "runtime-launch.json",
+                &json!({"processes":runtime["processes"]}),
+            ),
+        };
+        let frontend_sha = documents.frontend.sha256();
+        let observed = Observed {
+            documents,
+            processes,
+            readiness,
+        }
+        .reply(&receipt);
+        assert_eq!(observed["status"], "verified");
+        assert_eq!(observed["runtime_receipt_sha256"], receipt.sha256());
+        assert_eq!(
+            observed["api_readiness"],
+            serde_json::from_slice::<Value>(API_BODY).unwrap()
+        );
+        assert_eq!(
+            observed["frontend"],
+            json!({"build_receipt_sha256":frontend_sha,"files":files})
+        );
+        let actual = observed["processes"].as_object().unwrap();
+        assert_eq!(actual.len(), generation::ROLES.len());
+        for role in generation::ROLES {
+            let recorded = &runtime["processes"][role];
+            assert_eq!(actual[role]["identity"], recorded["identity"]);
+            assert_eq!(
+                actual[role]["process_receipt"],
+                json!({
+                    "path":recorded["receipt_path"],"sha256":recorded["receipt_sha256"],
+                })
+            );
+        }
     }
 
     fn assert_recheck(
@@ -517,6 +620,12 @@ mod online_probes {
                 assert_eq!(
                     result.unwrap_err().to_string(),
                     "监听所有者不同于登记内核进程；核对绑定端点与服务进程"
+                );
+            }
+            DuringProbe::StaleWorkerIdentity => {
+                assert_eq!(
+                    result.unwrap_err().to_string(),
+                    "登记进程已退出或内核创建身份变化"
                 );
             }
             DuringProbe::AddWorkerConfiguration => {

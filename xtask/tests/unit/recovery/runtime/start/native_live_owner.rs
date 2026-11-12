@@ -5,26 +5,110 @@ use crate::{
         clone::native::lifecycle::lock::ProcessGuard,
         runtime::{
             REGISTRATION_GUARD, dataset_authority::path, live_verify::verify_live_generation_with,
+            verify,
         },
     },
 };
 
 #[test]
 fn live_verify_holds_owner_and_rejects_generation_directory_drift() -> Result<()> {
+    let (fixture, ports) = prepared_fixture()?;
+    drop(ports);
+    if let Err(error) = verify_cases(&fixture) {
+        let path = fixture._work.keep();
+        return Err(format!("{error}；在线代次回归证据：{}", path.display()).into());
+    }
+    Ok(())
+}
+
+#[test]
+fn online_rejects_worker_configuration_drift_before_any_probe() -> Result<()> {
+    let (fixture, listeners) = prepared_fixture()?;
+    if let Err(error) = verify_configuration_preprobe(&fixture, &listeners) {
+        let path = fixture._work.keep();
+        return Err(format!("{error}；探针前配置回归证据：{}", path.display()).into());
+    }
+    Ok(())
+}
+
+fn prepared_fixture() -> Result<(Fixture, [TcpListener; 3])> {
     let mut fixture = Fixture::new();
     fixture.root = fixture.control.join("case").join("runtime");
     let program = portable_path(&std::env::current_exe()?.canonicalize()?);
     let ports = configure_with_artifact(&mut fixture, &program, &program)?;
-    drop(ports);
     for key in ["bindings", "backend_build", "frontend_build"] {
         let file = path(&fixture.request["paths"][key])?;
         strict::write_new(&file, &json!({}))?;
         fixture.request["digests"][key] = file_binding(&fixture, &file)?["sha256"].clone();
     }
     fixture.commands = commands::expected(&fixture.request, &fixture.request["tools"])?;
-    if let Err(error) = verify_cases(&fixture) {
-        let path = fixture._work.keep();
-        return Err(format!("{error}；在线代次回归证据：{}", path.display()).into());
+    Ok((fixture, ports))
+}
+
+fn verify_configuration_preprobe(fixture: &Fixture, listeners: &[TcpListener; 3]) -> Result<()> {
+    let launch = publish_running(fixture)?;
+    let options = runtime_receipt(fixture, &launch)?;
+    let receipt = document::read(&options.receipt, &fixture.backend, "探针前运行收据")?;
+    let request = &launch.value["request"];
+    let authority = &request["authority"];
+
+    let baseline = online_error(fixture, &options, &receipt, authority)?;
+    check(
+        baseline == "恢复静态权威绑定必须为对象",
+        &format!("原配置应通过校验并到达缺少比较绑定的夹具边界：{baseline}"),
+    )?;
+    check_no_probes(listeners)?;
+
+    let directory = path(&request["environment"]["configurations"]["worker"]["directory"])?;
+    let drift = directory.join("app.dev.toml");
+    let bytes = b"unselected = true\n";
+    check(!drift.try_exists()?, "夹具已存在未登记的 Worker 配置")?;
+    fs::write(&drift, bytes)?;
+    let error = online_error(fixture, &options, &receipt, authority)?;
+    check(
+        error == "恢复启动角色配置快照发生漂移",
+        &format!("应在探针前拒绝真实 Worker 配置漂移：{error}"),
+    )?;
+    check_no_probes(listeners)?;
+    for original in [&launch, &receipt] {
+        original.assert_unchanged()?;
+    }
+    check(fs::read(drift)? == bytes, "应保留原漂移文件")
+}
+
+fn online_error(
+    fixture: &Fixture,
+    options: &RuntimeVerifyOptions,
+    receipt: &Document,
+    authority: &Value,
+) -> Result<String> {
+    let window = Window::direct()?;
+    let mut inputs = Inputs::new(&fixture.backend);
+    let result = verify::online(
+        &fixture.backend,
+        &options.sources,
+        &options.bindings,
+        &receipt.value,
+        authority,
+        &mut inputs,
+    );
+    let error = window
+        .finish(inputs.finish(result))
+        .err()
+        .ok_or("夹具应在发出探针前拒绝在线核验")?;
+    Ok(error.to_string())
+}
+
+fn check_no_probes(listeners: &[TcpListener; 3]) -> Result<()> {
+    for (role, listener) in ROLES.into_iter().zip(listeners) {
+        listener.set_nonblocking(true)?;
+        check(
+            listener
+                .accept()
+                .err()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::WouldBlock),
+            &format!("前置配置核验期间 {role} 不应收到探针连接"),
+        )?;
     }
     Ok(())
 }

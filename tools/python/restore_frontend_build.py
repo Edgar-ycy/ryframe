@@ -13,7 +13,7 @@ from restore_runtime_evidence import (
 )
 from source_inventory import capture_inventory
 from restore_frontend_configuration import verify_frontend_inputs
-from restore_frontend_native import B0_HEAD, B0_KIND, request
+from restore_frontend_native import B0_HEAD, request
 
 FRONTEND_RECEIPT = ".vite/restore-build.json"
 
@@ -74,23 +74,3 @@ def validate_registered_frontend(root: Path, expected_head: str, *,
     if not b0:
         verify_frontend_inputs(root, receipt.value["build"], expected_head=expected_head)
     return inventory, receipt
-
-
-def frontend_input_recheck(root: Path, receipt: dict, *, expected_head: str | None = None):
-    """普通构建保留原配置窗口，B0 重验同一收据及原版构建输入。"""
-    if receipt["kind"] != B0_KIND:
-        return verify_frontend_inputs(root, receipt["build"], expected_head=expected_head).assert_unchanged
-    if expected_head is not None and expected_head != B0_HEAD:
-        raise ValueError("B0 恢复构建必须绑定原始前端提交")
-    inventory, document = validate_frontend_build(root, b0=True)
-    if document.value != receipt:
-        raise ValueError("B0 构建收据不同于本次绑定")
-
-    def recheck():
-        document.assert_unchanged()
-        proof = request("validate-b0", root, expected_head=B0_HEAD, inventory=inventory)
-        if proof["receipt"] != receipt:
-            raise ValueError("B0 构建收据在核验期间漂移")
-        document.assert_unchanged()
-
-    return recheck
