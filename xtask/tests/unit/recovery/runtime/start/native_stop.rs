@@ -180,7 +180,7 @@ fn verify_and_stop(
     Ok(())
 }
 
-fn runtime_command(fixture: &Fixture, program: &Path, operation: &str) -> Result<Value> {
+pub(super) fn runtime_command(fixture: &Fixture, program: &Path, operation: &str) -> Result<Value> {
     let mut command = crate::process::child_command(program);
     command
         .current_dir(&fixture.backend)
@@ -205,7 +205,7 @@ fn runtime_command(fixture: &Fixture, program: &Path, operation: &str) -> Result
     strict::parse_fragment(std::str::from_utf8(&result.stdout)?, "原生恢复控制结果")
 }
 
-fn verify_completion(
+pub(super) fn verify_completion(
     fixture: &Fixture,
     generation: &Value,
     role: &str,

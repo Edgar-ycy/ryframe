@@ -9,10 +9,16 @@ use crate::recovery::{
 };
 use std::{net::TcpListener, process::Command, time::Duration};
 
+#[path = "native_frontend_fixture.rs"]
+mod native_frontend_fixture;
 #[path = "native_live_owner.rs"]
 mod native_live_owner;
 #[path = "native_stop.rs"]
 mod native_stop;
+#[path = "native_three_roles.rs"]
+mod native_three_roles;
+
+use native_frontend_fixture::Frontend;
 
 #[test]
 fn worker_readiness_failure_reclaims_started_role_trees_without_launch_receipt() -> Result<()> {
@@ -61,13 +67,14 @@ fn start_operation(binding: &Value) -> Result<String> {
 
 fn configure(fixture: &mut Fixture, coordinator: &Path) -> Result<[TcpListener; 3]> {
     let artifact = compile_product(&fixture.control)?;
-    configure_with_artifact(fixture, coordinator, &artifact)
+    configure_with_artifact(fixture, coordinator, &artifact, None)
 }
 
 fn configure_with_artifact(
     fixture: &mut Fixture,
     coordinator: &Path,
     native: &Path,
+    frontend_build: Option<&Frontend>,
 ) -> Result<[TcpListener; 3]> {
     let git = Command::new("git")
         .args(["init", "--quiet"])
@@ -87,7 +94,9 @@ fn configure_with_artifact(
     let execution = fixture.control.join("product");
     let api_dir = execution.join("config");
     let worker_dir = execution.join("worker-config");
-    let frontend_root = fixture.control.join("frontend");
+    let frontend_root = frontend_build
+        .map(|frontend| frontend.root.clone())
+        .unwrap_or_else(|| fixture.control.join("frontend"));
     for path in [&api_dir, &worker_dir, &frontend_root] {
         fs::create_dir_all(path)?;
     }
@@ -106,11 +115,18 @@ fn configure_with_artifact(
             "api_config_dir":api_dir,"worker_config_dir":worker_dir,
         }),
     )?;
-    let authority = authority(scope, api, worker, frontend);
+    let mut authority = authority(scope, api, worker, frontend);
+    let mut frontend_path = frontend_root.join("frontend-build.json");
+    let mut frontend_sha256 = "c".repeat(64);
+    if let Some(frontend) = frontend_build {
+        authority["frontend_sha"] = json!(&frontend.head);
+        frontend_path.clone_from(&frontend.receipt);
+        frontend_sha256.clone_from(&frontend.receipt_sha256);
+    }
     fixture.binding = register_fixture(fixture, &registration, &private, &authority)?;
     let paths = json!({"bindings":fixture.control.join("bindings.json"),
         "backend_build":fixture.control.join("backend-build.json"),
-        "frontend_build":frontend_root.join("frontend-build.json")});
+        "frontend_build":frontend_path});
     let roots =
         json!({"backend_product":execution,"backend_execution":execution,"frontend":frontend_root});
     let artifact = digest::file(native)?;
@@ -122,7 +138,7 @@ fn configure_with_artifact(
     fixture.request = json!({
         "format_version":2,"kind":"restore-runtime-launch-request","runtime_directory":fixture.root,
         "authority":authority,"registration":fixture.binding,
-        "roots":roots,"paths":paths,"digests":{"bindings":"a".repeat(64),"backend_build":"b".repeat(64),"frontend_build":"c".repeat(64)},
+        "roots":roots,"paths":paths,"digests":{"bindings":"a".repeat(64),"backend_build":"b".repeat(64),"frontend_build":frontend_sha256},
         "artifacts":{"api":artifact,"worker":artifact},"tools":tools,
     });
     fixture.request["environment"] =

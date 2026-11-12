@@ -35,7 +35,7 @@ fn prepared_fixture() -> Result<(Fixture, [TcpListener; 3])> {
     let mut fixture = Fixture::new();
     fixture.root = fixture.control.join("case").join("runtime");
     let program = portable_path(&std::env::current_exe()?.canonicalize()?);
-    let ports = configure_with_artifact(&mut fixture, &program, &program)?;
+    let ports = configure_with_artifact(&mut fixture, &program, &program, None)?;
     for key in ["bindings", "backend_build", "frontend_build"] {
         let file = path(&fixture.request["paths"][key])?;
         strict::write_new(&file, &json!({}))?;

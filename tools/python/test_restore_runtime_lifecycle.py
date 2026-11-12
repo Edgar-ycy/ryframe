@@ -187,23 +187,6 @@ class RestoreRuntimeLifecycleTests(unittest.TestCase):
         generation = state["generations"][-1]
         return generation, lifecycle._observe_generation(generation)
 
-    def test_three_role_generation_starts_and_stops_complete_trees(self):
-        with self.patched(self.commands()):
-            started = lifecycle.start(self.args(), self.coordinator, Mock(), Mock(), Mock())
-            self.assertEqual(started["status"], "running")
-            launch = read_json_document(Path(started["launch"]["path"])).value
-            self.assertEqual(set(launch["processes"]), {"api", "worker", "frontend"})
-            generation, processes = self.observed_generation()
-            self.assertEqual(generation["status"], "running")
-            self.assertEqual({item["state"] for item in processes.values()}, {"running"})
-            identities = [item["identity"] for item in processes.values()]
-            stopped = self.stop_under_recover_lock()
-            self.assertEqual(stopped["status"], "stopped")
-            self.assertTrue(all(process_identity(item["pid"]) is None for item in identities))
-            generation, processes = self.observed_generation()
-            self.assertEqual(generation["status"], "stopped")
-            self.assertEqual({item["state"] for item in processes.values()}, {"stopped"})
-
     def test_stop_after_natural_exit_retains_completion_evidence(self):
         with self.patched(self.commands(0.5)):
             lifecycle.start(self.args(), self.coordinator, Mock(), Mock(), Mock())
@@ -262,22 +245,6 @@ class RestoreRuntimeLifecycleTests(unittest.TestCase):
         runner.assert_not_called()
         self.assertFalse(generation_model.creation_path(self.runtime).exists())
         self.assertFalse(self.runtime.exists())
-
-    def test_stop_recovers_a_generation_interrupted_after_launch_publication(self):
-        with self.patched(self.commands()):
-            lifecycle.start(self.args(), self.coordinator, Mock(), Mock(), Mock())
-            state_path = self.runtime / "lifecycle.json"
-            state = read_json_document(state_path).value
-            state["generations"][0]["status"] = "starting"
-            state["generations"][0]["launch"] = None
-            write_receipt(state_path, state)
-            generation, processes = self.observed_generation()
-            self.assertEqual({item["state"] for item in processes.values()}, {"running"})
-            self.assertEqual(generation["status"], "starting")
-            stopped = self.stop_under_recover_lock()
-            self.assertEqual(stopped["status"], "stopped")
-            persisted = read_json_document(state_path).value["generations"][0]
-            self.assertIsNotNone(persisted["launch"])
 
     def test_recover_completes_first_directory_crash_cut(self):
         with self.patched(self.commands()):
