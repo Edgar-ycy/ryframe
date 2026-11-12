@@ -1,4 +1,4 @@
-use ryframe_config::{AppConfig, DatabaseReplicaConfig, DbTlsMode, Environment};
+use ryframe_config::{AppConfig, DatabaseReplicaConfig, DbConnection, DbTlsMode, Environment};
 use sha2::{Digest, Sha256};
 use std::{
     fs, io,
@@ -7,10 +7,12 @@ use std::{
 
 pub(super) const REPLICA: &str = "fixture-read-replica";
 
+type FileImage = (PathBuf, Option<Vec<u8>>);
+
 /// 冻结本用例实际读取的配置及 TLS 文件；缺失的公共配置也参与前后像。
 pub(super) struct Configuration {
     pub(super) app: AppConfig,
-    images: Vec<(PathBuf, Option<Vec<u8>>)>,
+    images: Vec<FileImage>,
 }
 
 impl Configuration {
@@ -39,25 +41,12 @@ impl Configuration {
             return Err("副本真实场景必须保留启用的 MySQL TLS".into());
         }
         let mut result = Self { app, images };
-        for configured in [
-            &result.app.database.primary.tls_ca,
-            &result.app.database.primary.tls_client_cert,
-            &result.app.database.primary.tls_client_key,
-        ]
-        .into_iter()
-        .flatten()
-        .filter(|value| !value.trim().is_empty())
-        {
-            // TLS 相对路径仍以实际进程 cwd 解析，与驱动读取规则一致。
-            let path = PathBuf::from(configured);
-            let path = if path.is_absolute() {
-                path
-            } else {
-                std::env::current_dir()
-                    .map_err(|_| "无法读取 TLS 文件的当前目录")?
-                    .join(path)
-            };
-            result.images.push((path.clone(), image(&path, false)?));
+        result
+            .images
+            .extend(tls_images(&result.app.database.primary)?);
+        if let Some(replica) = result.physical() {
+            let images = tls_images(replica)?;
+            result.images.extend(images);
         }
         result.verify()?;
         Ok(result)
@@ -73,10 +62,29 @@ impl Configuration {
         if primary == replica || port == self.app.database.primary.port {
             return Err("副本测试的派生 schema 或代理端口不独立".into());
         }
-        let mut app = self.app.clone();
         let mut read = self.app.database.primary.clone();
-        app.database.primary.database = primary.into();
         read.database = replica.into();
+        self.with_proxy(primary, read, port)
+    }
+
+    pub(super) fn physical(&self) -> Option<&DbConnection> {
+        self.app
+            .database
+            .replicas
+            .iter()
+            .find(|replica| replica.name == "physical-replica")
+            .map(|replica| &replica.connection)
+    }
+
+    pub(super) fn with_proxy(
+        &self,
+        primary: &str,
+        mut read: DbConnection,
+        port: u16,
+    ) -> Result<AppConfig, String> {
+        self.verify()?;
+        let mut app = self.app.clone();
+        app.database.primary.database = primary.into();
         read.port = port;
         // 本用例仅接入两个 owned schema，不访问原配置中的其他拓扑资源。
         app.database.sources.clear();
@@ -99,6 +107,31 @@ impl Configuration {
         }
         Ok(())
     }
+}
+
+fn tls_images(connection: &DbConnection) -> Result<Vec<FileImage>, String> {
+    [
+        &connection.tls_ca,
+        &connection.tls_client_cert,
+        &connection.tls_client_key,
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|value| !value.trim().is_empty())
+    .map(|configured| {
+        // TLS 相对路径仍以实际进程 cwd 解析，与驱动读取规则一致。
+        let path = PathBuf::from(configured);
+        let path = if path.is_absolute() {
+            path
+        } else {
+            std::env::current_dir()
+                .map_err(|_| "无法读取 TLS 文件的当前目录")?
+                .join(path)
+        };
+        let digest = image(&path, false)?;
+        Ok((path, digest))
+    })
+    .collect()
 }
 
 fn image(path: &Path, missing_allowed: bool) -> Result<Option<Vec<u8>>, String> {

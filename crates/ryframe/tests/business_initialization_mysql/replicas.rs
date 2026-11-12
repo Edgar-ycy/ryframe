@@ -8,9 +8,13 @@ use tokio::task::JoinHandle;
 mod configuration;
 #[path = "replicas/diagnostics.rs"]
 mod diagnostics;
+#[path = "replicas/physical.rs"]
+mod physical;
 #[path = "replicas/transport.rs"]
 mod transport;
 use configuration::{Configuration, REPLICA};
+
+const OWNED_CODES: [&str; 2] = ["primary-only", "replica-only"];
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn real_replica_monitor_routes_recovers_and_rejects_business_drift() {
@@ -19,6 +23,10 @@ async fn real_replica_monitor_routes_recovers_and_rejects_business_drift() {
         return;
     }
     let binding = Configuration::load().unwrap_or_else(|error| panic!("{error}"));
+    if binding.physical().is_some() {
+        eprintln!("同实例双 schema 场景未验收：当前选择了独立物理副本夹具");
+        return;
+    }
     ryframe_db::migration::register_business_tables([("biz_sql_example", TABLE_SCHEMA)]).unwrap();
     mysql::run_mysql_test("replica-primary", move |primary| async move {
         mysql::run_mysql_test("replica-read", move |replica| async move {
@@ -51,16 +59,7 @@ async fn scenario(
     );
     let proxy = transport::Proxy::start(&binding.app.database.primary).await?;
     let config = binding.derive(&primary_id.1, &replica_id.1, proxy.port())?;
-    diagnostics::install(&config)?;
-    let cluster = ryframe::boot::datasource::connect(&config)
-        .await
-        .map_err(message)?;
-    let mut runtime = Runtime {
-        cluster,
-        monitor: None,
-        proxy,
-        pools: Vec::new(),
-    };
+    let mut runtime = Runtime::start(&config, proxy).await?;
     let mut result = AssertUnwindSafe(exercise(
         &mut runtime,
         &replica,
@@ -110,26 +109,12 @@ async fn exercise(
     primary_id: &(String, String),
     replica_id: &(String, String),
 ) -> Result<(), String> {
-    let initial = health(&runtime.cluster)?;
-    assert!(!initial.healthy && initial.consecutive_successes == 0);
-    assert!(runtime.cluster.replica_connection(REPLICA).is_none());
-    read(
-        &runtime.cluster,
-        ReadConsistency::Eventual,
-        DatabaseNodeKind::Primary,
-        primary_id,
-        "primary-only",
-    )
-    .await?;
-    runtime.monitor = Some(ryframe::boot::datasource::spawn_replica_health_monitor(
-        runtime.cluster.clone(),
-        config.database.replicas.clone(),
-        config.database.sql_log_level,
-        config.database.sql_slow_threshold_ms,
-    ));
-    admission(runtime, primary_id, replica_id, "initial").await?;
+    runtime
+        .start_monitor(config, primary_id, OWNED_CODES[0])
+        .await?;
+    admission(runtime, primary_id, replica_id, "initial", OWNED_CODES).await?;
     binding.verify()?;
-    disconnect_and_restore(runtime, primary_id, replica_id).await?;
+    disconnect_and_restore(runtime, primary_id, replica_id, OWNED_CODES).await?;
     binding.verify()?;
     business_drift(runtime, replica, primary_id, replica_id).await?;
     read(
@@ -148,6 +133,7 @@ async fn admission(
     primary: &(String, String),
     replica: &(String, String),
     phase: &str,
+    [primary_code, replica_code]: [&str; 2],
 ) -> Result<(), String> {
     wait_health(&runtime.cluster, phase, |h| {
         !h.healthy && h.consecutive_successes == 1
@@ -158,7 +144,7 @@ async fn admission(
         ReadConsistency::Eventual,
         DatabaseNodeKind::Primary,
         primary,
-        "primary-only",
+        primary_code,
     )
     .await?;
     wait_health(&runtime.cluster, phase, |h| {
@@ -175,7 +161,7 @@ async fn admission(
         ReadConsistency::Strong,
         DatabaseNodeKind::Primary,
         primary,
-        "primary-only",
+        primary_code,
     )
     .await?;
     read(
@@ -183,7 +169,7 @@ async fn admission(
         ReadConsistency::Eventual,
         DatabaseNodeKind::Replica,
         replica,
-        "replica-only",
+        replica_code,
     )
     .await
 }
@@ -192,6 +178,7 @@ async fn disconnect_and_restore(
     runtime: &mut Runtime,
     primary: &(String, String),
     replica: &(String, String),
+    codes: [&str; 2],
 ) -> Result<(), String> {
     fresh_probe(&runtime.cluster).await?;
     let selected = runtime.cluster.select_read(ReadConsistency::Eventual);
@@ -227,7 +214,7 @@ async fn disconnect_and_restore(
         ReadConsistency::Strong,
         DatabaseNodeKind::Primary,
         primary,
-        "primary-only",
+        codes[0],
     )
     .await?;
     wait_health(&runtime.cluster, "failure-one", |h| {
@@ -249,11 +236,11 @@ async fn disconnect_and_restore(
         ReadConsistency::Eventual,
         DatabaseNodeKind::Primary,
         primary,
-        "primary-only",
+        codes[0],
     )
     .await?;
     runtime.proxy.restore().await?;
-    admission(runtime, primary, replica, "reconnected").await
+    admission(runtime, primary, replica, "reconnected", codes).await
 }
 
 async fn business_drift(
@@ -311,7 +298,14 @@ async fn business_drift(
             .map_err(mysql::db_error)?,
         TABLE_SCHEMA
     );
-    admission(runtime, primary_id, replica_id, "schema-restored").await?;
+    admission(
+        runtime,
+        primary_id,
+        replica_id,
+        "schema-restored",
+        OWNED_CODES,
+    )
+    .await?;
     assert_eq!(business_rows(replica).await?, before);
     Ok(())
 }
@@ -324,6 +318,48 @@ struct Runtime {
 }
 
 impl Runtime {
+    async fn start(
+        config: &ryframe_config::AppConfig,
+        proxy: transport::Proxy,
+    ) -> Result<Self, String> {
+        diagnostics::install(config)?;
+        let cluster = ryframe::boot::datasource::connect(config)
+            .await
+            .map_err(message)?;
+        Ok(Self {
+            cluster,
+            monitor: None,
+            proxy,
+            pools: Vec::new(),
+        })
+    }
+
+    async fn start_monitor(
+        &mut self,
+        config: &ryframe_config::AppConfig,
+        primary: &(String, String),
+        code: &str,
+    ) -> Result<(), String> {
+        let initial = health(&self.cluster)?;
+        assert!(!initial.healthy && initial.consecutive_successes == 0);
+        assert!(self.cluster.replica_connection(REPLICA).is_none());
+        read(
+            &self.cluster,
+            ReadConsistency::Eventual,
+            DatabaseNodeKind::Primary,
+            primary,
+            code,
+        )
+        .await?;
+        self.monitor = Some(ryframe::boot::datasource::spawn_replica_health_monitor(
+            self.cluster.clone(),
+            config.database.replicas.clone(),
+            config.database.sql_log_level,
+            config.database.sql_slow_threshold_ms,
+        ));
+        Ok(())
+    }
+
     async fn close(&mut self) -> Result<(), String> {
         let mut errors = Vec::new();
         if let Some(task) = self.monitor.take() {
