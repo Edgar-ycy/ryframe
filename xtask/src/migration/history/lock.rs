@@ -171,10 +171,10 @@ pub(super) fn render_lock(
         .as_deref()
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "迁移冻结清单 frozen_at 必须是非空字符串".to_owned())?;
-    let mut rendered = format!("format_version = 1\nfrozen_at = \"{frozen_at}\"\n\n");
+    let mut rendered = format!("format_version = 1\nfrozen_at = \"{frozen_at}\"\n");
     for entry in entries {
         rendered.push_str(&format!(
-            "[[files]]\npath = \"{}\"\nsha256 = \"{}\"\nstorage = \"{}\"\ntarget = \"{}\"\n\n",
+            "\n[[files]]\npath = \"{}\"\nsha256 = \"{}\"\nstorage = \"{}\"\ntarget = \"{}\"\n",
             entry.relative, entry.expected_sha256, entry.storage, entry.target
         ));
     }

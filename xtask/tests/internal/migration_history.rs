@@ -85,7 +85,7 @@ impl TestRoot {
     fn write_lock(&self, paths: &[PathBuf]) {
         let mut paths = paths.to_vec();
         paths.sort();
-        let mut content = "format_version = 1\nfrozen_at = \"2026-08-20\"\n\n".to_owned();
+        let mut content = "format_version = 1\nfrozen_at = \"2026-08-20\"\n".to_owned();
         for path in paths {
             let relative = path
                 .strip_prefix(&self.0)
@@ -94,7 +94,7 @@ impl TestRoot {
                 .replace('\\', "/");
             let (storage, target) = lock_identity(&relative).unwrap();
             content.push_str(&format!(
-                "[[files]]\npath = \"{relative}\"\nsha256 = \"{}\"\nstorage = \"{storage}\"\ntarget = \"{target}\"\n\n",
+                "\n[[files]]\npath = \"{relative}\"\nsha256 = \"{}\"\nstorage = \"{storage}\"\ntarget = \"{target}\"\n",
                 sha256(&path).unwrap()
             ));
         }
@@ -683,12 +683,17 @@ fn reconcile_selects_baseline_or_freeze_from_the_shared_release_stage() {
     let development = TestRoot::new();
     development.write("Cargo.toml", "[workspace.package]\nversion = \"0.12.1\"\n");
     development.commit_all("development baseline");
+    let before = fs::read(development.lock()).unwrap();
+    run_reconcile(&development.0).unwrap();
+    assert_eq!(fs::read(development.lock()).unwrap(), before);
+
     development.write(
         "crates/ryframe-db/src/migration/m20260820_000000_control_baseline/mod.rs",
         "refreshed development baseline\n",
     );
-    let before = fs::read(development.lock()).unwrap();
     run_reconcile(&development.0).unwrap();
-    assert_ne!(fs::read(development.lock()).unwrap(), before);
+    let after = fs::read(development.lock()).unwrap();
+    assert_ne!(after, before);
+    assert!(after.ends_with(b"\n") && !after.ends_with(b"\n\n"));
     assert!(check_history(&development.0, true, "HEAD").is_empty());
 }
