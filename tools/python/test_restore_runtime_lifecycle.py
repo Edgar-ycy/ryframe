@@ -174,19 +174,6 @@ class RestoreRuntimeLifecycleTests(unittest.TestCase):
             stack.enter_context(patch.object(lifecycle, "require_closed_port"))
             yield
 
-    def test_retired_status_and_stop_are_rejected_by_the_python_protocol(self):
-        for operation, fields in (("status", {"write": False}),
-                                  ("stop", {"write": True, "generation": 1})):
-            payload = {
-                "backend_dir": str(self.coordinator), "format_version": 1,
-                "kind": restore_runtime.PROTOCOL_KIND, "operation": operation,
-                "runtime_registration": str(self.args().runtime_registration),
-                "target_plan": str(self.args().target_plan),
-                **fields,
-            }
-            with self.subTest(operation=operation), self.assertRaises(restore_runtime.RuntimeProtocolError):
-                restore_runtime.decode_request(json.dumps(payload))
-
     def stop_under_recover_lock(self):
         # 旧 Recover 仍以相同锁调用此内部回收实现。
         with runtime_control_lock.controller_lock(

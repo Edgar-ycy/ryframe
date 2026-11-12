@@ -2,8 +2,9 @@
 
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
     sync::atomic::{AtomicUsize, Ordering},
 };
 
@@ -97,8 +98,9 @@ fn write(directory: &Path, name: &str) -> PathBuf {
     path
 }
 
-fn invoke_with_conflicting_python_environment(arguments: &[String], fixture: &Fixture) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_xtask"))
+fn native_command(arguments: &[String], fixture: &Fixture) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_xtask"));
+    command
         .args(arguments)
         .env(
             "RYFRAME_RESTORE_RUNTIME_PROTOCOL",
@@ -111,9 +113,12 @@ fn invoke_with_conflicting_python_environment(arguments: &[String], fixture: &Fi
         .env("pythonUtf8", "0")
         .env("PythonIoEncoding", "ascii:strict")
         .env("PYTHONPATH", &fixture.directory)
-        .env("RYFRAME_RUNTIME_TEST_CAPTURE", &fixture.capture)
-        .output()
-        .unwrap()
+        .env("RYFRAME_RUNTIME_TEST_CAPTURE", &fixture.capture);
+    command
+}
+
+fn invoke_with_conflicting_python_environment(arguments: &[String], fixture: &Fixture) -> Output {
+    native_command(arguments, fixture).output().unwrap()
 }
 
 fn assert_native_registration_rejected(operation: &str, result: Output) {
@@ -129,23 +134,20 @@ fn assert_native_registration_rejected(operation: &str, result: Output) {
 }
 
 #[test]
-fn runtime_status_and_recover_reject_invalid_registration_without_python_or_file_changes() {
+fn runtime_control_rejects_invalid_registration_without_python_or_file_changes() {
     let fixture = Fixture::new();
     let owner = fixture.directory.join("隔离 owner.json");
     let owner_bytes = b"{\"isolated_owner\":true}\n";
     fs::write(&owner, owner_bytes).unwrap();
     let before = fixture.entries();
 
-    for operation in ["status", "recover"] {
+    for operation in ["status", "stop", "recover"] {
         let mut arguments = fixture.runtime_arguments(operation);
+        if operation != "status" {
+            arguments.extend(["--generation".into(), "1".into(), "--write".into()]);
+        }
         if operation == "recover" {
-            arguments.extend([
-                "--generation".into(),
-                "1".into(),
-                "--owner".into(),
-                owner.to_string_lossy().into_owned(),
-                "--write".into(),
-            ]);
+            arguments.extend(["--owner".into(), owner.to_string_lossy().into_owned()]);
         }
         let result = invoke_with_conflicting_python_environment(&arguments, &fixture);
         assert_native_registration_rejected(operation, result);
@@ -153,6 +155,73 @@ fn runtime_status_and_recover_reject_invalid_registration_without_python_or_file
         fixture.assert_no_python_hook();
         assert_eq!(fixture.entries(), before);
     }
+}
+
+#[test]
+fn runtime_verify_reads_explicit_stdin_and_rejects_an_invalid_receipt_without_changes() {
+    let fixture = Fixture::new();
+    let backend = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let frontend = fixture.directory.join("前端 来源");
+    fs::create_dir(&frontend).unwrap();
+    let receipt = write(&fixture.directory, "运行 收据.json");
+    let bindings = write(&fixture.directory, "数据 绑定.json");
+    let arguments = [
+        "check",
+        "recovery",
+        "runtime",
+        "verify",
+        "--source-backend",
+        backend.to_str().unwrap(),
+        "--source-frontend",
+        frontend.to_str().unwrap(),
+        "--bindings",
+        bindings.to_str().unwrap(),
+        "--receipt",
+        receipt.to_str().unwrap(),
+    ]
+    .map(str::to_owned);
+    let authority = serde_json::json!({
+        "format_version":2, "kind":"restore-runtime-authority", "restore_id":"restore-1",
+        "backup_id":"backup-1", "scope_id":"fixture-restore-1", "plan_hash":"a".repeat(64),
+        "data_verified_at":"2026-09-06T00:00:00Z", "backup_source_sha":"b".repeat(40),
+        "backend_product_sha":"c".repeat(40), "backend_execution_sha":"c".repeat(40),
+        "backend_adapter_contract":null, "frontend_sha":"d".repeat(40),
+        "api_endpoint":"http://127.0.0.1:18080/readyz",
+        "worker_endpoint":"http://127.0.0.1:19091/readyz",
+        "frontend_endpoint":"http://127.0.0.1:14174",
+    });
+    let before = fixture.entries();
+    let mut empty = native_command(&arguments, &fixture);
+    let empty = empty.stdin(Stdio::null()).output().unwrap();
+    assert_eq!(empty.status.code(), Some(1));
+    assert!(empty.stdout.is_empty());
+    assert!(
+        String::from_utf8(empty.stderr)
+            .unwrap()
+            .contains("verify 必须从 stdin")
+    );
+    let mut process = native_command(&arguments, &fixture)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    process
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(&serde_json::to_vec(&authority).unwrap())
+        .unwrap();
+    let invalid = process.wait_with_output().unwrap();
+    assert_eq!(invalid.status.code(), Some(1));
+    assert!(invalid.stdout.is_empty());
+    let stderr = String::from_utf8(invalid.stderr).unwrap();
+    assert_eq!(
+        stderr.trim_end(),
+        "任务失败：恢复运行收据字段缺失或包含未知字段"
+    );
+    fixture.assert_no_python_hook();
+    assert_eq!(fixture.entries(), before);
 }
 
 #[test]

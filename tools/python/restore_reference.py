@@ -22,7 +22,7 @@ from restore_reference_io import ExternalTools, redact_object_diagnostic
 from restore_reference_plan import (dataset_timeout_seconds, plan_hash,
                                     validate_plan,
                                     verify_artifacts)
-from restore_runtime import read_json
+from restore_runtime_evidence import read_json
 from restore_runtime_registration import registered_stopped_runtime
 from restore_reference_target import execute_plan
 from source_inventory import build_source_domains, capture_inventory

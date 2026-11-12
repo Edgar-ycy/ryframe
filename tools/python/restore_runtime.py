@@ -2,15 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-import json
-import math
-import sys
-from types import SimpleNamespace
 from pathlib import Path
 
 from native_s3_client import _invoke as native_invoke, _read_response as native_response
-from rate_limit_tool import install_binding, parse_binding, tool_binding
+from rate_limit_tool import tool_binding
 import subprocess
 
 from full_stack_process import process_identity
@@ -28,7 +23,6 @@ from restore_frontend_build import (
 from restore_frontend_native import B0_KIND
 from restore_runtime_source import require_bindings, resolve_runtime_sources, runtime_authority
 from restore_runtime_evidence import (
-    HEX_40,
     ArtifactSnapshot,
     JsonDocument,
     artifact_snapshot,
@@ -37,10 +31,7 @@ from restore_runtime_evidence import (
     directory as _directory,
     exact_fields as _exact_fields,
     process_document as _process_document,
-    read_authority,
-    read_json as read_json,
     read_json_document,
-    reject_json_constant as _reject_json_constant,
     same_path as _same_path,
     validate_authority,
     validate_frontend_receipt as _validate_frontend_receipt,
@@ -578,221 +569,3 @@ def verify(
         "api_readiness": readiness,
         "frontend": {"build_receipt_sha256": frontend_build.sha256, "files": files},
     }
-
-
-PROTOCOL_KIND = "ryframe-xtask-restore-runtime"
-PROTOCOL_MAX_BYTES = 16 * 1024
-OPERATIONS = frozenset(
-    {"start", "recover", "bind", "verify"}
-)
-WRITING_OPERATIONS = frozenset({"start", "recover", "bind"})
-BASE_FIELDS = {"backend_dir", "format_version", "kind", "operation", "write"}
-SOURCE_FIELDS = {"source_backend", "source_frontend"}
-CONTROL_FIELDS = {"runtime_registration", "target_plan"}
-OPERATION_FIELDS = {
-    "start": CONTROL_FIELDS | SOURCE_FIELDS | {"build_receipt", "bindings", "timeout"},
-    "recover": CONTROL_FIELDS | {"generation", "owner"},
-    "bind": SOURCE_FIELDS | {"build_receipt", "launch_receipt", "bindings", "output"},
-    "verify": SOURCE_FIELDS | {"bindings", "receipt"},
-}
-PATH_FIELDS = {
-    "backend_dir", "frontend_dir", "target_plan", "output", "source_backend",
-    "source_frontend", "product_backend", "runtime_registration", "build_receipt", "bindings",
-    "owner", "launch_receipt", "receipt",
-}
-
-
-class RuntimeProtocolError(ValueError):
-    """私有运行协议错误；公开 Rust 参数解析应在启动前阻止同类输入。"""
-
-
-@dataclass(frozen=True)
-class RuntimeRequest:
-    operation: str
-    values: dict
-
-    def namespace(self) -> SimpleNamespace:
-        return SimpleNamespace(command=self.operation, **self.values)
-
-
-def _unique_protocol_object(pairs: list[tuple[str, object]]) -> dict:
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            raise RuntimeProtocolError(f"私有协议字段重复：{key}")
-        result[key] = value
-    return result
-
-
-def _protocol_path(value: object, label: str) -> Path:
-    if not isinstance(value, str) or not value or not Path(value).is_absolute():
-        raise RuntimeProtocolError(f"{label}必须是非空绝对路径")
-    if any(character in value for character in ("\n", "\r", "\0")):
-        raise RuntimeProtocolError(f"{label}不能包含换行符或 NUL")
-    return Path(value)
-
-
-def _protocol_sources(protocol: dict, fields: set[str]) -> set[str]:
-    adapter = protocol.get("adapter_contract")
-    product = protocol.get("product_backend")
-    if (adapter is None) != (product is None):
-        raise RuntimeProtocolError("适配合同与产品后端必须成对提供")
-    if adapter is not None:
-        if adapter != "legacy-stable-readiness-b0-v1":
-            raise RuntimeProtocolError("私有协议包含未知适配合同")
-        fields |= {"adapter_contract", "product_backend"}
-    return fields
-
-
-def _decode_protocol(raw: str) -> dict:
-    try:
-        value = json.loads(
-            raw,
-            object_pairs_hook=_unique_protocol_object,
-            parse_constant=_reject_json_constant,
-        )
-    except RuntimeProtocolError:
-        raise
-    except (TypeError, ValueError, json.JSONDecodeError) as error:
-        raise RuntimeProtocolError("runtime 私有协议不是严格 JSON") from error
-    if not isinstance(value, dict):
-        raise RuntimeProtocolError("runtime 私有协议必须是 JSON 对象")
-    return value
-
-
-def private_protocol_request(argv: list[str] | None = None) -> RuntimeRequest:
-    arguments = sys.argv[1:] if argv is None else list(argv)
-    if len(arguments) != 2 or arguments[0] != "--request-file":
-        raise RuntimeProtocolError("恢复运行仅接受受管请求文件参数")
-    try:
-        path = _protocol_path(arguments[1], "请求文件")
-        document = read_json_document(path)
-        envelope = _exact_fields(document.value, {"request", "native_tool"}, "恢复运行受管请求")
-        parse_binding(envelope["native_tool"])
-        request = decode_request(json.dumps(envelope["request"], ensure_ascii=False))
-        if request.operation == "recover":
-            raise RuntimeProtocolError("runtime Recover 由 Rust 公共入口执行")
-        if (".." in path.parts or path.resolve(strict=True) != path
-                or not path.is_relative_to(request.values["backend_dir"] / ".local-tests")):
-            raise ValueError("请求文件不在后端受管目录")
-        document.assert_unchanged()
-        install_binding(envelope["native_tool"])
-        return request
-    except (OSError, ValueError):
-        raise RuntimeProtocolError("恢复运行受管请求文件无效") from None
-
-
-def decode_request(raw: str) -> RuntimeRequest:
-    if (
-        not isinstance(raw, str)
-        or not raw
-        or len(raw.encode("utf-8")) > PROTOCOL_MAX_BYTES
-    ):
-        raise RuntimeProtocolError("恢复运行私有协议缺失、为空或过长")
-    if any(character in raw for character in ("\n", "\r", "\0")):
-        raise RuntimeProtocolError("恢复运行私有协议不能包含换行符或 NUL")
-    protocol = _decode_protocol(raw)
-    if (
-        type(protocol.get("format_version")) is not int
-        or protocol.get("format_version") != 1
-        or protocol.get("kind") != PROTOCOL_KIND
-    ):
-        raise RuntimeProtocolError("恢复运行私有协议版本或类型无效")
-    operation = protocol.get("operation")
-    if not isinstance(operation, str) or operation not in OPERATIONS:
-        raise RuntimeProtocolError("恢复运行私有协议操作无效")
-    fields = BASE_FIELDS | OPERATION_FIELDS[operation]
-    if operation in {"start", "bind", "verify"}:
-        fields = _protocol_sources(protocol, fields)
-    if set(protocol) != fields:
-        raise RuntimeProtocolError("恢复运行私有协议字段不完整或含未知字段")
-    write = protocol["write"]
-    if type(write) is not bool or write != (operation in WRITING_OPERATIONS):
-        raise RuntimeProtocolError("恢复运行私有协议写入授权与操作不一致")
-    decoded = {
-        name: _protocol_path(value, name) if name in PATH_FIELDS else value
-        for name, value in protocol.items()
-        if name not in {"format_version", "kind", "operation", "write"}
-    }
-    if operation in {"start", "bind", "verify"}:
-        decoded.setdefault("adapter_contract", None)
-        decoded.setdefault("product_backend", None)
-    _validate_protocol_values(operation, decoded)
-    decoded["write"] = write
-    return RuntimeRequest(operation, decoded)
-
-
-def _validate_protocol_values(operation: str, values: dict) -> None:
-    for name in ("expected_head", "expected_frontend_head"):
-        if name in values and (
-            not isinstance(values[name], str)
-            or HEX_40.fullmatch(values[name]) is None
-            or set(values[name]) == {"0"}
-        ):
-            raise RuntimeProtocolError(f"{name} 必须是非零完整小写 SHA")
-    if values.get("adapter_contract") is not None and not isinstance(
-        values["adapter_contract"], str
-    ):
-        raise RuntimeProtocolError("适配合同必须是字符串")
-    if "generation" in values and (
-        type(values["generation"]) is not int or values["generation"] <= 0
-    ):
-        raise RuntimeProtocolError("generation 必须是正整数")
-    if operation == "start":
-        timeout = values["timeout"]
-        if type(timeout) not in {int, float} or not math.isfinite(timeout) or timeout <= 0:
-            raise RuntimeProtocolError("timeout 必须是有限正数")
-
-
-def execute(request: RuntimeRequest) -> dict:
-    from restore_runtime_lifecycle import dispatch as dispatch_lifecycle
-
-    args = request.namespace()
-    backend = args.backend_dir.resolve()
-    if args.command in {"start", "recover"}:
-        return dispatch_lifecycle(
-            args, backend, _probe_api, _probe_worker, verify_frontend_artifacts
-        )
-    if args.command == "bind":
-        bind_and_write(
-            backend,
-            args.source_backend,
-            args.source_frontend,
-            args.build_receipt.resolve(),
-            args.launch_receipt.resolve(),
-            args.bindings.resolve(),
-            args.output,
-            adapter_contract=args.adapter_contract,
-            product_backend=args.product_backend,
-        )
-        return {"output": str(args.output.resolve())}
-    runtime = read_json_document(args.receipt)
-    authority = read_authority()
-    if getattr(args, "adapter_contract", None) != authority["backend_adapter_contract"]:
-        raise ValueError("命令行适配合同与 stdin 权威恢复上下文不匹配")
-    result = verify(
-        runtime.value,
-        backend,
-        args.source_backend,
-        args.source_frontend,
-        args.bindings.resolve(),
-        authority,
-        runtime.sha256,
-        product_backend=getattr(args, "product_backend", None),
-    )
-    runtime.assert_unchanged()
-    return result
-
-
-def main(request: RuntimeRequest | None = None) -> None:
-    if request is None:
-        request = private_protocol_request()
-    print(json.dumps(execute(request), ensure_ascii=False, sort_keys=True, separators=(",", ":")))
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except RuntimeProtocolError:
-        print("restore_runtime_protocol_error：恢复运行私有协议无效。", file=sys.stderr)
-        raise SystemExit(2)

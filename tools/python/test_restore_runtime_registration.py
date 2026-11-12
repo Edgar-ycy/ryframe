@@ -7,7 +7,6 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import restore_runtime_registration as registration
-import restore_runtime
 from restore_runtime_evidence import artifact_snapshot
 from workspace_directory import WorkspaceDirectory
 
@@ -182,21 +181,6 @@ class RestoreRuntimeRegistrationTests(unittest.TestCase):
                 self.target_descriptor(),
                 target_verifier=self.verifier,
             )
-
-    def test_retired_registration_protocol_rejects_both_write_values(self):
-        protocol = {
-            "backend_dir": str(ROOT),
-            "format_version": 1,
-            "kind": restore_runtime.PROTOCOL_KIND,
-            "operation": "register",
-            "plan": str(self.reference_path),
-            "target_plan": str(self.target_path),
-            "output": str(self.output),
-        }
-        for write in (False, True):
-            with self.subTest(write=write), self.assertRaises(restore_runtime.RuntimeProtocolError):
-                restore_runtime.decode_request(json.dumps({**protocol, "write": write}))
-        self.assertFalse(self.output.exists())
 
 
 if __name__ == "__main__":

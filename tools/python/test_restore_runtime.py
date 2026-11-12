@@ -31,18 +31,6 @@ INVENTORY = {
 READY = {"status": "ready", "mysql": "up", "redis": "optional_degraded", "object_storage": "not_required"}
 
 
-def private_request(operation: str, **values) -> restore_runtime.RuntimeRequest:
-    protocol = {
-        "backend_dir": str(values.pop("backend_dir")),
-        "format_version": 1,
-        "kind": restore_runtime.PROTOCOL_KIND,
-        "operation": operation,
-        "write": operation in restore_runtime.WRITING_OPERATIONS,
-        **values,
-    }
-    return restore_runtime.decode_request(json.dumps(protocol))
-
-
 class RestoreRuntimeTests(unittest.TestCase):
     def test_native_probe_requires_bound_coordinator_without_compilation_fallback(self):
         with patch.object(restore_runtime, "tool_binding", return_value=None), patch.object(
@@ -339,7 +327,7 @@ class RestoreRuntimeTests(unittest.TestCase):
 
     def test_authoritative_context_has_exact_fields_and_strict_endpoints(self):
         expected = self.authority()
-        self.assertEqual(restore_runtime.read_authority(io.StringIO(json.dumps(expected))), expected)
+        self.assertEqual(restore_runtime_evidence.read_authority(io.StringIO(json.dumps(expected))), expected)
         valid = [
             {**expected, "restore_id": "a" + "_" * 63},
             {**expected, "backup_id": "b" + "-" * 63},
@@ -353,7 +341,7 @@ class RestoreRuntimeTests(unittest.TestCase):
         ]
         for value in valid:
             with self.subTest(valid=value):
-                self.assertEqual(restore_runtime.read_authority(io.StringIO(json.dumps(value))), value)
+                self.assertEqual(restore_runtime_evidence.read_authority(io.StringIO(json.dumps(value))), value)
         invalid = [
             {**expected, "extra": True},
             {**expected, "restore_id": "_restore"},
@@ -380,13 +368,13 @@ class RestoreRuntimeTests(unittest.TestCase):
         ]
         for value in invalid:
             with self.subTest(value=value), self.assertRaises(ValueError):
-                restore_runtime.read_authority(io.StringIO(json.dumps(value)))
+                restore_runtime_evidence.read_authority(io.StringIO(json.dumps(value)))
         with self.assertRaisesRegex(ValueError, "重复字段"):
-            restore_runtime.read_authority(io.StringIO('{"format_version":1,"format_version":1}'))
+            restore_runtime_evidence.read_authority(io.StringIO('{"format_version":1,"format_version":1}'))
 
     def test_bindings_use_the_same_identifier_boundaries_as_authority(self):
         authority, _build, _frontend, bindings_path = self.prepare()
-        bindings = restore_runtime.read_json(bindings_path)
+        bindings = restore_runtime_evidence.read_json(bindings_path)
         valid = [
             ("id", "a" + "_" * 63),
             ("backup_id", "b" + "-" * 63),
@@ -448,7 +436,7 @@ class RestoreRuntimeTests(unittest.TestCase):
             restore_runtime.verify(changed, self.backend, self.backend, self.frontend, bindings, authority, "f" * 64)
         probe.assert_not_called()
         process_path = self.root / "api.json"
-        process = restore_runtime.read_json(process_path)
+        process = restore_runtime_evidence.read_json(process_path)
         self.write_json(process_path, {**process, "extra": True})
         with self.runtime_patches(fake_probes=True), self.assertRaises(ValueError):
             restore_runtime.verify(receipt, self.backend, self.backend, self.frontend, bindings, authority, "f" * 64)
@@ -549,113 +537,6 @@ class RestoreRuntimeTests(unittest.TestCase):
                     )
                 self.assertEqual(verify_config.call_count, calls)
                 self.assertEqual(probe.call_count, calls - 1)
-
-    def test_private_protocol_requires_exact_write_and_rejects_direct_argv(self):
-        common = {
-            "backend_dir": str(self.backend),
-            "output": str(self.backend / ".local-tests/out.json"),
-            "source_backend": str(self.backend),
-            "source_frontend": str(self.frontend),
-        }
-        cases = {
-            "build": {
-                **common,
-                "frontend_dir": str(self.frontend),
-                "expected_head": SOURCE["head"],
-                "expected_frontend_head": self.frontend_head,
-            },
-            "bind": {
-                **common,
-                "bindings": str(self.root / "bindings.json"),
-                "build_receipt": str(self.root / "build.json"),
-                "launch_receipt": str(self.root / "runtime-launch.json"),
-            },
-        }
-        for operation, values in cases.items():
-            protocol = {
-                "format_version": 1,
-                "kind": restore_runtime.PROTOCOL_KIND,
-                "operation": operation,
-                "write": False,
-                **values,
-            }
-            with self.subTest(operation=operation), patch.object(restore_runtime, "bind") as bind_call, patch.object(restore_runtime, "write_new") as write:
-                with self.assertRaises(restore_runtime.RuntimeProtocolError):
-                    restore_runtime.decode_request(json.dumps(protocol))
-                bind_call.assert_not_called()
-                write.assert_not_called()
-        with self.assertRaises(restore_runtime.RuntimeProtocolError):
-            restore_runtime.private_protocol_request(["build"])
-
-    def test_bind_request_delegates_receipt_write_to_the_locked_operation(self):
-        output = self.backend / ".local-tests/runtime.json"
-        output.parent.mkdir()
-        request = private_request(
-            "bind", backend_dir=self.backend, source_backend=str(self.backend),
-            source_frontend=str(self.frontend), bindings=str(self.root / "bindings.json"),
-            build_receipt=str(self.root / "build.json"),
-            launch_receipt=str(self.root / "generation-0001/runtime-launch.json"),
-            output=str(output),
-        )
-        with patch.object(sys, "stdout", io.StringIO()) as stdout, patch.object(
-            restore_runtime, "bind_and_write"
-        ) as bind_write, patch.object(
-            restore_runtime, "write_new"
-        ) as raw_write:
-            restore_runtime.main(request)
-        bind_write.assert_called_once_with(
-            self.backend.resolve(),
-            self.backend,
-            self.frontend,
-            (self.root / "build.json").resolve(),
-            (self.root / "generation-0001/runtime-launch.json").resolve(),
-            (self.root / "bindings.json").resolve(),
-            output,
-            adapter_contract=None,
-            product_backend=None,
-        )
-        raw_write.assert_not_called()
-        self.assertEqual(json.loads(stdout.getvalue()), {"output": str(output.resolve())})
-
-    def test_retired_python_build_cannot_dispatch_a_second_producer(self):
-        with self.assertRaises(restore_runtime.RuntimeProtocolError):
-            private_request("build", backend_dir=self.backend, source_backend=str(self.backend),
-                            source_frontend=str(self.frontend), frontend_dir=str(self.frontend),
-                            expected_head=SOURCE["head"], expected_frontend_head=self.frontend_head,
-                            output=str(self.root / "forbidden.json"))
-        self.assertFalse((self.root / "forbidden.json").exists())
-
-    def test_verify_request_reads_stdin_authority_and_outputs_detailed_result(self):
-        runtime_path = self.write_json(self.root / "runtime.json", {"fixture": True})
-        bindings = self.root / "bindings.json"
-        authority = self.authority()
-        result = {
-            "format_version": 1,
-            "kind": "restore-runtime-verification",
-            "status": "verified",
-            "runtime_receipt_sha256": restore_build.file_digest(runtime_path)["sha256"],
-        }
-        request = private_request(
-            "verify", backend_dir=self.backend, source_backend=str(self.backend),
-            source_frontend=str(self.frontend), bindings=str(bindings), receipt=str(runtime_path),
-        )
-        with patch.object(sys, "stdin", io.StringIO(json.dumps(authority))), \
-                patch.object(sys, "stdout", io.StringIO()) as output, patch.object(
-                    restore_runtime, "verify", return_value=result
-                ) as verify_call:
-            restore_runtime.main(request)
-        self.assertEqual(json.loads(output.getvalue()), result)
-        self.assertEqual(verify_call.call_args.args[5], authority)
-
-        def mutate(*_args, **_kwargs):
-            runtime_path.write_text('{"fixture":"changed"}', encoding="utf-8")
-            return result
-
-        self.write_json(runtime_path, {"fixture": True})
-        with patch.object(sys, "stdin", io.StringIO(json.dumps(authority))), \
-                patch.object(sys, "stdout", io.StringIO()), patch.object(restore_runtime, "verify", side_effect=mutate), \
-                self.assertRaisesRegex(ValueError, "被替换或修改"):
-            restore_runtime.main(request)
 
 
 if __name__ == "__main__":
