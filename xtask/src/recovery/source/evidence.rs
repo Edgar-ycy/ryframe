@@ -191,13 +191,6 @@ fn dispatch(request: &Value) -> Result<Value> {
             crate::recovery::clone::native::maintenance_root::request(args)
         }
         Some("copy-api-environment") => environment::copy_api(args),
-        Some("frontend-build-validation") => {
-            let authority =
-                crate::check::consumer_context::existing_origin(&crate::workspace::root_dir())?;
-            let result = crate::recovery::frontend_build::recovery_request(args);
-            authority.verify()?;
-            result
-        }
         Some("source-inventory") => super::super::clone::native::source::protocol::request(args),
         Some("full-stack-source-evidence") => full_stack_source(args),
         Some("physical-binding") => binding::physical(args),

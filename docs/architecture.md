@@ -141,9 +141,9 @@ cargo reset -- execute --config-dir ../ryframe-reset-config --plan-hash <sha256>
 
 构建脚本还固化并核对自身与来源遍历 helper 的编译输入字节。共享缓存中的脚本若与当前根这两个文件不符，将拒绝构建并要求仅清理 xtask 后重建；不会读取当前文件后将其摘要伪装成脚本编译来源。
 
-受管 origin 工具的完整来源核验由同一受保护二进制的私有 `__frontend-origin verify-sources` 执行。标准输入只接受 `format_version` 为整数 `1`、`root` 和 `sources` 三个字段，上限为 4 MiB；根必须是编译时同一真实且无链接或重解析点的目录，来源绑定必须与编译列表和当前完整发现集合一致，不增加排除目录。每个普通文件按 16 MiB 上限双读完整字节，并核对读取前、打开句柄、关闭后的真实设备/文件编号、大小和 mtime/ctime；Windows ctime 为创建时间，Unix ctime 保留纳秒。返回值仅含固定版本、种类、文件数及覆盖有序绑定与文件/根身份的 SHA-256 聚合 token，不含源码字节。现存 Python loader 保留严格绑定读取、程序摘要和二进制保护，在保护内取得初始 token、发布工具前及 finally 再核验并比较 token；取消时回收当前只读 probe、不重试，仍核对绑定与程序身份。URL check 仍使用 10 秒超时，完整来源扫描不新增固定总期限；两者保留有界管道和失败关闭。源码或绑定变化后须重新编译并通过 `__frontend-origin describe` 重建受管绑定，不能回退到旧来源扫描或临时编译工具。
+受管 origin 工具的完整来源核验由同一受保护二进制的私有 `__frontend-origin verify-sources` 执行。标准输入只接受 `format_version` 为整数 `1`、`root` 和 `sources` 三个字段，上限为 4 MiB；根必须是编译时同一真实且无链接或重解析点的目录，来源绑定必须与编译列表和当前完整发现集合一致，不增加排除目录。每个普通文件按 16 MiB 上限双读完整字节，并核对读取前、打开句柄、关闭后的真实设备/文件编号、大小和 mtime/ctime；Windows ctime 为创建时间，Unix ctime 保留纳秒。返回值仅含固定版本、种类、文件数及覆盖有序绑定与文件/根身份的 SHA-256 聚合 token，不含源码字节。原生消费者在发布结果前复核固定工具绑定、程序身份和完整来源。需要更新工具绑定时，在编译根使用同一程序执行 `__frontend-origin prepare --write`，保留既有失败证据。
 
-前端构建证明由 Rust 私有 `__frontend-build-contract --frontend-dir <abs>` 统一核验：标准输入精确包含 `frontend_inventories` 与 `backend_inventories` 两数组，上限 16 MiB；响应仅含三域及公开配置、身份和完整产物描述。Node 从正式 consumer context 取得固定工具绑定，不再通过 Python 来源契约入口。权威只读核对既有 origin 绑定、编译根与完整来源闭包，持有来源、配置及产物保护至响应发布完成；失败不发布成功 JSON。恢复 Python 接口仅适配同一 Rust 模型和文件验证，IPC 快照不代表持续持有文件，使用窗口末端必须重验；实际 HTTP server、构建编排及仍被 origin loader 使用的通用 JSON/path helper 保留。配置正文不进入协议，dist 大文件继续流式摘要，不套用文档的 16 MiB 限制。
+前端构建证明由 Rust 私有 `__frontend-build-contract --frontend-dir <abs>` 统一核验：标准输入精确包含 `frontend_inventories` 与 `backend_inventories` 两数组，上限 16 MiB；响应仅含三域及公开配置、身份和完整产物描述。Node 从正式 consumer context 取得固定工具绑定。Rust 只读核对绑定、编译根和完整来源闭包，持有来源、配置与产物保护直到响应发布完成。普通恢复、B0 和原生静态站点在 Rust 内直接核验构建收据，启动探针清单返回前复核文件和成员集合。协议只传配置摘要，dist 大文件使用流式摘要，16 MiB 文档限额适用于协议文档。
 
 共享缓存回归的隔离 Workspace 从真实 TOML 派生包属性、所需依赖、lint、profile 和 patch，源路径转为原 Workspace 的绝对路径。先离线解析种子锁并拒绝任何包版本、来源或校验和变化，之后构建均使用 `--offline --locked`。仅隔离宏副本和既有 `patch_route` 消费测试追加字面量 probe，实际执行 A→同字节 B 输出 A→改写 B 输出 B→返回 A 输出 A；产品宏不增加测试导出。
 

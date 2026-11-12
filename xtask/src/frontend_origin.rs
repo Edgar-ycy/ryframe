@@ -79,7 +79,7 @@ pub(crate) fn run_hidden_if_requested() -> Option<i32> {
 
 fn prepare() -> (Value, i32) {
     let root = crate::workspace::root_dir();
-    let result = crate::check::consumer_context::prepare_python_origin(&root)
+    let result = crate::check::consumer_context::prepare_origin(&root)
         .and_then(|binding| binding.finish(Ok(())));
     match result {
         Ok(()) => (
@@ -88,7 +88,7 @@ fn prepare() -> (Value, i32) {
         ),
         Err(error) => (
             json!({"format_version":1,"valid":false,"error":format!(
-                "来源绑定准备失败：{error}；请核对当前工具与完整源码，保留 python-origin-runs 中的失败证据；不覆盖历史或自动重放。"
+                "来源绑定准备失败：{error}；请核对当前工具与完整源码，保留 origin-runs 中的失败证据；不覆盖历史或自动重放。"
             )}),
             2,
         ),

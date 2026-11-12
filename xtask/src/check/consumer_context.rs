@@ -125,9 +125,9 @@ fn finish_verified_result(result: Result<()>, verification: Result<()>) -> Resul
     }
 }
 
-/// 后端 Python 检查独立发布固定绑定，不读取前端配置或路径。
-pub(crate) fn prepare_python_origin(root: &Path) -> Result<OriginBinding> {
-    let (root, evidence) = python_origin_run(root)?;
+/// 独立发布固定 origin 绑定，不读取前端配置或路径。
+pub(crate) fn prepare_origin(root: &Path) -> Result<OriginBinding> {
+    let (root, evidence) = origin_run(root)?;
     let result = origin::prepare(&root, &evidence);
     if result.is_err() {
         record_failure(&evidence);
@@ -135,9 +135,9 @@ pub(crate) fn prepare_python_origin(root: &Path) -> Result<OriginBinding> {
     result
 }
 
-fn python_origin_run(root: &Path) -> Result<(PathBuf, PathBuf)> {
+fn origin_run(root: &Path) -> Result<(PathBuf, PathBuf)> {
     let root = files::absolute_directory(root)?;
-    let directory = root.join(".local-tests/python-origin-runs");
+    let directory = root.join(".local-tests/origin-runs");
     files::directory(&directory)?;
     let evidence = directory.join(uuid::Uuid::new_v4().to_string());
     std::fs::create_dir(&evidence).map_err(|_| files::FILE_ERROR)?;

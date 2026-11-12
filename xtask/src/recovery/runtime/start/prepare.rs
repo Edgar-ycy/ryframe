@@ -84,9 +84,7 @@ impl Prepared {
         });
         request["environment"] = environment::capture(inputs, &request)?;
         let commands = commands::expected(&request, &request["tools"])?;
-        let frontend_files = frontend_build::recovery_request(&json!({
-            "action":"artifacts","root":frontend_root,"value":null,"expected_head":null,"inventory":null,
-        }))?;
+        let frontend_files = frontend_build::artifact_snapshot(&frontend_root)?;
         pin_execution(&request, inputs)?;
         Ok(Self {
             bound,

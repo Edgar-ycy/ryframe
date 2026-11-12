@@ -48,7 +48,7 @@ fn malformed_secret_bearing_requests_have_sanitized_failure_and_no_retry_permiss
 }
 
 #[test]
-fn retired_runtime_operations_cannot_publish_intent_or_probe_a_listener() {
+fn retired_recovery_operations_cannot_publish_intent_or_probe_a_listener() {
     let base = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
@@ -87,6 +87,12 @@ fn retired_runtime_operations_cannot_publish_intent_or_probe_a_listener() {
         listener.accept().unwrap_err().kind(),
         std::io::ErrorKind::WouldBlock
     );
+
+    let frontend = json!({"operation":"frontend-build-validation","write":false,"arguments":{
+        "action":"artifacts","root":coordinator.path(),"value":null,
+        "expected_head":null,"inventory":null,
+    }});
+    assert_rejected_operation(&frontend, "来源证据操作无效");
 }
 
 fn assert_rejected_operation(request: &Value, diagnostic: &str) {

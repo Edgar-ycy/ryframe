@@ -121,7 +121,7 @@ fn all_context_paths_must_be_absolute() {
 }
 
 #[test]
-fn python_origin_run_needs_only_backend_without_frontend_or_fixed_binding() {
+fn origin_run_needs_only_backend_without_frontend_or_fixed_binding() {
     let root = fixture();
     let backend = root.path().join("后端目录 with spaces");
     std::fs::create_dir(&backend).unwrap();
@@ -134,11 +134,11 @@ fn python_origin_run_needs_only_backend_without_frontend_or_fixed_binding() {
     let binding = backend.join(".local-tests/frontend-origin-tool.json");
     assert!(!binding.exists());
     assert!(!root.path().join("missing-前端目录").exists());
-    let (first_root, first) = python_origin_run(&backend).unwrap();
-    let (second_root, second) = python_origin_run(&backend).unwrap();
+    let (first_root, first) = origin_run(&backend).unwrap();
+    let (second_root, second) = origin_run(&backend).unwrap();
     assert_eq!(first_root, files::absolute_directory(&backend).unwrap());
     assert_eq!(second_root, first_root);
-    assert!(first.starts_with(first_root.join(".local-tests/python-origin-runs")));
+    assert!(first.starts_with(first_root.join(".local-tests/origin-runs")));
     assert!(first.is_dir() && second.is_dir());
     assert_ne!(first, second);
     assert!(uuid::Uuid::parse_str(first.file_name().unwrap().to_str().unwrap()).is_ok());
@@ -150,11 +150,11 @@ fn python_origin_run_needs_only_backend_without_frontend_or_fixed_binding() {
 }
 
 #[test]
-fn python_origin_preparation_rejects_invalid_backend_before_program_execution() {
+fn origin_preparation_rejects_invalid_backend_before_program_execution() {
     let root = fixture();
     let regular_file = root.path().join("file");
     std::fs::write(&regular_file, "ordinary file").unwrap();
-    let prepare: fn(&Path) -> Result<OriginBinding> = prepare_python_origin;
+    let prepare: fn(&Path) -> Result<OriginBinding> = prepare_origin;
     for path in [
         root.path().join(".."),
         root.path().join("SECRET_SENTINEL\n"),

@@ -81,7 +81,7 @@ fn prepared_fixture(root: &Path, description: &Description, evidence: &Path) -> 
 #[test]
 fn backend_only_cache_creates_shared_lock_parent_without_consumer_preparation() {
     let (root, description) = fixture();
-    let (_, directory) = super::super::python_origin_run(root.path()).unwrap();
+    let (_, directory) = super::super::origin_run(root.path()).unwrap();
     assert!(!root.path().join(".local-tests/consumer-contexts").exists());
     assert!(
         !root

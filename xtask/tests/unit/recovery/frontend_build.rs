@@ -1,6 +1,14 @@
-use super::{configuration, files, model, source, validate};
+use super::{artifact_snapshot, configuration, files, model, source, validate};
 use serde_json::{Value, json};
-use std::{fs, path::Path, process::Command};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
+
+#[path = "frontend_build_configuration_cases.rs"]
+mod configuration_cases;
 
 fn git(root: &Path, arguments: &[&str]) {
     let mut command = Command::new("git");
@@ -102,6 +110,9 @@ fn inferred_and_explicit_full_inventory_accept_real_clean_source_and_reject_mism
             assert_eq!(proof.inventory, inventory);
             proof.verify().unwrap();
         }
+        if commit == "development" {
+            assert!(validate(root, Some(&inventory), Some(head)).is_err());
+        }
     }
     let wrong_head = if head == "0".repeat(40) {
         "1".repeat(40)
@@ -110,6 +121,110 @@ fn inferred_and_explicit_full_inventory_accept_real_clean_source_and_reject_mism
     };
     write_receipt(root, &wrong_head, &inventory);
     assert!(validate(root, None, None).is_err());
+}
+
+#[test]
+fn readonly_frontend_proof_preserves_every_input_and_artifact() {
+    let temporary = fixture();
+    let root = temporary.path();
+    fs::write(root.join(".local-tests/frontend-tools.json"), b"{}").unwrap();
+    let inventory = source::inventory_value(&source::capture(root).unwrap());
+    let head = inventory["source"]["snapshot"]["head"].as_str().unwrap();
+    write_receipt(root, head, &inventory);
+    let before = fixture_contents(root);
+    let proof = validate(root, Some(&inventory), Some(head)).unwrap();
+    proof.verify().unwrap();
+    assert_eq!(fixture_contents(root), before);
+    drop(proof);
+    fs::write(
+        root.join("dist/build-identity.json"),
+        serde_json::to_vec(&json!({"frontend_commit":"development"})).unwrap(),
+    )
+    .unwrap();
+    let error = validate(root, Some(&inventory), Some(head))
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(error.contains("身份"), "{error}");
+}
+
+fn fixture_contents(root: &Path) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
+    let mut contents = BTreeMap::new();
+    let mut pending = vec![root.to_owned()];
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(directory).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path == root.join(".git") {
+                continue;
+            }
+            let kind = entry.file_type().unwrap();
+            let bytes = if kind.is_dir() {
+                pending.push(path.clone());
+                None
+            } else {
+                assert!(kind.is_file());
+                Some(fs::read(&path).unwrap())
+            };
+            contents.insert(path, bytes);
+        }
+    }
+    contents
+}
+
+#[test]
+fn snapshot_orders_unicode_assets_and_requires_manifest() {
+    let temporary = fixture();
+    let root = temporary.path();
+    for name in ["z.txt", "中文.txt", "a.txt", "😀.txt"] {
+        fs::write(root.join("dist").join(name), name).unwrap();
+    }
+    let snapshot = artifact_snapshot(root).unwrap();
+    let names = snapshot
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["path"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        names,
+        [
+            ".vite/manifest.json",
+            "a.txt",
+            "index.html",
+            "z.txt",
+            "中文.txt",
+            "😀.txt"
+        ]
+    );
+    fs::remove_file(root.join("dist/.vite/manifest.json")).unwrap();
+    let error = artifact_snapshot(root).unwrap_err().to_string();
+    assert!(error.contains("manifest.json"), "{error}");
+}
+
+#[cfg(any(unix, windows))]
+#[test]
+fn frontend_proof_rejects_linked_dist_and_dangling_selected_toml() {
+    let temporary = fixture();
+    let root = temporary.path();
+    let selected = root.join("config/app.test.toml");
+    let linked = root.join("dist/linked.toml");
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink as link;
+    #[cfg(windows)]
+    use std::os::windows::fs::symlink_file as link;
+    link(&selected, &linked).unwrap();
+    let error = artifact_snapshot(root).unwrap_err().to_string();
+    assert!(error.contains("dist 禁止链接"), "{error}");
+    fs::remove_file(linked).unwrap();
+    fs::remove_file(&selected).unwrap();
+    let missing = root.join("config/missing.toml");
+    link(missing, selected).unwrap();
+    let error = configuration::capture(root, "test")
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(error.contains("链接"), "{error}");
 }
 
 #[test]

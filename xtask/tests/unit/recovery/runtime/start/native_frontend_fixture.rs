@@ -1,13 +1,13 @@
 use std::path::PathBuf;
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::{
     Result,
     recovery::{
         clone::native::{digest, source},
         fixture_control::portable_path,
-        frontend_build::{recovery_request, tests as fixture},
+        frontend_build::{artifact_snapshot, tests as fixture},
     },
 };
 
@@ -32,13 +32,7 @@ impl Frontend {
         fixture::write_receipt(&root, &head, &inventory);
         let receipt = portable_path(&root.join("dist/.vite/restore-build.json").canonicalize()?);
         let receipt_sha256 = digest::file(&receipt)?.sha256;
-        let files = recovery_request(&json!({
-            "action": "artifacts",
-            "root": root,
-            "value": null,
-            "expected_head": null,
-            "inventory": null,
-        }))?;
+        let files = artifact_snapshot(&root)?;
 
         Ok(Self {
             directory,

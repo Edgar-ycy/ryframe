@@ -134,6 +134,7 @@ fn frontend_domains_keep_documents_tools_and_unknown_product_inputs() {
         "tests/check.ts",
         ".github/workflows/ci.yml",
         "config/tools.json",
+        "config/app.toml",
         "vitest.config.ts",
         "playwright.generated.config.ts",
         "tsconfig.test.json",
@@ -156,6 +157,7 @@ fn frontend_domains_keep_documents_tools_and_unknown_product_inputs() {
         "pnpm-lock.yaml",
         ".node-version",
         "vite.config.ts",
+        "config/app.toml",
         "unknown/input.dat",
         "tsconfig.test.json",
         "scripts/application-config.mjs",
@@ -183,6 +185,12 @@ fn frontend_domains_keep_documents_tools_and_unknown_product_inputs() {
         assert!(!product.contains(&json!(path)), "{path}");
     }
     assert_eq!(domains["full"], value);
+    assert!(
+        domains["tools"]["files"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("config/tools.json"))
+    );
     for path in [
         "playwright.generated.config.ts",
         "tsconfig.test.json",

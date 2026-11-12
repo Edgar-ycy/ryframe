@@ -152,6 +152,7 @@ fn real_binary_rejects_bad_urls_without_disclosing_input_or_userinfo() {
         format!("invalid-{SENTINEL}"),
         "ftp://example.invalid/".into(),
         "http://999.999.999.999".into(),
+        "http://256.0.0.1".into(),
         "http://example.invalid:65536/".into(),
         "http://example.invalid:invalid/".into(),
         "\u{85}http://example.invalid/".into(),
@@ -159,6 +160,7 @@ fn real_binary_rejects_bad_urls_without_disclosing_input_or_userinfo() {
     for input in cases {
         assert_failure(&fixture.check(&request(&input, false), 1));
     }
+    assert_failure(&fixture.check(&request("\u{85}", true), 1));
 }
 
 #[test]

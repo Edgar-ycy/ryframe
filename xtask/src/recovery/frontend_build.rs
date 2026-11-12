@@ -108,65 +108,13 @@ pub(crate) fn validate(
     Ok(proof)
 }
 
-/// 现有恢复只读协议的适配；所有规则直接使用同一原生模型与文件验证。
-/// 返回的是本次调用核验的快照事实，不跨 IPC 持有保护；调用者须在使用窗口末端
-/// 通过同一权威重新核验收据、inputs 与文件事实，不能把此返回值当成持续持有句柄。
-pub(crate) fn recovery_request(arguments: &Value) -> Result<Value> {
-    model::exact(
-        arguments,
-        &["action", "root", "value", "expected_head", "inventory"],
-    )?;
-    let root = Path::new(model::text(&arguments["root"])?);
-    let expected = if arguments["expected_head"].is_null() {
-        None
-    } else {
-        Some(model::text(&arguments["expected_head"])?)
-    };
-    match model::text(&arguments["action"])? {
-        "context" => {
-            model::context(&arguments["value"])?;
-            Ok(arguments["value"].clone())
-        }
-        "receipt" => {
-            model::receipt(&arguments["value"])?;
-            Ok(arguments["value"].clone())
-        }
-        "capture-inputs" => {
-            let inputs = configuration::capture(root, model::text(&arguments["value"])?)?;
-            inputs.verify()?;
-            inputs.facts()
-        }
-        "inputs" => {
-            let inputs = configuration::verify(root, &arguments["value"], expected)?;
-            inputs.verify()?;
-            inputs.facts()
-        }
-        "artifacts" => {
-            let artifacts = files::artifacts(root)?;
-            artifacts.verify()?;
-            if files::artifacts(root)?.files != artifacts.files {
-                return Err(fail("dist 完整文件集合变化"));
-            }
-            artifacts.verify()?;
-            Ok(artifacts.files)
-        }
-        "validate" => {
-            let inventory = (!arguments["inventory"].is_null()).then_some(&arguments["inventory"]);
-            let proof = validate(root, inventory, expected)?;
-            proof.verify()?;
-            Ok(json!({"inventory":proof.inventory,"receipt":proof.receipt}))
-        }
-        "receipt-b0" => {
-            b0::receipt(&arguments["value"])?;
-            Ok(arguments["value"].clone())
-        }
-        "validate-b0" => {
-            let head = expected.ok_or_else(|| fail("B0 核验缺少原始精确提交"))?;
-            let inventory = (!arguments["inventory"].is_null()).then_some(&arguments["inventory"]);
-            let proof = b0::validate(root, inventory, head)?;
-            proof.verify()?;
-            Ok(json!({"inventory":proof.inventory,"receipt":proof.receipt}))
-        }
-        _ => Err(fail("未知前端证明校验操作")),
+/// 为启动探针生成当前完整产物清单，在返回前复核原文件和成员集合。
+pub(in crate::recovery) fn artifact_snapshot(root: &Path) -> Result<Value> {
+    let artifacts = files::artifacts(root)?;
+    artifacts.verify()?;
+    if files::artifacts(root)?.files != artifacts.files {
+        return Err(fail("dist 完整文件集合变化"));
     }
+    artifacts.verify()?;
+    Ok(artifacts.files)
 }

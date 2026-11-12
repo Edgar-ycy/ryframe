@@ -42,21 +42,12 @@ def require_current_execution_source(root: Path, expected: dict) -> dict:
 def build_source(receipt: dict) -> dict:
     if receipt.get("kind") == "devex-clone-tool-build":
         return receipt["source"]
-    repository = {"restore-backend-build": "backend", "restore-frontend-build": "frontend"}.get(
-        receipt.get("kind")
-    )
-    if repository is None:
+    if receipt.get("kind") != "restore-backend-build":
         raise ValueError("构建来源类型无效")
-    expected = ({"format_version", "kind", "sources", "build", "artifacts"}
-                if repository == "backend"
-                else {"format_version", "kind", "sources", "build", "files"})
-    if receipt.get("format_version") != (2 if repository == "backend" else 3) or set(receipt) != expected:
-        raise ValueError("当前构建来源必须使用后端严格 v2、前端严格 v3 收据")
-    if repository == "frontend":
-        from restore_runtime_evidence import validate_frontend_receipt
-
-        validate_frontend_receipt(receipt)
-    return validate_build_source_domains(receipt.get("sources"), repository)["full"]["source"]
+    expected = {"format_version", "kind", "sources", "build", "artifacts"}
+    if receipt.get("format_version") != 2 or set(receipt) != expected:
+        raise ValueError("当前构建来源必须使用后端严格 v2 收据")
+    return validate_build_source_domains(receipt.get("sources"), "backend")["full"]["source"]
 
 
 def verify_inventory_source(inventory: dict, receipt: dict) -> None:
@@ -334,15 +325,11 @@ def source_check(root: Path):
 
 def reusable_artifact_source(root: Path, receipt: dict) -> dict | None:
     """返回构建时的原始来源；执行时的工具来源由调用方单独记录。"""
-    kind = receipt.get("kind")
-    repository = {"restore-backend-build": "backend", "restore-frontend-build": "frontend"}.get(kind)
-    if repository is not None:
-        expected_fields = ({"format_version", "kind", "sources", "build", "artifacts"}
-                           if repository == "backend"
-                           else {"format_version", "kind", "sources", "build", "files"})
-        if receipt.get("format_version") != (2 if repository == "backend" else 3) or set(receipt) != expected_fields:
+    if receipt.get("kind") == "restore-backend-build":
+        expected_fields = {"format_version", "kind", "sources", "build", "artifacts"}
+        if receipt.get("format_version") != 2 or set(receipt) != expected_fields:
             raise ValueError("当前构建收据字段无效")
-        sources = validate_build_source_domains(receipt.get("sources"), repository)
+        sources = validate_build_source_domains(receipt.get("sources"), "backend")
         scope = _BRIDGES.get()
         if scope is not None and root.resolve() != scope[0]:
             return None
@@ -354,24 +341,8 @@ def reusable_artifact_source(root: Path, receipt: dict) -> dict | None:
         current_inventory = (scope[3] if scope is not None and root.resolve() == scope[0]
                              else capture_inventory(root))
         if not nested and (not registration or not registration["inherited"]) and (
-                sources["product"] != build_source_domains(current_inventory, repository)["product"]):
+                sources["product"] != build_source_domains(current_inventory, "backend")["product"]):
             raise ValueError("产品构建输入已经变化，必须重新编译")
-        if kind == "restore-frontend-build":
-            from restore_runtime_evidence import validate_frontend_receipt
-            from restore_frontend_configuration import verify_frontend_inputs
-            from restore_frontend_build import frontend_snapshots
-
-            validate_frontend_receipt(receipt)
-            inputs = verify_frontend_inputs(root, receipt["build"])
-            files, snapshots = frontend_snapshots(root)
-            if files != receipt["files"]:
-                raise ValueError("前端完整 dist 产物已经变化，必须重新构建")
-            for snapshot in snapshots:
-                snapshot.assert_unchanged()
-            inputs.assert_unchanged()
-            if frontend_snapshots(root)[0] != files:
-                raise ValueError("核验期间前端完整 dist 文件集合或内容发生漂移")
-            return copy.deepcopy(sources["full"]["source"])
         from restore_build import build_context
 
         if not nested and receipt.get("build") != build_context(root):

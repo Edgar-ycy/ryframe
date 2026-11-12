@@ -18,19 +18,6 @@ pub(crate) struct Inputs {
     observed: Vec<Observation>,
 }
 impl Inputs {
-    pub(crate) fn facts(&self) -> Result<Value> {
-        let observed = self
-            .observed
-            .iter()
-            .map(|item| match item {
-                Observation::Present(file) => Ok(json!({"present":true,"file":file.facts()?})),
-                Observation::Absent(path, managed) => {
-                    Ok(json!({"present":false,"path":path,"managed":managed}))
-                }
-            })
-            .collect::<Result<Vec<_>>>()?;
-        Ok(json!({"configuration":self.configuration,"identity":self.identity,"observed":observed}))
-    }
     pub(crate) fn verify(&self) -> Result<()> {
         for item in &self.observed {
             match item {

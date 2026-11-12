@@ -320,12 +320,6 @@ def validate_authority(value: object) -> dict:
     return authority
 
 
-def validate_frontend_receipt(receipt: object, *, b0: bool = False) -> dict:
-    from restore_frontend_native import request
-
-    return request("receipt-b0" if b0 else "receipt", value=receipt)
-
-
 def process_identity_record(value: object, label: str) -> dict:
     identity = exact_fields(value, {"pid", "started", "executable"}, label)
     if (

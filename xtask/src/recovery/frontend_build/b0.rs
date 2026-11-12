@@ -160,7 +160,7 @@ pub(crate) fn validate(root: &Path, inventory: Option<&Value>, expected: &str) -
     Ok(proof)
 }
 
-pub(crate) fn receipt(value: &Value) -> Result<()> {
+fn receipt(value: &Value) -> Result<()> {
     model::exact(
         value,
         &[
