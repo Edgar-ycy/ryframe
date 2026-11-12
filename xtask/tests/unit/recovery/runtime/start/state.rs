@@ -65,6 +65,7 @@ impl Fixture {
     }
 
     fn seed_role(&self, state: &State, role: &str, ordinal: usize) -> Result<Value> {
+        let scope = &self.request["authority"]["scope_id"];
         let identity = |offset| {
             json!({
                 "pid":80 + ordinal * 3 + offset,"started":"100","executable":self.commands[role][0],
@@ -72,7 +73,7 @@ impl Fixture {
         };
         let tree = json!({
             "format_version":2,"kind":"full-stack-process-tree","runtime_directory":state.directory(),
-            "role":role,"scope_id":"state-test","operation_id":state.generation()["roles"][role]["operation_id"],
+            "role":role,"scope_id":scope,"operation_id":state.generation()["roles"][role]["operation_id"],
             "supervisor":identity(0),"monitor":identity(1),"process":identity(2),"group_id":80 + ordinal * 3,
         });
         let directory = state.directory();
@@ -80,7 +81,7 @@ impl Fixture {
         strict::write_new(
             &directory.join(format!("{role}.json")),
             &json!({
-                "format_version":1,"role":role,"scope_id":"state-test","identity":tree["process"],
+                "format_version":1,"role":role,"scope_id":scope,"identity":tree["process"],
             }),
         )?;
         fs::write(

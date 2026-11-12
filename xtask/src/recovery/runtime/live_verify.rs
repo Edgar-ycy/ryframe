@@ -22,6 +22,7 @@ use crate::{
     Result,
     cli::RuntimeVerifyOptions,
     local_test_path::{LocalTestPathKind, validate_absolute_path, validate_local_test_path},
+    recovery::inputs::document::Document,
 };
 
 #[cfg(test)]
@@ -35,6 +36,26 @@ pub(in crate::recovery) fn verify_live_generation(
     authority: &Value,
     receipt_sha256: &str,
     window: &Window,
+) -> Result<Value> {
+    verify_live_generation_with(root, options, receipt_sha256, window, |receipt, inputs| {
+        verify::online(
+            root,
+            &options.sources,
+            &options.bindings,
+            &receipt.value,
+            authority,
+            inputs,
+        )
+        .map(|observed| observed.reply(receipt))
+    })
+}
+
+pub(super) fn verify_live_generation_with(
+    root: &Path,
+    options: &RuntimeVerifyOptions,
+    receipt_sha256: &str,
+    window: &Window,
+    verify_online: impl FnOnce(&Document, &mut Inputs) -> Result<Value>,
 ) -> Result<Value> {
     super::validate_sources(&options.sources)?;
     validate_local_test_path(&options.bindings, root, LocalTestPathKind::ExistingFile)?;
@@ -62,17 +83,10 @@ pub(in crate::recovery) fn verify_live_generation(
     Owner::with(&control, &before.operation, |owner| {
         let result = (|| {
             verify_control(owner, &mut inputs, &before, Operation::Verify)?;
-            let observed = verify::online(
-                root,
-                &options.sources,
-                &options.bindings,
-                runtime,
-                authority,
-                &mut inputs,
-            );
+            let observed = verify_online(&receipt, &mut inputs);
             let after = verify_control(owner, &mut inputs, &before, Operation::Verify);
             match (observed, after) {
-                (Ok(observed), Ok(())) => Ok(observed.reply(&receipt)),
+                (Ok(observed), Ok(())) => Ok(observed),
                 (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
                 (Err(error), Err(after)) => {
                     Err(format!("{error}；恢复运行控制后验同时失败：{after}").into())

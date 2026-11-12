@@ -9,6 +9,8 @@ use crate::recovery::{
 };
 use std::{net::TcpListener, process::Command, time::Duration};
 
+#[path = "native_live_owner.rs"]
+mod native_live_owner;
 #[path = "native_stop.rs"]
 mod native_stop;
 
@@ -58,6 +60,15 @@ fn start_operation(binding: &Value) -> Result<String> {
 }
 
 fn configure(fixture: &mut Fixture, coordinator: &Path) -> Result<[TcpListener; 3]> {
+    let artifact = compile_product(&fixture.control)?;
+    configure_with_artifact(fixture, coordinator, &artifact)
+}
+
+fn configure_with_artifact(
+    fixture: &mut Fixture,
+    coordinator: &Path,
+    native: &Path,
+) -> Result<[TcpListener; 3]> {
     let git = Command::new("git")
         .args(["init", "--quiet"])
         .current_dir(&fixture.backend)
@@ -73,7 +84,6 @@ fn configure(fixture: &mut Fixture, coordinator: &Path) -> Result<[TcpListener; 
     let [api, worker, frontend] = listeners
         .each_ref()
         .map(|listener| listener.local_addr().unwrap().port());
-    let native = compile_product(&fixture.control)?;
     let execution = fixture.control.join("product");
     let api_dir = execution.join("config");
     let worker_dir = execution.join("worker-config");
@@ -103,7 +113,7 @@ fn configure(fixture: &mut Fixture, coordinator: &Path) -> Result<[TcpListener; 
         "frontend_build":frontend_root.join("frontend-build.json")});
     let roots =
         json!({"backend_product":execution,"backend_execution":execution,"frontend":frontend_root});
-    let artifact = digest::file(&native)?;
+    let artifact = digest::file(native)?;
     let artifact =
         json!({"executable":native,"command":[],"bytes":artifact.bytes,"sha256":artifact.sha256});
     let tool = digest::file(coordinator)?;

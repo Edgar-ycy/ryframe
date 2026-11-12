@@ -10,11 +10,7 @@ import subprocess
 
 from full_stack_process import process_identity
 from process_sockets import verify_listener
-from restore_build import (
-    repository,
-    validate_new_output,
-    write_new,
-)
+from restore_build import repository
 from restore_frontend_build import (
     FRONTEND_RECEIPT,
     frontend_input_recheck,
@@ -40,10 +36,6 @@ from restore_runtime_evidence import (
 from source_inventory import build_source_domains, capture_inventory
 
 ROLES = ("api", "worker", "frontend")
-
-
-def _descriptor(document: JsonDocument) -> dict:
-    return {"path": str(document.path), "bytes": len(document.raw), "sha256": document.sha256}
 
 
 def validate_launch(value: object, generation: Path) -> dict:
@@ -289,164 +281,6 @@ def bind(
         None,
         product_backend=product_backend,
     )
-    return receipt
-
-
-def _bind_control_inputs(coordinator: Path, launch_path: Path):
-    """把 bind 精确绑定到同一 registration、target plan 与运行中代次。"""
-    from restore_runtime_state import state_document, validate_state
-    from restore_runtime_registration import registration_binding
-
-    launch_document = read_json_document(launch_path)
-    launch = validate_launch(launch_document.value, launch_document.path.parent)
-    _same_path(
-        str(launch_document.path),
-        Path(launch["runtime_directory"]) / "runtime-launch.json",
-        "恢复运行启动收据",
-    )
-    binding = launch["request"]["registration"]
-    registration_path = Path(binding["registration"]["path"])
-    target_path = Path(binding["target_plan"]["path"])
-    target = read_json_document(target_path)
-    if _descriptor(target) != binding["target_plan"]:
-        raise ValueError("恢复运行 bind 的 target plan 描述已经变化")
-    _registration, facts, registration_documents = registration_binding(
-        coordinator, registration_path, binding["target_plan"]
-    )
-    if (
-        _descriptor(registration_documents[0]) != binding["registration"]
-        or registration_documents[2].path != target.path
-        or registration_documents[2].raw != target.raw
-    ):
-        raise ValueError("恢复运行 bind 没有绑定同一 registration 或 target plan")
-    root = Path(facts["runtime_directory"])
-    lifecycle = state_document(root)
-    if lifecycle is None:
-        raise ValueError("恢复运行 bind 缺少 lifecycle 状态")
-    state = validate_state(lifecycle.value, root, binding)
-    generation_number = launch["generation"]
-    if generation_number > len(state["generations"]):
-        raise ValueError("恢复运行 bind 的 generation 不存在")
-    generation = state["generations"][generation_number - 1]
-    if (
-        generation["number"] != generation_number
-        or generation["status"] != "running"
-        or generation["request"] != launch["request"]
-        or generation["launch"] != _descriptor(launch_document)
-    ):
-        raise ValueError("恢复运行 bind 只接受同一 lifecycle 的运行中 generation")
-    documents = (*registration_documents, target, lifecycle, launch_document)
-    for document in documents:
-        document.assert_unchanged()
-    return root, binding, launch, documents
-
-
-def verify_live_generation(
-    receipt: dict,
-    coordinator: Path,
-    execution_backend: Path,
-    frontend: Path,
-    bindings_path: Path,
-    authority: dict,
-    runtime_receipt_sha256: str | None,
-    *,
-    product_backend: Path | None = None,
-) -> dict:
-    """在 registration ownership 锁内复核仍为 running 的同一运行代次。"""
-    from restore_runtime_registration import REGISTRATION_LOCK, runtime_control_directory
-    from runtime_control_lock import controller_lock
-
-    receipt = _validate_runtime_receipt(receipt)
-    launch_path = Path(receipt["paths"]["launch"])
-    root, binding, launch, documents = _bind_control_inputs(coordinator, launch_path)
-    _same_path(receipt["paths"]["runtime_dir"], Path(launch["runtime_directory"]), "恢复运行目录")
-    operation = (
-        f"runtime-verify:{binding['registration']['sha256']}:"
-        f"{binding['target_plan']['sha256']}:{launch['generation']}"
-    )
-    with controller_lock(runtime_control_directory(coordinator), operation, REGISTRATION_LOCK):
-        repeated = _bind_control_inputs(coordinator, launch_path)
-        if (
-            repeated[:3] != (root, binding, launch)
-            or [_descriptor(item) for item in repeated[3]]
-            != [_descriptor(item) for item in documents]
-        ):
-            raise ValueError("取得 ownership 控制锁前恢复运行代次发生变化")
-        result = verify(
-            receipt,
-            coordinator,
-            execution_backend,
-            frontend,
-            bindings_path,
-            authority,
-            runtime_receipt_sha256,
-            product_backend=product_backend,
-        )
-        final = _bind_control_inputs(coordinator, launch_path)
-        if (
-            final[:3] != (root, binding, launch)
-            or [_descriptor(item) for item in final[3]]
-            != [_descriptor(item) for item in documents]
-        ):
-            raise ValueError("恢复运行主动核验期间 lifecycle 代次发生变化")
-        for document in (*documents, *repeated[3], *final[3]):
-            document.assert_unchanged()
-    return result
-
-
-def bind_and_write(
-    coordinator: Path,
-    execution_backend: Path,
-    frontend: Path,
-    build_path: Path,
-    launch_path: Path,
-    bindings_path: Path,
-    output: Path,
-    *,
-    adapter_contract: str | None = None,
-    product_backend: Path | None = None,
-) -> dict:
-    """在全局 ownership 锁内复核运行代次并原子签发运行收据。"""
-    from restore_runtime_registration import REGISTRATION_LOCK, runtime_control_directory
-    from runtime_control_lock import controller_lock
-
-    output = validate_new_output(output, coordinator)
-    root, binding, launch, documents = _bind_control_inputs(coordinator, launch_path)
-    if output == root or output.is_relative_to(root):
-        raise ValueError("恢复运行收据不能写入 lifecycle 管理的运行目录")
-    operation = (
-        f"runtime-bind:{binding['registration']['sha256']}:"
-        f"{binding['target_plan']['sha256']}:{launch['generation']}"
-    )
-    with controller_lock(runtime_control_directory(coordinator), operation, REGISTRATION_LOCK):
-        repeated_root, repeated_binding, repeated_launch, repeated_documents = (
-            _bind_control_inputs(coordinator, launch_path)
-        )
-        if (
-            repeated_root != root
-            or repeated_binding != binding
-            or repeated_launch != launch
-            or [_descriptor(item) for item in repeated_documents]
-            != [_descriptor(item) for item in documents]
-        ):
-            raise ValueError("取得 ownership 控制锁前 bind 输入或运行代次发生变化")
-        receipt = bind(
-            coordinator,
-            execution_backend,
-            frontend,
-            build_path,
-            launch_path,
-            bindings_path,
-            adapter_contract=adapter_contract,
-            product_backend=product_backend,
-        )
-        write_new(output, receipt, coordinator)
-        written = read_json_document(output)
-        if written.value != receipt:
-            raise ValueError("恢复运行收据写入后内容不一致")
-        _validate_runtime_receipt(written.value)
-        for document in (*documents, *repeated_documents, written):
-            document.assert_unchanged()
     return receipt
 
 

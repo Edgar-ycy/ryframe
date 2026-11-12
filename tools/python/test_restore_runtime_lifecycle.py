@@ -17,7 +17,6 @@ import restore_runtime_evidence as evidence_model
 import restore_runtime_lifecycle as lifecycle
 import restore_runtime_launch as launch_model
 import restore_runtime_registration as registration_model
-import restore_runtime
 import runtime_control_lock
 from full_stack_process import process_identity, write_receipt
 from restore_runtime_evidence import artifact_snapshot, read_json_document
@@ -506,121 +505,6 @@ class RestoreRuntimeLifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "描述不一致"):
             launch_model._environment_document(self.coordinator, facts)
         self.assertEqual(document.sha256, facts["fresh_target"]["environment"]["sha256"])
-
-    def test_bind_receipt_is_written_inside_the_same_global_ownership_lock(self):
-        output = self.base / "runtime-receipt.json"
-        launch = {"generation": 1}
-        events = []
-
-        @contextlib.contextmanager
-        def locked(directory, operation, spec):
-            events.append(("lock", directory, operation, spec))
-            yield
-            events.append(("unlock",))
-
-        def bind(*_args, **_kwargs):
-            events.append(("bind",))
-            return {"receipt": True}
-
-        def write(path, value, _root):
-            events.append(("write",))
-            path.write_text(json.dumps(value), encoding="utf-8")
-
-        documents = tuple(
-            read_json_document(self.base / name)
-            for name in ("registration.json", "target-plan.json")
-        )
-        inputs = (self.runtime, self.binding, launch, documents)
-        with patch.object(restore_runtime, "validate_new_output", return_value=output), patch.object(
-            restore_runtime, "_bind_control_inputs", side_effect=[inputs, inputs]
-        ), patch.object(restore_runtime, "bind", side_effect=bind), patch.object(
-            restore_runtime, "write_new", side_effect=write
-        ), patch.object(restore_runtime, "_validate_runtime_receipt"), patch.object(
-            runtime_control_lock, "controller_lock", side_effect=locked
-        ):
-            receipt = restore_runtime.bind_and_write(
-                self.coordinator,
-                self.base,
-                self.base,
-                self.base / "build.json",
-                self.base / "launch.json",
-                self.base / "bindings.json",
-                output,
-            )
-        self.assertEqual(receipt, {"receipt": True})
-        self.assertEqual([event[0] for event in events], ["lock", "bind", "write", "unlock"])
-        self.assertEqual(events[0][1], self.coordinator / ".local-tests")
-        self.assertEqual(events[0][3], REGISTRATION_LOCK)
-
-    def test_live_verification_holds_ownership_lock_and_rechecks_generation(self):
-        documents = tuple(
-            read_json_document(self.base / name)
-            for name in ("registration.json", "target-plan.json")
-        )
-        launch = {"generation": 1, "runtime_directory": str(self.runtime)}
-        inputs = (self.runtime, self.binding, launch, documents)
-        receipt = {
-            "paths": {
-                "launch": str(self.runtime / "runtime-launch.json"),
-                "runtime_dir": str(self.runtime),
-            }
-        }
-
-        @contextlib.contextmanager
-        def locked(*_args):
-            yield
-
-        with patch.object(restore_runtime, "_validate_runtime_receipt", return_value=receipt), patch.object(
-            restore_runtime, "_bind_control_inputs", side_effect=[inputs, inputs, inputs]
-        ), patch.object(restore_runtime, "verify", return_value={"status": "verified"}) as verify, patch.object(
-            runtime_control_lock, "controller_lock", side_effect=locked
-        ):
-            result = restore_runtime.verify_live_generation(
-                receipt,
-                self.coordinator,
-                self.base,
-                self.base,
-                self.base / "bindings.json",
-                {"authority": True},
-                "f" * 64,
-            )
-        self.assertEqual(result, {"status": "verified"})
-        verify.assert_called_once()
-
-    def test_live_verification_rejects_generation_that_stops_during_probe(self):
-        documents = tuple(
-            read_json_document(self.base / name)
-            for name in ("registration.json", "target-plan.json")
-        )
-        launch = {"generation": 1, "runtime_directory": str(self.runtime)}
-        inputs = (self.runtime, self.binding, launch, documents)
-        stopped = (self.runtime, self.binding, {**launch, "generation": 2}, documents)
-        receipt = {
-            "paths": {
-                "launch": str(self.runtime / "runtime-launch.json"),
-                "runtime_dir": str(self.runtime),
-            }
-        }
-
-        @contextlib.contextmanager
-        def locked(*_args):
-            yield
-
-        with patch.object(restore_runtime, "_validate_runtime_receipt", return_value=receipt), patch.object(
-            restore_runtime, "_bind_control_inputs", side_effect=[inputs, inputs, stopped]
-        ), patch.object(restore_runtime, "verify", return_value={"status": "verified"}), patch.object(
-            runtime_control_lock, "controller_lock", side_effect=locked
-        ), self.assertRaisesRegex(ValueError, "lifecycle 代次发生变化"):
-            restore_runtime.verify_live_generation(
-                receipt,
-                self.coordinator,
-                self.base,
-                self.base,
-                self.base / "bindings.json",
-                {"authority": True},
-                "f" * 64,
-            )
-
 
 if __name__ == "__main__":
     unittest.main()
