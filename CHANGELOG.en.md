@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Windows recovery acceptance restricts access to the B0 startup configuration directories before writing the two role configurations.
+
 - Remove the unused Python workbook parser while preserving the department fixture data and checks.
 
 - Lock dependencies for the daily Cargo startup, migration, and reset aliases so first runs keep the checkout clean.

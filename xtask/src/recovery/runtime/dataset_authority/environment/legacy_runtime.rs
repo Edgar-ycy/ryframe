@@ -17,6 +17,7 @@ use super::{
 };
 use crate::{
     Result,
+    ci::databases::files::private_directory,
     local_test_path::{LocalTestPathKind, validate_local_test_path},
 };
 
@@ -64,14 +65,7 @@ pub(in crate::recovery::runtime) fn materialize(
 }
 
 fn create_directory(path: &Path) -> Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        fs::DirBuilder::new().mode(0o700).create(path)?;
-    }
-    #[cfg(not(unix))]
-    fs::create_dir(path)?;
-    Ok(())
+    private_directory(path).map_err(|_| "无法创建 B0 私有启动配置目录；保留原现场".into())
 }
 
 fn write_file(path: &Path, bytes: &[u8]) -> Result<()> {
@@ -162,4 +156,40 @@ fn protected(inputs: &mut Inputs, path: &Path, expected: &Value) -> Result<()> {
         expected == &json!({"bytes":actual.bytes,"sha256":actual.sha256}),
         "B0 启动配置文件与登记摘要不同",
     )
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn projected_b0_configuration_directory_removes_inherited_windows_aces() {
+        let local = crate::workspace::root_dir().join(".local-tests");
+        fs::create_dir_all(&local).unwrap();
+        let temporary = tempfile::tempdir_in(local).unwrap();
+        let generation = temporary.path().join("generation");
+        private_directory(&generation).unwrap();
+
+        let ordinary = generation.join("ordinary");
+        fs::create_dir(&ordinary).unwrap();
+        assert!(has_inherited_aces(&ordinary), "普通测试目录应继承访问权限");
+
+        let directory = generation.join(b0::config_directory("api").unwrap());
+        create_directory(&directory).unwrap();
+        assert!(!has_inherited_aces(&directory), "B0 配置目录继承了访问权限");
+    }
+
+    fn has_inherited_aces(path: &Path) -> bool {
+        let system_root = std::env::var_os("SystemRoot").unwrap();
+        let executable = Path::new(&system_root).join("System32/icacls.exe");
+        assert!(executable.is_absolute(), "Windows 系统目录必须为绝对路径");
+        let output = Command::new(executable)
+            .arg(path)
+            .env_clear()
+            .env("SystemRoot", system_root)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "无法读取测试目录 ACL");
+        output.stdout.windows(3).any(|marker| marker == b"(I)")
+    }
 }
