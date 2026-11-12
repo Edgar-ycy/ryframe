@@ -87,10 +87,7 @@ pub(super) fn verify_control(
 ) -> Result<()> {
     owner.check()?;
     let observed = Control::read(inputs, &before.launch.path, operation)?;
-    check(
-        observed.snapshot == before.snapshot && observed.operation == before.operation,
-        operation.drift(),
-    )?;
+    check(observed.same_generation_as(before), operation.drift())?;
     owner.check()
 }
 

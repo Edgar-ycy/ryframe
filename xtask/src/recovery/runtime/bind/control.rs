@@ -53,6 +53,10 @@ pub(in crate::recovery::runtime) struct Control {
 }
 
 impl Control {
+    pub(in crate::recovery::runtime) fn same_generation_as(&self, previous: &Self) -> bool {
+        self.snapshot == previous.snapshot && self.operation == previous.operation
+    }
+
     pub(in crate::recovery::runtime) fn read(
         inputs: &mut Inputs,
         launch_path: &Path,

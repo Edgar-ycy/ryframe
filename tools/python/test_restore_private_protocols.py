@@ -209,7 +209,7 @@ assert tool_binding() is None
 runpy.run_path(sys.argv[0],run_name='__main__')
 """
 
-    def test_formal_entries_reject_missing_or_bad_tools_before_children_and_writes(self):
+    def test_reference_entry_rejects_missing_or_bad_tools_before_children_and_writes(self):
         registered = tool_binding()
         self.assertIsNotNone(registered, "本测试须由正式 run_checks 绑定工具")
         with WorkspaceDirectory(dir=ROOT / ".local-tests/python-unit") as directory:
@@ -217,46 +217,35 @@ runpy.run_path(sys.argv[0],run_name='__main__')
             evidence = root / "input.json"
             evidence.write_text("{}", encoding="utf-8")
             bad = {**registered, "sha256": "0" * 64}
+            payload = json.dumps({
+                "format_version": 1,
+                "kind": "ryframe-xtask-recovery-reference",
+                "request": {
+                    "backend_dir": str(ROOT), "format_version": 1, "operation": "check-existing",
+                    "plan": str(evidence), "side": "source", "write": False,
+                },
+            })
+            script = ROOT / "tools/python/restore_reference.py"
+            audit = 'NATIVE_BINDING_AUDIT={"subprocesses": 0}'
             for binding in (None, bad):
-                def envelope(value):
-                    result = {key:item for key,item in value.items() if key != "native_tool"}
-                    if binding is not None:
-                        result["native_tool"] = binding
-                    return json.dumps(result)
-                tool_args = [] if binding is None else ["--native-tool", json.dumps(binding)]
-                cases = [
-                    ("restore_reference.py", [*tool_args,"--stdin"], json.dumps({"format_version":1,
-                        "kind":"ryframe-xtask-recovery-reference","request":{"backend_dir":str(ROOT),
-                        "format_version":1,"operation":"check-existing","plan":str(evidence),"side":"source","write":False}})),
-                    ("devex_provenance.py", [], envelope({})),
-                ]
-                diagnostics = {
-                    "restore_reference.py": (2, "restore_reference_protocol_error：私有参数协议无效。"),
-                }
-                for script, arguments, payload in cases:
-                    with self.subTest(script=script, missing=binding is None):
-                        before = {str(path.relative_to(root)):(None if path.is_dir() else path.read_bytes()) for path in root.rglob("*")}
-                        result = subprocess.run([sys.executable,"-X","utf8","-B","-c",self.DRIVER,
-                            str(ROOT / "tools/python" / script),*arguments], input=payload,
-                            cwd=ROOT, env=private_environment(), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, encoding="utf-8", timeout=60, check=False)
-                        self.assertNotIn("SyntaxError", result.stderr)
-                        audit = 'NATIVE_BINDING_AUDIT={"subprocesses": 0}'
-                        diagnostic = result.stderr.replace(audit + "\n", "").strip()
-                        if script == "devex_provenance.py":
-                            self.assertEqual(result.returncode, 1)
-                            self.assertEqual(json.loads(result.stdout), {"ok": False, "stage": "bindings"})
-                            self.assertEqual(diagnostic, "")
-                        else:
-                            code, expected = diagnostics[script]
-                            self.assertEqual(result.returncode, code)
-                            self.assertEqual(diagnostic, expected)
-                        if script != "devex_provenance.py":
-                            self.assertEqual(result.stdout, "")
-                        self.assertIn('NATIVE_BINDING_AUDIT={"subprocesses": 0}', result.stderr)
-                        after = {str(path.relative_to(root)):(None if path.is_dir() else path.read_bytes()) for path in root.rglob("*")}
-                        self.assertEqual(before, after)
-                        self.assertFalse((root / "output.json").exists())
+                with self.subTest(missing=binding is None):
+                    tool_args = [] if binding is None else ["--native-tool", json.dumps(binding)]
+                    before = {str(path.relative_to(root)):(None if path.is_dir() else path.read_bytes()) for path in root.rglob("*")}
+                    result = subprocess.run(
+                        [sys.executable, "-X", "utf8", "-B", "-c", self.DRIVER, str(script), *tool_args, "--stdin"],
+                        input=payload, cwd=ROOT, env=private_environment(),
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
+                        timeout=60, check=False,
+                    )
+                    self.assertNotIn("SyntaxError", result.stderr)
+                    diagnostic = result.stderr.replace(audit + "\n", "").strip()
+                    self.assertEqual(result.returncode, 2)
+                    self.assertEqual(diagnostic, "restore_reference_protocol_error：私有参数协议无效。")
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn(audit, result.stderr)
+                    after = {str(path.relative_to(root)):(None if path.is_dir() else path.read_bytes()) for path in root.rglob("*")}
+                    self.assertEqual(before, after)
+                    self.assertFalse((root / "output.json").exists())
 
     def test_fresh_process_uses_only_explicit_binding_for_a_real_readonly_native_request(self):
         registered = tool_binding()

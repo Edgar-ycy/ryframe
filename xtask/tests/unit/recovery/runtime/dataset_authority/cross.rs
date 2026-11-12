@@ -1,4 +1,5 @@
 use super::*;
+use std::{collections::BTreeSet, fs, path::Path};
 
 struct Fixture {
     bindings: Value,
@@ -51,6 +52,97 @@ impl Fixture {
             &self.reference,
             &self.manifest,
         )
+    }
+
+    fn runtime_receipt(&mut self) -> (tempfile::TempDir, Value) {
+        let backend = crate::workspace::root_dir();
+        let local = backend.join(".local-tests");
+        fs::create_dir_all(&local).unwrap();
+        let directory = tempfile::Builder::new()
+            .prefix("runtime-cross-")
+            .tempdir_in(local)
+            .unwrap();
+        let root = directory.path();
+        let generation = root.join("g0001");
+        let frontend_root = root.join("frontend");
+        for path in [&generation, &frontend_root] {
+            fs::create_dir(path).unwrap();
+        }
+        let write = |path: &Path, value: &Value| {
+            strict::write_new(path, value).unwrap();
+            document::read(path, &backend, "恢复运行测试收据").unwrap()
+        };
+        let bindings = write(&root.join("bindings.json"), &self.bindings);
+        let backend_build = write(
+            &root.join("backend-build.json"),
+            &json!({"format_version":2, "kind":"restore-backend-build",
+                "artifacts":{"api":{"executable":root.join("api.exe")},
+                    "worker":{"executable":root.join("worker.exe")}}}),
+        );
+        let frontend_build = write(
+            &frontend_root.join("restore-build.json"),
+            &json!({"format_version":3, "kind":"restore-frontend-build"}),
+        );
+        self.target["product_execution"]["roots"] =
+            json!({"source_backend":root, "execution_backend":root, "frontend":frontend_root});
+        self.target["product_execution"]["builds"] = json!({
+            "backend": document::binding(&backend_build),
+            "frontend": document::binding(&frontend_build),
+        });
+        let authority = self.authority().unwrap();
+        let mut paths = json!({});
+        let mut digests = json!({});
+        for (name, doc) in [
+            ("bindings", &bindings),
+            ("backend_build", &backend_build),
+            ("frontend_build", &frontend_build),
+        ] {
+            paths[name] = json!(doc.path);
+            digests[name] = json!(doc.sha256());
+        }
+        let mut processes = json!({});
+        let mut launch_processes = json!({});
+        for (role, pid) in [("api", 11), ("worker", 12), ("frontend", 13)] {
+            let identity =
+                json!({"pid":pid, "started":"1000", "executable":root.join(format!("{role}.exe"))});
+            let process = write(
+                &generation.join(format!("{role}.json")),
+                &json!({"format_version":1, "role":role, "scope_id":authority["scope_id"], "identity":identity}),
+            );
+            let mut receipt = document::binding(&process);
+            receipt["identity"] = identity.clone();
+            launch_processes[role] = json!({"process_receipt":receipt});
+            processes[role] = json!({"receipt_path":process.path,
+                "receipt_sha256":process.sha256(), "identity":identity});
+        }
+        let launch = write(
+            &generation.join("runtime-launch.json"),
+            &json!({"format_version":1, "kind":"restore-runtime-launch", "generation":1,
+                "runtime_directory":generation, "processes":launch_processes,
+                "request":{"format_version":2, "kind":"restore-runtime-launch-request",
+                    "authority":authority, "paths":paths, "digests":digests,
+                    "roots":{"backend_product":root, "backend_execution":root, "frontend":frontend_root},
+                    "artifacts":backend_build.value["artifacts"]}}),
+        );
+        paths["launch"] = json!(launch.path);
+        paths["runtime_dir"] = json!(generation);
+        paths["backend_product_root"] = json!(root);
+        paths["backend_execution_root"] = json!(root);
+        paths["frontend_root"] = json!(frontend_root);
+        digests["launch"] = json!(launch.sha256());
+        let runtime = json!({"format_version":3, "kind":"restore-runtime",
+            "paths":paths, "digests":digests, "processes":processes,
+            "restore":{"id":authority["restore_id"], "backup_id":authority["backup_id"],
+                "scope_id":authority["scope_id"], "plan_hash":authority["plan_hash"],
+                "data_verified_at":authority["data_verified_at"]},
+            "source":{"backup_source_sha":authority["backup_source_sha"],
+                "backend_product_sha":authority["backend_product_sha"],
+                "backend_execution_sha":authority["backend_execution_sha"],
+                "frontend_sha":authority["frontend_sha"], "backend_adapter_contract":null},
+            "endpoints":{"api":authority["api_endpoint"], "worker":authority["worker_endpoint"],
+                "frontend":authority["frontend_endpoint"]},
+            "backend":backend_build.value, "frontend":frontend_build.value});
+        (directory, runtime)
     }
 }
 
@@ -174,4 +266,106 @@ fn start_authority_validates_time_frontend_adapter_and_distinct_ports() {
             .to_string()
             .contains("互异显式端口")
     );
+}
+
+#[test]
+fn read_checks_launch_digest_and_canonical_generation_path() {
+    let mut fixture = Fixture::new();
+    let (directory, runtime) = fixture.runtime_receipt();
+    let backend = crate::workspace::root_dir();
+    let read_runtime = |value: &Value| {
+        let mut inputs = Inputs::new(&backend);
+        let result = read(&mut inputs, value);
+        inputs.finish(result)
+    };
+    let documents = read_runtime(&runtime).unwrap();
+    let launch = documents.launch;
+    assert_eq!(json!(launch.sha256()), runtime["digests"]["launch"]);
+    assert_eq!(
+        launch.path.canonicalize().unwrap(),
+        directory
+            .path()
+            .join("g0001/runtime-launch.json")
+            .canonicalize()
+            .unwrap()
+    );
+
+    let other_generation = directory.path().join("g0002");
+    fs::create_dir(&other_generation).unwrap();
+    let other_launch = other_generation.join("runtime-launch.json");
+    fs::copy(&launch.path, &other_launch).unwrap();
+    assert_eq!(fs::read(&other_launch).unwrap(), launch.raw);
+    let mut misplaced = runtime.clone();
+    misplaced["paths"]["launch"] = json!(other_launch);
+    let error = read_runtime(&misplaced).err().unwrap().to_string();
+    assert!(
+        error.contains("恢复运行启动收据路径不属于同代目录"),
+        "{error}"
+    );
+
+    let mut changed = launch.value;
+    changed["generation"] = json!(2);
+    let changed = document::canonical_bytes(&changed).unwrap();
+    assert_eq!(changed.len(), launch.raw.len());
+    assert_ne!(changed, launch.raw);
+    fs::write(&launch.path, changed).unwrap();
+    let error = read_runtime(&runtime).err().unwrap().to_string();
+    assert!(error.contains("恢复运行输入摘要漂移"), "{error}");
+}
+
+#[test]
+fn verify_binds_projected_authority_builds_and_processes() {
+    use super::super::schema;
+
+    let mut fixture = Fixture::new();
+    let (directory, runtime) = fixture.runtime_receipt();
+    let generation = directory.path().join("g0001");
+    let frontend = directory.path().join("frontend");
+    let members = || {
+        [directory.path(), &generation, &frontend]
+            .into_iter()
+            .flat_map(|path| fs::read_dir(path).unwrap())
+            .map(|entry| entry.unwrap().path())
+            .collect::<BTreeSet<_>>()
+    };
+    let before = members();
+    let backend = crate::workspace::root_dir();
+    let mut inputs = Inputs::new(&backend);
+    schema::runtime(&runtime).unwrap();
+    let documents = read(&mut inputs, &runtime).unwrap();
+    let verify_runtime = |runtime: &Value, target: &Value| {
+        verify(
+            runtime,
+            target,
+            &fixture.reference,
+            &fixture.manifest,
+            &documents,
+        )
+    };
+    assert_eq!(
+        verify_runtime(&runtime, &fixture.target).unwrap(),
+        fixture.authority().unwrap()
+    );
+
+    let mut changed_process = runtime.clone();
+    changed_process["processes"]["worker"]["identity"]["started"] = json!("1001");
+    schema::runtime(&changed_process).unwrap();
+    let error = verify_runtime(&changed_process, &fixture.target)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("恢复运行进程与 launch 绑定不同"), "{error}");
+
+    let mut changed_target = fixture.target.clone();
+    let build = &mut changed_target["product_execution"]["builds"]["backend"];
+    build["sha256"] = json!("e".repeat(64));
+    document::binding_shape(build, "替换后的构建绑定").unwrap();
+    let error = verify_runtime(&runtime, &changed_target)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("恢复构建未绑定目标计划的产品执行来源"),
+        "{error}"
+    );
+    inputs.finish(Ok(())).unwrap();
+    assert_eq!(members(), before);
 }

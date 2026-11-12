@@ -33,7 +33,7 @@ pub(crate) fn observe(
         let observed = explicit.online(driver, backend, frontend, &before, &mut inputs);
         let after = explicit.control(driver, &mut inputs).and_then(|current| {
             check(
-                current.snapshot == before.snapshot && current.operation == before.operation,
+                current.same_generation_as(&before),
                 "性能核验期间恢复运行生命周期或代次发生变化",
             )
         });
@@ -210,5 +210,25 @@ mod tests {
             .to_string();
         assert!(error.contains("在线探针失败"));
         assert!(error.contains("原运行代次变化"));
+    }
+
+    #[test]
+    fn performance_postcheck_requires_the_same_lifecycle_and_generation() {
+        let observation = |lifecycle: &str, number| Control {
+            launch: Document {
+                path: "runtime-launch.json".into(),
+                raw: b"{}".to_vec(),
+                value: json!({}),
+            },
+            directory: "runtime".into(),
+            operation: Operation::Verify.describe(&"a".repeat(64), &"b".repeat(64), number),
+            snapshot: json!({
+                "lifecycle": {"path":"lifecycle.json","bytes":45,"sha256":lifecycle.repeat(64)},
+            }),
+        };
+        let before = observation("c", 1);
+        assert!(observation("c", 1).same_generation_as(&before));
+        assert!(!observation("d", 1).same_generation_as(&before));
+        assert!(!observation("c", 2).same_generation_as(&before));
     }
 }
