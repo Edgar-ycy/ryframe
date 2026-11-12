@@ -234,7 +234,13 @@ impl ManagedChild {
     }
 
     pub(super) fn is_running(&mut self) -> Result<bool, String> {
-        Ok(self.0.as_mut().unwrap().try_wait().map_err(message)?.is_none())
+        Ok(self
+            .0
+            .as_mut()
+            .unwrap()
+            .try_wait()
+            .map_err(message)?
+            .is_none())
     }
 
     pub(super) fn terminate(&mut self) -> Result<(), String> {

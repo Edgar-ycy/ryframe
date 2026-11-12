@@ -177,9 +177,7 @@ pub(super) async fn apply<P: ConnectionTrait>(
         }
         return Err(error);
     }
-    tx.finish_mysql_root(true)
-        .await
-        .map_err(|error| {
-            format!("归属提交结果未知。先 inspect 原计划，不自动重放。底层错误 {error}").into()
-        })
+    tx.finish_mysql_root(true).await.map_err(|error| {
+        format!("归属提交结果未知。先 inspect 原计划，不自动重放。底层错误 {error}").into()
+    })
 }
