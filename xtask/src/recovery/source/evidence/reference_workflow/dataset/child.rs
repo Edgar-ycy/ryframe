@@ -208,6 +208,72 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn dataset_windows_timeout_closes_job_and_preserves_failed_stage() -> Result<()> {
+        use super::super::super::tests::Fixture;
+        use super::super::{Lock, Stage, native, receipts, require_absent};
+
+        const CHILD_MARKER: &str = "ryframe-reference-dataset-timeout-child";
+        if std::env::args_os().any(|arg| arg == CHILD_MARKER) {
+            std::thread::sleep(Duration::from_secs(30));
+            return Ok(());
+        }
+
+        let fixture = Fixture::new();
+        let work = Path::new(fixture.plan["work_dir"].as_str().unwrap());
+        let lock = Lock::claim(work)?;
+        let args = json!({"plan":fixture.plan,"command":"dataset","copy_id":null,
+            "root":null,"receipt":null,"bindings":null});
+        let started = receipts::start(&args)?;
+        let stage = Stage {
+            backend: work.parent().unwrap(),
+            work,
+            lock: &lock,
+            started: &started,
+            plan: &fixture.plan,
+        };
+        let name = format!(
+            "{}::dataset_windows_timeout_closes_job_and_preserves_failed_stage",
+            module_path!().split_once("::").unwrap().1
+        );
+        let command = Command::new(std::env::current_exe()?)
+            .args(["--exact", &name, "--skip", CHILD_MARKER])
+            .env_clear()
+            .envs(system_environment())
+            .stdin(Stdin::from_bytes(b""))
+            .stdout(StdioMode::Null)
+            .stderr(StdioMode::Null)
+            .create_no_window();
+        let error = execute(command, Duration::from_secs(2)).unwrap_err();
+        let failure = error.downcast_ref::<ChildFailure>().unwrap();
+        assert!(failure.confirmed_closed);
+        assert!(failure.to_string().contains("达到阶段时限"));
+
+        let saved_error = stage.finish(Err(error)).unwrap_err();
+        assert!(
+            saved_error
+                .downcast_ref::<ChildFailure>()
+                .unwrap()
+                .confirmed_closed
+        );
+        let path = work.join("dataset.json");
+        let original = std::fs::read(&path)?;
+        let receipt = native::json::read(&path)?;
+        assert_eq!(receipt["status"], "failed");
+        assert!(receipt.get("result").is_none());
+        assert!(
+            receipt["failure"]["notes"][0]
+                .as_str()
+                .unwrap()
+                .contains("达到阶段时限")
+        );
+        assert!(require_absent(&path).is_err());
+        assert!(receipts::start(&args).is_err());
+        assert_eq!(std::fs::read(path)?, original);
+        Ok(())
+    }
+
     #[test]
     fn dataset_child_keeps_request_paths_out_of_argv_and_discards_raw_diagnostics() {
         let backend = std::env::current_dir().unwrap();

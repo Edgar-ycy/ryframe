@@ -2,6 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::{Component, Path, PathBuf},
+    time::Duration,
 };
 
 use chrono::{DateTime, FixedOffset};
@@ -9,7 +10,7 @@ use regex::Regex;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use super::document::{array, digest, exact, integer, linked, text};
+use super::document::{array, digest, exact, linked, text};
 use crate::{
     Result,
     local_test_path::{
@@ -433,8 +434,16 @@ pub(crate) fn mode_for_key(key: &str) -> Result<(&'static str, &'static str)> {
         .ok_or_else(|| "新目标必须精确包含四个逻辑数据库".into())
 }
 
+pub(crate) fn dataset_timeout(dataset: &Value) -> Result<Duration> {
+    let seconds = dataset["timeout_seconds"]
+        .as_u64()
+        .filter(|value| (1..=604_800).contains(value))
+        .ok_or("数据准备必须显式设置 1 至 604800 秒的阶段时限，独立于恢复时限")?;
+    Ok(Duration::from_secs(seconds))
+}
+
 fn validate_dataset_credentials(dataset: &Value, backend: &Path) -> Result<()> {
-    let dataset = exact(
+    let fields = exact(
         dataset,
         &[
             "timeout_seconds",
@@ -452,27 +461,24 @@ fn validate_dataset_credentials(dataset: &Value, backend: &Path) -> Result<()> {
         "数据准备计划",
     )?;
     exact(
-        dataset.get("admin").unwrap(),
+        fields.get("admin").unwrap(),
         &["tenant_id", "username"],
         "数据准备管理员",
     )?;
     crate::recovery::clone::native::session::credentials::load_account(
         backend,
-        dataset.get("administrator_credentials").unwrap(),
-        dataset.get("admin").unwrap()["tenant_id"]
+        fields.get("administrator_credentials").unwrap(),
+        fields.get("admin").unwrap()["tenant_id"]
             .as_str()
             .ok_or("管理员租户缺失")?,
-        dataset.get("admin").unwrap()["username"]
+        fields.get("admin").unwrap()["username"]
             .as_str()
             .ok_or("管理员用户名缺失")?,
     )?;
-    let timeout = integer(dataset.get("timeout_seconds").unwrap(), "数据准备时限")?;
-    if !(1..=604_800).contains(&timeout) {
-        return Err("数据准备必须显式设置 1 至 604800 秒的阶段时限".into());
-    }
+    dataset_timeout(dataset)?;
     crate::recovery::clone::native::s3::app_configuration::load(
         backend,
-        dataset.get("configuration").unwrap(),
+        fields.get("configuration").unwrap(),
         &mut Vec::new(),
     )?;
     Ok(())

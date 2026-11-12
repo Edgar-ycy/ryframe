@@ -146,33 +146,6 @@ pub(super) fn preflight(args: &Value) -> Result<Value> {
     )
 }
 
-pub(super) fn dataset_result(args: &Value) -> Result<Value> {
-    exact(
-        args,
-        &[
-            "preflight",
-            "actual_preflight",
-            "source",
-            "actual_source",
-            "tools",
-            "actual_tools",
-            "result",
-        ],
-    )?;
-    if args["preflight"] != args["actual_preflight"] {
-        return Err("数据准备预检收据在执行期间发生变化".into());
-    }
-    if args["source"] != args["actual_source"] {
-        return Err("参考数据准备期间源码发生变化".into());
-    }
-    if args["tools"] != args["actual_tools"] {
-        return Err("参考数据准备期间维护工具来源发生变化".into());
-    }
-    let mut result = native::json::object(&args["result"], "数据准备结果")?.clone();
-    result.insert("source".into(), args["source"].clone());
-    Ok(Value::Object(result))
-}
-
 pub(super) fn backup_inventory(
     plan: &Value,
     raw: &Value,

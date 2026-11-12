@@ -12,23 +12,16 @@ import os
 import subprocess
 from pathlib import Path
 
-from full_stack_process import process_identity, read_process
-from process_sockets import verify_listener
-from restore_build import file_digest, source_snapshot
+from restore_build import file_digest
 from restore_reference_backup import document_binding
 from restore_reference_execution import RestoreInputs, restore_inputs, restore_output
 from restore_reference_images import RestoreImages
 from restore_reference_io import ExternalTools, redact_object_diagnostic
-from restore_reference_plan import (dataset_timeout_seconds, plan_hash,
-                                    validate_plan,
-                                    verify_artifacts)
+from restore_reference_plan import plan_hash, validate_plan, verify_artifacts
 from restore_runtime_evidence import read_json
 from restore_runtime_registration import registered_stopped_runtime
 from restore_reference_target import execute_plan
-from source_inventory import build_source_domains, capture_inventory
 from native_s3_client import _invoke, _read_response
-
-DATASET_PROTOCOL_KIND = "ryframe-xtask-recovery-dataset-prepare"
 
 
 def _coordinate(operation: str, arguments: dict, *, write=False):
@@ -48,12 +41,6 @@ def write_json(path: Path, value: dict, *, new=True) -> None:
     with path.open("x" if new else "w", encoding="utf-8", newline="\n") as stream:
         json.dump(value, stream, ensure_ascii=False, indent=2)
         stream.write("\n")
-
-
-def dataset_protocol(backend: Path, plan: Path, preflight: Path) -> str:
-    return _coordinate("dataset-protocol", {
-        "backend": str(backend), "plan": str(plan), "preflight": str(preflight),
-    })
 
 
 def failure_diagnostic(error: BaseException) -> dict:
@@ -197,8 +184,8 @@ def _request_from_raw(raw: str) -> ReferenceRequest:
         values = _coordinate("request", {"raw": raw})
     except (ValueError, RuntimeError) as error:
         raise ReferenceProtocolError("reference 私有参数协议无效") from error
-    if values["command"] in {"backup", "restore"}:
-        raise ReferenceProtocolError("参考备份和恢复由 Rust 公共入口执行")
+    if values["command"] in {"dataset", "backup", "restore"}:
+        raise ReferenceProtocolError("参考数据准备、备份和恢复由 Rust 公共入口执行")
     paths = {name: Path(value) for name, value in values.items() if name in {
         "backend_dir", "plan",
         "backup_root", "record", "runtime_registration", "backup_receipt", "comparison_sources",
@@ -207,6 +194,8 @@ def _request_from_raw(raw: str) -> ReferenceRequest:
 
 
 def main(args: ReferenceRequest) -> None:
+    if args.command not in {"plan", "restore"}:
+        raise ReferenceProtocolError("该参考阶段由 Rust 公共入口执行")
     backend, plan = args.backend_dir.resolve(strict=True), read_json(args.plan)
     validate_plan(plan, backend)
     if args.command == "plan":
@@ -231,55 +220,19 @@ def main(args: ReferenceRequest) -> None:
 
 
 def execute(args, plan: dict, backend: Path, tools: ExternalTools, work: Path) -> dict:
-    inputs = None
-    output = None
-    if args.command == "restore":
-        inputs = getattr(args, "restore_inputs", None) or restore_inputs(
-            backend, plan, args.target_plan, args.backup_root, args.record, args.runtime_registration, read_only=True)
-        output = restore_output(backend, plan, inputs)
+    if args.command != "restore":
+        raise ReferenceProtocolError("参考写入阶段必须通过 Rust 公共入口运行")
+    inputs = getattr(args, "restore_inputs", None) or restore_inputs(
+        backend, plan, args.target_plan, args.backup_root, args.record, args.runtime_registration, read_only=True)
+    output = restore_output(backend, plan, inputs)
     receipt = _coordinate("receipt-start", {
         "plan": plan, "command": args.command, "copy_id": args.copy_id,
-        "root": str(args.backup_root.resolve()) if args.command == "damage" else None,
-        "receipt": str(output) if output is not None else None,
-        "bindings": inputs.bindings() if inputs is not None else None,
+        "root": None,
+        "receipt": str(output),
+        "bindings": inputs.bindings(),
     }, write=True)
     try:
-        if args.command == "dataset":
-            timeout = dataset_timeout_seconds(plan)
-            source = source_snapshot(backend)
-            tool_root = Path(__file__).resolve().parents[2]
-            tool_inventory = capture_inventory(tool_root)
-            runner = tool_root / "xtask/src/recovery/dataset_prepare.rs"
-            write_json(work / "dataset-tools.json", {
-                "format_version": 1, "kind": "restore-reference-dataset-tools",
-                "root": str(tool_root),
-                "sources": build_source_domains(tool_inventory, "backend"),
-                "runner": {"path": str(runner), **file_digest(runner)},
-            })
-            check_api(plan, tools, "source")
-            require_empty_source(plan, tools)
-            preflight = _coordinate("dataset-preflight", {"plan": plan})
-            preflight_path = work / "dataset-preflight.json"
-            write_json(preflight_path, preflight)
-            from rate_limit_tool import tool_binding, verified_tool
-            from process_environment import configured
-            with verified_tool(tool_binding()) as executable:
-                if executable is None:
-                    raise ValueError("参考数据准备缺少受管原生工具绑定；请通过正式 xtask 或 run_checks.py 绑定当前工具后执行，禁止临时编译回退")
-                command = [executable, "__recovery-dataset"]
-                tools.execute(command, data=dataset_protocol(
-                    backend, args.plan.resolve(), preflight_path.resolve()).encode("utf-8"),
-                    env=configured({}), timeout=timeout)
-            result = read_json(work / "dataset/result.json")
-            result = _coordinate("dataset-result", {
-                "preflight": preflight, "actual_preflight": read_json(preflight_path),
-                "source": source, "actual_source": source_snapshot(backend),
-                "tools": tool_inventory, "actual_tools": capture_inventory(tool_root), "result": result,
-            })
-        elif args.command == "restore":
-            result = restore(plan, tools, backend, inputs)
-        else:
-            raise ReferenceProtocolError("本地 copy/damage 阶段必须通过 Rust 公共入口运行")
+        result = restore(plan, tools, backend, inputs)
         _coordinate("receipt-finish", {"receipt": receipt, "result": result,
             "failure": None, "resource_images": None}, write=True)
         return result
@@ -291,21 +244,6 @@ def execute(args, plan: dict, backend: Path, tools: ExternalTools, work: Path) -
         except BaseException as failure:
             error.add_note("失败收据发布未确认，保留运行收据和未知结果：" + type(failure).__name__)
         raise
-
-
-def check_api(plan: dict, tools: ExternalTools, side: str) -> None:
-    tools.verify_databases(side)
-    config = plan[side]
-    identity = read_process(Path(config["runtime_dir"]), "api", config["scope_id"])
-    if process_identity(identity["pid"]) != identity:
-        raise ValueError("业务验收 API 进程不属于本次隔离环境")
-    verify_listener(identity["pid"], config["api_url"])
-
-
-def require_empty_source(plan: dict, tools: ExternalTools) -> None:
-    database = next(db for db in plan["source"]["databases"] if db["kind"] == "combined")
-    if tools.mysql(database, "SELECT COUNT(*) FROM sys_tenant WHERE tenant_id <> 'system';") != "0":
-        raise ValueError("参考数据只允许准备到没有普通租户的明确隔离环境")
 
 
 if __name__ == "__main__":

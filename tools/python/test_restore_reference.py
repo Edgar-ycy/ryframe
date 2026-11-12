@@ -6,13 +6,12 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import restore_reference as reference
 import restore_reference_execution as execution
-from restore_reference_plan import dataset_timeout_seconds, safe_file, validate_inventory, validate_plan, verify_artifacts
+from restore_reference_plan import safe_file, validate_inventory, validate_plan, verify_artifacts
 from restore_reference_fixture import environment, inventory, restore_record, stored_backup
 from restore_reference_execution_fixture import guards
 
@@ -174,81 +173,6 @@ class ReferenceTests(unittest.TestCase):
             change(record)
             with self.assertRaises(ValueError):
                 execution.validate_restore_record(self.plan, manifest, record, record["plan"])
-
-    def test_source_with_existing_tenant_cannot_be_seeded(self):
-        tools = Mock()
-        tools.mysql.return_value = "1"
-        with self.assertRaisesRegex(ValueError, "没有普通租户"):
-            reference.require_empty_source(self.plan, tools)
-        tools.mysql.return_value = "0"
-        reference.require_empty_source(self.plan, tools)
-
-    def test_dataset_uses_long_stage_timeout_and_preserves_timeout_failure(self):
-        self.plan["dataset"] = {"timeout_seconds": 21600}
-        work = reference.work_directory(self.plan)
-        tools = Mock()
-        tools.execute.side_effect = subprocess.TimeoutExpired(["xtask", "__recovery-dataset"], 21600)
-        args = SimpleNamespace(command="dataset", copy_id=None, plan=self.backend / "plan.json")
-        with patch.object(reference, "source_snapshot", return_value={"head": "a" * 40, "clean": False}), \
-                patch.object(reference, "check_api"), patch.object(reference, "require_empty_source"):
-            with self.assertRaises(subprocess.TimeoutExpired):
-                reference.execute(args, self.plan, self.backend, tools, work)
-        self.assertEqual(tools.execute.call_args.kwargs["timeout"], 21600)
-        command = tools.execute.call_args.args[0]
-        self.assertEqual(command[-1], "__recovery-dataset")
-        self.assertNotIn("node", command)
-        self.assertNotIn(str(args.plan), command)
-        recorded = reference.read_json(work / "dataset-tools.json")
-        self.assertEqual(recorded["kind"], "restore-reference-dataset-tools")
-        self.assertIn("tools", recorded["sources"])
-        protocol = json.loads(
-            tools.execute.call_args.kwargs["data"].decode("utf-8")
-        )
-        self.assertEqual(protocol["kind"], reference.DATASET_PROTOCOL_KIND)
-        self.assertTrue(protocol["write"])
-        self.assertEqual(protocol["side"], "source")
-        self.assertIsNone(protocol["verify_existing"])
-        preflight = reference.read_json(Path(protocol["preflight"]))
-        self.assertEqual(preflight["plan_sha256"], reference.plan_hash(self.plan))
-        self.assertEqual(preflight["scope_id"], self.plan["source"]["scope_id"])
-        self.assertEqual(reference.read_json(work / "dataset.json")["status"], "failed")
-
-    def test_dataset_tool_drift_cannot_publish_success_for_frozen_product(self):
-        self.plan["dataset"] = {"timeout_seconds": 21600}
-        work = reference.work_directory(self.plan)
-        (work / "dataset").mkdir()
-        reference.write_json(work / "dataset/result.json", {"records": 100000})
-        tools = Mock()
-        args = SimpleNamespace(command="dataset", copy_id=None, plan=self.backend / "plan.json")
-        with (
-            patch.object(reference, "source_snapshot", return_value={"head": "a" * 40}),
-            patch.object(reference, "capture_inventory", side_effect=[{"revision": 1}, {"revision": 2}]),
-            patch.object(reference, "build_source_domains", return_value={"tools": {"sha256": "a" * 64}}),
-            patch.object(reference, "check_api"), patch.object(reference, "require_empty_source"),
-        ):
-            with self.assertRaisesRegex(ValueError, "维护工具来源发生变化"):
-                reference.execute(args, self.plan, self.backend, tools, work)
-        self.assertEqual(reference.read_json(work / "dataset.json")["status"], "failed")
-
-    def test_dataset_missing_binding_starts_no_resource_runner(self):
-        tools = Mock()
-        args = SimpleNamespace(command="dataset", copy_id=None, plan=self.backend / "plan.json")
-        with patch.object(reference, "_coordinate", return_value={}), \
-                patch.object(reference, "dataset_timeout_seconds", return_value=21600), \
-                patch.object(reference, "source_snapshot", return_value={}), \
-                patch.object(reference, "capture_inventory", return_value={}), \
-                patch.object(reference, "build_source_domains", return_value={}), \
-                patch.object(reference, "write_json"), \
-                patch.object(reference, "check_api") as api, \
-                patch.object(reference, "require_empty_source") as empty, \
-                patch("rate_limit_tool.tool_binding", return_value=None), \
-                patch.object(reference.subprocess, "run") as run, \
-                self.assertRaisesRegex(ValueError, "正式 xtask 或 run_checks.py"):
-            reference.execute(args, self.plan, self.backend, tools, Path(self.plan["work_dir"]))
-        tools.execute.assert_not_called()
-        run.assert_not_called()
-        api.assert_called_once_with(self.plan, tools, "source")
-        empty.assert_called_once_with(self.plan, tools)
 
     def test_called_process_failure_records_redacted_output(self):
         error = subprocess.CalledProcessError(1, ["node"], output="normal", stderr="password=private")

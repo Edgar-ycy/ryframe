@@ -39,10 +39,6 @@ def plan_hash(plan: dict) -> str:
     return _native("reference-plan-hash", {"value": plan})
 
 
-def dataset_timeout_seconds(plan: dict) -> int:
-    return _native("reference-dataset-timeout", {"plan": plan})
-
-
 def validate_configuration_binding(binding: dict, backend: Path) -> None:
     _native("reference-configuration-binding", {
         "backend": str(backend), "binding": binding, "directory": None, "app_env": None,

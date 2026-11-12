@@ -255,22 +255,16 @@ fn dataset_protocol_is_bounded_exact_and_credential_free() {
         json!(1.5),
         json!("21600"),
     ] {
-        assert!(
-            super::super::reference::request(
-                "reference-dataset-timeout",
-                &json!({"plan":{"dataset":{"timeout_seconds":timeout}}})
-            )
-            .is_err()
+        assert!(inputs::domain::dataset_timeout(&json!({"timeout_seconds":timeout})).is_err());
+    }
+    for seconds in [1, 21_600, 604_800] {
+        assert_eq!(
+            inputs::domain::dataset_timeout(&json!({"timeout_seconds":seconds}))
+                .unwrap()
+                .as_secs(),
+            seconds
         );
     }
-    assert_eq!(
-        super::super::reference::request(
-            "reference-dataset-timeout",
-            &json!({"plan":{"dataset":{"timeout_seconds":21600}}})
-        )
-        .unwrap(),
-        21600
-    );
 }
 
 #[test]
@@ -395,7 +389,7 @@ fn resource_preflight_checks_all_artifacts_before_returning_ordered_tasks() {
 }
 
 #[test]
-fn retention_uses_capture_time_and_dataset_drift_cannot_publish_success() {
+fn retention_uses_capture_time() {
     let fixture = Fixture::new();
     let mut inventory = fixture.manifest.clone();
     let captured =
@@ -417,14 +411,6 @@ fn retention_uses_capture_time_and_dataset_drift_cannot_publish_success() {
             .to_rfc3339_opts(SecondsFormat::AutoSi, true)
     );
     assert!(completed.timestamp_subsec_nanos().is_multiple_of(1_000));
-    let args = json!({"preflight":{"same":true},"actual_preflight":{"same":true},"source":{"head":"a"},
-        "actual_source":{"head":"a"},"tools":{"revision":1},"actual_tools":{"revision":1},"result":{"records":100000}});
-    assert_eq!(model::dataset_result(&args).unwrap()["records"], 100000);
-    for field in ["actual_preflight", "actual_source", "actual_tools"] {
-        let mut drift = args.clone();
-        drift[field] = json!({"changed":true});
-        assert!(model::dataset_result(&drift).is_err());
-    }
 }
 
 #[test]

@@ -194,7 +194,7 @@ mod tests {
         let mut altered = manifest.clone();
         altered["files"][0]["sha256"] = json!("c".repeat(64));
         assert!(require_database_authority(&altered, &record, &authority).is_err());
-        let mut altered = record.clone();
+        let mut altered = record;
         altered["data_verified_at"] = json!("2026-11-11T01:01:00Z");
         assert!(require_database_authority(&manifest, &altered, &authority).is_err());
     }

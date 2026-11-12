@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Reference dataset preparation uses the Rust stage controller and shared timeout validation. The old Python execution branch and its private dispatch operations have been removed.
+
 - Ordinary recovery uses native frontend build receipts and artifact inventories directly. Retire the legacy Python receipt and origin adapters. The frontend consumer contract continues to verify its fixed tool, sources, and files.
 
 - Recovery startup allows its supervisor to publish process receipts for the first time while the controller is polling, and still verifies the receipts and process identities. The current Rust commands handle ordinary recovery startup, sources, and generations. Remove the corresponding legacy Python implementation.

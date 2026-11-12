@@ -108,6 +108,33 @@ fn assert_rejected_operation(request: &Value, diagnostic: &str) {
 }
 
 #[test]
+fn retired_reference_dataset_operations_are_rejected_by_the_native_protocol() {
+    for (operation, arguments) in [
+        (
+            "reference-dataset-protocol",
+            json!({"backend":"private-test-path","plan":"private-test-plan","preflight":"private-test-preflight"}),
+        ),
+        (
+            "reference-dataset-timeout",
+            json!({"plan":{"dataset":{"timeout_seconds":21600}}}),
+        ),
+        (
+            "reference-dataset-preflight",
+            json!({"plan":{"source":{"scope_id":"source"}}}),
+        ),
+        (
+            "reference-dataset-result",
+            json!({"preflight":{},"actual_preflight":{},"source":{},"actual_source":{},"tools":{},"actual_tools":{},"result":{}}),
+        ),
+    ] {
+        assert_rejected_operation(
+            &json!({"operation":operation,"write":false,"arguments":arguments}),
+            "参考证据操作无效",
+        );
+    }
+}
+
+#[test]
 fn reference_operations_are_strict_read_only_or_explicit_local_writes() {
     let hash = invoke(
         &serde_json::to_vec(&json!({

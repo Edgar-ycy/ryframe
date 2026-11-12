@@ -32,7 +32,6 @@ pub(crate) fn handles(operation: &str) -> bool {
         operation,
         "reference-request"
             | "reference-readonly"
-            | "reference-dataset-protocol"
             | "reference-work-directory"
             | "reference-work-verify"
             | "reference-copy"
@@ -47,8 +46,6 @@ pub(crate) fn handles(operation: &str) -> bool {
             | "reference-backup-result"
             | "reference-restore-record"
             | "reference-product-hash"
-            | "reference-dataset-preflight"
-            | "reference-dataset-result"
     )
 }
 
@@ -56,7 +53,6 @@ pub(crate) fn request(operation: &str, args: &Value) -> Result<Value> {
     match operation {
         "reference-request" => protocol::request(args),
         "reference-readonly" => readonly::execute(args),
-        "reference-dataset-protocol" => protocol::dataset(args),
         "reference-work-directory" => files::work(args, true),
         "reference-work-verify" => files::work(args, false),
         "reference-copy" => files::copy(args),
@@ -67,8 +63,6 @@ pub(crate) fn request(operation: &str, args: &Value) -> Result<Value> {
         "reference-bound-artifact" => model::bound_artifact(args),
         "reference-summary" => model::summary(args),
         "reference-restore-result" => model::restore_result(args),
-        "reference-dataset-preflight" => model::preflight(args),
-        "reference-dataset-result" => model::dataset_result(args),
         "reference-backup-source" => proof::backup_source(args),
         "reference-backup-result" => proof::backup_result(args),
         "reference-restore-record" => proof::record(args),

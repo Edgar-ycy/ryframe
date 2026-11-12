@@ -14,7 +14,10 @@ use crate::{
     recovery::{
         clone::native::{digest, source},
         fixture_control::portable_path,
-        inputs::document::{self, Document},
+        inputs::{
+            document::{self, Document},
+            domain::dataset_timeout,
+        },
         monitoring::execution::ProtectedInputs,
     },
 };
@@ -53,9 +56,7 @@ impl Bound {
         }
 
         let args = json!({"plan": plan});
-        let seconds = super::super::super::reference::request("reference-dataset-timeout", &args)?
-            .as_u64()
-            .ok_or("参考数据准备时限不是正整数")?;
+        let timeout = dataset_timeout(&plan["dataset"])?;
         let preflight = model::preflight(&args)?;
         let inventory = source::capture(&backend)?;
         let snapshot = source::binding_value(&inventory.source)["snapshot"].clone();
@@ -77,7 +78,7 @@ impl Bound {
         protected.assert_unchanged()?;
         document.assert_unchanged()?;
         Ok(Self {
-            timeout: Duration::from_secs(seconds),
+            timeout,
             preflight,
             tools_receipt,
             plan_path,
@@ -98,3 +99,7 @@ impl Bound {
         self.plan.assert_unchanged()
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../../../tests/unit/recovery/source/evidence/reference_workflow/dataset/binding.rs"]
+mod tests;

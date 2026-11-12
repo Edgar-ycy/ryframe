@@ -25,7 +25,6 @@ pub(super) fn request(operation: &str, args: &Value) -> Result<Value> {
         "reference-identifier" => identifier(args, false),
         "reference-scope-identifier" => identifier(args, true),
         "reference-safe-file" => safe_file_request(args),
-        "reference-dataset-timeout" => dataset_timeout(args),
         "reference-configuration-binding" => configuration_binding(args),
         "source-reference-projection" => {
             exact(args, &["backend", "request"])?;
@@ -154,17 +153,6 @@ fn safe_file_request(args: &Value) -> Result<Value> {
     let exists = args["exists"].as_bool().ok_or("exists必须为布尔值")?;
     let result = safe_file(root, text(&args["relative"], "备份相对路径")?, exists)?;
     Ok(Value::String(result.to_string_lossy().into_owned()))
-}
-
-fn dataset_timeout(args: &Value) -> Result<Value> {
-    exact(args, &["plan"])?;
-    let timeout = args["plan"]
-        .get("dataset")
-        .and_then(|value| value.get("timeout_seconds"))
-        .and_then(Value::as_u64)
-        .filter(|value| (1..=604_800).contains(value))
-        .ok_or("数据准备必须显式设置 1 至 604800 秒的阶段时限，独立于恢复时限")?;
-    Ok(Value::from(timeout))
 }
 
 fn configuration_binding(args: &Value) -> Result<Value> {
@@ -405,20 +393,13 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn identifiers_hash_and_timeout_are_strict() {
+    fn identifiers_and_hash_are_strict() {
         assert_eq!(
             request("reference-identifier", &json!({"value":"table_1"})).unwrap(),
             "table_1"
         );
         assert!(request("reference-identifier", &json!({"value":"Table"})).is_err());
         assert!(request("reference-scope-identifier", &json!({"value":"scope-a"})).is_ok());
-        assert!(
-            request(
-                "reference-dataset-timeout",
-                &json!({"plan":{"dataset":{"timeout_seconds":604801}}})
-            )
-            .is_err()
-        );
         assert_eq!(
             request("reference-plan-hash", &json!({"value":{"中":"文","a":1}})).unwrap(),
             native::digest::plan_hash(&json!({"中":"文","a":1})).unwrap()
