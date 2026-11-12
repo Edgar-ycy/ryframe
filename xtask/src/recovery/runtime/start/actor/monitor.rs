@@ -4,9 +4,7 @@ use crate::{
     Result,
     local_test_path::{LocalTestPathKind, validate_absolute_path},
     recovery::{
-        clone::native::{
-            digest, lifecycle::identity, resources::common, target_verify::publication,
-        },
+        clone::native::{digest, lifecycle::identity, resources::common},
         process_tree::Group,
         runtime::generation::receipts,
     },
@@ -153,10 +151,7 @@ fn completion(mut ready: Value, members: Vec<Value>, observed: bool, closed: boo
 
 fn publish_member(actor: &Actor, directory: (u64, u64), suffix: &str, value: &Value) -> Result<()> {
     verify_directory(actor, directory)?;
-    let path = actor.member_path(suffix);
-    let name = path.file_name().ok_or("原成员收据文件名缺失")?;
-    let native = actor.directory.canonicalize()?.join(name);
-    publication::publish(&native, value)?;
+    actor.publish_receipt(&actor.member_path(suffix), value)?;
     verify_directory(actor, directory)
 }
 

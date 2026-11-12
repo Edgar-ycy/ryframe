@@ -20,6 +20,17 @@ pub(crate) fn publish(path: &Path, value: &Value) -> Result<()> {
     )
 }
 
+pub(crate) fn publish_from(path: &Path, value: &Value, staging: &Path) -> Result<()> {
+    publish_in(
+        path,
+        value,
+        staging,
+        "创建发布临时文件",
+        |file, bytes| file.write_all(bytes),
+        File::sync_all,
+    )
+}
+
 /// 写入与同步钩子用于确定性核验发布前的失败和并发创建边界。
 pub(crate) fn publish_with(
     path: &Path,
@@ -27,15 +38,26 @@ pub(crate) fn publish_with(
     writer: impl FnOnce(&mut File, &[u8]) -> io::Result<()>,
     sync: impl FnOnce(&File) -> io::Result<()>,
 ) -> Result<()> {
-    let mut encoded = serde_json::to_vec_pretty(value)
-        .map_err(|error| failure(path, "序列化完整 JSON", error))?;
-    encoded.push(b'\n');
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let mut temporary = NamedTempFile::new_in(parent)
-        .map_err(|error| failure(path, "创建同目录临时文件", error))?;
+    publish_in(path, value, parent, "创建同目录临时文件", writer, sync)
+}
+
+fn publish_in(
+    path: &Path,
+    value: &Value,
+    staging: &Path,
+    creation: &'static str,
+    writer: impl FnOnce(&mut File, &[u8]) -> io::Result<()>,
+    sync: impl FnOnce(&File) -> io::Result<()>,
+) -> Result<()> {
+    let mut encoded = serde_json::to_vec_pretty(value)
+        .map_err(|error| failure(path, "序列化完整 JSON", error))?;
+    encoded.push(b'\n');
+    let mut temporary =
+        NamedTempFile::new_in(staging).map_err(|error| failure(path, creation, error))?;
     let prepared = (|| {
         writer(temporary.as_file_mut(), &encoded)
             .map_err(|error| failure(path, "写入临时文件", error))?;

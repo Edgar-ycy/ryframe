@@ -141,7 +141,7 @@ pub(super) fn generation_receipts(value: &Value, directory: &Path, commands: &Va
         if !item["completion"].is_null() {
             let path = completion_path(directory, role, item)?;
             files::document(&path)?;
-            files::bound(&path, &item["completion"])?;
+            bound_completion(&path, &item["completion"])?;
         }
     }
     check(
@@ -152,6 +152,15 @@ pub(super) fn generation_receipts(value: &Value, directory: &Path, commands: &Va
 fn completion_path(directory: &Path, role: &str, item: &Value) -> Result<std::path::PathBuf> {
     let operation = text(&item["operation_id"])?;
     Ok(directory.join(format!("{role}-members-{operation}-stopped.json")))
+}
+
+fn bound_completion(path: &Path, expected: &Value) -> Result<()> {
+    let registered = super::path(&expected["path"])?;
+    check(
+        crate::recovery::runtime::dataset_authority::commands::same_path(path, &registered)?,
+        "恢复关闭收据不属于原角色及代次",
+    )?;
+    files::bound(&registered, expected)
 }
 
 fn interrupted_closed_tree(
@@ -182,9 +191,9 @@ fn interrupted_closed_tree(
     // 对当前代次另行动态核验原成员退出和端口闭口。
     let directory = super::path(&value["directory"])?;
     let path = completion_path(&directory, role, item)?;
-    files::bound(&path, &item["completion"])?;
+    bound_completion(&path, &item["completion"])?;
     check_restore_completion(tree, &files::document(&path)?)?;
-    files::bound(&path, &item["completion"])
+    bound_completion(&path, &item["completion"])
 }
 
 pub(super) fn validate_launch(

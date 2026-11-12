@@ -103,7 +103,7 @@ fn launch_roles(
             .last_mut()
             .ok_or("恢复启动缺少当前监督尝试")?
             .1
-            .start(state, owner)?;
+            .start(state, owner, &std::env::current_exe()?)?;
         state.update(owner, |generation| {
             generation["roles"][role]["tree"] = tree.clone();
             generation["roles"][role]["state"] = json!("running");

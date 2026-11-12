@@ -60,10 +60,10 @@ impl Attempt {
         })
     }
 
-    pub(super) fn start(&mut self, state: &State, owner: &Owner) -> Result<Value> {
+    pub(super) fn start(&mut self, state: &State, owner: &Owner, program: &Path) -> Result<Value> {
         let (request, log_identity) = self.descriptor(state, owner)?;
         let log = self.directory.join(format!("{}.log", self.role));
-        let mut command = crate::process::child_command(std::env::current_exe()?);
+        let mut command = crate::process::child_command(program);
         command
             .current_dir(&self.backend)
             .stdin(Stdio::null())

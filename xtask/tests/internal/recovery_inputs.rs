@@ -394,6 +394,72 @@ fn document_rejects_duplicate_keys_and_invalid_utf8() {
 }
 
 #[test]
+fn document_rejects_invalid_files_and_detects_same_size_changes() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("document.json");
+    let read = || document::read(&path, &fixture.backend, "恢复文档");
+    for (bytes, expected) in [
+        (b"".as_slice(), "不能为空"),
+        (b"[]".as_slice(), "必须是 JSON 对象"),
+        (br#"{"value":NaN}"#.as_slice(), "不是严格 JSON"),
+    ] {
+        fs::write(&path, bytes).unwrap();
+        let error = read().unwrap_err().to_string();
+        assert!(error.contains(expected), "{error}");
+    }
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(document::MAX_JSON_BYTES + 1)
+        .unwrap();
+    let error = read().unwrap_err().to_string();
+    assert!(error.contains("超过 16 MiB"), "{error}");
+
+    fs::write(&path, br#"{"value":1}"#).unwrap();
+    let saved = read().unwrap();
+    saved.assert_unchanged().unwrap();
+    fs::write(&path, br#"{"value":2}"#).unwrap();
+    let changed = read().unwrap();
+    assert_eq!(saved.raw.len(), changed.raw.len());
+    assert_eq!(changed.value, json!({"value":2}));
+    let error = saved.assert_unchanged().unwrap_err().to_string();
+    assert!(error.contains("被替换或修改"), "{error}");
+}
+
+#[cfg(windows)]
+#[test]
+fn document_and_artifact_read_use_real_windows_paths_beyond_max_path() {
+    use super::recovery::clone::native::digest;
+    use std::os::windows::ffi::OsStrExt;
+
+    let fixture = Fixture::new();
+    let native_backend = fixture.backend.canonicalize().unwrap();
+    let native_root = fixture.root.canonicalize().unwrap();
+    let mut directory = native_root.clone();
+    while directory.as_os_str().encode_wide().count() <= 280 {
+        directory.push("恢复证据 长目录".repeat(4));
+    }
+    fs::create_dir_all(&directory).unwrap();
+    let native = directory.join("document.json");
+    let portable = fixture
+        .root
+        .join(native.strip_prefix(&native_root).unwrap());
+    assert!(portable.as_os_str().encode_wide().count() > 260);
+    let raw = br#"{"value":7}"#;
+    fs::write(&native, raw).unwrap();
+    let artifact = digest::file(&native).unwrap();
+    assert_eq!(artifact.bytes, raw.len() as u64);
+
+    for (path, backend) in [(&native, &native_backend), (&portable, &fixture.backend)] {
+        let observed = document::read(path, backend, "长路径恢复文档").unwrap();
+        assert_eq!(observed.raw.as_slice(), raw);
+        assert_eq!(observed.value, json!({"value":7}));
+        assert_eq!(observed.sha256(), artifact.sha256);
+    }
+}
+
+#[test]
 fn reference_configuration_drift_rejects_before_publication() {
     let fixture = Fixture::new();
     let mut options = fixture.reference_options(None);

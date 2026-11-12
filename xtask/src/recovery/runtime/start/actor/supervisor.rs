@@ -139,20 +139,22 @@ fn register(actor: &Actor, child: &Child, supervisor: &Value, monitor: &Value) -
         "supervisor":supervisor,"process":product,"monitor":monitor,"group_id":supervisor["pid"]});
     actor.verify_start()?;
     publish(
+        actor,
         &actor.directory.join(format!("{}-tree.json", actor.role)),
         &tree,
     )?;
     require_identity(&product)?;
     actor.verify_start()?;
     publish(
+        actor,
         &actor.directory.join(format!("{}.json", actor.role)),
         &json!({"format_version":1,"role":actor.role,"scope_id":actor.scope,"identity":product}),
     )?;
     Ok(tree)
 }
 
-fn publish(path: &Path, value: &Value) -> Result<()> {
-    strict::write_new(path, value)?;
+fn publish(actor: &Actor, path: &Path, value: &Value) -> Result<()> {
+    actor.publish_receipt(path, value)?;
     check(
         strict::read(path)? == *value,
         "恢复监督原收据发布期间发生变化",

@@ -10,9 +10,11 @@ use serde_json::{Value, json};
 
 use crate::{
     Result,
-    local_test_path::{LocalTestPathKind, validate_local_test_path},
+    local_test_path::{LocalTestPathKind, validate_absolute_path, validate_local_test_path},
     recovery::{
-        clone::native::{json as strict, lifecycle::identity, resources::common},
+        clone::native::{
+            json as strict, lifecycle::identity, resources::common, target_verify::publication,
+        },
         full_stack::worker::read_stop_request,
         inputs::document,
         runtime::{
@@ -152,6 +154,26 @@ impl Actor {
             "{}-members-{}-{suffix}.json",
             self.role, self.operation_id
         ))
+    }
+
+    pub(super) fn publish_receipt(&self, path: &Path, value: &Value) -> Result<()> {
+        check(
+            path.parent() == Some(self.directory.as_path()),
+            "恢复监督收据超出原代次",
+        )?;
+        let staging = self
+            .directory
+            .parent()
+            .and_then(Path::parent)
+            .ok_or("恢复监督缺少发布父目录")?;
+        // 运行根与代次都严格校验目录成员，临时文件须在同卷的上级目录完成。
+        validate_absolute_path(staging, LocalTestPathKind::ExistingDirectory)?;
+        let name = path.file_name().ok_or("恢复监督收据文件名缺失")?;
+        publication::publish_from(
+            &self.directory.canonicalize()?.join(name),
+            value,
+            &staging.canonicalize()?,
+        )
     }
 
     pub(super) fn control(&self) -> Result<Option<bool>> {

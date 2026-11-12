@@ -1,5 +1,9 @@
 use super::*;
 
+#[cfg(windows)]
+#[path = "native_cleanup.rs"]
+mod native_cleanup;
+
 struct Fixture {
     _work: tempfile::TempDir,
     backend: PathBuf,
