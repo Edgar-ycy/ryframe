@@ -99,9 +99,8 @@ pub(super) fn online(
         "action":"validate-launch", "root":directory, "binding":request["registration"],
         "value":launch, "previous":null, "commands":commands, "number":launch["generation"],
     }))?;
-    environment::verify(inputs, request)?;
     let generation_directory = path(&launch["runtime_directory"])?;
-    environment::verify_projected(inputs, request, &generation_directory)?;
+    verify_role_configuration(inputs, request, &generation_directory)?;
     let build_environment = registered_build_environment(inputs, request, &documents.backend)?;
     let backend = backend_sources(
         root,
@@ -138,14 +137,18 @@ pub(super) fn online(
             )? == backend,
             "恢复运行核验期间后端源码发生变化",
         )?;
-        environment::verify(inputs, request)?;
-        environment::verify_projected(inputs, request, &generation_directory)
+        verify_role_configuration(inputs, request, &generation_directory)
     })?;
     Ok(Observed {
         documents,
         processes: processes.value,
         readiness,
     })
+}
+
+fn verify_role_configuration(inputs: &mut Inputs, request: &Value, directory: &Path) -> Result<()> {
+    environment::verify(inputs, request)?;
+    environment::verify_projected(inputs, request, directory)
 }
 
 fn registered_build_environment(

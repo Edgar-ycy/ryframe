@@ -6,7 +6,7 @@ use std::{fs, path::PathBuf};
 const TOKEN: &str = "synthetic-private-recovery-token";
 const SCOPE: &str = "runtime-environment-case";
 
-struct Fixture {
+pub(in crate::recovery::runtime) struct Fixture {
     _temporary: tempfile::TempDir,
     root: PathBuf,
     execution: PathBuf,
@@ -14,10 +14,15 @@ struct Fixture {
     private: PathBuf,
     api: PathBuf,
     worker: PathBuf,
+    ports: [u16; 3],
 }
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_ports([12341, 12342, 12343])
+    }
+
+    pub(in crate::recovery::runtime) fn with_ports(ports: [u16; 3]) -> Self {
         let local = crate::workspace::root_dir().join(".local-tests");
         fs::create_dir_all(&local).unwrap();
         let temporary = tempfile::Builder::new()
@@ -48,9 +53,10 @@ impl Fixture {
             private,
             api,
             worker,
+            ports,
         };
-        fixture.api_toml(2, 12341);
-        fixture.worker_toml(3, 12342);
+        fixture.api_toml(2, ports[0]);
+        fixture.worker_toml(3, ports[1]);
         fixture.write_private(&fixture.api);
         fixture.write_registration();
         fixture
@@ -68,12 +74,18 @@ impl Fixture {
         .unwrap();
     }
 
-    fn request(&self) -> Value {
+    pub(in crate::recovery::runtime) fn request(&self) -> Value {
         let registration = document::read(&self.registration, &self.root, "运行登记夹具").unwrap();
-        json!({"authority":{"scope_id":SCOPE,"api_endpoint":"http://127.0.0.1:12341/readyz",
-            "worker_endpoint":"http://127.0.0.1:12342/readyz","frontend_endpoint":"http://127.0.0.1:12343"},
+        let [api, worker, frontend] = self.ports;
+        json!({"authority":{"scope_id":SCOPE,"api_endpoint":format!("http://127.0.0.1:{api}/readyz"),
+            "worker_endpoint":format!("http://127.0.0.1:{worker}/readyz"),
+            "frontend_endpoint":format!("http://127.0.0.1:{frontend}")},
             "registration":{"registration":document::binding(&registration)},
             "roots":{"backend_execution":self.execution},"tools":{"coordinator_root":self.root}})
+    }
+
+    pub(in crate::recovery::runtime) fn worker_directory(&self) -> &Path {
+        &self.worker
     }
 
     fn write_registration(&self) {

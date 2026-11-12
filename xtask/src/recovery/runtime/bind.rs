@@ -73,9 +73,23 @@ fn bind_locked(
         authority,
         inputs,
     )?;
-    publish_verified(output, &runtime, || {
+    publish_locked(output, &runtime, owner, || {
         verify_control(owner, inputs, before, Operation::Bind)?;
-        window.finish(inputs.finish(Ok(true)))
+        window.finish(inputs.finish(Ok(())))
+    })
+}
+
+fn publish_locked(
+    output: &Path,
+    runtime: &Value,
+    owner: &Owner,
+    mut recheck: impl FnMut() -> Result<()>,
+) -> Result<()> {
+    publish_verified(output, runtime, || {
+        owner.check()?;
+        let result = recheck();
+        let ownership = owner.check();
+        result.and(ownership).map(|()| true)
     })
 }
 

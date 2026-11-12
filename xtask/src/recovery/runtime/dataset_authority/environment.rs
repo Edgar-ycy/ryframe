@@ -152,4 +152,4 @@ fn table(directory: &Path) -> Result<toml::Table> {
 
 #[cfg(test)]
 #[path = "../../../../tests/unit/recovery/runtime/dataset_authority/environment.rs"]
-mod tests;
+pub(in crate::recovery::runtime) mod tests;

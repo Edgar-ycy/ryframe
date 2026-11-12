@@ -187,3 +187,57 @@ fn bind_resolves_equivalent_input_spelling_and_preserves_launch_paths() {
     fs::hard_link(&bindings, &options.bindings).unwrap();
     assert!(BoundPaths::read(&options, request).is_err());
 }
+
+#[test]
+fn bind_publication_keeps_the_same_owner_and_preserves_the_receipt_after_a_failed_recheck() {
+    use crate::recovery::inputs::document;
+
+    let work = workspace();
+    let root = portable_path(&work.path().canonicalize().unwrap());
+    let owner_path = root.join(REGISTRATION_LOCK).join("owner.json");
+    let output = root.join("runtime.json");
+    let runtime = json!({"format_version":3,"kind":"restore-runtime","fixture":"first"});
+    let bytes = document::canonical_bytes(&runtime).unwrap();
+    let mut rechecks = 0;
+
+    let error = Owner::with(&root, OPERATION, |owner| {
+        let owner_bytes = fs::read(&owner_path)?;
+        publish_locked(&output, &runtime, owner, || {
+            rechecks += 1;
+            assert_eq!(fs::read(&owner_path)?, owner_bytes);
+            let contender = ProcessGuard::acquire_named(&root, REGISTRATION_GUARD);
+            assert!(contender.err().unwrap().to_string().contains("并发"));
+            if rechecks == 1 {
+                assert!(!output.try_exists()?);
+                return Ok(());
+            }
+            assert_eq!(rechecks, 2);
+            assert_eq!(fs::read(&output)?, bytes);
+            Err("发布后核验失败".into())
+        })
+    })
+    .unwrap_err();
+    assert_eq!(error.to_string(), "发布后核验失败");
+    assert_eq!(rechecks, 2);
+    assert!(!root.join(REGISTRATION_LOCK).exists());
+
+    let mut replay_checks = 0;
+    let replay = Owner::with(&root, OPERATION, |owner| {
+        publish_locked(&output, &json!({"fixture":"replacement"}), owner, || {
+            replay_checks += 1;
+            Ok(())
+        })
+    });
+    assert!(replay.unwrap_err().to_string().contains("禁止覆盖"));
+    assert_eq!(replay_checks, 1);
+    assert_eq!(fs::read(&output).unwrap(), bytes);
+    assert!(!root.join(REGISTRATION_LOCK).exists());
+    assert!(!fs::read_dir(&root).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .ends_with(".pending")
+    }));
+    ProcessGuard::acquire_named(&root, REGISTRATION_GUARD).unwrap();
+}

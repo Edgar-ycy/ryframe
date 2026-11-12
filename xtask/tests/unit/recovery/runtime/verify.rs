@@ -215,14 +215,16 @@ mod online_probes {
         Unchanged,
         ReplaceReceipt,
         CloseWorkerListener,
+        AddWorkerConfiguration,
     }
 
     #[test]
-    fn successful_http_probes_still_require_the_original_listener_and_receipt() {
+    fn successful_http_probes_still_require_original_processes_and_configuration() {
         for change in [
             DuringProbe::Unchanged,
             DuringProbe::ReplaceReceipt,
             DuringProbe::CloseWorkerListener,
+            DuringProbe::AddWorkerConfiguration,
         ] {
             exercise(change);
         }
@@ -239,6 +241,10 @@ mod online_probes {
         let api = TcpListener::bind("127.0.0.1:0").unwrap();
         let worker = TcpListener::bind("127.0.0.1:0").unwrap();
         let frontend = TcpListener::bind("127.0.0.1:0").unwrap();
+        let ports =
+            [&api, &worker, &frontend].map(|listener| listener.local_addr().unwrap().port());
+        let configuration = environment::tests::Fixture::with_ports(ports);
+        let mut request = configuration.request();
         let endpoints = json!({
             "api":format!("http://{}/readyz", api.local_addr().unwrap()),
             "worker":format!("http://{}/readyz", worker.local_addr().unwrap()),
@@ -247,9 +253,17 @@ mod online_probes {
         let identity = common::process_identity(std::process::id())
             .unwrap()
             .unwrap();
-        let runtime = runtime_fixture(&root, runtime_dir.path(), endpoints, &identity);
+        let runtime = runtime_fixture(
+            &root,
+            runtime_dir.path(),
+            endpoints,
+            &identity,
+            &request["authority"]["scope_id"],
+        );
         let window = Window::direct().unwrap();
         let mut inputs = Inputs::new(&root);
+        request["environment"] = environment::capture(&mut inputs, &request).unwrap();
+        verify_role_configuration(&mut inputs, &request, runtime_dir.path()).unwrap();
         let commands = json!({"frontend":[identity["executable"]]});
         let processes = observe_processes(&runtime, &commands, &mut inputs).unwrap();
         assert_eq!(processes.value["worker"]["identity"], identity);
@@ -271,6 +285,9 @@ mod online_probes {
             .unwrap();
         *first_digit = b'2';
         let frontend_body = b"<main>restore</main>";
+        let additional_config = configuration.worker_directory().join("app.dev.toml");
+        assert!(!additional_config.exists());
+        let new_config = additional_config.clone();
         let frontend_response = respond(
             &frontend,
             "/index.html",
@@ -278,10 +295,12 @@ mod online_probes {
             frontend_body,
             move || {
                 drop(close_during_probe);
-                if matches!(change, DuringProbe::ReplaceReceipt) {
-                    Some(fs::write(worker_receipt, changed_receipt))
-                } else {
-                    None
+                match change {
+                    DuringProbe::ReplaceReceipt => Some(fs::write(worker_receipt, changed_receipt)),
+                    DuringProbe::AddWorkerConfiguration => {
+                        Some(fs::write(new_config, b"unselected = true\n"))
+                    }
+                    _ => None,
                 }
             },
         );
@@ -289,11 +308,35 @@ mod online_probes {
             {"path":"index.html","bytes":frontend_body.len(),"sha256":hex::encode(Sha256::digest(frontend_body))},
             {"path":".vite/manifest.json","bytes":2,"sha256":hex::encode(Sha256::digest(b"{}"))},
         ]);
-        let readiness = probe_and_recheck(&runtime, &files, &processes, || Ok(()));
+        let readiness = probe_and_recheck(&runtime, &files, &processes, || {
+            verify_role_configuration(&mut inputs, &request, runtime_dir.path())
+        });
         api_response.join().unwrap();
         worker_response.join().unwrap();
         let write_result = frontend_response.join().unwrap();
         let result = window.finish(inputs.finish(readiness));
+        if matches!(change, DuringProbe::AddWorkerConfiguration) {
+            assert_eq!(fs::read(additional_config).unwrap(), b"unselected = true\n");
+        }
+        assert_recheck(
+            change,
+            result,
+            write_result,
+            &runtime_dir.path().join("worker.json"),
+            &receipt_before,
+            api_reply,
+        );
+        drop(worker);
+    }
+
+    fn assert_recheck(
+        change: DuringProbe,
+        result: Result<Value>,
+        write_result: Option<io::Result<()>>,
+        worker_receipt: &Path,
+        receipt_before: &[u8],
+        api_reply: &[u8],
+    ) {
         match change {
             DuringProbe::Unchanged => {
                 assert_eq!(
@@ -305,10 +348,7 @@ mod online_probes {
                 let attempt = write_result.unwrap();
                 if cfg!(windows) {
                     assert_eq!(attempt.unwrap_err().raw_os_error(), Some(32));
-                    assert_eq!(
-                        fs::read(runtime_dir.path().join("worker.json")).unwrap(),
-                        receipt_before
-                    );
+                    assert_eq!(fs::read(worker_receipt).unwrap(), receipt_before);
                     assert_eq!(
                         result.unwrap(),
                         serde_json::from_slice::<Value>(api_reply).unwrap()
@@ -324,27 +364,43 @@ mod online_probes {
                     "监听所有者不同于登记内核进程；核对绑定端点与服务进程"
                 );
             }
+            DuringProbe::AddWorkerConfiguration => {
+                write_result.unwrap().unwrap();
+                assert_eq!(
+                    result.unwrap_err().to_string(),
+                    "恢复启动角色配置快照发生漂移"
+                );
+            }
         }
-        drop(worker);
     }
 
-    fn runtime_fixture(root: &Path, directory: &Path, endpoints: Value, identity: &Value) -> Value {
+    fn runtime_fixture(
+        root: &Path,
+        directory: &Path,
+        endpoints: Value,
+        identity: &Value,
+        scope: &Value,
+    ) -> Value {
         let executable = path(&identity["executable"]).unwrap();
         let facts = StableFile::open(&executable).unwrap().facts().unwrap();
         let artifact =
             json!({"executable":executable,"bytes":facts["bytes"],"sha256":facts["sha256"]});
         let mut runtime = json!({
             "paths":{"runtime_dir":directory},
-            "restore":{"scope_id":"restore-probe-test"},
+            "restore":{"scope_id":scope},
             "endpoints":endpoints,
             "backend":{"artifacts":{"api":artifact,"worker":artifact}},
             "processes":{},
         });
         for role in generation::ROLES {
             let receipt = directory.join(format!("{role}.json"));
-            strict::write_new(&receipt, &json!({
-                "format_version":1,"role":role,"scope_id":"restore-probe-test","identity":identity,
-            })).unwrap();
+            strict::write_new(
+                &receipt,
+                &json!({
+                    "format_version":1,"role":role,"scope_id":scope,"identity":identity,
+                }),
+            )
+            .unwrap();
             let saved = document::read(&receipt, root, "探针进程收据").unwrap();
             runtime["processes"][role] = json!({
                 "identity":identity,"receipt_path":receipt,"receipt_sha256":saved.sha256(),
