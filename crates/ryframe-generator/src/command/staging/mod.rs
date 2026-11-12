@@ -37,7 +37,11 @@ pub(super) fn execute(plan: &GenerationPlan, tables: Option<&[TableInfo]>) -> Re
     let catalog_target = cache.join("catalog-target");
     let pipeline_target = cache.join("pipeline");
     println!("→ 编译候选模型并生成整批 CRUD 与迁移");
-    let mut backend_allowed = backend::generate(plan, &backend.path, tables, &catalog_target)?;
+    let mut backend_allowed = match backend::generate(plan, &backend.path, tables, &catalog_target)
+    {
+        Ok(allowed) => allowed,
+        Err(error) => return Err(backend.retain(error)),
+    };
     let mut frontend_allowed = BTreeSet::new();
     let frontend = if let Some(root) = &frontend_root {
         let frontend = CandidateWorkspace::create(root, false)?;
@@ -54,7 +58,9 @@ pub(super) fn execute(plan: &GenerationPlan, tables: Option<&[TableInfo]>) -> Re
         backend_allowed.insert("openapi/openapi.json".into());
         Some(frontend)
     } else {
-        preflight::validate(&backend.path, &pipeline_target)?;
+        if let Err(error) = preflight::validate(&backend.path, &pipeline_target) {
+            return Err(backend.retain(error));
+        }
         None
     };
     let backend_changes = backend.changes(&backend_allowed)?;

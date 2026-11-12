@@ -19,7 +19,10 @@ pub(in crate::command) fn execute(plan: &GenerationPlan, module: &str) -> Result
     )?)?;
     println!("→ 在隔离候选工作区创建业务骨架并锁定依赖");
     let candidate = CandidateWorkspace::create(&plan.workspace_root, false)?;
-    let allowed = generate(&candidate, module, &plan.package, &plan.target_dir)?;
+    let allowed = match generate(&candidate, module, &plan.package, &plan.target_dir) {
+        Ok(allowed) => allowed,
+        Err(error) => return Err(candidate.retain(error)),
+    };
     let changes = candidate.changes(&allowed)?;
     print_changes("后端", &changes);
     if plan.write {
@@ -74,4 +77,61 @@ fn generate(
         .collect::<BTreeSet<_>>();
     allowed.insert("Cargo.lock".into());
     Ok(allowed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::snapshot::SourceSnapshot;
+    use super::*;
+    use crate::command::{GenerationBuilder, GenerationOperation};
+
+    #[test]
+    fn rejected_business_bootstrap_retains_candidate_without_installing() {
+        let cache = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .unwrap()
+            .join(".local-tests");
+        fs::create_dir_all(&cache).unwrap();
+        let root = tempfile::Builder::new()
+            .prefix("bootstrap-retention-")
+            .tempdir_in(&cache)
+            .unwrap();
+        let package = Path::new("crates/order-business/Cargo.toml");
+        let manifest = b"[package]\nname = \"order-business\"\n";
+        fs::create_dir_all(root.path().join(package.parent().unwrap())).unwrap();
+        fs::write(root.path().join(package), manifest).unwrap();
+        fs::write(
+            root.path().join("Cargo.toml"),
+            b"[workspace]\nmembers = [\"crates/order-business\"]\n",
+        )
+        .unwrap();
+        let before = SourceSnapshot::capture(root.path()).unwrap();
+
+        let error = GenerationBuilder::new(root.path())
+            .operation(GenerationOperation::NewBusiness("order".into()))
+            .write(true)
+            .plan()
+            .unwrap()
+            .execute()
+            .unwrap_err();
+
+        assert!(
+            error.contains("候选业务骨架生成失败") && error.contains("业务 crate 已存在"),
+            "{error}"
+        );
+        assert!(error.contains("候选现场保留于"), "{error}");
+        let mut entries = fs::read_dir(root.path().join(".local-tests")).unwrap();
+        let retained = entries.next().unwrap().unwrap();
+        assert!(entries.next().is_none());
+        assert!(
+            error.contains(retained.file_name().to_str().unwrap()),
+            "{error}"
+        );
+        assert_eq!(
+            fs::read(retained.path().join("workspace").join(package)).unwrap(),
+            manifest
+        );
+        before.verify().unwrap();
+    }
 }

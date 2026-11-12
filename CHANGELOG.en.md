@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Preserve candidate directories and any recovery backups when business scaffolding, backend resource generation, or backend preflight fails.
+
 - Add real MySQL initialization CLI regressions for session and migration-lock release after forced termination, and read-only reconciliation after an ownership commit succeeds but its response is lost.
 - Preserve instructions for checking ownership, ledgers, or adoption plans when connection addresses are redacted from migration and adoption diagnostics for unknown commits.
 
