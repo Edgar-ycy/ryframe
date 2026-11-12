@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove the retired Python host boot proof. The existing Rust recovery commands and regressions cover boot time, original process identity, and invalid receipts.
+
 - Migration lock files end with a single newline, so regeneration produces no blank-line diff when the contents stay the same.
 
 - Preserve candidate directories and any recovery backups when business scaffolding, backend resource generation, or backend preflight fails.

@@ -137,10 +137,22 @@ mod tests {
         assert_eq!(proof["boot_ticks"], observed - 3600 * TICKS);
         assert_eq!(proof["boot_time"], "2012-12-14T22:06:40.000001+00:00");
         assert_eq!(proof.as_object().unwrap().len(), 8);
+        assert_eq!(verify_recorded(&proof).unwrap(), observed - 3600 * TICKS);
+        for (field, invalid) in [
+            ("boot_ticks", json!(observed - 3600 * TICKS + 1)),
+            ("uptime_ticks", json!("3600")),
+            ("margin_seconds", json!(-1)),
+        ] {
+            let mut tampered = proof.clone();
+            tampered[field] = invalid;
+            assert!(verify_recorded(&tampered).is_err(), "{field}");
+        }
         assert!(fresh(&proof, observed + 1800 * TICKS).is_ok());
         assert!(fresh(&proof, observed + 1800 * TICKS + 1).is_err());
         assert!(fresh(&proof, observed - 60 * TICKS - 1).is_err());
+        assert!(recorded(0, TICKS).is_err());
         assert!(recorded(observed, 0).is_err());
         assert!(recorded(observed, observed).is_err());
+        assert!(recorded(observed, observed + 1).is_err());
     }
 }

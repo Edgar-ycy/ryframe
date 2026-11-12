@@ -20,8 +20,18 @@ fn reboot_requires_all_original_members_and_strict_boot_margin_without_pid_subst
     assert!(members(&tree, boot).is_err());
     tree["monitor"] = Value::Null;
     assert!(members(&tree, boot).is_err());
-    tree["monitor"] = original["monitor"].clone();
-    tree["monitor"]["started"] = json!("unknown");
+    for (field, invalid) in [
+        ("pid", json!(true)),
+        ("started", json!("unknown")),
+        ("started", json!("12.5")),
+        ("started", json!(started)),
+        ("executable", json!("")),
+    ] {
+        tree["monitor"] = original["monitor"].clone();
+        tree["monitor"][field] = invalid;
+        assert!(members(&tree, boot).is_err(), "{field}");
+    }
+    tree["monitor"] = json!({"pid": 13, "started": started.to_string()});
     assert!(members(&tree, boot).is_err());
 }
 
