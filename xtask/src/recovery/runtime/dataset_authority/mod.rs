@@ -1,7 +1,10 @@
 //! 首次浏览器会话前的静态运行权威模型；不执行产品或解释器。
 use crate::{
     Result,
-    recovery::clone::native::{digest, json as strict},
+    recovery::{
+        clone::native::{digest, json as strict},
+        inputs::document::{self, Document},
+    },
 };
 use serde_json::Value;
 use serde_json::json;
@@ -76,16 +79,39 @@ fn produce(
     environment::verify(inputs, &documents.launch.value["request"])?;
     lifecycle::verify(inputs, &documents.launch, &chain.reference.value, &tools)?;
     let dataset = lineage::extract(inputs, &chain.backup.result)?;
-    let selected = &chain.reference.value["target"];
-    Ok(Verified {
-        authority: json!({"format_version":1,"kind":"restore-dataset-authority",
-        "runtime":crate::recovery::inputs::document::binding(&runtime),
-        "target_plan":crate::recovery::inputs::document::binding(&target),
-        "source_generation":dataset["source_generation"],"dataset_lineage":dataset["dataset_lineage"],
-        "target":{"scope_id":selected["scope_id"],"api_url":selected["api_url"],"frontend_url":selected["frontend_url"]},
-        "execution_backend":verified["product_execution"]["roots"]["execution_backend"]}),
+    Ok(project(
+        runtime,
+        &target,
+        &dataset,
+        &chain.reference.value["target"],
+        &verified["product_execution"]["roots"]["execution_backend"],
+    ))
+}
+
+fn project(
+    runtime: Document,
+    target: &Document,
+    dataset: &Value,
+    selected: &Value,
+    execution_backend: &Value,
+) -> Verified {
+    Verified {
+        authority: json!({
+            "format_version": 1,
+            "kind": "restore-dataset-authority",
+            "runtime": document::binding(&runtime),
+            "target_plan": document::binding(target),
+            "source_generation": dataset["source_generation"],
+            "dataset_lineage": dataset["dataset_lineage"],
+            "target": {
+                "scope_id": selected["scope_id"],
+                "api_url": selected["api_url"],
+                "frontend_url": selected["frontend_url"],
+            },
+            "execution_backend": execution_backend,
+        }),
         runtime: runtime.value,
-    })
+    }
 }
 
 pub(super) mod b0;

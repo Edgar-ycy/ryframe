@@ -10,6 +10,80 @@ fn fixture() -> tempfile::TempDir {
 }
 
 #[test]
+fn browser_authority_projects_bound_files_and_the_selected_target() {
+    let directory = fixture();
+    let backend = crate::workspace::root_dir();
+    let mut inputs = inputs::Inputs::new(&backend);
+    let mut read = |name: &str, raw: &[u8]| {
+        let path = directory.path().join(name);
+        std::fs::write(&path, raw).unwrap();
+        inputs.read(&path).unwrap()
+    };
+    let runtime = read("runtime.json", b"{ \"kind\": \"restore-runtime\" }\n");
+    let target = read("target.json", b"{\"kind\":\"restore-target-plan\"}\n");
+    let stop = read(
+        "stop.json",
+        b"{\"status\":\"seed_source_generation_published\"}\n",
+    );
+    let lineage = read("lineage.json", b"{\"kind\":\"dataset-lineage\"}\n");
+    let dataset = json!({
+        "source_generation": document::binding(&stop),
+        "dataset_lineage": document::binding(&lineage),
+    });
+    let selected = json!({
+        "scope_id": "recovery-b1",
+        "api_url": "http://127.0.0.1:25001",
+        "frontend_url": "http://127.0.0.1:25002",
+        "private": "not for the browser",
+    });
+    let execution = json!(directory.path().join("execution-backend"));
+    let result = project(runtime.clone(), &target, &dataset, &selected, &execution);
+    assert_eq!(result.runtime, runtime.value);
+    assert_eq!(
+        result.authority,
+        json!({
+            "format_version": 1,
+            "kind": "restore-dataset-authority",
+            "runtime": document::binding(&runtime),
+            "target_plan": document::binding(&target),
+            "source_generation": document::binding(&stop),
+            "dataset_lineage": document::binding(&lineage),
+            "target": {
+                "scope_id": "recovery-b1",
+                "api_url": "http://127.0.0.1:25001",
+                "frontend_url": "http://127.0.0.1:25002",
+            },
+            "execution_backend": execution,
+        }),
+    );
+    inputs.finish(Ok(())).unwrap();
+}
+
+#[test]
+fn browser_authority_rejects_forged_receipt_without_publishing() {
+    let directory = fixture();
+    let backend = crate::recovery::fixture_control::git_root(
+        &crate::workspace::root_dir(),
+        "恢复数据集权威测试根",
+    )
+    .unwrap();
+    let runtime = directory.path().join("runtime.json");
+    let target = directory.path().join("target.json");
+    let forged =
+        br#"{"format_version":3,"kind":"restore-runtime","authority":{"remote_writes":0}}"#;
+    std::fs::write(&runtime, forged).unwrap();
+    std::fs::write(&target, b"{}").unwrap();
+    let failure = request(&json!({
+        "backend_dir":backend,"runtime_receipt":runtime,"target_plan":target,
+    }))
+    .unwrap_err();
+    assert!(failure.to_string().contains("恢复运行收据"), "{failure}");
+    assert_eq!(std::fs::read(runtime).unwrap(), forged);
+    assert_eq!(std::fs::read(target).unwrap(), b"{}");
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 2);
+}
+
+#[test]
 fn parallel_and_protected_serial_source_scans_preserve_complete_results_and_guards() {
     use crate::frontend_origin::{manifest, sources};
     use crate::recovery::clone::native::source;
@@ -515,4 +589,84 @@ fn lineage_refuses_modified_bytes_after_binding_even_with_the_same_length() {
     let error = extract_lineage(&backend, &backup).unwrap_err().to_string();
     assert!(error.contains("与登记描述不一致"), "{error}");
     assert_eq!(lineage_directory_bytes(root), before);
+}
+
+// 启动登记选取的参考计划可以与共享备份的原参考计划属于不同侧。
+#[test]
+fn registration_reference_uses_the_launch_arm_and_rejects_binding_drift() {
+    use crate::recovery::inputs::document;
+
+    let backend = crate::workspace::root_dir();
+    let directory = fixture();
+    let root = directory.path();
+    let bind = |name: &str, value: &Value| write_lineage_receipt(&backend, &root.join(name), value);
+    let plan = |side: &str| {
+        json!({"format_version":1,"id":"shared-backup","target_side":side,
+            "target":{"scope_id":format!("fixture-{side}")}})
+    };
+    let original = bind("backup-reference.json", &plan("base"));
+    let backup = bind(
+        "backup.json",
+        &json!({"format_version":2,"kind":"restore-reference-backup","reference_plan":original}),
+    );
+    let selected = plan("candidate");
+    let selected_binding = bind("selected-reference.json", &selected);
+    let target_binding = bind(
+        "target.json",
+        &json!({"format_version":1,"kind":"restore-reference-target-plan","target_side":"candidate",
+            "reference_plan_sha256":document::hash(&selected).unwrap(),"backup_receipt":backup}),
+    );
+    let registration_path = root.join("registration.json");
+    let sidecar = configuration_registration::sidecar(&registration_path).unwrap();
+    std::fs::create_dir(&sidecar).unwrap();
+    let environment = write_lineage_receipt(
+        &backend,
+        &sidecar.join("environment.json"),
+        &json!({"scope_id":"fixture-candidate","metrics_bearer_token":"fixture-token",
+            "api_config_dir":sidecar.join("roles/config"),"worker_config_dir":sidecar.join("roles/worker-config")}),
+    );
+    let registration = bind(
+        "registration.json",
+        &json!({"format_version":2,"kind":"restore-runtime-registration","reference_plan":selected_binding,
+            "target_plan":target_binding,"runtime_environment":environment,"remote_writes":0,
+            "observation":{"ports_idle":["api","worker","frontend"],"runtime":{"exists":false,"entries":[],
+                "anchor":{"path":root,"device":1,"inode":2,"created_ns":3}}}}),
+    );
+    let launch = json!({"request":{"registration":{"registration":registration,"target_plan":target_binding}}});
+    let descriptor_mismatch = "恢复静态权威输入与登记描述不一致";
+
+    {
+        let mut inputs = inputs::Inputs::new(&backend);
+        let target = inputs.bound(&target_binding).unwrap();
+        let backup = inputs.bound(&target.value["backup_receipt"]).unwrap();
+        let original = inputs.bound(&backup.value["reference_plan"]).unwrap();
+        let reference = registration::reference(&mut inputs, &launch, &target).unwrap();
+        assert_eq!(document::binding(&reference), selected_binding);
+        assert_eq!(reference.value, selected);
+        assert_eq!(original.value["target_side"], "base");
+        assert_ne!(reference.path, original.path);
+
+        for (field, reason) in [
+            ("target_plan", "恢复代次未绑定显式登记和目标计划"),
+            ("registration", descriptor_mismatch),
+        ] {
+            let mut wrong_launch = launch.clone();
+            wrong_launch["request"]["registration"][field]["sha256"] = json!("0".repeat(64));
+            let error = registration::reference(&mut inputs, &wrong_launch, &target).unwrap_err();
+            assert!(error.to_string().contains(reason), "{field}: {error}");
+        }
+        inputs.finish(Ok(())).unwrap();
+    }
+
+    let selected_path = root.join("selected-reference.json");
+    let original = std::fs::read_to_string(&selected_path).unwrap();
+    let tampered = original.replace("fixture-candidate", "fixture-candidatz");
+    assert_ne!(original, tampered);
+    assert_eq!(original.len(), tampered.len());
+    std::fs::write(selected_path, tampered).unwrap();
+
+    let mut inputs = inputs::Inputs::new(&backend);
+    let target = inputs.bound(&target_binding).unwrap();
+    let error = registration::reference(&mut inputs, &launch, &target).unwrap_err();
+    assert!(error.to_string().contains(descriptor_mismatch), "{error}");
 }

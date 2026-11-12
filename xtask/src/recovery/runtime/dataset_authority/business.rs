@@ -79,10 +79,10 @@ fn verify(
         &path(&arguments["target_plan"])?,
         inputs,
     )?;
-    check(
-        verified.manifest == authority["backup_manifest"]
-            && verified.documents.bindings.value["record"] == *record,
-        "正式备份或运行记录与数据库权威不同",
+    require_database_authority(
+        &verified.manifest,
+        &verified.documents.bindings.value["record"],
+        authority,
     )?;
     let value = business_evidence::verify(
         Evidence {
@@ -108,6 +108,13 @@ fn verify(
     )?;
     verified.verify_live(backend, window)?;
     Ok(value.clone())
+}
+
+fn require_database_authority(manifest: &Value, record: &Value, authority: &Value) -> Result<()> {
+    check(
+        *manifest == authority["backup_manifest"] && *record == authority["record"],
+        "正式备份或运行记录与数据库权威不同",
+    )
 }
 
 fn require_record(record: &Value) -> Result<()> {
@@ -169,4 +176,53 @@ fn verify_tool(backend: &Path, expected: &Value, inputs: &mut Inputs) -> Result<
     let compiled = frontend_origin::describe()?;
     frontend_origin::verify_compiled_sources(backend, &compiled["sources"])?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn formal_manifest_and_runtime_record_must_both_match_database_authority() {
+        let manifest = json!({"backup_id":"backup-1","files":[{"sha256":"a".repeat(64)}]});
+        let record = json!({"plan_hash":"b".repeat(64),"status":"data_verified",
+            "data_verified_at":"2026-11-11T01:00:00Z"});
+        let authority = json!({"backup_manifest":manifest,"record":record});
+        require_database_authority(&manifest, &record, &authority).unwrap();
+
+        let mut altered = manifest.clone();
+        altered["files"][0]["sha256"] = json!("c".repeat(64));
+        assert!(require_database_authority(&altered, &record, &authority).is_err());
+        let mut altered = record.clone();
+        altered["data_verified_at"] = json!("2026-11-11T01:01:00Z");
+        assert!(require_database_authority(&manifest, &altered, &authority).is_err());
+    }
+
+    #[test]
+    fn database_record_requires_data_verification_and_exact_fields() {
+        let record = json!({
+            "plan": {},
+            "plan_hash": "a".repeat(64),
+            "status": "data_verified",
+            "started_at": "2026-11-11T00:55:00Z",
+            "data_verified_at": "2026-11-11T01:00:00Z",
+            "completed_at": null,
+            "recovered_at": "2026-11-11T00:59:00Z",
+            "failure": null,
+        });
+        require_record(&record).unwrap();
+
+        for (field, value) in [
+            ("status", json!("started")),
+            ("completed_at", json!("2026-11-11T01:10:00Z")),
+            ("failure", json!("failed")),
+            ("data_verified_at", Value::Null),
+            ("unexpected", json!(true)),
+        ] {
+            let mut changed = record.clone();
+            changed[field] = value;
+            assert!(require_record(&changed).is_err(), "{field}");
+        }
+    }
 }

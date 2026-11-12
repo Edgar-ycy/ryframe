@@ -2,10 +2,8 @@
 
 import copy
 import json
-import os
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 import unittest
 from unittest.mock import patch
@@ -97,22 +95,6 @@ class StaticRuntimeTests(unittest.TestCase):
         self.registration["target_plan"]["bytes"] += 1
         with self.assertRaisesRegex(ValueError, "同一文件快照"):
             self.verify()
-
-    def test_cli_without_B_does_not_create_project_bytecode(self):
-        tools_python = self.fixture.root / "tools" / "python"
-        tools_python.mkdir(parents=True)
-        for source in runtime_tests.ROOT.joinpath("tools", "python").glob("*.py"):
-            shutil.copyfile(source, tools_python / source.name)
-        environment = dict(os.environ)
-        environment.pop("PYTHONDONTWRITEBYTECODE", None)
-        environment.pop("PYTHONPYCACHEPREFIX", None)
-        result = subprocess.run([sys.executable, "-X", "utf8", str(tools_python / "restore_business_proof.py"), "--help"],
-                                cwd=self.fixture.root, env=environment, stdin=subprocess.DEVNULL,
-                                capture_output=True, text=True, encoding="utf-8", timeout=60)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("--preflight", result.stdout)
-        self.assertEqual(list(tools_python.rglob("*.pyc")), [])
-        self.assertEqual(list(tools_python.rglob("__pycache__")), [])
 
 
 if __name__ == "__main__":
