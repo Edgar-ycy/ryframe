@@ -1,8 +1,6 @@
 """保留服务上下文、状态观察和私有 CLI 的有效场景，不访问共享服务。"""
 from __future__ import annotations
 
-import io
-import json
 from pathlib import Path
 import sys
 import unittest
@@ -14,8 +12,6 @@ from devex_clone_capture import read_json, write_json
 from devex_clone_run_state import binding, begin, finish, load_state
 import reference_fixture_service_context as context
 from fixture_service_client import validate_history
-import reference_fixture_services as cli
-from rate_limit_tool import tool_binding
 
 
 class ServiceContextTests(unittest.TestCase):
@@ -152,33 +148,6 @@ class ServiceContextTests(unittest.TestCase):
             self.assertIs(context.observe_services({"frozen": True}), expected)
         invoke.assert_called_once_with("service-observe", {"services": {"frozen": True}})
 
-
-    def test_cli_requires_explicit_write_for_first_generation(self):
-        common = ["--backend-dir", str(self.backend), "--review", str(self.review), "--environment", str(self.bootstrap),
-                  "--native-tool", json.dumps(tool_binding())]
-        for args in (("rustfs",), ("buckets",),
-                     ("rustfs", "--write", "--owner-binding", "owner.json")):
-            with self.subTest(args=args), patch("sys.stderr", new_callable=io.StringIO), \
-                    self.assertRaises(SystemExit) as error:
-                cli.main([*args, *common])
-            self.assertEqual(error.exception.code, 2)
-
-
-    def test_cli_rejects_retired_operation_and_invalid_options_before_reading_inputs(self):
-        common = ["--backend-dir", str(self.backend), "--review", str(self.review), "--environment", str(self.bootstrap),
-                  "--native-tool", json.dumps(tool_binding())]
-        before = self.snapshot()
-        invalid = [("redis", "--write"), ("rustfs", "--write", "--review", "other"),
-                   ("buckets", "--write", "--environment=other"), ("buckets", "--write", "--write"),
-                   ("rustfs", "--write", "--rev", "other")]
-        for args in invalid:
-            with self.subTest(args=args), patch("sys.stderr", new_callable=io.StringIO), \
-                    patch.object(cli, "document") as read, \
-                    self.assertRaises(SystemExit) as error:
-                cli.main([*args, *common])
-            self.assertEqual(error.exception.code, 2)
-            read.assert_not_called()
-            self.assertEqual(before, self.snapshot())
 
 if __name__ == "__main__":
     unittest.main()

@@ -89,10 +89,10 @@ def _service(backend: Path, run: Path, review_binding: dict, review: dict, revie
         raise ValueError("首代服务账本未绑定 seed 私有环境或原始审阅")
     if manifest.get("review") != review_binding:
         # 允许账本保持原始审阅，而登记请求使用由同一 seed 私有环境证明血脉的工具续签审阅；
-        # environment 自身只接受“等于计划审阅”或“经续签校验的审阅”。
-        from reference_fixture_services import environment
+        # 原生服务环境核验只接受原审阅或经续签校验的审阅。
+        from reference_fixture_service_context import service_environment
 
-        environment(backend, review_file, review, Path(seed_binding["path"]))
+        service_environment(backend, review_file, review, Path(seed_binding["path"]))
     if (
         manifest.get("execution_backend") != seed["execution_backend"]
         or manifest.get("scope_id") != review["services"]["rustfs"]["scope_id"]

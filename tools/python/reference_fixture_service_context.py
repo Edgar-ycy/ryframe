@@ -21,6 +21,15 @@ def load_prepared_environment(backend: Path, value: Path, secret_files: tuple[st
     return Path(receipt), Path(execution), private, document
 
 
+def service_environment(backend: Path, review_file: Path, review: dict, bootstrap_path: Path) -> tuple[Path, dict, dict]:
+    path, receipt, private = _invoke(
+        "service-environment",
+        {"review_file": review_file, "review": review, "environment": bootstrap_path},
+        backend=backend,
+    )
+    return Path(path), receipt, private
+
+
 def context(backend: Path, review_path: Path, bootstrap_path: Path) -> dict:
     value = _invoke("service-context", {"review": review_path, "environment": bootstrap_path}, backend=backend)
     value["backend"], value["run"] = Path(value["backend"]), Path(value["run"])

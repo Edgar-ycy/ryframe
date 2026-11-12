@@ -331,40 +331,6 @@ fn transition_uses_current_review_and_registered_historical_generations() {
 }
 
 #[test]
-fn preparation_projection_requires_exact_prefix_and_direct_credentials() {
-    let backend = crate::workspace::root_dir();
-    let state = json!({"attempts":[{"stage":"storage-target","mode":"initial","status":"passed"},
-        {"stage":"cache-target","mode":"initial","status":"passed"}]});
-    assert!(query::dispatch(&backend, "service-initial-prefix", &json!({"state":state})).is_ok());
-    for invalid in [
-        json!({"attempts":[]}),
-        json!({"attempts":[{"stage":"cache-target","mode":"initial","status":"passed"}]}),
-    ] {
-        assert!(
-            query::dispatch(
-                &backend,
-                "service-initial-prefix",
-                &json!({"state":invalid})
-            )
-            .is_err()
-        );
-    }
-    let args = json!({"review":{"scopes":{"seed":{"objects":{"endpoint":"http://127.0.0.1:29200","region":"us-east-1"}}}},
-        "private":{"object_storage":{"access_key":"file-access","secret_key":"file-secret"}}});
-    assert_eq!(
-        query::dispatch(&backend, "service-bucket-configuration", &args).unwrap()["secret_key"],
-        "file-secret"
-    );
-    for key in ["access_key", "secret_key"] {
-        let mut invalid = args.clone();
-        invalid["private"]["object_storage"][key] = Value::Null;
-        let error =
-            query::dispatch(&backend, "service-bucket-configuration", &invalid).unwrap_err();
-        assert!(!error.to_string().contains("file-secret"));
-    }
-}
-
-#[test]
 fn prepared_environment_requires_exact_digest_credentials_and_no_service_side_effects() {
     let input = InputFixture::new();
     let mut receipt = read(&input.bootstrap).unwrap();

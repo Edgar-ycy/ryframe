@@ -16,7 +16,6 @@ import full_stack_provenance as provenance
 import native_s3_client as native
 from artifact_digests import file_digest
 from full_stack_process import write_receipt
-from reference_fixture_source_pair import write_pair
 from source_inventory import snapshot
 from workspace_directory import WorkspaceDirectory
 
@@ -148,28 +147,6 @@ class BusinessSourceEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "恰好包含"):
             provenance.build_evidence(self.backend, self.directory,
                                       {role: path for role, path in binaries.items() if role != "ryframe-worker"}, source)
-
-    def test_local_fixture_pair_writer_and_native_reader_keep_original_identity_and_no_overwrite(self):
-        self.prepare_business()
-        output = self.backend / ".local-tests/reference-fixture/runtime/source-pair.json"
-        output.parent.mkdir(parents=True)
-        result = write_pair(self.backend, output)
-        self.assertEqual(result["kind"], provenance.REFERENCE_FIXTURE_SOURCE_PAIR)
-        self.assertEqual(result["sources"], self.sources)
-        self.assertEqual(result["fixture_receipt"],
-                         {"path": str(self.fixture_path), **file_digest(self.fixture_path)})
-        with patch.dict(os.environ, {"GITHUB_RUN_ID": "different-ci", "GITHUB_RUN_ATTEMPT": "99"}):
-            evidence = provenance.full_stack_source_evidence(self.backend, output.parent)
-        self.assertEqual(evidence["source_pair"]["kind"], provenance.REFERENCE_FIXTURE_SOURCE_PAIR)
-        before = output.read_bytes()
-        with self.assertRaisesRegex(ValueError, "不得覆盖"):
-            write_pair(self.backend, output)
-        self.assertEqual(output.read_bytes(), before)
-        wrong = copy.deepcopy(result)
-        wrong["sources"]["backend"]["head"] = "c" * 40
-        write_receipt(output, wrong)
-        with self.assertRaises(ValueError):
-            provenance.full_stack_source_evidence(self.backend, output.parent)
 
     def test_business_fixture_and_generated_snapshot_drift_fail_closed(self):
         self.prepare_business()

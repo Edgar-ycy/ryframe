@@ -53,6 +53,50 @@ fn full_stack_source_facts_are_read_only_and_reject_undeclared_inputs() {
 }
 
 #[test]
+fn native_source_reader_accepts_published_local_pair_and_rejects_rebound_commit() {
+    use crate::recovery::{
+        clone::native::json as documents, fixture_control::source_pair,
+        full_stack::build::tests::Fixture,
+    };
+    use std::fs;
+
+    let fixture = Fixture::new();
+    let backend = &fixture.context.root;
+    fs::write(backend.join(".git/info/exclude"), b"/.local-tests/\n").unwrap();
+    let business = fixture.business();
+    let directory = backend.join(".local-tests/reference-fixture/runtime");
+    fs::create_dir_all(&directory).unwrap();
+    let path = directory.join("source-pair.json");
+    let pair = source_pair::publish(backend, &path).unwrap();
+    let original = fs::read(&path).unwrap();
+    assert_eq!(pair["sources"], business["sources"]);
+    assert!(source_pair::publish(backend, &path).is_err());
+    assert_eq!(fs::read(&path).unwrap(), original);
+
+    let request = serde_json::to_vec(
+        &json!({"operation":"full-stack-source-evidence","write":false,
+        "arguments":{"backend":backend,"directory":directory,
+            "ci":{"run_id":"unrelated-ci-run","attempt":"99"}}}),
+    )
+    .unwrap();
+    let observed = execute(&request).unwrap();
+    let source = &observed["source_pair"];
+    assert_eq!(source["kind"], "reference-fixture-source-pair");
+    assert_eq!(source["sources"], pair["sources"]);
+    assert_eq!(source["fixture_receipt"], pair["fixture_receipt"]);
+    assert!(source.get("run_id").is_none() && source.get("attempt").is_none());
+    assert_eq!(fs::read(&path).unwrap(), original);
+
+    let mut rebound = pair;
+    rebound["sources"]["backend"]["head"] = json!("c".repeat(40));
+    documents::write_replace(&path, &rebound).unwrap();
+    let rejected = fs::read(&path).unwrap();
+    let error = execute(&request).unwrap_err().to_string();
+    assert!(error.contains("未绑定当前 fixture 收据和来源"), "{error}");
+    assert_eq!(fs::read(path).unwrap(), rejected);
+}
+
+#[test]
 fn inventory_capture_requires_local_write_authorization_and_keeps_failed_inputs() {
     let backend = crate::workspace::root_dir();
     let local = backend.join(".local-tests");

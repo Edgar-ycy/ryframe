@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,20 +10,14 @@ import subprocess
 
 from artifact_digests import file_digest
 from full_stack_process import write_receipt
-from source_inventory import git, source_domain
 import native_s3_client as native
 
 
 SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
-COMMIT_PATTERN = re.compile(r"^[a-f0-9]{40}$")
 BUILD_EVIDENCE = "build-evidence.json"
 RUNTIME_EVIDENCE = "runtime-evidence.json"
-RUNTIME_RECEIPT = "runtime.json"
 SOURCE_PAIR_RECEIPT = "source-pair.json"
-FIXTURE_RECEIPT = "fixture.json"
-REFERENCE_FIXTURE_SOURCE_PAIR = "reference-fixture-source-pair"
 BINARY_ROLES = frozenset({"ryframe", "ryframe-worker", "ryframe-reset", "ryframe-migrate"})
-EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 
 class _DuplicateJsonKey(ValueError):
     pass
@@ -49,47 +42,6 @@ def _sha256(value: object, label: str) -> str:
     if not isinstance(value, str) or SHA256_PATTERN.fullmatch(value) is None:
         raise ValueError(f"{label}不是有效 SHA-256")
     return value
-
-
-def _snapshot(value: object, label: str) -> dict:
-    receipt = _exact(value, {"head", "patch_sha256", "files"}, label)
-    if not isinstance(receipt["head"], str) or COMMIT_PATTERN.fullmatch(receipt["head"]) is None:
-        raise ValueError(f"{label} HEAD 不是有效提交 SHA")
-    _sha256(receipt["patch_sha256"], f"{label}补丁摘要")
-    if not isinstance(receipt["files"], list):
-        raise ValueError(f"{label}未跟踪文件清单无效")
-    previous = ""
-    for entry in receipt["files"]:
-        item = _exact(entry, {"path", "sha256"}, f"{label}未跟踪文件")
-        if not isinstance(item["path"], str):
-            raise ValueError(f"{label}未跟踪文件路径无效")
-        source_domain(item["path"])
-        if item["path"] <= previous:
-            raise ValueError(f"{label}未跟踪文件必须无重复并按路径排序")
-        previous = item["path"]
-        _sha256(item["sha256"], f"{label}未跟踪文件摘要")
-    return receipt
-
-
-def _canonical_root(value: object, expected_parent: Path, label: str) -> Path:
-    if not isinstance(value, str):
-        raise ValueError(f"{label}路径无效")
-    path = Path(value)
-    try:
-        resolved = path.resolve(strict=True)
-    except (OSError, RuntimeError):
-        raise ValueError(f"{label}路径不存在或无法解析") from None
-    if (
-        not path.is_absolute()
-        or path != resolved
-        or resolved.parent != expected_parent
-        or not resolved.is_dir()
-    ):
-        raise ValueError(f"{label}必须是 fixture 目录内的规范绝对目录")
-    actual_git_root = Path(git(resolved, "rev-parse", "--show-toplevel").decode().strip()).resolve()
-    if actual_git_root != resolved:
-        raise ValueError(f"{label}必须是实际 Git 工作树根目录")
-    return resolved
 
 
 def _binding(path: Path) -> dict:
@@ -125,43 +77,6 @@ def _read_json(path: Path, label: str, limit: int = 4 * 1024 * 1024) -> tuple[di
         raise ValueError(f"{label}必须是普通文件")
     raw = path.read_bytes()
     return _parse_json(raw, label, limit), raw
-
-
-def _clean_archive_snapshot(value: object, label: str, expected_head: str) -> dict:
-    receipt = _snapshot(value, label)
-    if (
-        receipt["head"] != expected_head
-        or receipt["patch_sha256"] != EMPTY_SHA256
-        or receipt["files"]
-    ):
-        raise ValueError(f"{label}必须是目标提交的干净源码")
-    return receipt
-
-
-def reference_fixture_source_pair(backend: Path) -> dict:
-    """为已完成的 业务 crate fixture 签发本地来源组合，不伪装为 CI 运行。"""
-    root = backend.resolve(strict=True).parent
-    receipt_path = root / FIXTURE_RECEIPT
-    receipt, _ = _read_json(receipt_path, "业务 crate fixture 收据")
-    _exact(
-        receipt,
-        {"format_version", "fixture", "status", "fixture_sha256", "sources", "paths", "generated"},
-        "业务 crate fixture 收据",
-    )
-    if receipt["format_version"] != 1 or receipt["fixture"] != "business" or receipt["status"] != "ready":
-        raise ValueError("业务 crate fixture 尚未完成或格式不受支持")
-    paths = _exact(receipt["paths"], {"backend", "frontend"}, "业务 crate 工作树路径")
-    if _canonical_root(paths["backend"], root, "业务 crate 后端工作树") != backend.resolve():
-        raise ValueError("业务 crate fixture 与当前后端工作树不匹配")
-    sources = _exact(receipt["sources"], {"backend", "frontend"}, "业务 crate 原始来源")
-    for name in ("backend", "frontend"):
-        _clean_archive_snapshot(sources[name], f"业务 crate {name} 原始来源", sources[name].get("head", ""))
-    return {
-        "format_version": 1,
-        "kind": REFERENCE_FIXTURE_SOURCE_PAIR,
-        "fixture_receipt": _binding(receipt_path),
-        "sources": sources,
-    }
 
 
 def full_stack_source_evidence(backend: Path, directory: Path | None = None) -> dict | None:

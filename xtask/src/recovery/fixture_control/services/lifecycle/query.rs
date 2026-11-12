@@ -66,55 +66,12 @@ pub(crate) fn dispatch(backend: &Path, operation: &str, args: &Value) -> Result<
                 &args["expected"],
             )
         }
-        "service-initial-prefix" => {
-            exact(args, &["state"])?;
-            initial_prefix(&args["state"])?;
-            Ok(Value::Null)
-        }
-        "service-bucket-configuration" => {
-            exact(args, &["review", "private"])?;
-            bucket_configuration(&args["review"], &args["private"])
-        }
         _ => Err(model::error("未知夹具服务只读操作")),
     }
 }
 
 fn exact(args: &Value, keys: &[&str]) -> Result<()> {
     json_io::exact(args, keys, "夹具服务只读协议").map(|_| ())
-}
-
-fn initial_prefix(value: &Value) -> Result<()> {
-    let attempts = state::attempts(value)?;
-    check(
-        attempts.len() == 2
-            && attempts
-                .iter()
-                .zip(["storage-target", "cache-target"])
-                .all(|(item, stage)| {
-                    item["stage"] == stage
-                        && item["mode"] == "initial"
-                        && item["status"] == "passed"
-                }),
-        "对象桶初始化只允许接续同一账本中的完成 RustFS 与 Redis 首代",
-    )
-}
-
-fn bucket_configuration(review: &Value, private: &Value) -> Result<Value> {
-    let values = &private["object_storage"];
-    for key in ["access_key", "secret_key"] {
-        check(
-            values[key].as_str().is_some_and(|value| !value.is_empty()),
-            "对象桶初始化缺少直接配置的 S3 凭据",
-        )?;
-    }
-    let objects = &review["scopes"]["seed"]["objects"];
-    check(
-        objects["endpoint"].is_string() && objects["region"].is_string(),
-        "对象桶审阅缺少 endpoint 或 region",
-    )?;
-    Ok(
-        json!({"endpoint":objects["endpoint"],"region":objects["region"],"access_key":values["access_key"],"secret_key":values["secret_key"]}),
-    )
 }
 
 fn environment(backend: &Path, args: &Value) -> Result<Value> {

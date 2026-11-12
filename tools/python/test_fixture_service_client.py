@@ -1,6 +1,5 @@
 """原生历史调用桥只传协议，不继承服务凭据或解释生命周期。"""
 from contextlib import nullcontext
-from rate_limit_tool import tool_binding
 import io
 import json
 import os
@@ -86,24 +85,6 @@ class FixtureServiceClientTests(unittest.TestCase):
                   self.assertRaises(RuntimeError) as raised):
                 client._invoke("manifest", {"value": {}})
             self.assertNotIn("credential marker", str(raised.exception))
-
-    def test_services_entry_installs_explicit_coordinator_binding_before_dispatch(self):
-        import reference_fixture_services as services
-        for operation, status in (("rustfs", "rustfs_started"), ("buckets", "fixture_buckets_ready")):
-            arguments = [operation, "--backend-dir", str(client.ROOT), "--review", "review.json",
-                         "--environment", "bootstrap.json", "--write", "--native-tool", "bound-tool"]
-
-            def start(*_args, **_kwargs):
-                install.assert_called_once_with("bound-tool")
-                return {"status": status, "remote_writes": 0}
-
-            with (self.subTest(operation=operation),
-                  patch("rate_limit_tool.install_verified_binding") as install,
-                  patch.object(services, operation, side_effect=start) as dispatch,
-                  patch("sys.stdout", io.StringIO())):
-                services.main(arguments)
-            dispatch.assert_called_once_with(client.ROOT.resolve(), Path("review.json"),
-                                             Path("bootstrap.json"), write=True)
 
     def test_request_entry_installs_explicit_coordinator_binding_before_dispatch(self):
         import reference_fixture_request as request

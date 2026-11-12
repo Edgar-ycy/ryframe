@@ -339,13 +339,13 @@ class ReferenceFixtureRequestTests(unittest.TestCase):
         successor = self.write(self.root / "review-successor.json", self.review)
         scope = {"tools": self.review["tools"],
                  "services": {"rustfs": {"scope_id": "services-fixture-seed"}}}
-        with patch("reference_fixture_services.environment") as validated:
+        with patch("reference_fixture_service_context.service_environment") as validated:
             result = request._service(self.backend, self.service_run, self.bound(successor),
                                       scope, successor)
         validated.assert_called_once()
         self.assertEqual(validated.call_args.args[3], self.environments["seed"])
         self.assertEqual(result["run"]["manifest"], self.bound(self.service_run / "manifest.json"))
-        with patch("reference_fixture_services.environment",
+        with patch("reference_fixture_service_context.service_environment",
                    side_effect=ValueError("夹具环境未绑定当前审阅收据")), \
                 self.assertRaisesRegex(ValueError, "未绑定"):
             request._service(self.backend, self.service_run, self.bound(successor), scope, successor)

@@ -158,7 +158,7 @@ fn invoke(arguments: &[String]) -> std::process::Output {
 }
 
 #[test]
-fn invalid_arguments_exit_two_before_python_starts() {
+fn invalid_service_arguments_fail_before_inputs_or_effects() {
     let fixture = Fixture::new();
     let base = fixture.valid();
     let mut cases = Vec::new();
@@ -179,12 +179,29 @@ fn invalid_arguments_exit_two_before_python_starts() {
         .to_string_lossy()
         .into_owned();
     cases.push(outside);
+    for operation in ["rustfs", "redis", "buckets"] {
+        let mut initial = fixture.valid();
+        initial[4] = operation.to_owned();
+        cases.push(initial.clone());
+        initial.push("--write".to_owned());
+        let mut duplicate = initial.clone();
+        duplicate.push("--write".to_owned());
+        cases.push(duplicate);
+        initial.extend([
+            "--owner-binding".to_owned(),
+            fixture.review.to_string_lossy().into_owned(),
+        ]);
+        cases.push(initial);
+    }
     for arguments in cases {
         let result = invoke(&arguments);
         assert_eq!(result.status.code(), Some(2), "参数：{arguments:?}");
         assert!(String::from_utf8_lossy(&result.stderr).contains("参数错误"));
-        assert!(!String::from_utf8_lossy(&result.stdout).contains("reference_fixture_services.py"));
+        assert!(result.stdout.is_empty());
     }
+    assert_eq!(fs::read(&fixture.review).unwrap(), b"{}\n");
+    assert_eq!(fs::read(&fixture.environment).unwrap(), b"{}\n");
+    assert_eq!(fs::read_dir(&fixture.directory).unwrap().count(), 2);
 }
 
 #[test]

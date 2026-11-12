@@ -36,28 +36,32 @@ fn execute(inputs: &Inputs, lock: &RunLock, output: &Path) -> Result<Value> {
     state::bind_controller(&inputs.run, number, &lock.owner, &attempt)?;
     let running = json!({"ledger":storage::binding::snapshot(&inputs.run.join("state.json"))?,
         "controller":storage::binding::snapshot(&state::controller_path(&inputs.run, number))?});
-    let result = create_all(inputs, lock, output, &sources, &predecessors, &running);
+    let result = create_all(
+        output,
+        &inputs.review["scopes"]["seed"]["scope_id"],
+        &inputs.configuration,
+        || guard(inputs, lock, &sources, &predecessors, &running),
+        |operation, request| invoke(inputs, operation, request),
+    );
     finish(inputs, number, result, "NativeBucketInitializationFailed")
 }
 
 fn create_all(
-    inputs: &Inputs,
-    lock: &RunLock,
     output: &Path,
-    sources: &Value,
-    predecessors: &Value,
-    running: &Value,
+    scope_id: &Value,
+    configuration_binding: &Value,
+    mut guard: impl FnMut() -> Result<()>,
+    mut invoke: impl FnMut(&str, &Value) -> Result<Value>,
 ) -> Result<Value> {
     let mut receipts = Vec::new();
     let mut buckets = BUCKETS.to_vec();
     buckets.sort_unstable();
     for bucket in &buckets {
-        guard(inputs, lock, sources, predecessors, running)?;
+        guard()?;
         let request = json!({"format_version":1,"kind":"ryframe-native-s3-create-bucket",
-            "scope_id":inputs.review["scopes"]["seed"]["scope_id"],
-            "configuration_binding":inputs.configuration,"bucket":bucket});
+            "scope_id":scope_id,"configuration_binding":configuration_binding,"bucket":bucket});
         document::write_new(&output.join(format!("intent-{bucket}.json")), &request)?;
-        let outcome = invoke(inputs, "__s3-create-bucket", &request)?;
+        let outcome = invoke("__s3-create-bucket", &request)?;
         let create = output.join(format!("create-{bucket}.json"));
         document::write_new(
             &create,
@@ -68,13 +72,13 @@ fn create_all(
             outcome["status"] == "created_unverified",
             "对象桶创建未获得可继续核验的新建结果；禁止接管或重试",
         )?;
-        guard(inputs, lock, sources, predecessors, running)?;
+        guard()?;
         let mut request = request;
         request["kind"] = json!("ryframe-native-s3-inspect");
         request["operation"] = json!("head-bucket");
         request["prefix"] = Value::Null;
         request["continuation"] = Value::Null;
-        let observed = invoke(inputs, "__s3-inspect", &request)?;
+        let observed = invoke("__s3-inspect", &request)?;
         let head = output.join(format!("head-{bucket}.json"));
         document::write_new(
             &head,
@@ -83,7 +87,7 @@ fn create_all(
         )?;
         check(observed == json!({}), "对象桶 HEAD 返回未识别字段")?;
         receipts.push(json!({"bucket":bucket,"create":common::binding(&create)?,"head":common::binding(&head)?}));
-        guard(inputs, lock, sources, predecessors, running)?;
+        guard()?;
     }
     Ok(
         json!({"status":"fixture_buckets_ready","buckets":buckets,"receipts":receipts,
@@ -222,6 +226,105 @@ fn bucket_guard_accepts_its_running_third_stage_but_rejects_changed_predecessors
         .unwrap()
         .push(json!({"number":4,"status":"running"}));
     assert!(running_prefix(&changed, &previous).is_err());
+}
+
+#[cfg(test)]
+#[test]
+fn bucket_create_preserves_receipts_and_stops_before_head_on_bound_file_drift() {
+    let backend = crate::workspace::root_dir();
+    let local = backend.join(".local-tests");
+    fs::create_dir_all(&local).unwrap();
+    let directory = tempfile::tempdir_in(local).unwrap();
+    let config = directory.path().join("app.test.toml");
+    let output = directory.path().join("buckets");
+    fs::create_dir(&output).unwrap();
+    let initial = "[object_storage]\naccess_key = 'fixture-access-marker'\nsecret_key = 'fixture-secret-marker'\n";
+    fs::write(&config, initial).unwrap();
+    let snapshot = storage::binding::snapshot(&config).unwrap();
+    let configuration =
+        app_configuration::configuration_value(&backend, directory.path(), "test").unwrap();
+    let scope_id = json!("bucket-drift");
+    let intent = json!({"format_version":1,"kind":"ryframe-native-s3-create-bucket",
+        "scope_id":scope_id,"configuration_binding":configuration,"bucket":"avatar"});
+    let outcome = json!({"status":"created_unverified","http_status":200,
+        "remote_write_may_have_occurred":true,"automatic_retry_permitted":false});
+    let intent_path = output.join("intent-avatar.json");
+    let create_path = output.join("create-avatar.json");
+    let mut checks = 0;
+    let mut calls = 0;
+    let error = create_all(
+        &output,
+        &scope_id,
+        &configuration,
+        || {
+            checks += 1;
+            storage::binding::verify_snapshot(&snapshot)
+        },
+        |operation, request| {
+            calls += 1;
+            assert_eq!(calls, 1);
+            assert_eq!(operation, "__s3-create-bucket");
+            assert_eq!(request, &intent);
+            assert_eq!(document::read(&intent_path).unwrap(), intent);
+            fs::write(&config, format!("{initial}# drift\n"))?;
+            Ok(outcome.clone())
+        },
+    )
+    .unwrap_err();
+    assert_eq!(error.to_string(), "RustFS 输入字节或内核文件身份变化");
+    assert_eq!((checks, calls), (2, 1));
+    assert_eq!(fs::read_dir(&output).unwrap().count(), 2);
+    assert_eq!(document::read(&intent_path).unwrap(), intent);
+    assert_eq!(
+        document::read(&create_path).unwrap(),
+        json!({"transport":"rust-s3-sigv4","operation":"create-bucket","bucket":"avatar",
+            "outcome":outcome,"returncode":0,"error_type":null})
+    );
+    for path in [intent_path, create_path] {
+        let receipt = fs::read_to_string(path).unwrap();
+        assert!(
+            !receipt.contains("fixture-access-marker")
+                && !receipt.contains("fixture-secret-marker")
+        );
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn bucket_credentials_require_direct_values_in_the_bound_toml() {
+    let backend = crate::workspace::root_dir();
+    let local = backend.join(".local-tests");
+    fs::create_dir_all(&local).unwrap();
+    let directory = tempfile::tempdir_in(local).unwrap();
+    let selected = directory.path().join("app.test.toml");
+    let endpoint = "[object_storage]\nendpoint='http://127.0.0.1:29200'\nregion='us-east-1'\n";
+    let access = "access_key='file-access-marker'\n";
+    let secret = "secret_key='file-secret-marker'\n";
+    let read = |access: &str, secret: &str| {
+        fs::write(&selected, format!("{endpoint}{access}{secret}")).unwrap();
+        let binding =
+            app_configuration::configuration_value(&backend, directory.path(), "test").unwrap();
+        app_configuration::private_configuration(&backend, &binding)
+    };
+    let valid = read(access, secret).unwrap();
+    assert_eq!(valid["access_key"], "file-access-marker");
+    assert_eq!(valid["secret_key"], "file-secret-marker");
+    for (access, secret) in [
+        ("", secret),
+        ("access_key=''\n", secret),
+        ("access_key=123\n", secret),
+        (access, ""),
+        (access, "secret_key=''\n"),
+        (access, "secret_key=123\n"),
+        (
+            "access_key_env='AWS_ACCESS_KEY_ID'\n",
+            "secret_key_env='AWS_SECRET_ACCESS_KEY'\n",
+        ),
+    ] {
+        let error = read(access, secret).unwrap_err().to_string();
+        assert!(error.contains("object_storage"), "{error}");
+        assert!(!error.contains("file-access-marker") && !error.contains("file-secret-marker"));
+    }
 }
 
 fn invoke(inputs: &Inputs, operation: &str, request: &Value) -> Result<Value> {
