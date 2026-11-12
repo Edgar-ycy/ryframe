@@ -9,19 +9,15 @@ use crate::recovery::{
 };
 use std::{net::TcpListener, process::Command, time::Duration};
 
+#[path = "native_stop.rs"]
+mod native_stop;
+
 #[test]
 fn worker_readiness_failure_reclaims_started_role_trees_without_launch_receipt() -> Result<()> {
     let mut fixture = Fixture::new();
-    let executable = option_env!("CARGO_BIN_EXE_xtask")
-        .ok_or("恢复进程回归须由 Cargo internal 测试提供原生 xtask 路径")?;
-    let program = portable_path(&Path::new(executable).canonicalize()?);
+    let program = native_coordinator()?;
     let ports = configure(&mut fixture, &program)?;
-    let binding = &fixture.binding;
-    let operation = format!(
-        "runtime-start:{}:{}",
-        binding["registration"]["sha256"].as_str().unwrap(),
-        binding["target_plan"]["sha256"].as_str().unwrap()
-    );
+    let operation = start_operation(&fixture.binding)?;
     drop(ports);
     let result = Owner::with(&fixture.control, &operation, |owner| {
         let mut state = fixture.start(owner)?;
@@ -49,12 +45,26 @@ fn worker_readiness_failure_reclaims_started_role_trees_without_launch_receipt()
     Ok(())
 }
 
+fn native_coordinator() -> Result<PathBuf> {
+    let executable = option_env!("CARGO_BIN_EXE_xtask")
+        .ok_or("恢复进程回归须由 Cargo internal 测试提供原生 xtask 路径")?;
+    Ok(portable_path(&Path::new(executable).canonicalize()?))
+}
+
+fn start_operation(binding: &Value) -> Result<String> {
+    let registration = document::digest(&binding["registration"]["sha256"], "运行登记摘要")?;
+    let target = document::digest(&binding["target_plan"]["sha256"], "目标计划摘要")?;
+    Ok(format!("runtime-start:{registration}:{target}"))
+}
+
 fn configure(fixture: &mut Fixture, coordinator: &Path) -> Result<[TcpListener; 3]> {
     let git = Command::new("git")
         .args(["init", "--quiet"])
         .current_dir(&fixture.backend)
         .output()?;
     check(git.status.success(), "无法创建隔离 Git 根")?;
+    fs::write(fixture.backend.join("Cargo.toml"), b"[workspace]\n")?;
+    fs::create_dir(fixture.backend.join("xtask"))?;
     let listeners = [
         TcpListener::bind("127.0.0.1:0")?,
         TcpListener::bind("127.0.0.1:0")?,
@@ -86,15 +96,8 @@ fn configure(fixture: &mut Fixture, coordinator: &Path) -> Result<[TcpListener; 
             "api_config_dir":api_dir,"worker_config_dir":worker_dir,
         }),
     )?;
-    strict::write_new(
-        &registration,
-        &json!({"runtime_environment":file_binding(fixture, &private)?}),
-    )?;
-    let target = fixture.control.join("target.json");
-    strict::write_new(&target, &json!({"fixture":"runtime-cleanup"}))?;
-    fixture.binding = json!({
-        "registration":file_binding(fixture,&registration)?,"target_plan":file_binding(fixture,&target)?,
-    });
+    let authority = authority(scope, api, worker, frontend);
+    fixture.binding = register_fixture(fixture, &registration, &private, &authority)?;
     let paths = json!({"bindings":fixture.control.join("bindings.json"),
         "backend_build":fixture.control.join("backend-build.json"),
         "frontend_build":frontend_root.join("frontend-build.json")});
@@ -108,7 +111,7 @@ fn configure(fixture: &mut Fixture, coordinator: &Path) -> Result<[TcpListener; 
         "inventory_sha256":"b".repeat(64),"frontend_server":{"path":coordinator,"bytes":tool.bytes,"sha256":tool.sha256}});
     fixture.request = json!({
         "format_version":2,"kind":"restore-runtime-launch-request","runtime_directory":fixture.root,
-        "authority":authority(scope, api, worker, frontend),"registration":fixture.binding,
+        "authority":authority,"registration":fixture.binding,
         "roots":roots,"paths":paths,"digests":{"bindings":"a".repeat(64),"backend_build":"b".repeat(64),"frontend_build":"c".repeat(64)},
         "artifacts":{"api":artifact,"worker":artifact},"tools":tools,
     });
@@ -116,6 +119,43 @@ fn configure(fixture: &mut Fixture, coordinator: &Path) -> Result<[TcpListener; 
         environment::capture(&mut Inputs::new(&fixture.backend), &fixture.request)?;
     fixture.commands = commands::expected(&fixture.request, &tools)?;
     Ok(listeners)
+}
+
+fn register_fixture(
+    fixture: &Fixture,
+    registration: &Path,
+    private: &Path,
+    authority: &Value,
+) -> Result<Value> {
+    let reference = fixture.control.join("reference.json");
+    strict::write_new(
+        &reference,
+        &json!({
+            "target_side":"candidate","target":{"scope_id":authority["scope_id"],
+                "runtime_dir":fixture.root,"frontend_url":authority["frontend_endpoint"]},
+        }),
+    )?;
+    let target = fixture.control.join("target.json");
+    strict::write_new(
+        &target,
+        &json!({
+            "target_side":"candidate","fresh_target":{},"maintenance_execution":{},"product_execution":{},
+            "product_plan":{"scope_id":authority["scope_id"],"frontend_sha":authority["frontend_sha"],
+                "api_ready_url":authority["api_endpoint"],"worker_ready_url":authority["worker_endpoint"]},
+        }),
+    )?;
+    let target = file_binding(fixture, &target)?;
+    let (_, observed) = runtime_observation(&fixture.backend, &fixture.root)?;
+    strict::write_new(
+        registration,
+        &json!({
+            "format_version":2,"kind":"restore-runtime-registration","remote_writes":0,
+            "reference_plan":file_binding(fixture,&reference)?,"target_plan":target,
+            "observation":{"runtime":observed,"ports_idle":["api","worker","frontend"]},
+            "runtime_environment":file_binding(fixture,private)?,
+        }),
+    )?;
+    Ok(json!({"registration":file_binding(fixture,registration)?,"target_plan":target}))
 }
 
 fn authority(scope: &str, api: u16, worker: u16, frontend: u16) -> Value {
@@ -196,23 +236,42 @@ fn start_two_roles(
         ("api", Duration::from_secs(8)),
         ("worker", Duration::from_secs(2)),
     ] {
-        let attempt = Attempt::new(&fixture.backend, state, role)?;
-        attempts.push((role, attempt));
-        let tree = attempts
-            .last_mut()
-            .unwrap()
-            .1
-            .start(state, owner, program)?;
-        state.update(owner, |generation| {
-            generation["roles"][role]["tree"] = tree.clone();
-            generation["roles"][role]["state"] = json!("running");
-            Ok(())
-        })?;
-        let probe =
-            json!({"role":role,"url":fixture.request["authority"][format!("{role}_endpoint")]});
-        readiness::wait(&tree, &probe, budget, || owner.check())?;
+        let tree = start_role(fixture, state, owner, program, attempts, role)?;
+        record_started(state, owner, role, &tree)?;
+        wait_ready(fixture, owner, role, &tree, budget)?;
     }
     Ok(())
+}
+
+fn start_role(
+    fixture: &Fixture,
+    state: &State,
+    owner: &Owner,
+    program: &Path,
+    attempts: &mut Vec<(&'static str, Attempt)>,
+    role: &'static str,
+) -> Result<Value> {
+    attempts.push((role, Attempt::new(&fixture.backend, state, role)?));
+    attempts.last_mut().unwrap().1.start(state, owner, program)
+}
+
+fn record_started(state: &mut State, owner: &Owner, role: &str, tree: &Value) -> Result<()> {
+    state.update(owner, |generation| {
+        generation["roles"][role]["tree"] = tree.clone();
+        generation["roles"][role]["state"] = json!("running");
+        Ok(())
+    })
+}
+
+fn wait_ready(
+    fixture: &Fixture,
+    owner: &Owner,
+    role: &str,
+    tree: &Value,
+    budget: Duration,
+) -> Result<()> {
+    let probe = json!({"role":role,"url":fixture.request["authority"][format!("{role}_endpoint")]});
+    readiness::wait(tree, &probe, budget, || owner.check())
 }
 
 fn assert_failure_evidence(fixture: &Fixture, state: &State) -> Result<()> {

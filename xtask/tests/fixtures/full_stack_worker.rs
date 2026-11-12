@@ -69,6 +69,9 @@ fn main() {
     let listener = TcpListener::bind((host.as_str(), port)).unwrap();
     listener.set_nonblocking(true).unwrap();
     loop {
+        if mode == "tree-ready-json" && root.join("api-natural-exit").is_file() {
+            return;
+        }
         if root.join("disable-ready").exists() {
             drop(listener);
             thread::sleep(Duration::from_secs(120));
