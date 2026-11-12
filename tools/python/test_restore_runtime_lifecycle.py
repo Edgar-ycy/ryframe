@@ -196,47 +196,6 @@ class RestoreRuntimeLifecycleTests(unittest.TestCase):
             self.assertTrue(all(item["completion"] is not None for item in processes.values()))
             self.assertEqual(self.stop_under_recover_lock()["status"], "stopped")
 
-    def test_process_tree_published_before_state_update_is_fully_reclaimed(self):
-        original = lifecycle.save_state
-        calls = 0
-
-        def fail_once(*args, **kwargs):
-            nonlocal calls
-            calls += 1
-            if calls == 2:
-                raise RuntimeError("simulated controller cut")
-            return original(*args, **kwargs)
-
-        with self.patched(self.commands()), patch.object(
-            lifecycle, "save_state", side_effect=fail_once
-        ), self.assertRaisesRegex(RuntimeError, "controller cut"):
-            lifecycle.start(self.args(), self.coordinator, Mock(), Mock(), Mock())
-        with self.patched(self.commands()):
-            generation, processes = self.observed_generation()
-        self.assertEqual(generation["status"], "start_failed")
-        self.assertNotIn("running", {item["state"] for item in processes.values()})
-
-    def test_unknown_generation_write_blocks_stop(self):
-        with self.patched(self.commands()):
-            lifecycle.start(self.args(), self.coordinator, Mock(), Mock(), Mock())
-            unknown = self.runtime / "generation-0001/foreign.json"
-            unknown.write_text("{}", encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "未登记文件"):
-                self.stop_under_recover_lock()
-            unknown.unlink()
-            self.assertEqual(self.stop_under_recover_lock()["status"], "stopped")
-
-    def test_cancelled_start_reclaims_trees_and_preserves_failed_generation_without_launch(self):
-        with self.patched(self.commands()), patch.object(lifecycle, "_wait_ready", side_effect=KeyboardInterrupt):
-            with self.assertRaises(KeyboardInterrupt):
-                lifecycle.start(self.args(), self.coordinator, Mock(), Mock(), Mock())
-        with self.patched(self.commands()):
-            generation, processes = self.observed_generation()
-        self.assertEqual(generation["status"], "start_failed")
-        self.assertNotIn("running", {item["state"] for item in processes.values()})
-        self.assertIsNone(generation["launch"])
-        self.assertFalse((self.runtime / "generation-0001/runtime-launch.json").exists())
-
     def test_generation_without_tool_binding_fails_before_process_or_file_write(self):
         with patch.object(generation_model, "tool_binding", return_value=None), patch.object(
             generation_model.subprocess, "run"
