@@ -33,6 +33,23 @@ mod object_write;
 
 use inputs::Snapshot;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    Before,
+    After,
+    FailureAfter,
+}
+
+impl Phase {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Before => "before",
+            Self::After => "after",
+            Self::FailureAfter => "failure-after",
+        }
+    }
+}
+
 pub(super) fn run(backend: &Path, request: &Value) -> Result<Value> {
     let before = Snapshot::read(backend, request, true)?;
     let output = before.output(backend)?;
@@ -177,20 +194,21 @@ impl Execution<'_> {
             self.target.initialized(),
         )?;
         let runtime = || self.snapshot.check_runtime(&checkpoint()?);
-        self.capture("before", &before, &runtime, evidence)?;
-        let result = (|| {
-            self.write(tasks, &runtime)?;
-            inventory::verify_artifacts(&self.snapshot.root, &self.snapshot.manifest.value)?;
-            self.capture("after", &after, &runtime, evidence)
-        })();
-        if let Err(error) = result {
-            let checked = if evidence.contains_key("after") {
-                Ok(())
-            } else {
-                self.capture("failure-after", &after, &runtime, evidence)
-            };
-            return combine(Err(error), checked);
-        }
+        capture_around_write(
+            |phase, evidence| {
+                let expected = if phase == Phase::Before {
+                    &before
+                } else {
+                    &after
+                };
+                self.capture(phase, expected, &runtime, evidence)
+            },
+            || {
+                self.write(tasks, &runtime)?;
+                inventory::verify_artifacts(&self.snapshot.root, &self.snapshot.manifest.value)
+            },
+            evidence,
+        )?;
         runtime()?;
         let final_input = Snapshot::read(self.stage.backend, request, true)?;
         if final_input.bindings() != self.snapshot.bindings() {
@@ -201,7 +219,7 @@ impl Execution<'_> {
 
     fn capture(
         &self,
-        phase: &str,
+        phase: Phase,
         expected: &Value,
         runtime: &dyn Fn() -> Result<()>,
         evidence: &mut Map<String, Value>,
@@ -259,6 +277,21 @@ impl Execution<'_> {
             }
         }
         Ok(())
+    }
+}
+
+fn capture_around_write(
+    capture: impl Fn(Phase, &mut Map<String, Value>) -> Result<()>,
+    write: impl FnOnce() -> Result<()>,
+    evidence: &mut Map<String, Value>,
+) -> Result<()> {
+    capture(Phase::Before, evidence)?;
+    let result = write().and_then(|()| capture(Phase::After, evidence));
+    match result {
+        Err(error) if !evidence.contains_key(Phase::After.name()) => {
+            combine(Err(error), capture(Phase::FailureAfter, evidence))
+        }
+        result => result,
     }
 }
 

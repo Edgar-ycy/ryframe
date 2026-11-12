@@ -14,6 +14,7 @@ const SCOPE: &str = "fixture-target";
 const ENDPOINT: &str = "http://127.0.0.1:29600";
 const REGION: &str = "us-east-1";
 const KEY: &str = "fixture-target/tenant/item";
+const MISSING_KEY: &str = "fixture-target/tenant/missing";
 const ETAG: &str = "\"fixture-etag\"";
 const BODY: &[u8] = b"retained full object";
 
@@ -26,11 +27,11 @@ struct Fixture {
     environment: BTreeMap<String, String>,
     manifest: Value,
     expected: Value,
-    after: bool,
+    phase: Phase,
 }
 
 impl Fixture {
-    fn new(after: bool) -> Self {
+    fn new(phase: Phase) -> Self {
         let temp = tempfile::tempdir_in(crate::workspace::root_dir()).unwrap();
         let backend = crate::recovery::fixture_control::portable_path(
             &fs::canonicalize(temp.path()).unwrap(),
@@ -47,7 +48,7 @@ impl Fixture {
             "endpoint":ENDPOINT,"region":REGION,"access_key":"fixture-access","secret_key":"fixture-secret"}}});
         let directory = local.join("phase");
         fs::create_dir(&directory).unwrap();
-        let (manifest, expected) = manifest_and_image(after);
+        let (manifest, expected) = manifest_and_image(!matches!(phase, Phase::Before));
         Self {
             _temp: temp,
             backend,
@@ -56,9 +57,26 @@ impl Fixture {
             target,
             manifest,
             expected,
-            after,
+            phase,
             environment: BTreeMap::from([("APP_ENV".into(), "test".into())]),
         }
+    }
+
+    fn with_missing_planned_object(mut self) -> Self {
+        let bucket = self.manifest["objects"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|bucket| bucket["bucket"] == "uploads")
+            .unwrap();
+        bucket["entries"].as_array_mut().unwrap().push(json!({
+            "key":"fixture-source/tenant/missing","bytes":BODY.len(),"sha256":sha256_hex(BODY)
+        }));
+        self.expected["uploads"]["keys"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!(MISSING_KEY));
+        self
     }
 
     fn capture(
@@ -86,7 +104,7 @@ impl Fixture {
                 plan_sha256: &"a".repeat(64),
                 generation_sha256: &"b".repeat(64),
             },
-            self.after,
+            self.phase,
             transport,
             checkpoint,
         )
@@ -122,12 +140,15 @@ fn response(bytes: usize) -> Value {
         "LastModified":"2026-11-09T00:00:00+00:00"})
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Fault {
     None,
     InitialExtra,
+    InitialOwnerMissing,
+    ChangedOwner,
     IndependentHead,
     FinalListing,
+    PlannedKeyAppears,
 }
 
 struct Fake {
@@ -154,12 +175,18 @@ impl Fake {
         let count = lists.entry(bucket.to_owned()).or_default();
         *count += 1;
         let mut keys = vec![json!({"Key":format!("{SCOPE}/.ryframe-owner")})];
+        if self.fault == Fault::InitialOwnerMissing && bucket == "imports" && *count == 1 {
+            keys.clear();
+        }
         if self.after && bucket == "uploads" {
             keys.push(json!({"Key":KEY}));
             if (self.fault == Fault::InitialExtra && *count == 1)
                 || (self.fault == Fault::FinalListing && *count == 3)
             {
                 keys.push(json!({"Key":format!("{SCOPE}/extra")}));
+            }
+            if self.fault == Fault::PlannedKeyAppears && *count == 3 {
+                keys.push(json!({"Key":MISSING_KEY}));
             }
         }
         json!({"IsTruncated":false,"Contents":keys})
@@ -208,7 +235,10 @@ impl Transport for Fake {
                 if key == format!("{SCOPE}/.ryframe-owner") {
                     assert!(if_match.is_none());
                     assert_eq!(max_bytes, 4096);
-                    let owner = owner(&request.bucket);
+                    let mut owner = owner(&request.bucket);
+                    if self.fault == Fault::ChangedOwner && request.bucket == "exports" {
+                        owner = owner.replace(SCOPE, "another-scope");
+                    }
                     fs::write(destination, owner.as_bytes())?;
                     Ok(response(owner.len()))
                 } else {
@@ -227,14 +257,14 @@ impl Transport for Fake {
 
 #[test]
 fn before_uses_owner_only_and_per_read_checkpoint() {
-    let fixture = Fixture::new(false);
+    let fixture = Fixture::new(Phase::Before);
     let fake = Fake::new(false, Fault::None);
     let (image, evidence) = fixture.capture(&fake, &|| Ok(())).unwrap();
     assert_eq!(image, fixture.expected);
     assert!(evidence.is_empty());
     assert_eq!(fake.downloads.load(Ordering::SeqCst), 0);
 
-    let fixture = Fixture::new(false);
+    let fixture = Fixture::new(Phase::Before);
     let calls = AtomicUsize::new(0);
     let checkpoint = || {
         let call = calls.fetch_add(1, Ordering::SeqCst);
@@ -254,7 +284,7 @@ fn before_uses_owner_only_and_per_read_checkpoint() {
 
 #[test]
 fn captures_full_payload_and_binds_observation_and_independent_head_receipts() {
-    let fixture = Fixture::new(true);
+    let fixture = Fixture::new(Phase::After);
     let fake = Fake::new(true, Fault::None);
     let (image, evidence) = fixture.capture(&fake, &|| Ok(())).unwrap();
     assert_eq!(image, fixture.expected);
@@ -286,7 +316,7 @@ fn unknown_initial_key_or_late_drift_cannot_return_success() {
         (Fault::IndependentHead, 1, false),
         (Fault::FinalListing, 1, true),
     ] {
-        let fixture = Fixture::new(true);
+        let fixture = Fixture::new(Phase::After);
         let fake = Fake::new(true, fault);
         assert!(fixture.capture(&fake, &|| Ok(())).is_err());
         assert_eq!(fake.downloads.load(Ordering::SeqCst), downloads);
@@ -303,5 +333,97 @@ fn unknown_initial_key_or_late_drift_cannot_return_success() {
                 BODY
             );
         }
+    }
+}
+
+#[test]
+fn failure_after_captures_all_five_buckets_with_zero_or_one_of_two_planned_objects() {
+    for (present, count) in [(false, 0), (true, 1)] {
+        let fixture = Fixture::new(Phase::FailureAfter).with_missing_planned_object();
+        let fake = Fake::new(present, Fault::None);
+        let (image, evidence) = fixture.capture(&fake, &|| Ok(())).unwrap();
+        let (_, expected_actual) = manifest_and_image(present);
+        assert_eq!(image, expected_actual);
+        assert_ne!(image, fixture.expected);
+        assert_eq!(fake.downloads.load(Ordering::SeqCst), count);
+        assert_eq!(fake.heads.load(Ordering::SeqCst), count * 3);
+        assert_eq!(
+            *fake.lists.lock().unwrap(),
+            BUCKETS
+                .into_iter()
+                .map(|bucket| (bucket.to_owned(), 3))
+                .collect::<BTreeMap<_, _>>()
+        );
+
+        let final_head = fixture.directory.join("object-heads/verified.json");
+        let observation = fixture.directory.join("object-uploads-0/observation.json");
+        let mut bindings = Vec::new();
+        if present {
+            assert_eq!(
+                fs::read(observation.with_file_name("object.bin")).unwrap(),
+                BODY
+            );
+            assert_eq!(
+                document::read(&observation).unwrap()["evidence"]["object.bin"],
+                json!({"bytes":BODY.len(),"sha256":sha256_hex(BODY)})
+            );
+            bindings.push(common::binding(&observation).unwrap());
+        } else {
+            assert!(!observation.exists());
+        }
+        assert!(!fixture.directory.join("object-uploads-1").exists());
+        bindings.push(common::binding(&final_head).unwrap());
+        assert_eq!(evidence, bindings);
+        let verified = document::read(&final_head).unwrap();
+        let expected_keys = BUCKETS
+            .into_iter()
+            .map(|bucket| (bucket, &expected_actual[bucket]["keys"]))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(verified["keys"], json!(expected_keys));
+        assert_eq!(verified["objects"].as_array().unwrap().len(), count);
+        assert_eq!(verified["remote_writes"], 0);
+    }
+}
+
+#[test]
+fn successful_after_still_rejects_missing_planned_objects_before_business_reads() {
+    let fixture = Fixture::new(Phase::After).with_missing_planned_object();
+    let fake = Fake::new(true, Fault::None);
+    assert!(fixture.capture(&fake, &|| Ok(())).is_err());
+    assert_eq!(fake.heads.load(Ordering::SeqCst), 0);
+    assert_eq!(fake.downloads.load(Ordering::SeqCst), 0);
+    assert!(
+        !fixture
+            .directory
+            .join("object-heads/verified.json")
+            .exists()
+    );
+}
+
+#[test]
+fn failure_after_rejects_owner_changes_unknown_keys_and_observation_drift() {
+    for (fault, downloads, verified) in [
+        (Fault::InitialExtra, 0, false),
+        (Fault::InitialOwnerMissing, 0, false),
+        (Fault::ChangedOwner, 0, false),
+        (Fault::IndependentHead, 1, false),
+        (Fault::PlannedKeyAppears, 1, true),
+    ] {
+        let fixture = Fixture::new(Phase::FailureAfter).with_missing_planned_object();
+        let fake = Fake::new(true, fault);
+        assert!(fixture.capture(&fake, &|| Ok(())).is_err(), "{fault:?}");
+        assert_eq!(
+            fake.downloads.load(Ordering::SeqCst),
+            downloads,
+            "{fault:?}"
+        );
+        assert_eq!(
+            fixture
+                .directory
+                .join("object-heads/verified.json")
+                .exists(),
+            verified,
+            "{fault:?}"
+        );
     }
 }

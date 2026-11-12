@@ -3,7 +3,7 @@ use std::path::Path;
 
 use serde_json::{Map, Value, json};
 
-use super::{Execution, combine, database_images, native, object_images, text};
+use super::{Execution, Phase, combine, database_images, native, object_images, text};
 use crate::{Result, recovery::inputs::document};
 use native::{
     digest::plan_hash, export::transport::SystemTransport, resources::common,
@@ -12,19 +12,35 @@ use native::{
 
 pub(super) fn capture(
     window: &Execution<'_>,
-    phase: &str,
+    phase: Phase,
     expected: &Value,
     checkpoint: &(dyn Fn() -> Result<()> + Sync),
     evidence: &mut Map<String, Value>,
 ) -> Result<()> {
     let side = text(&window.snapshot.target.value["target_side"])?;
     let backend = window.stage.backend;
-    let directory = window.stage.work.join(format!("restore-{side}-{phase}"));
-    common::ensure_new_directory(backend, &directory, "参考恢复资源像目录")?;
+    let directory = window
+        .stage
+        .work
+        .join(format!("restore-{side}-{}", phase.name()));
+    record(backend, &directory, phase, evidence, || {
+        observe(window, phase, &directory, expected, checkpoint)
+    })
+}
+
+fn record(
+    backend: &Path,
+    directory: &Path,
+    phase: Phase,
+    evidence: &mut Map<String, Value>,
+    observe: impl FnOnce() -> Result<(bool, Value)>,
+) -> Result<()> {
+    common::ensure_new_directory(backend, directory, "参考恢复资源像目录")?;
+    let name = phase.name();
     let result = (|| {
-        let (matches, binding) = observe(window, phase, &directory, expected, checkpoint)?;
-        evidence.insert(phase.to_owned(), binding);
-        if !matches {
+        let (matches, binding) = observe()?;
+        evidence.insert(name.to_owned(), binding);
+        if !matches && phase != Phase::FailureAfter {
             return Err("恢复完整资源像与预期不同，保留全部采集结果".into());
         }
         Ok(())
@@ -33,10 +49,10 @@ pub(super) fn capture(
         let saved = publish(
             backend,
             &directory.join("failure.json"),
-            &json!({"phase":phase,"error_type":"ReferenceResourceImageFailure"}),
+            &json!({"phase":name,"error_type":"ReferenceResourceImageFailure"}),
         )
         .map(|binding| {
-            evidence.insert(format!("{phase}-failure"), binding);
+            evidence.insert(format!("{name}-failure"), binding);
         });
         return combine(Err(error), saved);
     }
@@ -45,7 +61,7 @@ pub(super) fn capture(
 
 fn observe(
     window: &Execution<'_>,
-    phase: &str,
+    phase: Phase,
     directory: &Path,
     expected: &Value,
     checkpoint: &(dyn Fn() -> Result<()> + Sync),
@@ -84,7 +100,7 @@ fn observe(
             plan_sha256: &plan_hash(reference)?,
             generation_sha256: &plan_hash(&initialized["generation"])?,
         },
-        phase != "before",
+        phase,
         &SystemTransport,
         checkpoint,
     )?;
@@ -103,7 +119,7 @@ fn observe(
     let actual = json!({"databases":database.observations,"objects":objects,"redis":redis});
     let matches = actual == *expected;
     let image = json!({
-        "format_version":1,"kind":"restore-reference-resource-image","phase":phase,
+        "format_version":1,"kind":"restore-reference-resource-image","phase":phase.name(),
         "target_plan":document::binding(&snapshot.target),"inventory":database.receipt,
         "object_observations":object_proofs,"image":actual,"expected_sha256":plan_hash(expected)?,
         "matches_expected":matches,
@@ -123,3 +139,7 @@ fn publish(backend: &Path, path: &Path, value: &Value) -> Result<Value> {
     published.assert_unchanged()?;
     Ok(document::binding(&published))
 }
+
+#[cfg(test)]
+#[path = "../../../../../../tests/unit/recovery/source/evidence/reference_workflow/restore/images_tests.rs"]
+mod tests;

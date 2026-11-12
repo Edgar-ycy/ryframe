@@ -6,6 +6,7 @@ use std::{
 
 use serde_json::{Value, json};
 
+use super::Phase;
 use crate::{
     Result,
     recovery::{
@@ -43,16 +44,15 @@ pub(super) struct Observe<'a> {
 /// 目录由父控制器创建，checkpoint 必须可供原生最终 HEAD 的各个线程使用。
 pub(super) fn capture<T: Transport + Sync>(
     request: &Observe<'_>,
-    after: bool,
+    phase: Phase,
     transport: &T,
     checkpoint: &(dyn Fn() -> Result<()> + Sync),
 ) -> Result<(Value, Vec<Value>)> {
     checkpoint()?;
     request.validate()?;
-    let result = if after {
-        capture_after(request, transport, checkpoint)
-    } else {
-        capture_before(request, transport, checkpoint)
+    let result = match phase {
+        Phase::Before => capture_before(request, transport, checkpoint),
+        Phase::After | Phase::FailureAfter => capture_after(request, phase, transport, checkpoint),
     };
     checked(result, checkpoint())
 }
@@ -139,13 +139,14 @@ fn checked<T>(result: Result<T>, checkpoint: Result<()>) -> Result<T> {
 
 fn capture_after<T: Transport + Sync>(
     request: &Observe<'_>,
+    phase: Phase,
     transport: &T,
     checkpoint: &(dyn Fn() -> Result<()> + Sync),
 ) -> Result<(Value, Vec<Value>)> {
     let backend = request.storage.backend;
     binding::digest(&json!(request.plan_sha256), "参考恢复计划摘要")?;
     binding::digest(&json!(request.generation_sha256), "参考恢复代次摘要")?;
-    let entries = entries(request)?;
+    let mut entries = entries(request)?;
     let reads = ReadWindow::new(
         backend,
         request.configuration_root,
@@ -156,7 +157,10 @@ fn capture_after<T: Transport + Sync>(
         checkpoint,
     )?;
     let image = bucket_image(&reads, "before")?;
-    if image != *request.expected {
+    if phase == Phase::FailureAfter {
+        let present = failure_keys(request, &image)?;
+        entries.retain(|entry| present[entry.bucket].contains(entry.key.as_str()));
+    } else if image != *request.expected {
         return Err("参考恢复后五桶完整范围或 ownership 不符".into());
     }
     let captures = capture_entries(request, entries, transport, checkpoint)?;
@@ -191,6 +195,34 @@ fn capture_after<T: Transport + Sync>(
         common::bound_file(backend, proof, "参考恢复对象证明")?;
     }
     Ok((image, evidence))
+}
+
+fn failure_keys<'a>(
+    request: &Observe<'_>,
+    image: &'a Value,
+) -> Result<BTreeMap<&'static str, BTreeSet<&'a str>>> {
+    let owner_key = format!("{}/.ryframe-owner", request.scope);
+    let mut present = BTreeMap::new();
+    for bucket in BUCKETS {
+        let observed = &image[bucket];
+        let expected = &request.expected[bucket];
+        let observed_keys = image_keys(observed)?;
+        if observed["owner"] != expected["owner"]
+            || !observed_keys.contains(owner_key.as_str())
+            || !observed_keys.is_subset(&image_keys(expected)?)
+        {
+            return Err("参考恢复失败后五桶 ownership 或已登记键范围不符，保留原始观察".into());
+        }
+        present.insert(bucket, observed_keys);
+    }
+    Ok(present)
+}
+
+fn image_keys(bucket: &Value) -> Result<BTreeSet<&str>> {
+    document::array(&bucket["keys"], "参考恢复桶对象键")?
+        .iter()
+        .map(|key| document::text(key, "参考恢复对象键"))
+        .collect()
 }
 
 fn bucket_image<T: Transport>(reads: &ReadWindow<'_, T>, phase: &str) -> Result<Value> {

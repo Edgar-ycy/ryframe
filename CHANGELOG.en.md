@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- After a partial reference restore fails, the after-image records the planned objects actually present across the five buckets and their payload proofs, alongside the observed state of the four databases and Redis, the original failure, and replay protection.
+
 - Reference dataset preparation uses the Rust stage controller and shared timeout validation. The old Python execution branch and its private dispatch operations have been removed.
 
 - Ordinary recovery uses native frontend build receipts and artifact inventories directly. Retire the legacy Python receipt and origin adapters. The frontend consumer contract continues to verify its fixed tool, sources, and files.
