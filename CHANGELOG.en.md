@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Lock dependencies for the daily Cargo startup, migration, and reset aliases so first runs keep the checkout clean.
+
 - Remove the retired Python host boot proof. The existing Rust recovery commands and regressions cover boot time, original process identity, and invalid receipts.
 
 - Migration lock files end with a single newline, so regeneration produces no blank-line diff when the contents stay the same.

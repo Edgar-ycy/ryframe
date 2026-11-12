@@ -49,18 +49,18 @@ fn daily_cargo_aliases_lock_dependencies_and_isolate_the_runner() {
         );
     }
     for (alias, command) in [
-        ("serve", "run -p ryframe --bin ryframe"),
+        ("serve", "run --locked -p ryframe --bin ryframe"),
         (
             "worker",
-            "run -p ryframe --bin ryframe-worker --no-default-features --features bin-worker",
+            "run --locked -p ryframe --bin ryframe-worker --no-default-features --features bin-worker",
         ),
         (
             "migrate",
-            "run -p ryframe --bin ryframe-migrate --no-default-features --features bin-migrate",
+            "run --locked -p ryframe --bin ryframe-migrate --no-default-features --features bin-migrate",
         ),
         (
             "reset",
-            "run -p ryframe --bin ryframe-reset --no-default-features --features bin-reset",
+            "run --locked -p ryframe --bin ryframe-reset --no-default-features --features bin-reset",
         ),
         (
             "generate",
