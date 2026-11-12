@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove the unused Python workbook parser while preserving the department fixture data and checks.
+
 - Lock dependencies for the daily Cargo startup, migration, and reset aliases so first runs keep the checkout clean.
 
 - Remove the retired Python host boot proof. The existing Rust recovery commands and regressions cover boot time, original process identity, and invalid receipts.

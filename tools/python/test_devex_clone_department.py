@@ -19,7 +19,8 @@ from devex_clone_capture import read_json, write_json
 from devex_clone_run_state import begin, binding, finish, load_state
 from restore_reference_plan import plan_hash
 import test_devex_clone_seed as fixtures
-from xlsx_workbook import SPREADSHEET_NS
+
+SPREADSHEET_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 
 
 class FakeBridge:
