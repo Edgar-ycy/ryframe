@@ -22,12 +22,97 @@ fn direct_verify_stdin_is_bounded_strict_and_rejects_extra_authority() {
         "{{\"format_version\":2,{}",
         &str::from_utf8(&encoded).unwrap()[1..]
     );
-    assert!(read_authority(duplicate.as_bytes()).is_err());
+    let error = read_authority(duplicate.as_bytes())
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("重复 JSON 字段"), "{error}");
     assert!(read_authority([0xff].as_slice()).is_err());
     assert!(read_authority(io::repeat(b' ').take(strict::MAX_JSON_BYTES + 1)).is_err());
-    let mut unbound = value;
-    unbound["target_plan"] = json!("unknown");
-    assert!(read_authority(serde_json::to_vec(&unbound).unwrap().as_slice()).is_err());
+    reject_authority_field("target_plan", json!("unknown"), "恢复请求权威字段");
+}
+
+fn reject_authority_field(field: &str, input: Value, expected: &str) {
+    let mut value = authority();
+    value[field] = input;
+    let encoded = serde_json::to_vec(&value).unwrap();
+    let error = read_authority(encoded.as_slice())
+        .expect_err(field)
+        .to_string();
+    assert!(
+        error.contains(expected),
+        "{field}={}: {error}",
+        value[field]
+    );
+}
+
+#[test]
+fn direct_verify_stdin_checks_identifier_and_timestamp_boundaries() {
+    for (field, input) in [
+        ("restore_id", format!("a{}", "_".repeat(63))),
+        ("backup_id", format!("b{}", "-".repeat(63))),
+        ("scope_id", "a1".into()),
+        ("scope_id", format!("a{}z", "_".repeat(46))),
+    ] {
+        let mut value = authority();
+        value[field] = json!(input);
+        assert_eq!(
+            read_authority(serde_json::to_vec(&value).unwrap().as_slice()).unwrap(),
+            value,
+            "{field}"
+        );
+    }
+
+    for (field, input) in [
+        ("restore_id", "_restore".into()),
+        ("restore_id", "Restore".into()),
+        ("restore_id", "restore.one".into()),
+        ("restore_id", "a".repeat(65)),
+        ("backup_id", "-backup".into()),
+    ] {
+        reject_authority_field(field, json!(input), "计划资源名称无效");
+    }
+    for input in [
+        "a".into(),
+        "_scope".into(),
+        "scope_".into(),
+        "Scope".into(),
+        "scope.one".into(),
+        format!("a{}z", "_".repeat(47)),
+    ] {
+        reject_authority_field("scope_id", json!(input), "演练 scope 无效");
+    }
+    reject_authority_field(
+        "data_verified_at",
+        json!("2026-09-06T08:00:00"),
+        "恢复请求校验时间不是有效时间或缺少时区",
+    );
+}
+
+#[test]
+fn direct_verify_stdin_requires_canonical_loopback_endpoints_with_distinct_ports() {
+    let loopback = "恢复角色端点只接受明确的本机 loopback 端点";
+    let explicit = "恢复角色端点必须使用显式端口和精确路径";
+    let canonical = "恢复角色端点必须规范且使用互异显式端口";
+    for (field, input, expected) in [
+        ("api_endpoint", "http://localhost:18080/readyz", loopback),
+        (
+            "api_endpoint",
+            "http://user@127.0.0.1:18080/readyz",
+            loopback,
+        ),
+        (
+            "api_endpoint",
+            "http://127.0.0.1:18080/readyz?ok=1",
+            loopback,
+        ),
+        ("api_endpoint", "http://127.0.0.1:18080/", explicit),
+        ("api_endpoint", "http://127.0.0.1/readyz", explicit),
+        ("api_endpoint", "http://127.0.0.1:018080/readyz", canonical),
+        ("worker_endpoint", "http://[::1]:18080/readyz", canonical),
+        ("frontend_endpoint", "http://127.0.0.1:14174/", explicit),
+    ] {
+        reject_authority_field(field, json!(input), expected);
+    }
 }
 
 #[test]
@@ -62,14 +147,27 @@ fn direct_verify_binds_explicit_paths_and_adapter_before_network() {
 }
 
 #[test]
-fn only_the_exact_legacy_source_selects_the_b0_frontend_receipt() {
+fn direct_verify_stdin_pairs_backend_sources_and_only_selects_frozen_b0() {
+    reject_authority_field(
+        "backend_execution_sha",
+        json!("e".repeat(40)),
+        "恢复请求适配关系无效",
+    );
+    reject_authority_field(
+        "backend_adapter_contract",
+        json!("legacy-stable-readiness-b0-v1"),
+        "恢复请求适配关系无效",
+    );
+
     let mut value = authority();
     value["backend_adapter_contract"] = json!("legacy-stable-readiness-b0-v1");
     value["backend_product_sha"] = json!("815c5eafb09d4b493319d255fb7ab88ddd02c8b6");
     value["backend_execution_sha"] = json!("c05114bcdf5c369cd74087db6317ce3c8f89bee8");
     assert!(!b0::matches(&value));
     value["frontend_sha"] = json!("0087ea2ecf62530d042b9e52f5c950fb34c66d78");
-    assert!(b0::matches(&value));
+    let parsed = read_authority(serde_json::to_vec(&value).unwrap().as_slice()).unwrap();
+    assert_eq!(parsed, value);
+    assert!(b0::matches(&parsed));
     value["backend_execution_sha"] = json!("e".repeat(40));
     assert!(!b0::matches(&value));
 }
@@ -228,6 +326,63 @@ mod online_probes {
         ] {
             exercise(change);
         }
+    }
+
+    #[test]
+    fn process_observation_rejects_receipt_and_worker_artifact_drift() {
+        let root = crate::workspace::root_dir();
+        let local = root.join(".local-tests");
+        fs::create_dir_all(&local).unwrap();
+        let directory = tempfile::tempdir_in(local).unwrap();
+        let listeners = [(); 3].map(|()| TcpListener::bind("127.0.0.1:0").unwrap());
+        let [api, worker, frontend] = listeners
+            .each_ref()
+            .map(|listener| listener.local_addr().unwrap());
+        let identity = common::process_identity(std::process::id())
+            .unwrap()
+            .unwrap();
+        let runtime = runtime_fixture(
+            &root,
+            directory.path(),
+            json!({"api":format!("http://{api}/readyz"),
+                "worker":format!("http://{worker}/readyz"),"frontend":format!("http://{frontend}")}),
+            &identity,
+            &json!("process-drift"),
+        );
+        let commands = json!({"frontend":[identity["executable"]]});
+        observe_processes(&runtime, &commands, &mut Inputs::new(&root)).unwrap();
+        let reject = |candidate: &Value, expected: &str| {
+            let result = observe_processes(candidate, &commands, &mut Inputs::new(&root));
+            let error = result.err().expect("必须拒绝恢复进程输入漂移").to_string();
+            assert!(error.contains(expected), "{error}");
+        };
+        for role in ["api", "frontend"] {
+            let receipt = directory.path().join(format!("{role}.json"));
+            let original = fs::read(&receipt).unwrap();
+            let mut changed = original.clone();
+            changed.push(b' ');
+            fs::write(&receipt, &changed).unwrap();
+            reject(&runtime, "进程收据摘要或创建身份不同");
+            assert_eq!(fs::read(&receipt).unwrap(), changed);
+            fs::write(&receipt, original).unwrap();
+        }
+        let mut changed = runtime.clone();
+        changed["backend"]["artifacts"]["worker"]["sha256"] = json!("0".repeat(64));
+        reject(&changed, "未运行登记的构建产物");
+        let mut changed = runtime;
+        let bytes = changed["backend"]["artifacts"]["worker"]["bytes"]
+            .as_u64()
+            .unwrap();
+        changed["backend"]["artifacts"]["worker"]["bytes"] = json!(bytes + 1);
+        reject(&changed, "未运行登记的构建产物");
+
+        let receipt = directory.path().join("api.json");
+        let mut extra = strict::read(&receipt).unwrap();
+        extra["extra"] = json!(true);
+        fs::write(&receipt, serde_json::to_vec(&extra).unwrap()).unwrap();
+        let saved = document::read(&receipt, &root, "探针进程收据").unwrap();
+        changed["processes"]["api"]["receipt_sha256"] = json!(saved.sha256());
+        reject(&changed, "恢复产品进程收据字段缺失或包含未知字段");
     }
 
     fn exercise(change: DuringProbe) {

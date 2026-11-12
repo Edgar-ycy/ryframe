@@ -1,9 +1,6 @@
 import contextlib
 import copy
-import io
 import json
-import os
-import shutil
 import subprocess
 import sys
 import unittest
@@ -17,7 +14,6 @@ import restore_runtime
 import restore_runtime_launch
 import restore_runtime_evidence
 import source_inventory
-from artifact_digests import filesystem_path
 from workspace_directory import WorkspaceDirectory
 from frontend_receipt_fixture import prepare_frontend, frontend_receipt as frontend_receipt_value
 
@@ -32,13 +28,6 @@ READY = {"status": "ready", "mysql": "up", "redis": "optional_degraded", "object
 
 
 class RestoreRuntimeTests(unittest.TestCase):
-    def test_native_probe_requires_bound_coordinator_without_compilation_fallback(self):
-        with patch.object(restore_runtime, "tool_binding", return_value=None), patch.object(
-            restore_runtime, "native_invoke"
-        ) as invoke, self.assertRaisesRegex(ValueError, "工具绑定"):
-            restore_runtime._probe_api("http://127.0.0.1:1/readyz")
-        invoke.assert_not_called()
-
     def setUp(self):
         self.enterContext(
             patch.object(
@@ -265,202 +254,6 @@ class RestoreRuntimeTests(unittest.TestCase):
             )
         return authority, receipt, bindings_path
 
-    def test_json_documents_are_regular_bounded_utf8_strict_and_stable(self):
-        document = self.root / "document.json"
-        document.write_text('{"value": 1}', encoding="utf-8")
-        observed = restore_runtime.read_json_document(document)
-        self.assertEqual(observed.value, {"value": 1})
-        self.assertEqual(observed.sha256, restore_build.file_digest(document)["sha256"])
-        invalid = {
-            "empty": b"",
-            "utf8": b'{"value":"\xff"}',
-            "duplicate": b'{"value":1,"value":2}',
-            "constant": b'{"value":NaN}',
-            "array": b"[]",
-        }
-        for name, raw in invalid.items():
-            with self.subTest(name=name):
-                path = self.root / f"{name}.json"
-                path.write_bytes(raw)
-                with self.assertRaises(ValueError):
-                    restore_runtime.read_json_document(path)
-        oversized = self.root / "oversized.json"
-        with oversized.open("wb") as stream:
-            stream.truncate(restore_runtime_evidence.MAX_JSON_BYTES + 1)
-        with self.assertRaisesRegex(ValueError, "超过 16 MiB"):
-            restore_runtime.read_json_document(oversized)
-        with self.assertRaisesRegex(ValueError, "普通文件"):
-            restore_runtime.read_json_document(self.root)
-        document.write_text('{"value": 2}', encoding="utf-8")
-        with self.assertRaisesRegex(ValueError, "被替换或修改"):
-            observed.assert_unchanged()
-
-    def test_json_documents_reject_links_and_reparse_points(self):
-        document = self.root / "document.json"
-        document.write_text("{}", encoding="utf-8")
-        with patch.object(restore_runtime_evidence, "is_reparse", return_value=True), self.assertRaisesRegex(
-            ValueError, "重解析点"
-        ):
-            restore_runtime.read_json_document(document)
-        link = self.root / "link.json"
-        try:
-            link.symlink_to(document)
-        except OSError:
-            return
-        self.addCleanup(link.unlink)
-        with self.assertRaisesRegex(ValueError, "符号链接"):
-            restore_runtime.read_json_document(link)
-
-    def test_json_documents_support_paths_beyond_max_path(self):
-        deep = self.root
-        while len(str(deep)) < 250:
-            deep = deep / ("d" * 40)
-        os.makedirs(filesystem_path(deep), exist_ok=True)
-        self.addCleanup(lambda: shutil.rmtree(filesystem_path(deep), ignore_errors=True))
-        document = deep / "document.json"
-        with open(filesystem_path(document), "wb") as stream:
-            stream.write(b'{"value": 7}')
-        self.assertGreater(len(str(document)), 260)
-        observed = restore_runtime.read_json_document(document)
-        self.assertEqual(observed.value, {"value": 7})
-        self.assertEqual(restore_runtime_evidence.artifact_snapshot(document).bytes, 12)
-
-    def test_authoritative_context_has_exact_fields_and_strict_endpoints(self):
-        expected = self.authority()
-        self.assertEqual(restore_runtime_evidence.read_authority(io.StringIO(json.dumps(expected))), expected)
-        valid = [
-            {**expected, "restore_id": "a" + "_" * 63},
-            {**expected, "backup_id": "b" + "-" * 63},
-            {**expected, "scope_id": "a1"},
-            {**expected, "scope_id": "a" + "_" * 46 + "z"},
-            {
-                **expected,
-                "backend_execution_sha": "e" * 40,
-                "backend_adapter_contract": "legacy-stable-readiness-b0-v1",
-            },
-        ]
-        for value in valid:
-            with self.subTest(valid=value):
-                self.assertEqual(restore_runtime_evidence.read_authority(io.StringIO(json.dumps(value))), value)
-        invalid = [
-            {**expected, "extra": True},
-            {**expected, "restore_id": "_restore"},
-            {**expected, "restore_id": "Restore"},
-            {**expected, "restore_id": "restore.one"},
-            {**expected, "restore_id": "a" * 65},
-            {**expected, "backup_id": "-backup"},
-            {**expected, "scope_id": "a"},
-            {**expected, "scope_id": "_scope"},
-            {**expected, "scope_id": "scope_"},
-            {**expected, "scope_id": "Scope"},
-            {**expected, "scope_id": "scope.one"},
-            {**expected, "scope_id": "a" + "_" * 47 + "z"},
-            {**expected, "data_verified_at": "2026-09-06T08:00:00"},
-            {**expected, "api_endpoint": "http://localhost:18080/readyz"},
-            {**expected, "api_endpoint": "http://user@127.0.0.1:18080/readyz"},
-            {**expected, "api_endpoint": "http://127.0.0.1:18080/readyz?ok=1"},
-            {**expected, "api_endpoint": "http://127.0.0.1:18080/"},
-            {**expected, "api_endpoint": "http://127.0.0.1/readyz"},
-            {**expected, "worker_endpoint": expected["api_endpoint"]},
-            {**expected, "frontend_endpoint": "http://127.0.0.1:14174/"},
-            {**expected, "backend_execution_sha": "e" * 40},
-            {**expected, "backend_adapter_contract": "legacy-stable-readiness-b0-v1"},
-        ]
-        for value in invalid:
-            with self.subTest(value=value), self.assertRaises(ValueError):
-                restore_runtime_evidence.read_authority(io.StringIO(json.dumps(value)))
-        with self.assertRaisesRegex(ValueError, "重复字段"):
-            restore_runtime_evidence.read_authority(io.StringIO('{"format_version":1,"format_version":1}'))
-
-    def test_bindings_use_the_same_identifier_boundaries_as_authority(self):
-        authority, _build, _frontend, bindings_path = self.prepare()
-        bindings = restore_runtime_evidence.read_json(bindings_path)
-        valid = [
-            ("id", "a" + "_" * 63),
-            ("backup_id", "b" + "-" * 63),
-            ("scope_id", "a" + "_" * 46 + "z"),
-        ]
-        for field, value in valid:
-            candidate = copy.deepcopy(bindings)
-            candidate["record"]["plan"][field] = value
-            if field == "backup_id":
-                candidate["manifest"]["id"] = value
-            with self.subTest(valid_field=field):
-                restore_runtime.require_bindings(candidate)
-        invalid = [
-            ("id", "_restore"),
-            ("backup_id", "backup.one"),
-            ("scope_id", "a"),
-            ("scope_id", "scope-"),
-            ("scope_id", "a" * 49),
-        ]
-        for field, value in invalid:
-            candidate = copy.deepcopy(bindings)
-            candidate["record"]["plan"][field] = value
-            if field == "backup_id":
-                candidate["manifest"]["id"] = value
-            with self.subTest(invalid_field=field), self.assertRaises(ValueError):
-                restore_runtime.require_bindings(candidate)
-
-    def test_bind_records_reviewable_paths_and_every_authoritative_field(self):
-        authority, receipt, bindings = self.bind_receipt()
-        self.assertEqual(receipt["paths"]["bindings"], str(bindings))
-        self.assertEqual(receipt["paths"]["launch"], str(self.launch_path))
-        self.assertEqual(receipt["format_version"], 3)
-        self.assertEqual(receipt["restore"]["data_verified_at"], authority["data_verified_at"])
-        self.assertEqual(
-            receipt["source"],
-            {
-                "backup_source_sha": authority["backup_source_sha"],
-                "backend_product_sha": authority["backend_product_sha"],
-                "backend_execution_sha": authority["backend_execution_sha"],
-                "backend_adapter_contract": authority["backend_adapter_contract"],
-                "frontend_sha": authority["frontend_sha"],
-            },
-        )
-        self.assertEqual(
-            receipt["endpoints"],
-            {
-                "api": authority["api_endpoint"],
-                "worker": authority["worker_endpoint"],
-                "frontend": authority["frontend_endpoint"],
-            },
-        )
-        for role in ("api", "worker", "frontend"):
-            self.assertEqual(receipt["processes"][role]["receipt_path"], str(self.root / f"{role}.json"))
-
-    def test_runtime_and_process_receipts_reject_extra_fields_before_probes(self):
-        authority, receipt, bindings = self.bind_receipt()
-        changed = {**receipt, "extra": True}
-        with patch.object(restore_runtime, "_probe_api") as probe, self.assertRaisesRegex(ValueError, "字段必须精确"):
-            restore_runtime.verify(changed, self.backend, self.backend, self.frontend, bindings, authority, "f" * 64)
-        probe.assert_not_called()
-        process_path = self.root / "api.json"
-        process = restore_runtime_evidence.read_json(process_path)
-        self.write_json(process_path, {**process, "extra": True})
-        with self.runtime_patches(fake_probes=True), self.assertRaises(ValueError):
-            restore_runtime.verify(receipt, self.backend, self.backend, self.frontend, bindings, authority, "f" * 64)
-
-    def test_tampered_bindings_build_frontend_process_and_dist_are_rejected(self):
-        authority, receipt, bindings = self.bind_receipt()
-        paths = [
-            bindings,
-            Path(receipt["paths"]["backend_build"]),
-            Path(receipt["paths"]["frontend_build"]),
-            Path(receipt["processes"]["api"]["receipt_path"]),
-            Path(receipt["processes"]["frontend"]["receipt_path"]),
-            Path(receipt["paths"]["launch"]),
-            self.frontend / "dist/app.js",
-            Path(receipt["backend"]["artifacts"]["worker"]["executable"]),
-        ]
-        for path in paths:
-            with self.subTest(path=path):
-                original = path.read_bytes()
-                path.write_bytes(original + b"tampered")
-                with self.runtime_patches(fake_probes=True), self.assertRaises(ValueError):
-                    restore_runtime.verify(receipt, self.backend, self.backend, self.frontend, bindings, authority, "f" * 64)
-                path.write_bytes(original)
-
     def test_full_verification_binds_native_probe_results_to_the_runtime_receipt(self):
         # 真实 HTTP 与全部公开产物字节由 Rust runtime::probes 测试覆盖；
         # 此处仍覆盖尚由 Python 执行的绑定、编排及最终结果投影。
@@ -498,18 +291,6 @@ class RestoreRuntimeTests(unittest.TestCase):
         self.assertEqual(set(result["processes"]), {"api", "worker", "frontend"})
         self.assertEqual({item["path"] for item in result["frontend"]["files"]},
                          {"index.html", "app.js", ".vite/manifest.json", "build-identity.json"})
-
-    def test_process_receipt_change_during_probe_is_detected(self):
-        authority, receipt, bindings = self.bind_receipt()
-        process_path = self.root / "api.json"
-
-        def mutate(_url):
-            process_path.write_bytes(process_path.read_bytes() + b" ")
-            return READY
-
-        with self.runtime_patches(fake_probes=True), patch.object(restore_runtime, "_probe_api", side_effect=mutate), \
-                self.assertRaisesRegex(ValueError, "被替换或修改"):
-            restore_runtime.verify(receipt, self.backend, self.backend, self.frontend, bindings, authority, "f" * 64)
 
     def test_source_or_process_identity_change_after_probe_is_detected(self):
         authority, receipt, bindings = self.bind_receipt()

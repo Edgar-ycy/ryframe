@@ -269,7 +269,7 @@ fn start_authority_validates_time_frontend_adapter_and_distinct_ports() {
 }
 
 #[test]
-fn read_checks_launch_digest_and_canonical_generation_path() {
+fn read_checks_all_document_digests_and_canonical_generation_path() {
     let mut fixture = Fixture::new();
     let (directory, runtime) = fixture.runtime_receipt();
     let backend = crate::workspace::root_dir();
@@ -279,6 +279,21 @@ fn read_checks_launch_digest_and_canonical_generation_path() {
         inputs.finish(result)
     };
     let documents = read_runtime(&runtime).unwrap();
+    for (name, original) in [
+        ("bindings", &documents.bindings),
+        ("backend_build", &documents.backend),
+        ("frontend_build", &documents.frontend),
+    ] {
+        assert_eq!(json!(original.sha256()), runtime["digests"][name]);
+        let mut changed = original.raw.clone();
+        changed.push(b' ');
+        fs::write(&original.path, &changed).unwrap();
+        let error = read_runtime(&runtime).err().unwrap().to_string();
+        assert!(error.contains("恢复运行输入摘要漂移"), "{name}: {error}");
+        assert_eq!(fs::read(&original.path).unwrap(), changed);
+        fs::write(&original.path, &original.raw).unwrap();
+        read_runtime(&runtime).unwrap();
+    }
     let launch = documents.launch;
     assert_eq!(json!(launch.sha256()), runtime["digests"]["launch"]);
     assert_eq!(

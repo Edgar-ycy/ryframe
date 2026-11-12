@@ -112,7 +112,7 @@ fn named_guard_rejects_hardlinks_and_bind_output_stays_outside_generation() {
 }
 
 #[test]
-fn bind_resolves_equivalent_input_spelling_and_preserves_launch_paths() {
+fn bind_resolves_equivalent_input_spelling_and_preserves_runtime_receipt() {
     use crate::recovery::inputs::document::Document;
 
     let work = workspace();
@@ -126,8 +126,12 @@ fn bind_resolves_equivalent_input_spelling_and_preserves_launch_paths() {
     let bindings = root.join("bindings.json");
     let backend_build = root.join("backend-build.json");
     let frontend_build = frontend.join("dist/.vite/restore-build.json");
-    for file in [&bindings, &backend_build, &frontend_build] {
-        fs::write(file, b"{}").unwrap();
+    for (file, raw) in [
+        (&bindings, br#"{"record":"binding"}"#.as_slice()),
+        (&backend_build, br#"{"build":"backend"}"#.as_slice()),
+        (&frontend_build, br#"{"build":"frontend"}"#.as_slice()),
+    ] {
+        fs::write(file, raw).unwrap();
     }
     let spelling = |path: &Path| PathBuf::from(path.to_string_lossy().replace('\\', "/"));
     #[cfg(windows)]
@@ -144,12 +148,24 @@ fn bind_resolves_equivalent_input_spelling_and_preserves_launch_paths() {
         bindings: spelling(&bindings),
         output: root.join("runtime.json"),
     };
+    let process_receipts = bind_process_receipts(&root);
     let value = json!({
         "runtime_directory":root,
         "request":{
             "roots":{"backend_product":product,"backend_execution":execution,"frontend":frontend},
             "paths":{"bindings":bindings,"backend_build":backend_build,"frontend_build":frontend_build},
+            "authority":{
+                "restore_id":"restore-bind","backup_id":"backup-bind","scope_id":"bind-fixture",
+                "plan_hash":"1".repeat(64),"data_verified_at":"2026-11-12T03:10:09Z",
+                "backup_source_sha":"2".repeat(40),"backend_product_sha":"3".repeat(40),
+                "backend_execution_sha":"4".repeat(40),"frontend_sha":"5".repeat(40),
+                "backend_adapter_contract":"legacy-stable-readiness-b0-v1",
+                "api_endpoint":"http://127.0.0.1:18180/readyz",
+                "worker_endpoint":"http://127.0.0.1:18181/readyz",
+                "frontend_endpoint":"http://127.0.0.1:15174",
+            },
         },
+        "processes":process_receipts,
     });
     let control = Control {
         launch: Document {
@@ -164,21 +180,7 @@ fn bind_resolves_equivalent_input_spelling_and_preserves_launch_paths() {
     let request = &control.launch.value["request"];
     let bound = BoundPaths::read(&options, request).unwrap();
     let receipt = runtime_receipt(&bound, &control, &mut Inputs::new(&root)).unwrap();
-    assert_eq!(
-        receipt["paths"]["backend_product_root"],
-        request["roots"]["backend_product"]
-    );
-    assert_eq!(
-        receipt["paths"]["backend_execution_root"],
-        request["roots"]["backend_execution"]
-    );
-    assert_eq!(
-        receipt["paths"]["frontend_root"],
-        request["roots"]["frontend"]
-    );
-    for field in ["bindings", "backend_build", "frontend_build"] {
-        assert_eq!(receipt["paths"][field], request["paths"][field]);
-    }
+    assert_bind_receipt(&receipt, &bound, &control);
 
     options.bindings = root.join("other-bindings.json");
     fs::copy(&bindings, &options.bindings).unwrap();
@@ -186,6 +188,72 @@ fn bind_resolves_equivalent_input_spelling_and_preserves_launch_paths() {
     options.bindings = root.join("hard-link-bindings.json");
     fs::hard_link(&bindings, &options.bindings).unwrap();
     assert!(BoundPaths::read(&options, request).is_err());
+}
+
+fn bind_process_receipts(root: &Path) -> Value {
+    let mut processes = json!({});
+    for (ordinal, role) in generation::ROLES.into_iter().enumerate() {
+        processes[role] = json!({"process_receipt":{
+            "path":root.join(format!("{role}.json")),
+            "sha256":(ordinal + 6).to_string().repeat(64),
+            "identity":{"pid":100 + ordinal,"started":(10 + ordinal).to_string(),
+                "executable":root.join(format!("{role}-fixture"))},
+        }});
+    }
+    processes
+}
+
+fn assert_bind_receipt(receipt: &Value, bound: &BoundPaths, control: &Control) {
+    use crate::recovery::clone::native::digest;
+    use crate::recovery::runtime::dataset_authority::schema;
+
+    schema::runtime(receipt).unwrap();
+    assert_eq!(receipt["format_version"], 3);
+    assert_eq!(receipt["kind"], "restore-runtime");
+    assert_eq!(
+        receipt["restore"],
+        json!({"id":"restore-bind","backup_id":"backup-bind","scope_id":"bind-fixture",
+            "plan_hash":"1".repeat(64),"data_verified_at":"2026-11-12T03:10:09Z"})
+    );
+    assert_eq!(
+        receipt["source"],
+        json!({"backup_source_sha":"2".repeat(40),"backend_product_sha":"3".repeat(40),
+            "backend_execution_sha":"4".repeat(40),"frontend_sha":"5".repeat(40),
+            "backend_adapter_contract":"legacy-stable-readiness-b0-v1"})
+    );
+    assert_eq!(
+        receipt["endpoints"],
+        json!({"api":"http://127.0.0.1:18180/readyz","worker":"http://127.0.0.1:18181/readyz",
+            "frontend":"http://127.0.0.1:15174"})
+    );
+    let request = &control.launch.value["request"];
+    assert_eq!(
+        receipt["paths"],
+        json!({"backend_product_root":request["roots"]["backend_product"],
+            "backend_execution_root":request["roots"]["backend_execution"],
+            "frontend_root":request["roots"]["frontend"],"runtime_dir":control.directory,
+            "bindings":request["paths"]["bindings"],"backend_build":request["paths"]["backend_build"],
+            "frontend_build":request["paths"]["frontend_build"],
+            "launch":control.launch.path})
+    );
+    for (key, path) in [
+        ("bindings", &bound.bindings),
+        ("backend_build", &bound.backend),
+        ("frontend_build", &bound.frontend),
+    ] {
+        assert_eq!(receipt["digests"][key], digest::file(path).unwrap().sha256);
+    }
+    assert_eq!(receipt["digests"]["launch"], control.launch.sha256());
+    assert_eq!(receipt["backend"], json!({"build":"backend"}));
+    assert_eq!(receipt["frontend"], json!({"build":"frontend"}));
+    for role in generation::ROLES {
+        let record = &control.launch.value["processes"][role]["process_receipt"];
+        assert_eq!(
+            receipt["processes"][role],
+            json!({"receipt_path":record["path"],"receipt_sha256":record["sha256"],
+                "identity":record["identity"]})
+        );
+    }
 }
 
 #[test]

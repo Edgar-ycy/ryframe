@@ -85,3 +85,43 @@ fn require_bindings(value: &Value) -> Result<()> {
     timestamp(record.get("data_verified_at").unwrap(), "恢复数据校验时间")?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bindings_validate_restore_backup_and_scope_boundaries() {
+        let valid = json!({
+            "record":{
+                "status":"data_verified", "plan_hash":"a".repeat(64),
+                "data_verified_at":"2026-11-12T03:10:09Z",
+                "plan":{"id":format!("a{}", "_".repeat(63)),
+                    "backup_id":format!("b{}", "-".repeat(63)),
+                    "scope_id":format!("a{}z", "_".repeat(46)),
+                    "frontend_sha":"b".repeat(40)},
+            },
+            "manifest":{"id":format!("b{}", "-".repeat(63)),"source_sha":"c".repeat(40)},
+        });
+        require_bindings(&valid).unwrap();
+
+        for (field, value, expected) in [
+            ("id", "_restore".to_owned(), "计划资源名称"),
+            ("id", "a".repeat(65), "计划资源名称"),
+            ("backup_id", "backup.one".to_owned(), "计划资源名称"),
+            ("backup_id", "b".repeat(65), "计划资源名称"),
+            ("scope_id", "a".to_owned(), "演练 scope"),
+            ("scope_id", "scope-".to_owned(), "演练 scope"),
+            ("scope_id", "a".repeat(49), "演练 scope"),
+        ] {
+            let mut candidate = valid.clone();
+            if field == "backup_id" {
+                // 让备份绑定一致，测试实际进入标识验证。
+                candidate["manifest"]["id"] = json!(value);
+            }
+            candidate["record"]["plan"][field] = json!(value);
+            let error = require_bindings(&candidate).unwrap_err().to_string();
+            assert!(error.contains(expected), "{field}: {error}");
+        }
+    }
+}

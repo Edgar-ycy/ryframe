@@ -90,12 +90,6 @@ def verify_frontend(root: Path, receipt: dict, sha: str, base_url: str) -> None:
         snapshot.assert_unchanged()
 
 
-def verify_frontend_artifacts(root: Path, receipt: dict, base_url: str) -> None:
-    _files, snapshots = _verify_frontend_artifacts(root, receipt, base_url)
-    for snapshot in snapshots:
-        snapshot.assert_unchanged()
-
-
 def _probe_api(url: str) -> dict:
     return _native_probe("api", url)
 

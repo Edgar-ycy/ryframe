@@ -332,16 +332,6 @@ def validate_authority(value: object) -> dict:
     return authority
 
 
-def read_authority(stream=None) -> dict:
-    source = stream if stream is not None else sys.stdin
-    raw = source.buffer.read(MAX_JSON_BYTES + 1) if hasattr(source, "buffer") else source.read(MAX_JSON_BYTES + 1)
-    if isinstance(raw, str):
-        raw = raw.encode("utf-8")
-    if not raw or len(raw) > MAX_JSON_BYTES:
-        raise ValueError("verify 必须从 stdin 接收非空且不超过 16 MiB 的权威恢复上下文")
-    return validate_authority(decode_object(raw, "stdin 权威恢复上下文"))
-
-
 def validate_frontend_receipt(receipt: object, *, b0: bool = False) -> dict:
     from restore_frontend_native import request
 

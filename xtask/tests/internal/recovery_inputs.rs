@@ -9,7 +9,7 @@ use super::recovery::inputs::{
     target,
 };
 use super::recovery_inputs_fixture::Fixture;
-use super::recovery_inputs_support::{binding, hash, read_value};
+use super::recovery_inputs_support::{binding, file_sha, hash, read_value};
 
 #[test]
 fn reference_product_and_bindings_native_chains_succeed() {
@@ -398,6 +398,11 @@ fn document_rejects_invalid_files_and_detects_same_size_changes() {
     let fixture = Fixture::new();
     let path = fixture.root.join("document.json");
     let read = || document::read(&path, &fixture.backend, "恢复文档");
+    let directory_error = document::read(&fixture.root, &fixture.backend, "恢复文档")
+        .unwrap_err()
+        .to_string();
+    assert!(directory_error.contains("输入路径必须是现有普通文件"));
+
     for (bytes, expected) in [
         (b"".as_slice(), "不能为空"),
         (b"[]".as_slice(), "必须是 JSON 对象"),
@@ -416,8 +421,12 @@ fn document_rejects_invalid_files_and_detects_same_size_changes() {
     let error = read().unwrap_err().to_string();
     assert!(error.contains("超过 16 MiB"), "{error}");
 
-    fs::write(&path, br#"{"value":1}"#).unwrap();
+    let original = br#"{"value":1}"#;
+    fs::write(&path, original).unwrap();
     let saved = read().unwrap();
+    assert_eq!(saved.value, json!({"value":1}));
+    assert_eq!(saved.raw.as_slice(), original);
+    assert_eq!(saved.sha256(), file_sha(&path));
     saved.assert_unchanged().unwrap();
     fs::write(&path, br#"{"value":2}"#).unwrap();
     let changed = read().unwrap();
@@ -425,6 +434,57 @@ fn document_rejects_invalid_files_and_detects_same_size_changes() {
     assert_eq!(changed.value, json!({"value":2}));
     let error = saved.assert_unchanged().unwrap_err().to_string();
     assert!(error.contains("被替换或修改"), "{error}");
+}
+
+#[cfg(any(unix, windows))]
+#[test]
+fn document_rejects_file_links_and_windows_junction_ancestors() {
+    let fixture = Fixture::new();
+    let directory = fixture.root.join("document-directory");
+    fs::create_dir(&directory).unwrap();
+    let target = directory.join("document.json");
+    let raw = br#"{"value":7}"#;
+    fs::write(&target, raw).unwrap();
+    let read = |path: &Path| document::read(path, &fixture.backend, "恢复文档");
+    assert_eq!(read(&target).unwrap().raw.as_slice(), raw);
+
+    let link = fixture.root.join("document-link.json");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&target, &link).expect("创建文件符号链接夹具");
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_file(&target, &link).expect("创建文件符号链接夹具");
+    let linked_bytes = fs::read(&link);
+    let linked_document = read(&link);
+    fs::remove_file(&link).unwrap();
+    assert_eq!(linked_bytes.unwrap(), raw);
+    let error = linked_document.unwrap_err().to_string();
+    assert!(error.contains("路径不能经过符号链接或 junction"), "{error}");
+
+    #[cfg(windows)]
+    {
+        let junction = fixture.root.join("document-junction");
+        let output = std::process::Command::new("cmd.exe")
+            .args(["/d", "/c", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&directory)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "创建目录联接夹具失败：{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let aliased = junction.join("document.json");
+        let aliased_bytes = fs::read(&aliased);
+        let aliased_document = read(&aliased);
+        fs::remove_dir(&junction).unwrap();
+        assert_eq!(aliased_bytes.unwrap(), raw);
+        let error = aliased_document.unwrap_err().to_string();
+        assert!(error.contains("路径不能经过符号链接或 junction"), "{error}");
+    }
+
+    assert_eq!(fs::read(&target).unwrap(), raw);
 }
 
 #[cfg(windows)]
