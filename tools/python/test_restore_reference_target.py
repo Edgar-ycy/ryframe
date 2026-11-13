@@ -78,31 +78,6 @@ class TargetPlanTests(unittest.TestCase):
         with patch.object(target, "execution_backend", return_value=(self.backend / "other", {})), self.assertRaises(ValueError):
             self.capture()
 
-    def test_product_plan_rejects_extra_fields_sha_target_and_endpoint_drift(self):
-        changes = [lambda value: value.update(extra=True), lambda value: value.update(frontend_sha="e" * 40),
-                   lambda value: value.update(backup_id="other"), lambda value: value.update(scope_id="other"),
-                   lambda value: value.update(object_prefix="source/"), lambda value: value.update(fault_at="today"),
-                   lambda value: value.update(worker_ready_url=value["api_ready_url"]),
-                   lambda value: value["databases"][0].update(database="other"),
-                   lambda value: value["databases"][0].update(extra=True), lambda value: value["databases"].reverse()]
-        for change in changes:
-            product = copy.deepcopy(self.product)
-            change(product)
-            self.write("product.json", product)
-            with self.subTest(change=change), self.assertRaises(ValueError):
-                self.capture()
-
-    def test_product_fault_time_must_survive_rust_serialization_unchanged(self):
-        for value in ("2026-09-05T00:00:00Z", "2026-09-05T00:00:00.100Z", "2026-09-05T00:00:00.123450Z"):
-            self.write("product.json", {**self.product, "fault_at": value})
-            self.assertEqual(self.capture()["product_plan"]["fault_at"], value)
-        for value in ("2026-09-05T00:00:00+00:00", "2026-09-05T08:00:00+08:00",
-                      "2026-09-05T00:00:00.1Z", "2026-09-05T00:00:00.100000Z",
-                      "2026-09-05T00:00:00.000Z", "2026-09-05T00:00:00.1234567Z"):
-            self.write("product.json", {**self.product, "fault_at": value})
-            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "Rust 原生"):
-                self.capture()
-
     def test_original_backup_receipt_and_owner_are_strict(self):
         original = reference.read_json(self.paths["backup_receipt"])
         for change in (lambda value: value.update(status="failed"), lambda value: value.update(extra=True),

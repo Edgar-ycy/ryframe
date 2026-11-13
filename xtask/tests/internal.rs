@@ -241,6 +241,8 @@ mod recovery_cli_tests;
 mod recovery_inputs_fixture;
 #[path = "internal/recovery_inputs_fresh.rs"]
 mod recovery_inputs_fresh_tests;
+#[path = "internal/recovery_inputs_product.rs"]
+mod recovery_inputs_product_tests;
 #[path = "internal/recovery_inputs_support.rs"]
 mod recovery_inputs_support;
 #[path = "internal/recovery_inputs.rs"]
