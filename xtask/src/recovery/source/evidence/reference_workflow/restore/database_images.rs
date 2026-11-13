@@ -56,17 +56,8 @@ pub(super) fn capture<'a>(
     checkpoint: &dyn Fn() -> Result<()>,
 ) -> Result<Observed<'a>> {
     checkpoint()?;
+    let origin = CaptureOrigin::open(spec)?;
     let storage = spec.storage;
-    let backend = storage.backend;
-    let initialized = Directory::bind(backend, spec.initialized_directory)?;
-    let phase = Directory::bind(backend, spec.phase_root)?;
-    if overlaps(
-        &fs::canonicalize(&initialized.path)?,
-        &fs::canonicalize(&phase.path)?,
-    ) {
-        return Err("参考恢复库存目录与原初始化证据重叠".into());
-    }
-    let original = original_inputs(storage, spec.initialized, &initialized.path)?;
     let selected = selected_target(
         storage,
         spec.reference,
@@ -74,7 +65,7 @@ pub(super) fn capture<'a>(
         spec.configuration,
     )?;
     spec.scope.assert_unchanged()?;
-    let directory = phase.path.join("inventory");
+    let directory = origin.phase.path.join("inventory");
     let captured = database::capture_source_at(
         storage,
         &directory,
@@ -90,27 +81,68 @@ pub(super) fn capture<'a>(
             configuration: Some(spec.configuration),
         },
     )?;
-    let inventory = Directory::bind(backend, &directory)?;
-    let files = Value::Array(captured.evidence_files);
-    let retained = Inputs::open(tree::files(&directory, &files)?)?;
-    let observed = Observed {
-        observations: captured.observations,
-        receipt: captured.receipt,
-        backend,
-        request: storage.request,
-        scope: spec.scope,
-        initialized,
-        phase,
-        inventory,
-        files,
-        original,
-        retained,
-    };
+    let observed = Observed::from_capture(spec, origin, captured)?;
     observed.check(checkpoint)?;
     Ok(observed)
 }
 
-impl Observed<'_> {
+struct CaptureOrigin {
+    initialized: Directory,
+    phase: Directory,
+    original: Inputs,
+}
+
+impl CaptureOrigin {
+    fn open(spec: &Capture<'_>) -> Result<Self> {
+        let backend = spec.storage.backend;
+        let initialized = Directory::bind(backend, spec.initialized_directory)?;
+        let phase = Directory::bind(backend, spec.phase_root)?;
+        if overlaps(
+            &fs::canonicalize(&initialized.path)?,
+            &fs::canonicalize(&phase.path)?,
+        ) {
+            return Err("参考恢复库存目录与原初始化证据重叠".into());
+        }
+        let original = original_inputs(spec.storage, spec.initialized, &initialized.path)?;
+        Ok(Self {
+            initialized,
+            phase,
+            original,
+        })
+    }
+}
+
+impl<'a> Observed<'a> {
+    fn from_capture(
+        spec: &Capture<'a>,
+        origin: CaptureOrigin,
+        captured: database::Captured,
+    ) -> Result<Self> {
+        let backend = spec.storage.backend;
+        let directory = origin.phase.path.join("inventory");
+        let inventory = Directory::bind(backend, &directory)?;
+        let files = Value::Array(captured.evidence_files);
+        let retained = Inputs::open(tree::files(&directory, &files)?)?;
+        Ok(Self {
+            observations: captured.observations,
+            receipt: captured.receipt,
+            backend,
+            request: spec.storage.request,
+            scope: spec.scope,
+            initialized: origin.initialized,
+            phase: origin.phase,
+            inventory,
+            files,
+            original: origin.original,
+            retained,
+        })
+    }
+
+    #[cfg(test)]
+    pub(super) fn bind(spec: &Capture<'a>, captured: database::Captured) -> Result<Self> {
+        Self::from_capture(spec, CaptureOrigin::open(spec)?, captured)
+    }
+
     pub(super) fn check(&self, checkpoint: &dyn Fn() -> Result<()>) -> Result<()> {
         checkpoint()?;
         self.check_files()?;

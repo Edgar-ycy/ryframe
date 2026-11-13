@@ -4,7 +4,10 @@ use std::path::Path;
 use serde_json::{Map, Value, json};
 
 use super::{Execution, Phase, combine, database_images, native, object_images, text};
-use crate::{Result, recovery::inputs::document};
+use crate::{
+    Result,
+    recovery::inputs::document::{self, Document},
+};
 use native::{
     digest::plan_hash, export::transport::SystemTransport, resources::common,
     target_verify::guard::Inputs,
@@ -104,30 +107,75 @@ fn observe(
         &SystemTransport,
         checkpoint,
     )?;
-    let proof_paths = object_proofs
-        .iter()
-        .map(|proof| document::binding_shape(proof, "参考恢复对象证明").map(|file| file.path))
-        .collect::<Result<Vec<_>>>()?;
-    let protected = Inputs::open(proof_paths)?;
-    let redis = target.redis_state()?;
-    database.check(checkpoint)?;
-    for proof in &object_proofs {
-        let (_, file) = document::bound_file(window.stage.backend, proof, "参考恢复对象证明")?;
-        file.assert_unchanged()?;
+    Publication {
+        backend: window.stage.backend,
+        directory,
+        target: &snapshot.target,
+        phase,
+        expected,
     }
-    checkpoint()?;
-    let actual = json!({"databases":database.observations,"objects":objects,"redis":redis});
-    let matches = actual == *expected;
-    let image = json!({
-        "format_version":1,"kind":"restore-reference-resource-image","phase":phase.name(),
-        "target_plan":document::binding(&snapshot.target),"inventory":database.receipt,
-        "object_observations":object_proofs,"image":actual,"expected_sha256":plan_hash(expected)?,
-        "matches_expected":matches,
-    });
-    let binding = publish(window.stage.backend, &directory.join("image.json"), &image)?;
-    protected.check()?;
-    checkpoint()?;
-    Ok((matches, binding))
+    .publish(
+        Observations {
+            database,
+            objects,
+            object_proofs,
+        },
+        || target.redis_state(),
+        checkpoint,
+    )
+}
+
+struct Observations<'a> {
+    database: database_images::Observed<'a>,
+    objects: Value,
+    object_proofs: Vec<Value>,
+}
+
+struct Publication<'a> {
+    backend: &'a Path,
+    directory: &'a Path,
+    target: &'a Document,
+    phase: Phase,
+    expected: &'a Value,
+}
+
+impl Publication<'_> {
+    fn publish(
+        self,
+        observed: Observations<'_>,
+        redis: impl FnOnce() -> Result<Value>,
+        checkpoint: &dyn Fn() -> Result<()>,
+    ) -> Result<(bool, Value)> {
+        let Observations {
+            database,
+            objects,
+            object_proofs,
+        } = observed;
+        let proof_paths = object_proofs
+            .iter()
+            .map(|proof| document::binding_shape(proof, "参考恢复对象证明").map(|file| file.path))
+            .collect::<Result<Vec<_>>>()?;
+        let protected = Inputs::open(proof_paths)?;
+        let redis = redis()?;
+        database.check(checkpoint)?;
+        for proof in &object_proofs {
+            let (_, file) = document::bound_file(self.backend, proof, "参考恢复对象证明")?;
+            file.assert_unchanged()?;
+        }
+        checkpoint()?;
+        let actual = json!({"databases":database.observations,"objects":objects,"redis":redis});
+        let matches = actual == *self.expected;
+        let image = json!({
+            "format_version":1,"kind":"restore-reference-resource-image","phase":self.phase.name(),
+            "target_plan":document::binding(self.target),"inventory":database.receipt,
+            "object_observations":object_proofs,"image":actual,"expected_sha256":plan_hash(self.expected)?,
+            "matches_expected":matches,
+        });
+        let binding = publish(self.backend, &self.directory.join("image.json"), &image)?;
+        protected.check()?;
+        checkpoint()?;
+        Ok((matches, binding))
+    }
 }
 
 fn publish(backend: &Path, path: &Path, value: &Value) -> Result<Value> {

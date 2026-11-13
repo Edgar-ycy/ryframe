@@ -1,4 +1,14 @@
-use std::{cell::Cell, fs, path::PathBuf};
+use std::{cell::Cell, collections::BTreeMap, fs, path::PathBuf};
+
+use crate::recovery::inputs::domain::{BUCKETS, TARGET_DATABASES};
+use native::{
+    bridge::scope::Scope,
+    target_verify::{
+        database::{Captured, model::expected_owners},
+        storage::StorageInputs,
+        tree,
+    },
+};
 
 use super::super::{Lock, capture_around_write, finish, model, receipts};
 use super::*;
@@ -248,4 +258,408 @@ fn mismatched_before_image_prevents_writes_and_finishes_with_original_evidence()
     assert_eq!(before.value["matches_expected"], false);
     assert!(!fixture.work.join("restore-base-after").exists());
     assert!(!fixture.work.join("restore-base-failure-after").exists());
+}
+
+struct JointFixture {
+    restore: Fixture,
+    target: document::Document,
+    initialized_directory: PathBuf,
+    initialized: Value,
+    request: Value,
+    reference: Value,
+    configuration: Value,
+}
+
+impl JointFixture {
+    fn new() -> Self {
+        let restore = Fixture::new("base");
+        let (_, target) = document::bound_file(
+            &restore.backend,
+            &restore.args["bindings"]["target_plan"],
+            "原目标计划",
+        )
+        .unwrap();
+        let configuration = json!({"app_env":"test","sha256":"a".repeat(64)});
+        let databases = TARGET_DATABASES.map(|(key, kind, mode)| {
+            json!({"key":key,"kind":kind,"mode":mode,"database":database_name(key),
+                "server_uuid":"server-fixture"})
+        });
+        let storage = json!({"endpoint":"http://127.0.0.1:19001","region":"us-east-1"});
+        let request = json!({"side":"base","target":{"scope_id":"target","databases":databases,"s3":storage}});
+        let reference = json!({"target_side":"base","target":{
+            "scope_id":"target","databases":databases,"runtime_dir":"fixture-runtime",
+            "api_url":"http://127.0.0.1:19002","worker_ready_url":"http://127.0.0.1:19003/readyz",
+            "frontend_url":"http://127.0.0.1:19004","s3":{
+                "endpoint":storage["endpoint"],"region":storage["region"],"configuration":configuration
+            }
+        }});
+        let initialized = json!({"status":"fresh_target_initialized","scope_id":"target",
+            "controlled_generation_never_started":true,"generation":{"selected":reference["target"]},
+            "inventory":{"observations":resource_image(Phase::Before)["databases"]}});
+        let initialized_directory = restore.work.join("initialized");
+        fs::create_dir(&initialized_directory).unwrap();
+        native::json::write_new(
+            &initialized_directory.join("initialized.json"),
+            &initialized,
+        )
+        .unwrap();
+        native::json::write_new(&initialized_directory.join("request.json"), &request).unwrap();
+        Self {
+            restore,
+            target,
+            initialized_directory,
+            initialized,
+            request,
+            reference,
+            configuration,
+        }
+    }
+
+    fn directory(&self, phase: Phase) -> PathBuf {
+        self.restore
+            .work
+            .join(format!("restore-base-{}", phase.name()))
+    }
+
+    fn capture(
+        &self,
+        scope: &Scope,
+        phase: Phase,
+        expected: &Value,
+        actual: &Value,
+        evidence: &mut Map<String, Value>,
+        during_redis: impl FnOnce(&Path) -> Result<()>,
+    ) -> Result<()> {
+        let backend = &self.restore.backend;
+        let directory = self.directory(phase);
+        record(backend, &directory, phase, evidence, || {
+            let storage = StorageInputs {
+                backend,
+                request: &self.request,
+                environment: &BTreeMap::new(),
+                observation_dir: &directory,
+            };
+            let inventory = directory.join("inventory");
+            let captured = record_inventory(backend, &inventory, &actual["databases"])?;
+            let database = database_images::Observed::bind(
+                &database_images::Capture {
+                    storage: &storage,
+                    reference: &self.reference,
+                    initialized: &self.initialized,
+                    configuration: &self.configuration,
+                    scope,
+                    initialized_directory: &self.initialized_directory,
+                    phase_root: &directory,
+                },
+                captured,
+            )?;
+            let object_proofs = if phase == Phase::After {
+                let proof = directory.join("object-heads.json");
+                native::json::write_new(
+                    &proof,
+                    &json!({"status":"object_head_verified","bucket":"uploads",
+                        "key":"target/tenant/file.txt","sha256":"c".repeat(64)}),
+                )?;
+                vec![common::binding(&proof)?]
+            } else {
+                Vec::new()
+            };
+            Publication {
+                backend,
+                directory: &directory,
+                target: &self.target,
+                phase,
+                expected,
+            }
+            .publish(
+                Observations {
+                    database,
+                    objects: actual["objects"].clone(),
+                    object_proofs,
+                },
+                || {
+                    during_redis(&inventory.join("inventory.json"))?;
+                    Ok(actual["redis"].clone())
+                },
+                &|| Ok(()),
+            )
+        })
+    }
+}
+
+fn database_name(key: &str) -> String {
+    format!("target_{}", key.replace('-', "_"))
+}
+
+fn resource_image(phase: Phase) -> Value {
+    let databases = TARGET_DATABASES
+        .iter()
+        .map(|(key, kind, _)| {
+            let name = database_name(key);
+            let tables = json!({"sys_post":{"rows":usize::from(phase == Phase::After),
+                "sha256":if phase == Phase::After {"b".repeat(64)} else {"a".repeat(64)}}});
+            let preserved = if *kind == "combined" {
+                json!({"sys_restore_run":{"rows":0,"sha256":"d".repeat(64)}})
+            } else {
+                json!({})
+            };
+            let combined = *kind == "combined";
+            let mut all_tables = vec!["sys_post"];
+            if combined {
+                all_tables.push("sys_restore_run");
+            }
+            let image = json!({
+                "resource":{"kind":"database","scope_id":"target","database":name,
+                    "server_uuid":"server-fixture"},
+                "schema_sha256": if combined {"1".repeat(64)} else {"2".repeat(64)},
+                "tables":tables,"preserved":preserved,"all_tables":all_tables,
+                "ownership":expected_owners("target", combined),
+            });
+            (name, image)
+        })
+        .collect::<BTreeMap<_, _>>();
+    let objects = BUCKETS
+        .iter()
+        .map(|bucket| {
+            let mut keys = vec!["target/.ryframe-owner"];
+            if phase == Phase::After && *bucket == "uploads" {
+                keys.push("target/tenant/file.txt");
+            }
+            (
+                *bucket,
+                json!({"keys":keys,"owner":{"bytes":45,"sha256":"e".repeat(64)}}),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    json!({"databases":databases,"objects":objects,
+        "redis":{"namespace":"target","owner":"target","sentinel":"original"}})
+}
+
+fn record_inventory(backend: &Path, directory: &Path, databases: &Value) -> Result<Captured> {
+    fs::create_dir(directory)?;
+    let binding = json!({"scope_id":"target","server_uuid":"server-fixture"});
+    for file in ["binding-before.json", "binding-after.json"] {
+        native::json::write_new(&directory.join(file), &binding)?;
+    }
+    let keys = TARGET_DATABASES.map(|(key, _, _)| key);
+    let mut observations = Map::new();
+    let mut inventories = Map::new();
+    for key in keys {
+        let name = database_name(key);
+        let observed = &databases[&name];
+        observations.insert(key.to_owned(), observed.clone());
+        for round in ["before", "after"] {
+            let name = format!("{round}-target-{key}.json");
+            let file = directory.join(&name);
+            native::json::write_new(&file, observed)?;
+            let digest = native::digest::file(&file)?;
+            inventories.insert(name, json!({"bytes":digest.bytes,"sha256":digest.sha256}));
+        }
+    }
+    let inventory = json!({"format_version":1,"status":"side_inventory_captured","side":"target",
+        "scope_id":"target","keys":keys,"inventories":inventories,"observations":observations,
+        "binding_sha256":plan_hash(&binding)?,"remote_writes":0,
+        "producer_stopped_proven":false,"fresh_target_proven":false,"target_ready":false,
+        "clone_verified":false,"restore_qualified":false});
+    let path = directory.join("inventory.json");
+    native::json::write_new(&path, &inventory)?;
+    let evidence = tree::snapshot(backend, directory, false)?;
+    Ok(Captured {
+        binding,
+        inventory,
+        receipt: common::binding(&path)?,
+        observations: serde_json::from_value(databases.clone())?,
+        evidence_files: serde_json::from_value(evidence)?,
+    })
+}
+
+#[test]
+fn complete_joint_before_and_after_bind_four_databases_five_buckets_and_redis() {
+    let fixture = JointFixture::new();
+    let scope = Scope::load(&crate::workspace::root_dir(), &[], &[]).unwrap();
+    let writes = Cell::new(0);
+    let mut evidence = Map::new();
+    capture_around_write(
+        |phase, evidence| {
+            assert!(phase != Phase::FailureAfter);
+            let expected = resource_image(phase);
+            fixture.capture(&scope, phase, &expected, &expected, evidence, |_| {
+                assert_eq!(writes.get(), usize::from(phase == Phase::After));
+                Ok(())
+            })
+        },
+        || {
+            writes.set(writes.get() + 1);
+            Ok(())
+        },
+        &mut evidence,
+    )
+    .unwrap();
+    assert_eq!(writes.get(), 1);
+    assert_eq!(evidence.len(), 2);
+    for phase in [Phase::Before, Phase::After] {
+        let backend = &fixture.restore.backend;
+        let (_, image) = document::bound_file(backend, &evidence[phase.name()], "联合像").unwrap();
+        let expected = resource_image(phase);
+        assert_eq!(image.value["image"], expected);
+        assert_eq!(image.value["matches_expected"], true);
+        assert_eq!(
+            image.value["expected_sha256"],
+            plan_hash(&expected).unwrap()
+        );
+        assert_eq!(
+            image.value["target_plan"],
+            document::binding(&fixture.target)
+        );
+        let (_, inventory) =
+            document::bound_file(backend, &image.value["inventory"], "原库存收据").unwrap();
+        assert_eq!(inventory.value["inventories"].as_object().unwrap().len(), 8);
+        let proofs = image.value["object_observations"].as_array().unwrap();
+        assert_eq!(proofs.len(), usize::from(phase == Phase::After));
+        for proof in proofs {
+            let (_, object) = document::bound_file(backend, proof, "对象证明").unwrap();
+            assert_eq!(object.value["key"], "target/tenant/file.txt");
+        }
+    }
+}
+
+#[test]
+fn joint_resource_drift_is_recorded_and_blocks_the_affected_phase() {
+    let scope = Scope::load(&crate::workspace::root_dir(), &[], &[]).unwrap();
+    for (phase, pointer, replacement) in [
+        (
+            Phase::Before,
+            "/databases/target_dedicated_a/tables/sys_post/rows",
+            json!(2),
+        ),
+        (
+            Phase::Before,
+            "/databases/target_dedicated_b/all_tables",
+            json!(["sys_post", "unexpected_table"]),
+        ),
+        (
+            Phase::Before,
+            "/databases/target_shared/schema_sha256",
+            json!("3".repeat(64)),
+        ),
+        (
+            Phase::Before,
+            "/databases/target_shared_control/ownership/0/marker",
+            json!("changed"),
+        ),
+        (
+            Phase::Before,
+            "/databases/target_shared_control/preserved/sys_restore_run/sha256",
+            json!("f".repeat(64)),
+        ),
+        (
+            Phase::Before,
+            "/objects/avatar/owner/sha256",
+            json!("f".repeat(64)),
+        ),
+        (
+            Phase::Before,
+            "/objects/exports/keys",
+            json!(["target/.ryframe-owner", "target/unexpected"]),
+        ),
+        (Phase::Before, "/redis/sentinel", json!("changed")),
+        (
+            Phase::After,
+            "/databases/target_shared_control/preserved/sys_restore_run/rows",
+            json!(1),
+        ),
+    ] {
+        let fixture = JointFixture::new();
+        let expected = resource_image(phase);
+        let mut actual = expected.clone();
+        *actual.pointer_mut(pointer).unwrap() = replacement;
+        let mut evidence = Map::new();
+        let writes = Cell::new(0);
+        let error = capture_around_write(
+            |stage, evidence| {
+                let fresh = resource_image(stage);
+                let observed = if stage == phase { &actual } else { &fresh };
+                fixture.capture(&scope, stage, &fresh, observed, evidence, |_| Ok(()))
+            },
+            || {
+                writes.set(writes.get() + 1);
+                Ok(())
+            },
+            &mut evidence,
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("完整资源像与预期不同"),
+            "{pointer}: {error}"
+        );
+        assert_eq!(writes.get(), usize::from(phase == Phase::After));
+        assert!(evidence.contains_key(&format!("{}-failure", phase.name())));
+        let (_, image) = document::bound_file(
+            &fixture.restore.backend,
+            &evidence[phase.name()],
+            "漂移联合像",
+        )
+        .unwrap();
+        assert_eq!(image.value["image"], actual);
+        assert_eq!(image.value["matches_expected"], false);
+    }
+}
+
+#[test]
+fn inventory_drift_after_object_observation_keeps_only_the_failure_binding() {
+    let fixture = JointFixture::new();
+    let scope = Scope::load(&crate::workspace::root_dir(), &[], &[]).unwrap();
+    let expected = resource_image(Phase::After);
+    let mut evidence = Map::new();
+    let error = fixture
+        .capture(
+            &scope,
+            Phase::After,
+            &expected,
+            &expected,
+            &mut evidence,
+            |receipt| {
+                assert!(
+                    fixture
+                        .directory(Phase::After)
+                        .join("object-heads.json")
+                        .is_file()
+                );
+                let original = fs::read(receipt)?;
+                let mut edited = original.clone();
+                let version = b"\"format_version\": 1";
+                let offset = edited
+                    .windows(version.len())
+                    .position(|bytes| bytes == version)
+                    .unwrap();
+                edited[offset + version.len() - 1] = b'2';
+                let changed = fs::write(receipt, &edited);
+                #[cfg(windows)]
+                {
+                    assert_eq!(changed.unwrap_err().raw_os_error(), Some(32));
+                    assert_eq!(fs::read(receipt)?, original);
+                    fs::write(receipt.with_file_name("late.json"), b"{}")?;
+                }
+                #[cfg(not(windows))]
+                {
+                    changed?;
+                    assert_eq!(fs::read(receipt)?, edited);
+                }
+                Ok(())
+            },
+        )
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("原库存文件树或字节变化"),
+        "{error}"
+    );
+    assert_eq!(evidence.len(), 1);
+    assert!(!fixture.directory(Phase::After).join("image.json").exists());
+    let (_, failure) = document::bound_file(
+        &fixture.restore.backend,
+        &evidence["after-failure"],
+        "失败收据",
+    )
+    .unwrap();
+    assert_eq!(failure.value["error_type"], "ReferenceResourceImageFailure");
 }
