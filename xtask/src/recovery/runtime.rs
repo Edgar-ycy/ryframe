@@ -3,9 +3,9 @@ use std::path::Path;
 use crate::{
     Result,
     cli::{
-        LEGACY_B0_ADAPTER_CONTRACT, RUNTIME_USAGE, RuntimeBindOptions, RuntimeBuildOptions,
-        RuntimeCommand, RuntimeControlInputs, RuntimeGenerationOptions, RuntimeSources,
-        RuntimeStartOptions, RuntimeVerifyOptions,
+        RUNTIME_USAGE, RuntimeBindOptions, RuntimeBuildOptions, RuntimeCommand,
+        RuntimeControlInputs, RuntimeGenerationOptions, RuntimeSources, RuntimeStartOptions,
+        RuntimeVerifyOptions,
     },
     local_test_path::{LocalTestPathKind, validate_absolute_path, validate_local_test_path},
 };
@@ -168,7 +168,7 @@ fn validate_sources(sources: &RuntimeSources) -> Result<()> {
     }
     match (&sources.adapter_contract, &sources.product_backend) {
         (None, None) => Ok(()),
-        (Some(contract), Some(_)) if contract == LEGACY_B0_ADAPTER_CONTRACT => Ok(()),
+        (Some(contract), Some(_)) if contract == crate::recovery::b0::CONTRACT => Ok(()),
         (Some(_), Some(_)) => Err("未知的后端适配合同".into()),
         _ => Err("适配合同与产品后端必须成对提供".into()),
     }

@@ -34,23 +34,11 @@ impl BaselineContract {
         "f37e5d25d2268f69712ba22d4e7083ef19d14a5e";
     pub(crate) const LEGACY_CARGO_DEV_V2_ADAPTER_COMMIT: &'static str =
         "47ee7937aed3ac035049abb360cc235716377a65";
-    pub(crate) const STABLE_READINESS_B0_BASE_COMMIT: &'static str =
-        "815c5eafb09d4b493319d255fb7ab88ddd02c8b6";
-    pub(crate) const STABLE_READINESS_B0_FRONTEND_COMMIT: &'static str =
-        "0087ea2ecf62530d042b9e52f5c950fb34c66d78";
-    pub(crate) const STABLE_READINESS_B0_PATCH_SHA256: &'static str =
-        "sha256:28ad29f21ca9fd58356d059700bcc871172466e0a62286c5ccdbf68b1ed3fba3";
-    pub(crate) const STABLE_READINESS_B0_ADAPTER_TREE: &'static str =
-        "2ff15e7f34da1749c7eb27a1a025b9d3811b87a7";
-    pub(crate) const STABLE_READINESS_B0_ADAPTER_PATHS: [&'static str; 1] = ["xtask/src/cli.rs"];
-    pub(crate) const STABLE_READINESS_B0_ADAPTER_PATCH: &'static [u8] =
-        include_bytes!("../../../assets/baseline-adapters/stable-readiness-b0-v1.patch");
-
     pub(crate) fn parse(value: &str) -> Option<Self> {
         match value {
             "legacy-cargo-dev-v1" => Some(Self::LegacyCargoDevV1),
             "legacy-cargo-dev-v2" => Some(Self::LegacyCargoDevV2),
-            "legacy-stable-readiness-b0-v1" => Some(Self::LegacyStableReadinessB0V1),
+            crate::recovery::b0::CONTRACT => Some(Self::LegacyStableReadinessB0V1),
             _ => None,
         }
     }
@@ -59,7 +47,7 @@ impl BaselineContract {
         match self {
             Self::LegacyCargoDevV1 => "legacy-cargo-dev-v1",
             Self::LegacyCargoDevV2 => "legacy-cargo-dev-v2",
-            Self::LegacyStableReadinessB0V1 => "legacy-stable-readiness-b0-v1",
+            Self::LegacyStableReadinessB0V1 => crate::recovery::b0::CONTRACT,
         }
     }
 
@@ -88,7 +76,7 @@ impl BaselineContract {
         match self {
             Self::LegacyCargoDevV1 => Self::LEGACY_CARGO_DEV_BASE_COMMIT,
             Self::LegacyCargoDevV2 => Self::LEGACY_CARGO_DEV_V2_BASE_COMMIT,
-            Self::LegacyStableReadinessB0V1 => Self::STABLE_READINESS_B0_BASE_COMMIT,
+            Self::LegacyStableReadinessB0V1 => crate::recovery::b0::BACKEND,
         }
     }
 
@@ -96,7 +84,7 @@ impl BaselineContract {
         match self {
             Self::LegacyCargoDevV1 => Some(Self::LEGACY_CARGO_DEV_ADAPTER_COMMIT),
             Self::LegacyCargoDevV2 => Some(Self::LEGACY_CARGO_DEV_V2_ADAPTER_COMMIT),
-            Self::LegacyStableReadinessB0V1 => None,
+            Self::LegacyStableReadinessB0V1 => Some(crate::recovery::b0::COMMIT),
         }
     }
 

@@ -1,5 +1,6 @@
 use super::{
-    API, COMMON, RoleConfiguration, TEST, WORKER, configuration_files, configuration_identity,
+    API, COMMON, INSTANCE, RoleConfiguration, TEST, WORKER, configuration_files,
+    configuration_identity,
 };
 use serde_json::json;
 use std::{collections::BTreeMap, fs, path::Path};
@@ -18,36 +19,53 @@ fn binding(source: &Path) -> String {
 }
 
 #[test]
-fn publishes_api_bytes_and_changes_only_the_worker_instance() {
-    let root = tempfile::tempdir().unwrap();
-    let source = root.path().join("fresh");
-    fs::create_dir(&source).unwrap();
-    fs::write(source.join(COMMON), BASE).unwrap();
-    fs::write(source.join(TEST), API_TEST).unwrap();
-    let configuration = RoleConfiguration::capture(&source, &binding(&source), 2).unwrap();
-    let output = root.path().join("roles");
-    configuration.publish(&output).unwrap();
-    configuration.verify(&output).unwrap();
-
-    let api = output.join(API);
-    let worker = output.join(WORKER);
-    assert_eq!(fs::read(api.join(COMMON)).unwrap(), BASE);
-    assert_eq!(fs::read(api.join(TEST)).unwrap(), API_TEST);
-    assert_eq!(fs::read(worker.join(COMMON)).unwrap(), BASE);
-    let expected = std::str::from_utf8(API_TEST)
-        .unwrap()
-        .replace("snowflake_worker_id = 7", "snowflake_worker_id = 2");
-    let expected = if cfg!(windows) {
+fn derives_scheduler_and_worker_instance_without_changing_other_configuration() {
+    let cases: [(&[u8], &[u8]); 6] = [
+        (BASE, b"snowflake_worker_id=7\n[jobs]\nmode='external'\nscheduler_enabled=false\n"),
+        (BASE, b"snowflake_worker_id=7\n[jobs]\nmode='external'\nscheduler_enabled=true\n"),
+        (BASE, API_TEST),
+        (BASE, b"snowflake_worker_id=7\n"),
+        (b"scope_id='virtual'\n[jobs]\nscheduler_enabled=false\nqueue=['one','two']\n[jobs.limits]\ncount=3\n", API_TEST),
+        (b"scope_id='virtual'\nsnowflake_worker_id=7\n[jobs]\nscheduler_enabled=true\n", b"[jobs]\nmode='external'\n"),
+    ];
+    for (common, selected) in cases {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("fresh");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join(COMMON), common).unwrap();
+        fs::write(source.join(TEST), selected).unwrap();
+        let mut expected = document(&source);
         expected
-    } else {
-        expected.replace("\r\n", "\n")
-    };
-    assert_eq!(fs::read(worker.join(TEST)).unwrap(), expected.as_bytes());
-    assert_eq!(fs::read(source.join(TEST)).unwrap(), API_TEST);
+            .entry("jobs")
+            .or_insert_with(|| toml::Value::Table(toml::Table::new()))
+            .as_table_mut()
+            .unwrap()
+            .insert("scheduler_enabled".into(), toml::Value::Boolean(true));
+        let configuration = RoleConfiguration::capture(&source, &binding(&source), 2).unwrap();
+        let output = root.path().join("roles");
+        configuration.publish(&output).unwrap();
+        configuration.verify(&output).unwrap();
+
+        for (role, id) in [(API, 7), (WORKER, 2)] {
+            let directory = output.join(role);
+            expected.insert(INSTANCE.into(), toml::Value::Integer(id));
+            let actual = document(&directory);
+            assert_eq!(actual, expected);
+            assert_eq!(actual["jobs"]["scheduler_enabled"].as_bool(), Some(true));
+            assert_eq!(actual[INSTANCE].as_integer(), Some(id));
+            assert_eq!(fs::read(directory.join(COMMON)).unwrap(), common);
+        }
+        assert_eq!(fs::read(source.join(COMMON)).unwrap(), common);
+        assert_eq!(fs::read(source.join(TEST)).unwrap(), selected);
+    }
+}
+
+fn document(directory: &Path) -> toml::Table {
+    ryframe_config::AppConfig::read_document(directory, ryframe_config::Environment::Test).unwrap()
 }
 
 #[test]
-fn refuses_source_identity_drift_and_invalid_worker_instances() {
+fn refuses_source_identity_drift_invalid_worker_instances_and_scheduler_types() {
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("fresh");
     fs::create_dir(&source).unwrap();
@@ -60,6 +78,41 @@ fn refuses_source_identity_drift_and_invalid_worker_instances() {
     assert!(configuration.common.is_none());
     fs::write(source.join(TEST), b"snowflake_worker_id = 8\n").unwrap();
     assert!(RoleConfiguration::capture(&source, &expected, 2).is_err());
+
+    let cases: [(&[u8], &[u8], &str); 4] = [
+        (
+            BASE,
+            b"snowflake_worker_id=7\njobs='fixture-private-value'\n",
+            "fresh jobs 必须是表",
+        ),
+        (
+            BASE,
+            b"snowflake_worker_id=7\n[jobs]\nscheduler_enabled='fixture-private-value'\n",
+            "fresh jobs.scheduler_enabled 必须是布尔值",
+        ),
+        (
+            b"jobs='fixture-private-value'\n",
+            b"snowflake_worker_id=7\n",
+            "fresh jobs 必须是表",
+        ),
+        (
+            b"[jobs]\nscheduler_enabled='fixture-private-value'\n",
+            API_TEST,
+            "fresh jobs.scheduler_enabled 必须是布尔值",
+        ),
+    ];
+    for (common, selected, message) in cases {
+        fs::write(source.join(COMMON), common).unwrap();
+        fs::write(source.join(TEST), selected).unwrap();
+        let error = RoleConfiguration::capture(&source, &binding(&source), 2)
+            .err()
+            .unwrap()
+            .to_string();
+        assert_eq!(error, message);
+        assert!(!error.contains("fixture-private-value"));
+        assert_eq!(fs::read(source.join(COMMON)).unwrap(), common);
+        assert_eq!(fs::read(source.join(TEST)).unwrap(), selected);
+    }
 }
 
 #[test]
@@ -89,6 +142,21 @@ fn protects_existing_output_and_rejects_extra_members_and_changed_bytes() {
     fs::remove_file(extra).unwrap();
     configuration.verify(&output).unwrap();
 
-    fs::write(output.join(WORKER).join(TEST), API_TEST).unwrap();
+    for (role, original) in [(API, &configuration.api), (WORKER, &configuration.worker)] {
+        let path = output.join(role).join(TEST);
+        let mut changed: toml::Table =
+            toml::from_str(std::str::from_utf8(original).unwrap()).unwrap();
+        changed["jobs"]
+            .as_table_mut()
+            .unwrap()
+            .insert("scheduler_enabled".into(), toml::Value::Boolean(false));
+        fs::write(&path, toml::to_string(&changed).unwrap()).unwrap();
+        assert!(configuration.verify(&output).is_err());
+        fs::write(&path, original).unwrap();
+        configuration.verify(&output).unwrap();
+    }
+    let mut same_semantics = configuration.api.clone();
+    same_semantics.extend_from_slice(b"\n# changed bytes\n");
+    fs::write(output.join(API).join(TEST), same_semantics).unwrap();
     assert!(configuration.verify(&output).is_err());
 }

@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use super::{
     build,
     dataset_authority::{
-        b0, check, commands,
+        check, commands,
         cross::{self, RuntimeDocuments},
         environment,
         inputs::Inputs,
@@ -307,8 +307,8 @@ pub(super) fn backend_sources(
     };
     let product = source::validate_inventory(product)?;
     check(
-        receipt.value["sources"]["full"] == inventory["inventory"]
-            && receipt.value["sources"]["product"] == source::backend_domains(&product)?["product"]
+        receipt.value["sources"]
+            == source::backend_domains(&source::validate_inventory(&inventory["inventory"])?)?
             && authority["backend_product_sha"] == product.source.snapshot.head,
         "恢复构建未保持登记的后端产品或执行来源",
     )?;
@@ -335,7 +335,7 @@ impl Frontend {
             ),
             "恢复前端构建收据未绑定固定生产文件",
         )?;
-        let proof = if b0::matches(authority) {
+        let proof = if crate::recovery::b0::matches(authority) {
             Self::B0(Box::new(frontend_build::b0::validate(&root, None, head)?))
         } else {
             Self::Current(Box::new(frontend_build::validate(&root, None, Some(head))?))

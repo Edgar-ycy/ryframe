@@ -297,9 +297,8 @@ fn native_frontend_argv_binds_receipt_and_only_allows_the_exact_b0_contract() {
     assert!(commands::recorded_spelling(expected, &actual).is_err());
     request["authority"]["frontend_sha"] = json!(crate::recovery::frontend_build::b0::HEAD);
     assert!(commands::frontend_command(&request, &executable).is_err());
-    request["authority"]["backend_product_sha"] = json!("815c5eafb09d4b493319d255fb7ab88ddd02c8b6");
-    request["authority"]["backend_execution_sha"] =
-        json!("c05114bcdf5c369cd74087db6317ce3c8f89bee8");
+    request["authority"]["backend_product_sha"] = json!(crate::recovery::b0::BACKEND);
+    request["authority"]["backend_execution_sha"] = json!(crate::recovery::b0::COMMIT);
     request["authority"]["backend_adapter_contract"] = json!("legacy-stable-readiness-b0-v1");
     let b0 = commands::frontend_command(&request, &executable).unwrap();
     assert_eq!(b0[9], request["authority"]["frontend_sha"]);

@@ -64,7 +64,7 @@ pub(super) fn validate(value: &Value) -> Result<()> {
         "恢复产品和执行路径不符合适配关系",
     )?;
     document::binding_shape(&value["environment"]["document"], "恢复环境文件")?;
-    let legacy = super::b0::matches(&value["authority"]);
+    let legacy = crate::recovery::b0::matches(&value["authority"]);
     for role in ["api", "worker"] {
         configuration(&value["environment"]["configurations"][role], legacy)?;
     }

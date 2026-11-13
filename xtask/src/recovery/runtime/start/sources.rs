@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 use super::super::{
     build,
-    dataset_authority::{b0 as b0_backend, check},
+    dataset_authority::check,
     registration::protocol_path,
     verify::{Frontend, backend_sources},
 };
@@ -67,7 +67,7 @@ fn bind(
             },
         "恢复启动适配合同与目标计划或显式选择不同",
     )?;
-    let b0 = b0_backend::matches(authority);
+    let b0 = crate::recovery::b0::matches(authority);
     check(
         if b0 {
             selected.product_backend.is_some() && product != selected.source_backend.as_path()

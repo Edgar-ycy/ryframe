@@ -35,7 +35,7 @@ fn describe(bytes: &[u8]) -> Value {
 }
 
 fn selected(request: &Value) -> bool {
-    b0::matches(&request["authority"])
+    crate::recovery::b0::matches(&request["authority"])
 }
 
 pub(in crate::recovery::runtime) fn materialize(

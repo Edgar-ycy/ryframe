@@ -1,5 +1,5 @@
 //! 真实 Git 对象及绑定文件验证独立风险；模型夹具不作为正式收据接受证据。
-use super::{adapter, arms, common, digest, document, published, shape, source};
+use super::{adapter, arms, common, digest, document, published, shape};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -87,72 +87,78 @@ fn files(root: &Path) -> BTreeMap<PathBuf, (String, std::time::SystemTime)> {
 }
 
 #[test]
-fn b0_real_git_reconstruction_and_readonly_verification_preserve_fixed_objects() {
+fn b0_real_git_reconstruction_uses_compiled_patch_and_readonly_preserves_objects() {
+    use crate::recovery::b0;
     let temporary = directory();
-    let root = imported(temporary.path(), "coordinator", adapter::BACKEND);
-    let relative = "xtask/assets/baseline-adapters/stable-readiness-b0-v1.patch";
-    fs::create_dir_all(root.join("xtask/assets/baseline-adapters")).unwrap();
-    fs::copy(
-        crate::workspace::root_dir().join(relative),
-        root.join(relative),
-    )
-    .unwrap();
+    let root = imported(temporary.path(), "product", b0::BACKEND);
+    assert!(!root.join(b0::PATCH).exists());
     let before = files(&root.join(".git"));
     let readonly = adapter::evidence(&root, false).unwrap();
     assert_eq!(files(&root.join(".git")), before);
     assert!(!root.join("target").exists());
     let rebuilt = adapter::evidence(&root, true).unwrap();
     assert_eq!(rebuilt, readonly);
-    assert_eq!(rebuilt["reference_adapter_sha"], adapter::COMMIT);
+    assert_eq!(rebuilt["reference_adapter_sha"], b0::COMMIT);
     assert_eq!(fs::read_dir(root.join("target")).unwrap().count(), 0);
     let after = files(&root.join(".git"));
     assert_eq!(adapter::evidence(&root, false).unwrap(), readonly);
     assert_eq!(files(&root.join(".git")), after);
-    fs::write(root.join(relative), "changed patch").unwrap();
-    assert!(adapter::evidence(&root, false).is_err());
-    assert!(adapter::evidence(&root, true).is_err());
+    assert!(b0::validate_patch(&b0::PATCH_BYTES[..b0::PATCH_LENGTH - 1]).is_err());
+    let mut changed = b0::PATCH_BYTES.to_vec();
+    changed[0] ^= 1;
+    assert!(b0::validate_patch(&changed).is_err());
     assert_eq!(files(&root.join(".git")), after);
-    fs::copy(
-        crate::workspace::root_dir().join(relative),
-        root.join(relative),
-    )
-    .unwrap();
-    git(
-        &root,
-        &[
-            "fetch",
-            "--quiet",
-            "--no-tags",
-            "--depth=1",
-            crate::workspace::root_dir().to_str().unwrap(),
-            adapter::COMMIT,
-        ],
-    );
-    git(&root, &["replace", adapter::BACKEND, adapter::COMMIT]);
-    assert!(adapter::evidence(&root, false).is_err());
     temporary.close().unwrap();
 }
 
 #[test]
-fn exact_clean_git_sources_separate_b0_products_from_adapter_tools_and_detect_drift() {
+fn exact_b0_roots_reject_role_swaps_replace_refs_and_product_drift() {
+    use crate::recovery::b0;
     let temporary = directory();
-    let base = imported(temporary.path(), "base", adapter::BACKEND);
-    let execution = imported(temporary.path(), "execution", adapter::COMMIT);
-    let product = arms::inventory(&base, Some(adapter::BACKEND)).unwrap();
-    let tool = arms::inventory(&execution, Some(adapter::COMMIT)).unwrap();
-    assert_ne!(product, tool);
+    let base = imported(temporary.path(), "base", b0::BACKEND);
+    let execution = imported(temporary.path(), "execution", b0::COMMIT);
+    let coordinator = temporary.path().join("coordinator");
+    fs::create_dir(&coordinator).unwrap();
+    git(&coordinator, &["init", "--quiet"]);
+    let before = files(&coordinator.join(".git"));
+    let bound = adapter::registered(&coordinator, &execution, &base, false).unwrap();
     assert_eq!(
-        source::backend_domains(&source::validate_inventory(&product).unwrap()).unwrap()["product"],
-        source::backend_domains(&source::validate_inventory(&tool).unwrap()).unwrap()["product"]
+        bound["inventory"],
+        arms::inventory(&base, Some(b0::BACKEND)).unwrap()
     );
-    assert!(arms::inventory(&execution, Some(adapter::BACKEND)).is_err());
+    assert_eq!(
+        bound["execution_inventory"],
+        arms::inventory(&execution, Some(b0::COMMIT)).unwrap()
+    );
+    assert_ne!(bound["inventory"], bound["execution_inventory"]);
+    assert!(adapter::registered(&coordinator, &base, &execution, false).is_err());
+    assert!(adapter::registered(&coordinator, &base, &base, false).is_err());
+    assert_eq!(files(&coordinator.join(".git")), before);
+    for (root, original, substitute) in [
+        (&base, b0::BACKEND, b0::COMMIT),
+        (&execution, b0::COMMIT, b0::BACKEND),
+    ] {
+        git(
+            root,
+            &[
+                "fetch",
+                "--quiet",
+                "--no-tags",
+                "--depth=1",
+                crate::workspace::root_dir().to_str().unwrap(),
+                substitute,
+            ],
+        );
+        git(root, &["replace", original, substitute]);
+        assert!(adapter::registered(&coordinator, &execution, &base, false).is_err());
+        git(root, &["replace", "-d", original]);
+    }
+    assert_eq!(
+        adapter::registered(&coordinator, &execution, &base, false).unwrap(),
+        bound
+    );
     fs::write(execution.join("Cargo.toml"), "changed product input").unwrap();
-    assert!(arms::inventory(&execution, Some(adapter::COMMIT)).is_err());
-    let changed = source::capture(&execution).unwrap();
-    assert_ne!(
-        source::backend_domains(&changed).unwrap()["product"],
-        source::backend_domains(&source::validate_inventory(&product).unwrap()).unwrap()["product"]
-    );
+    assert!(adapter::registered(&coordinator, &execution, &base, false).is_err());
     temporary.close().unwrap();
 }
 
@@ -175,7 +181,7 @@ fn manifest(root: &Path) -> Value {
         json!({"roots":{"source_backend":root.join(if b0 {"base"} else {"candidate"}),
         "execution_backend":root.join(if b0 {"adapter"} else {"candidate"}),"frontend":root.join(if b0 {"front0"} else {"front1"})},
         "sources":{"backend":inventory,"frontend":inventory},"execution_sources":{"backend":inventory,"frontend":inventory},
-        "builds":{"backend":descriptor,"frontend":descriptor},"backend_environment":descriptor,"adapter":if b0 {adapter::expected(json!(1))} else {Value::Null},
+        "builds":{"backend":descriptor,"frontend":descriptor},"backend_environment":descriptor,"adapter":if b0 {crate::recovery::b0::expected()} else {Value::Null},
         "source_export_result_sha256":export["result"]["sha256"],"source_export_identity_sha256":export["identity_sha256"]})
     };
     json!({"format_version":2,"kind":"restore-comparison-sources","source_export":export,"arms":{"b0":arm(true),"b1":arm(false)}})
@@ -189,6 +195,15 @@ fn strict_manifest_rejects_shared_export_substitution_missing_adapter_and_unknow
     assert!(value["source_export"].get("source_storage").is_none());
     for (pointer, replacement) in [
         ("/arms/b0/adapter", Value::Null),
+        ("/arms/b0/adapter/adapter_tree", json!("f".repeat(40))),
+        ("/arms/b0/adapter/reconstructed_tree", json!("f".repeat(40))),
+        (
+            "/arms/b0/adapter/reference_adapter_sha",
+            json!(crate::recovery::b0::BACKEND),
+        ),
+        ("/arms/b0/adapter/patch/bytes", json!(1)),
+        ("/arms/b0/adapter/patch/sha256", json!("f".repeat(64))),
+        ("/arms/b0/adapter/patch/path", json!("unregistered.patch")),
         (
             "/arms/b0/source_export_identity_sha256",
             json!("f".repeat(64)),

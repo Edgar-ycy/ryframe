@@ -1,24 +1,14 @@
 use std::{
     collections::HashSet,
-    fs,
     path::{Path, PathBuf},
 };
 
 use serde_json::Value;
 
-use super::{
-    document::{Document, digest, exact, integer, text},
-    domain::file_sha256,
-};
+use super::document::{Document, digest, exact, integer, text};
 use crate::Result;
 
-const B0_BACKEND_COMMIT: &str = "815c5eafb09d4b493319d255fb7ab88ddd02c8b6";
-const B0_FRONTEND_COMMIT: &str = "0087ea2ecf62530d042b9e52f5c950fb34c66d78";
-const B0_ADAPTER_COMMIT: &str = "c05114bcdf5c369cd74087db6317ce3c8f89bee8";
-const B0_ADAPTER_TREE: &str = "2ff15e7f34da1749c7eb27a1a025b9d3811b87a7";
-const B0_ADAPTER_PATCH: &str = "xtask/assets/baseline-adapters/stable-readiness-b0-v1.patch";
-const B0_ADAPTER_PATCH_SHA256: &str =
-    "28ad29f21ca9fd58356d059700bcc871172466e0a62286c5ccdbf68b1ed3fba3";
+use crate::recovery::b0;
 
 const MANIFEST_FIELDS: [&str; 4] = ["format_version", "kind", "source_export", "arms"];
 const ARM_FIELDS: [&str; 8] = [
@@ -60,7 +50,7 @@ pub(crate) fn validate(backend: &Path, document: &Document) -> Result<Value> {
         "双版本来源 arms",
     )?;
     for name in ["b0", "b1"] {
-        validate_arm(backend, name, arms.get(name).unwrap(), &export)?;
+        validate_arm(name, arms.get(name).unwrap(), &export)?;
     }
     let mut roots = HashSet::new();
     for arm in arms.values() {
@@ -72,8 +62,8 @@ pub(crate) fn validate(backend: &Path, document: &Document) -> Result<Value> {
         return Err("B0/B1 产品、适配和前端必须使用五个独立工作树".into());
     }
     let b1 = arms.get("b1").unwrap();
-    if head(b1, "sources", "backend") == Some(B0_BACKEND_COMMIT)
-        || head(b1, "sources", "frontend") == Some(B0_FRONTEND_COMMIT)
+    if head(b1, "sources", "backend") == Some(b0::BACKEND)
+        || head(b1, "sources", "frontend") == Some(b0::FRONTEND)
     {
         return Err("B1 必须分别绑定区别于 B0 的最终双端源码".into());
     }
@@ -130,7 +120,7 @@ fn validate_export(backend: &Path, value: &Value) -> Result<Value> {
     Ok(Value::Object(export.clone()))
 }
 
-fn validate_arm(backend: &Path, name: &str, value: &Value, export: &Value) -> Result<()> {
+fn validate_arm(name: &str, value: &Value, export: &Value) -> Result<()> {
     let arm = exact(value, &ARM_FIELDS, "双版本来来源 arm")?;
     let roots = exact(
         arm.get("roots").unwrap(),
@@ -171,7 +161,7 @@ fn validate_arm(backend: &Path, name: &str, value: &Value, export: &Value) -> Re
         return Err("B0/B1 没有共同绑定同一 source-export".into());
     }
     if name == "b0" {
-        validate_b0(backend, arm.get("adapter").unwrap())?;
+        validate_b0(arm.get("adapter").unwrap())?;
     } else if !arm.get("adapter").unwrap().is_null()
         || arm.get("sources") != arm.get("execution_sources")
     {
@@ -204,7 +194,7 @@ pub(super) fn validate_builds(value: &Value) -> Result<()> {
     Ok(())
 }
 
-fn validate_b0(backend: &Path, value: &Value) -> Result<()> {
+fn validate_b0(value: &Value) -> Result<()> {
     let adapter = exact(
         value,
         &[
@@ -219,27 +209,13 @@ fn validate_b0(backend: &Path, value: &Value) -> Result<()> {
         ],
         "B0 工具适配",
     )?;
-    let patch = exact(
-        adapter.get("patch").unwrap(),
+    exact(
+        &adapter["patch"],
         &["path", "bytes", "sha256"],
         "B0 适配补丁",
     )?;
-    let patch_path = Path::new(text(patch.get("path").unwrap(), "B0 适配补丁")?);
-    let patch_file = backend.join(patch_path);
-    if adapter.get("contract").and_then(Value::as_str) != Some("legacy-stable-readiness-b0-v1")
-        || adapter.get("base_backend_sha").and_then(Value::as_str) != Some(B0_BACKEND_COMMIT)
-        || adapter.get("base_frontend_sha").and_then(Value::as_str) != Some(B0_FRONTEND_COMMIT)
-        || adapter.get("reference_adapter_sha").and_then(Value::as_str) != Some(B0_ADAPTER_COMMIT)
-        || adapter.get("adapter_tree").and_then(Value::as_str) != Some(B0_ADAPTER_TREE)
-        || adapter.get("reconstructed_tree").and_then(Value::as_str) != Some(B0_ADAPTER_TREE)
-        || adapter.get("adapter_paths") != Some(&serde_json::json!(["xtask/src/cli.rs"]))
-        || patch.get("path").and_then(Value::as_str) != Some(B0_ADAPTER_PATCH)
-        || file_sha256(&patch_file)? != B0_ADAPTER_PATCH_SHA256
-        || patch.get("sha256").and_then(Value::as_str) != Some(B0_ADAPTER_PATCH_SHA256)
-        || fs::metadata(&patch_file)?.len()
-            != super::document::integer(patch.get("bytes").unwrap(), "B0 适配补丁大小")?
-    {
-        return Err("B0 工具适配身份无效".into());
+    if *value != b0::evidence()? {
+        return Err("B0 执行适配身份无效".into());
     }
     Ok(())
 }

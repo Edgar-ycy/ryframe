@@ -45,6 +45,13 @@ pub(super) fn project(mut merged: Table) -> Result<LegacyConfig> {
 }
 
 fn project_startup_fields(merged: &mut Table) -> Result<()> {
+    if merged.contains_key("service_accounts") {
+        return Err("B0 来源不得包含已移除的 service_accounts 字段".into());
+    }
+    // 现代产品已移除服务账号，历史配置必须显式禁用，不能沿用 B0 的启用默认值。
+    let mut service_accounts = Table::new();
+    service_accounts.insert("enabled".into(), Value::Boolean(false));
+    merged.insert("service_accounts".into(), Value::Table(service_accounts));
     // B0 只启动已恢复的库。初始管理员密码属于现代显式初始化配置。
     if let Some(bootstrap) = merged.remove("bootstrap") {
         let bootstrap = bootstrap.as_table().ok_or("B0 来源 bootstrap 必须是表")?;
@@ -161,6 +168,9 @@ password = "fixture-value-a"
         assert_eq!(selected["scope_id"].as_str(), Some("test-base"));
         assert!(!selected.contains_key("snowflake_worker_id"));
         assert!(!selected.contains_key("bootstrap"));
+        let service_accounts = selected["service_accounts"].as_table().unwrap();
+        assert_eq!(service_accounts.len(), 1);
+        assert_eq!(service_accounts["enabled"].as_bool(), Some(false));
         assert_eq!(selected["app"]["port"].as_integer(), Some(23921));
         assert!(selected["app"].get("locales_dir").is_none());
         assert_eq!(selected["telemetry"]["sample_ratio"].as_float(), Some(0.5));
@@ -176,6 +186,21 @@ password = "fixture-value-a"
             assert_eq!(targets[index]["database"].as_str(), Some(database));
             assert!(targets[index].get("password").is_none());
             assert_eq!(projection.passwords[&name], value);
+        }
+    }
+
+    #[test]
+    fn rejects_existing_service_accounts_without_exposing_private_values() {
+        let private_value = "fixture-private-keyring-value";
+        for enabled in [false, true] {
+            let mut merged = fixture();
+            let mut service_accounts = Table::new();
+            service_accounts.insert("enabled".into(), Value::Boolean(enabled));
+            service_accounts.insert("keyring".into(), Value::String(private_value.into()));
+            merged.insert("service_accounts".into(), Value::Table(service_accounts));
+            let error = project(merged).err().unwrap().to_string();
+            assert_eq!(error, "B0 来源不得包含已移除的 service_accounts 字段");
+            assert!(!error.contains(private_value));
         }
     }
 

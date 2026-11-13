@@ -417,12 +417,7 @@ fn prepare_outputs(
     arm: &ArmState,
 ) -> OutputState {
     let comparison_sources = base.root.join("comparison.json");
-    write_comparison(
-        &base.backend,
-        &base.root,
-        &comparison_sources,
-        &source.export,
-    );
+    write_comparison(&base.root, &comparison_sources, &source.export);
     let options = reference_options(
         &arm.arm_input,
         &target.fresh_verify,
@@ -788,7 +783,7 @@ fn export_identity(
     identity
 }
 
-fn write_comparison(backend: &Path, root: &Path, path: &Path, export: &Value) {
+fn write_comparison(root: &Path, path: &Path, export: &Value) {
     let arm = |name: &str, head: &str, adapter: Value| {
         let inventory = inventory(head);
         let source_root = root.join(name).join("source");
@@ -821,18 +816,7 @@ fn write_comparison(backend: &Path, root: &Path, path: &Path, export: &Value) {
             "source_export_identity_sha256": export["identity_sha256"],
         })
     };
-    let patch = backend.join("xtask/assets/baseline-adapters/stable-readiness-b0-v1.patch");
-    let adapter = json!({
-        "contract": "legacy-stable-readiness-b0-v1",
-        "base_backend_sha": "815c5eafb09d4b493319d255fb7ab88ddd02c8b6",
-        "base_frontend_sha": "0087ea2ecf62530d042b9e52f5c950fb34c66d78",
-        "reference_adapter_sha": "c05114bcdf5c369cd74087db6317ce3c8f89bee8",
-        "adapter_tree": "2ff15e7f34da1749c7eb27a1a025b9d3811b87a7",
-        "reconstructed_tree": "2ff15e7f34da1749c7eb27a1a025b9d3811b87a7",
-        "adapter_paths": ["xtask/src/cli.rs"],
-        "patch": {"path": "xtask/assets/baseline-adapters/stable-readiness-b0-v1.patch",
-                  "bytes": fs::metadata(&patch).unwrap().len(), "sha256": file_sha(&patch)},
-    });
+    let adapter = crate::recovery::b0::evidence().unwrap();
     write_value(
         root,
         "comparison.json",

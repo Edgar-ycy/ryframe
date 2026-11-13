@@ -138,7 +138,7 @@ pub(in crate::recovery::runtime) fn expected(request: &Value, current: &Value) -
 
 fn request_commands(request: &Value, frontend_program: &Value) -> Result<Value> {
     let mut commands = json!({});
-    let legacy = super::b0::matches(&request["authority"]);
+    let legacy = crate::recovery::b0::matches(&request["authority"]);
     for role in ["api", "worker"] {
         path(&request["artifacts"][role]["executable"])?;
         path(&request["environment"]["configurations"][role]["directory"])?;
@@ -180,7 +180,7 @@ pub(super) fn frontend_command(request: &Value, executable: &Value) -> Result<Va
     )?;
     let frontend = authority["frontend_sha"] == b0::HEAD;
     let adapter = authority["backend_adapter_contract"] == "legacy-stable-readiness-b0-v1";
-    let b0 = super::b0::matches(authority);
+    let b0 = crate::recovery::b0::matches(authority);
     check(
         b0 || !(frontend || adapter),
         "恢复 B0 前端服务必须绑定精确历史产品、执行树和适配合同",

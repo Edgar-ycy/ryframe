@@ -158,7 +158,7 @@ fn arm(name: &str, value: &Value, export: &Value) -> Result<()> {
         if adapter["patch"]["bytes"].as_u64().is_none_or(|n| n == 0) {
             return Err("B0 补丁字节数无效".into());
         }
-        if *adapter != super::adapter::expected(adapter["patch"]["bytes"].clone()) {
+        if *adapter != crate::recovery::b0::evidence()? {
             return Err("B0 工具适配身份无效".into());
         }
     } else if !value["adapter"].is_null() || value["sources"] != value["execution_sources"] {

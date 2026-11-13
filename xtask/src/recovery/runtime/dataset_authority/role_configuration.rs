@@ -1,4 +1,4 @@
-//! 从 fresh 配置捕获两角色的私有文件字节，并核验新发布的受管目录。
+//! 从 fresh 配置派生启用调度的双角色私有文件，并核验新发布的受管目录。
 
 use super::reads;
 use crate::{
@@ -79,7 +79,7 @@ impl RoleConfiguration {
             if i64::from(worker_id) == api_id {
                 return Err("恢复 API 与 Worker 实例编号必须不同".into());
             }
-            let worker = render_worker(&api, worker_id)?;
+            let (api, worker) = render_roles(&api, &table, worker_id)?;
             if snapshot()? != (directory, bindings) || directory_snapshot(source)? != before {
                 return Err("fresh 配置在捕获期间变化".into());
             }
@@ -173,30 +173,34 @@ fn capture_file(path: &Path, binding: &Value) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn render_worker(api: &[u8], worker_id: u16) -> Result<Vec<u8>> {
+fn render_roles(api: &[u8], effective: &toml::Table, worker_id: u16) -> Result<(Vec<u8>, Vec<u8>)> {
+    if let Some(jobs) = effective.get("jobs") {
+        let jobs = jobs.as_table().ok_or("fresh jobs 必须是表")?;
+        if jobs
+            .get("scheduler_enabled")
+            .is_some_and(|value| value.as_bool().is_none())
+        {
+            return Err("fresh jobs.scheduler_enabled 必须是布尔值".into());
+        }
+    }
     let source = std::str::from_utf8(api).map_err(|_| "fresh app.test.toml 必须为 UTF-8")?;
-    let mut original: toml::Table =
+    let mut role: toml::Table =
         toml::from_str(source).map_err(|_| "fresh app.test.toml 无法安全解析")?;
-    let text = source.replace("\r\n", "\n").replace('\r', "\n");
-    let value = files::dispatch("instance-text", json!({"text":text,"worker_id":worker_id}))
-        .map_err(|_| "无法安全改写恢复 Worker 实例编号")?;
-    let text = value["text"]
-        .as_str()
-        .ok_or("恢复 Worker 配置改写缺少文本")?;
-    let mut rewritten: toml::Table =
-        toml::from_str(text).map_err(|_| "恢复 Worker app.test.toml 无法安全解析")?;
-    original.remove(INSTANCE);
-    let actual = rewritten
-        .remove(INSTANCE)
-        .and_then(|value| value.as_integer());
-    if actual != Some(i64::from(worker_id)) || rewritten != original {
-        return Err("恢复 Worker 配置改写改变了实例编号以外的语义".into());
-    }
-    if cfg!(windows) {
-        Ok(text.replace('\n', "\r\n").into_bytes())
-    } else {
-        Ok(text.as_bytes().to_vec())
-    }
+    let jobs = role
+        .entry("jobs")
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()))
+        .as_table_mut()
+        .ok_or("fresh jobs 必须是表")?;
+    jobs.insert("scheduler_enabled".into(), toml::Value::Boolean(true));
+    let api = render_role(&role)?;
+    role.insert(INSTANCE.into(), toml::Value::Integer(i64::from(worker_id)));
+    Ok((api, render_role(&role)?))
+}
+
+fn render_role(table: &toml::Table) -> Result<Vec<u8>> {
+    toml::to_string(table)
+        .map(String::into_bytes)
+        .map_err(|_| "恢复角色 TOML 无法安全序列化".into())
 }
 
 #[derive(PartialEq, Eq)]
