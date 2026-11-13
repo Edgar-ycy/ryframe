@@ -40,9 +40,12 @@ fn temporary() -> tempfile::TempDir {
 
 #[test]
 fn invalid_protocol_is_sanitized_and_cannot_authorize_writes_or_retries() {
-    for raw in [b"\xff".as_slice(), br#"{"operation":"reference-request","write":false,"arguments":{"raw":"{\"private-secret\":1,\"private-secret\":2}"}}"#,
-        br#"{"operation":"reference-request","write":false,"arguments":{"raw":"private-secret"}}"#,
-        br#"{"operation":"reference-receipt-start","write":false,"arguments":{"private-secret":true}}"#] {
+    for raw in [
+        b"\xff".as_slice(),
+        br#"{"operation":"reference-readonly","write":false,"arguments":{"raw":"{\"private-secret\":1,\"private-secret\":2}"}}"#,
+        br#"{"operation":"reference-readonly","write":false,"arguments":{"raw":"private-secret"}}"#,
+        br#"{"operation":"reference-receipt-start","write":false,"arguments":{"private-secret":true}}"#,
+    ] {
         let output = invoke(raw);
         assert!(!output.status.success());
         assert!(output.stderr.is_empty());
@@ -56,13 +59,15 @@ fn invalid_protocol_is_sanitized_and_cannot_authorize_writes_or_retries() {
 }
 
 #[test]
-fn retired_restore_operations_are_rejected_by_the_native_private_protocol() {
+fn retired_reference_operations_are_rejected_by_the_native_private_protocol() {
     for operation in [
         "reference-restore-resources",
         "reference-bound-artifact",
         "reference-restore-result",
         "reference-restore-record",
         "reference-product-hash",
+        "reference-request",
+        "reference-summary",
     ] {
         let output = request(operation, false, &json!({}));
         assert_eq!(output.status.code(), Some(1), "{operation}");

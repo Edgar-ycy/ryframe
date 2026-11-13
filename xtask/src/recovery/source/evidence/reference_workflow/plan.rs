@@ -66,7 +66,8 @@ fn execute(
         // 旧 Python 输出及其摘要请求都递归排序。即便依赖打开 preserve_order 也保持原字节顺序。
         value.sort_all_objects();
         if let Some(output) = output {
-            return publish(backend, output, &chain, &value, &frame, window);
+            let backup = path(&chain.backup.result["backup_root"])?;
+            return publish(backend, output, backup, &value, &frame, window);
         }
         if frame.target.is_some() {
             return result_summary(&value, None);
@@ -259,19 +260,17 @@ fn descriptors(value: &Value) -> [&Value; 5] {
 fn publish(
     backend: &Path,
     output: &Path,
-    chain: &Chain,
+    backup: &Path,
     value: &Value,
     frame: &Frame<'_>,
     window: &Window,
 ) -> Result<Value> {
-    let backup = path(&chain.backup.result["backup_root"])?;
     let initialized = document::binding_shape(&value["fresh_target"]["initialized"], "原初始化")?;
     let fresh = initialized.path.parent().ok_or("原初始化缺少证据目录")?;
     let (output, identity) = output_path(backend, output, backup, fresh)?;
     let parent = output.parent().ok_or("目标计划输出缺少父目录")?;
-    window.finish(frame.check())?;
     inputs::publish::publish_verified(&output, value, || {
-        frame.check()?;
+        window.finish(frame.check())?;
         Ok(check_output_parent(parent, backup, fresh)? == identity)
     })?;
     let published = document::read(&output, backend, "已发布正式目标计划")?;
@@ -411,6 +410,70 @@ mod tests {
         fs::write(&path, b"original")?;
         assert!(output_path(backend, &path, &backup, &fresh).is_err());
         assert_eq!(fs::read(&path)?, b"original");
+        Ok(())
+    }
+
+    #[test]
+    fn target_plan_preserves_original_bindings_and_publishes_once() -> Result<()> {
+        let local = crate::workspace::root_dir().join(".local-tests");
+        fs::create_dir_all(&local)?;
+        let fixture = tempfile::tempdir_in(local)?;
+        let backend = fixture.path();
+        let work = backend.join(".local-tests");
+        let backup = work.join("backup");
+        let fresh = work.join("fresh");
+        for directory in [&backup, &fresh] {
+            fs::create_dir_all(directory)?;
+        }
+        let write = |path: &Path, value: Value| -> Result<Document> {
+            fs::write(path, document::canonical_bytes(&value)?)?;
+            document::read(path, backend, "目标计划测试输入")
+        };
+        let reference = write(&work.join("reference.json"), json!({"target_side":"base"}))?;
+        let receipt = write(&work.join("backup.json"), json!({"backup":true}))?;
+        let comparison = write(&work.join("comparison.json"), json!({"comparison":true}))?;
+        let arm = write(&work.join("arm.json"), json!({"arm":true}))?;
+        let verify = write(&fresh.join("verify.json"), json!({"verify":true}))?;
+        let initialized = write(&fresh.join("initialized.json"), json!({"initialized":true}))?;
+        let product = write(&work.join("product.json"), json!({"product":true}))?;
+        let request = json!({
+            "backup_receipt":receipt.path,
+            "comparison_sources":comparison.path,
+            "arm_input":arm.path,
+            "fresh_target_verify":verify.path,
+            "product_plan":product.path,
+        });
+        let value = json!({
+            "target_side":"base",
+            "comparison_arm":"b0",
+            "backup_receipt":document::binding(&receipt),
+            "comparison_sources":document::binding(&comparison),
+            "arm_input":document::binding(&arm),
+            "fresh_target":{
+                "verify":document::binding(&verify),
+                "initialized":document::binding(&initialized),
+            },
+            "product_plan_file":document::binding(&product),
+        });
+        let window = Window::direct()?;
+        let frame = Frame::read(backend, &request, &reference)?;
+        document::bound_file(backend, &value["fresh_target"]["initialized"], "原初始化")?;
+        frame.check_bindings(&value)?;
+        let output = work.join("target-plan-output.json");
+        assert!(!output.exists());
+        let summary = publish(backend, &output, &backup, &value, &frame, &window)?;
+        assert_eq!(summary["status"], "target_plan_published");
+        assert_eq!(summary["target_plan_sha256"], document::hash(&value)?);
+        let published = document::canonical_bytes(&value)?;
+        assert_eq!(fs::read(&output)?, published);
+        assert!(publish(backend, &output, &backup, &value, &frame, &window).is_err());
+        assert_eq!(fs::read(&output)?, published);
+
+        let verify = Frame::read(backend, &json!({"target_plan":output}), &reference)?;
+        let stored = &verify.target.as_ref().unwrap().value;
+        verify.check_bindings(stored)?;
+        window.finish(verify.check())?;
+        assert_eq!(*stored, value);
         Ok(())
     }
 }

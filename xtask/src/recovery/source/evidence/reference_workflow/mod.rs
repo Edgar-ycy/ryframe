@@ -30,15 +30,13 @@ pub(crate) fn run_local(raw: &str) -> Result<Value> {
 pub(crate) fn handles(operation: &str) -> bool {
     matches!(
         operation,
-        "reference-request"
-            | "reference-readonly"
+        "reference-readonly"
             | "reference-work-directory"
             | "reference-work-verify"
             | "reference-copy"
             | "reference-damage"
             | "reference-receipt-start"
             | "reference-receipt-finish"
-            | "reference-summary"
             | "reference-backup-source"
             | "reference-backup-result"
     )
@@ -46,7 +44,6 @@ pub(crate) fn handles(operation: &str) -> bool {
 
 pub(crate) fn request(operation: &str, args: &Value) -> Result<Value> {
     match operation {
-        "reference-request" => protocol::request(args),
         "reference-readonly" => readonly::execute(args),
         "reference-work-directory" => files::work(args, true),
         "reference-work-verify" => files::work(args, false),
@@ -54,7 +51,6 @@ pub(crate) fn request(operation: &str, args: &Value) -> Result<Value> {
         "reference-damage" => files::damage(args),
         "reference-receipt-start" => receipts::start(args),
         "reference-receipt-finish" => receipts::finish(args),
-        "reference-summary" => model::summary(args),
         "reference-backup-source" => proof::backup_source(args),
         "reference-backup-result" => proof::backup_result(args),
         _ => Err("参考协调操作无效".into()),

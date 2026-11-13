@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove the legacy Python reference-plan command and its private protocol entry points. The current Rust command handles summaries, previews, publication, and verification of published plans.
+
 - Reference restore uses the current Rust execution path. Remove the retired Python restore writes, runtime guard, resource-image implementation, and their private dispatch operations.
 
 - Reference backup protects the original plan, shared-export inventory, stopped generation, and publication receipt throughout execution, and revalidates the original inputs around publication.

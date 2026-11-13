@@ -1,13 +1,8 @@
-"""严格目标计划的来源关系、不可覆盖发布和失败关闭回归。"""
+"""严格目标计划的来源关系和失败关闭回归。"""
 
-import contextlib
 import copy
-import io
-import json
-import os
 from pathlib import Path
 import sys
-import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -223,62 +218,6 @@ class TargetPlanTests(unittest.TestCase):
             target.verify_target_plan(self.backend, self.plan, path)
         with patch("restore_runtime_evidence.is_reparse", return_value=True), self.assertRaises(ValueError):
             self.capture()
-        with patch("devex_clone_model.linked", return_value=True), self.assertRaises(ValueError):
-            target.plan_output(self.backend, self.work / "new.json", value)
-
-    def test_new_plan_output_rejects_collision_and_protected_artifact_directories(self):
-        value = self.capture()
-        for path in (self.paths["backup_receipt"], self.paths["product_plan"], self.work / "backup/new.json",
-                     self.work / "fresh/target/new.json", self.backend / "outside.json"):
-            with self.subTest(path=path), self.assertRaises(ValueError):
-                target.plan_output(self.backend, path, value)
-
-    def test_plan_preview_is_read_only_and_publication_is_explicit_and_exclusive(self):
-        path = self.write("reference-plan.json", self.plan)
-        request = reference.ReferenceRequest(command="plan", backend_dir=self.backend, plan=path,
-                                             write=False, **self.paths)
-        before = {str(item): item.read_bytes() for item in self.work.rglob("*") if item.is_file()}
-        with contextlib.redirect_stdout(io.StringIO()) as output:
-            reference.main(request)
-        self.assertEqual(json.loads(output.getvalue())["comparison_arm"], "b0")
-        self.assertEqual(before, {str(item): item.read_bytes() for item in self.work.rglob("*") if item.is_file()})
-        destination = self.work / "published-target-plan.json"
-        published = reference.ReferenceRequest(command="plan", backend_dir=self.backend, plan=path,
-                                               write=True, output=destination, **self.paths)
-        with contextlib.redirect_stdout(io.StringIO()):
-            reference.main(published)
-        self.assertTrue(destination.is_file())
-        with patch.object(target, "capture_target_plan") as capture, self.assertRaises(ValueError):
-            reference.main(published)
-        capture.assert_not_called()
-
-    def test_direct_legacy_arguments_fail_before_reading_input(self):
-        for command, extra in (("plan", ["--arm-input", "unused"]), ("plan", ["--write"]),
-                               ("plan", ["--output", "unused"]), ("dataset", ["--target-plan", "unused"]),
-                               ("restore", ["--arm-input", "unused"])):
-            argv = [command, "--backend-dir", str(self.backend), "--plan", "unused", *extra]
-            with patch.object(reference, "read_json") as read, \
-                    self.assertRaises(reference.ReferenceProtocolError):
-                reference.private_protocol_request(argv=argv)
-            read.assert_not_called()
-
-    def test_plan_cli_with_cold_bytecode_prefix_does_not_create_any_file(self):
-        plan = self.write("reference-plan.json", self.plan)
-        cache = self.work / "cold-bytecode"
-        before = {str(path): (path.stat().st_size, path.stat().st_mtime_ns) for path in self.backend.rglob("*")}
-        environment = dict(os.environ)
-        environment.update({"RYFRAME_XTASK_RECOVERY_REFERENCE": "untrusted",
-                            "RYFRAME_XTASK_RECOVERY_INPUTS": "untrusted",
-                            "PYTHONPYCACHEPREFIX": str(cache)})
-        from rate_limit_tool import tool_binding
-        binding = tool_binding()
-        self.assertIsNotNone(binding)
-        result = subprocess.run([binding["path"], "check", "recovery", "plan", "--plan", str(plan)],
-                                cwd=self.backend, env=environment,
-                                capture_output=True, check=True)
-        self.assertEqual(json.loads(result.stdout)["id"], self.plan["id"])
-        self.assertFalse(cache.exists())
-        self.assertEqual(before, {str(path): (path.stat().st_size, path.stat().st_mtime_ns) for path in self.backend.rglob("*")})
 
 
 if __name__ == "__main__":

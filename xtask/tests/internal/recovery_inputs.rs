@@ -97,6 +97,67 @@ fn reference_product_and_bindings_native_chains_succeed() {
 }
 
 #[test]
+fn reference_plan_summary_process_leaves_the_fixture_and_cold_cache_untouched() {
+    use std::{collections::BTreeMap, path::PathBuf, process::Command};
+
+    fn snapshot(root: &Path) -> BTreeMap<PathBuf, Option<Vec<u8>>> {
+        let mut snapshot = BTreeMap::new();
+        let mut pending = vec![root.to_path_buf()];
+        while let Some(directory) = pending.pop() {
+            for entry in fs::read_dir(directory).unwrap() {
+                let entry = entry.unwrap();
+                let path = entry.path();
+                let relative = path.strip_prefix(root).unwrap().to_owned();
+                if entry.file_type().unwrap().is_dir() {
+                    pending.push(path);
+                    snapshot.insert(relative, None);
+                } else {
+                    snapshot.insert(relative, Some(fs::read(path).unwrap()));
+                }
+            }
+        }
+        snapshot
+    }
+
+    let fixture = Fixture::new();
+    let cache = fixture.root.join("cold-bytecode");
+    let before = snapshot(&fixture.root);
+    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(["check", "recovery", "plan", "--plan"])
+        .arg(&fixture.reference_plan)
+        .current_dir(&fixture.backend)
+        .env("RYFRAME_XTASK_RECOVERY_REFERENCE", "untrusted")
+        .env("RYFRAME_XTASK_RECOVERY_INPUTS", "untrusted")
+        .env("PYTHONPYCACHEPREFIX", &cache)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(summary["id"], fixture.reference_value["id"]);
+    assert_eq!(summary["plan_sha256"], hash(&fixture.reference_value));
+    assert_eq!(summary["work_dir"], fixture.reference_value["work_dir"]);
+    for side in ["source", "target"] {
+        let databases = summary["targets"][side].as_array().unwrap();
+        let expected = fixture.reference_value[side]["databases"]
+            .as_array()
+            .unwrap();
+        assert_eq!(databases.len(), expected.len());
+        for (database, expected) in databases.iter().zip(expected) {
+            assert_eq!(
+                *database,
+                json!({"key":expected["key"],"server_uuid":expected["server_uuid"],"database":expected["database"]}),
+            );
+        }
+    }
+    assert!(!cache.exists());
+    assert_eq!(snapshot(&fixture.root), before);
+}
+
+#[test]
 fn arm_storage_requires_the_registered_run_prefix_and_same_effective_manifest() {
     let fixture = Fixture::new();
     let options = fixture.reference_options(None);
