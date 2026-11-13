@@ -6,6 +6,8 @@
 
 - Tenant data migration records the data-scope change during cutover. After activating the exact target fence, it publishes and verifies projection metadata plus digests and counts of actual Owner and department rows, then rechecks the control version and placement identity before becoming active. Failures retain maintenance state, and a published target can retry forward idempotently if the control commit did not complete. Ordinary outbox publication still requires active placement.
 
+- Bind B0 recovery adapters separately to the original product and exact execution tree, validating the full, product, and tool domains of the execution build. Use the compiled combined patch of the verifier, reconstruct only with explicit write authority in the original product repository, and reject Git replacement refs for both object identities.
+
 - Bind coordinator evidence, verification tools, and test runner to separate source roots and exact commits during formal recovery. Final verification builds maintenance code from verifier sources while reading runtime ledgers from the original coordinator root.
 
 - Remove Python target-plan verification and its dedicated fixture after the Rust entry point has taken over, retaining coverage for source bindings, unknown fields, and file identity.

@@ -18,8 +18,8 @@ impl Fixture {
         let adapter = legacy.then_some("legacy-stable-readiness-b0-v1".to_owned());
         let (backend_product_sha, backend_execution_sha, frontend_sha) = if legacy {
             (
-                "815c5eafb09d4b493319d255fb7ab88ddd02c8b6".to_owned(),
-                "c05114bcdf5c369cd74087db6317ce3c8f89bee8".to_owned(),
+                crate::recovery::b0::BACKEND.to_owned(),
+                crate::recovery::b0::COMMIT.to_owned(),
                 "0087ea2ecf62530d042b9e52f5c950fb34c66d78".to_owned(),
             )
         } else {

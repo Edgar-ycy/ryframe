@@ -1,3 +1,3710 @@
+diff --git a/catalog/migrations.lock.toml b/catalog/migrations.lock.toml
+index 220b3e734e5d0444b84630e889113910521d7dc9..5e2e1531a6bf82d33e15db8fd8c59cdde8fa4e04 100644
+--- a/catalog/migrations.lock.toml
++++ b/catalog/migrations.lock.toml
+@@ -1,26 +1,62 @@
+ format_version = 1
+ frozen_at = "2026-08-20"
+ 
++[[files]]
++path = "crates/ryframe-db/src/migration/m20260820_000000_control_baseline/backup.rs"
++sha256 = "8668ae2f9bb72ff459e6d304aefd7d5942ebeb2799bd0120500dde7ec5cd9997"
++storage = "control"
++target = "m20260820_000000_control_baseline"
++
+ [[files]]
+ path = "crates/ryframe-db/src/migration/m20260820_000000_control_baseline/base.rs"
+-sha256 = "521323f4b729a7231869368fd36f5add7bdc792419c2252c9622abca320974e6"
++sha256 = "63827c43e26ee7481f302cfff3d77904f019d0989ea1e91b128a47ed9d672bdd"
++storage = "control"
++target = "m20260820_000000_control_baseline"
++
++[[files]]
++path = "crates/ryframe-db/src/migration/m20260820_000000_control_baseline/base/tables.rs"
++sha256 = "e28fa07be8a2c72e996fee2d7bf19b05e7baec4390965c3a3b5d83b1d4580dc3"
++storage = "control"
++target = "m20260820_000000_control_baseline"
++
++[[files]]
++path = "crates/ryframe-db/src/migration/m20260820_000000_control_baseline/jobs.rs"
++sha256 = "38ff3e73a42c3a19a17fb836f3b74cabef3b4a0a7b084308f5b2d5d890af0fa6"
+ storage = "control"
+ target = "m20260820_000000_control_baseline"
+ 
+ [[files]]
+ path = "crates/ryframe-db/src/migration/m20260820_000000_control_baseline/mod.rs"
+-sha256 = "3d3d494838229ee057d156d30d2a11d42cc2bf08a82f34b4b4606b4b43afc08e"
++sha256 = "87d7e064603cb7a01a1e0dbe69c2690161058b72c9a4fb9233bfe4f73ba1b1e1"
+ storage = "control"
+ target = "m20260820_000000_control_baseline"
+ 
+ [[files]]
+ path = "crates/ryframe-db/src/migration/m20260820_000000_control_baseline/schema.rs"
+-sha256 = "a3519832e1e71a40ffe0e9cef3575d85e873fbf67f2f3ddb8a1fd900015c53c2"
++sha256 = "d1bb6746219c68660f44b1470b7951de37062f9b0d0d65d0ddc13dceaa8c4428"
+ storage = "control"
+ target = "m20260820_000000_control_baseline"
+ 
++[[files]]
++path = "crates/ryframe-db/src/migration/m20261013_000000_password_change.rs"
++sha256 = "b6fd640f8a97dd1145f16fa41e4f42b55b7d9de14ee6df23d09a631035334189"
++storage = "control"
++target = "m20261013_000000_password_change"
++
++[[files]]
++path = "crates/ryframe-db/src/migration/m20261017_000000_data_scope_projection.rs"
++sha256 = "6765745095cc648764eeb3cc250b281a3ba4bbf27562a9a0a85ea55b5017d3c7"
++storage = "control"
++target = "m20261017_000000_data_scope_projection"
++
+ [[files]]
+ path = "crates/ryframe-tenant-db/src/migration/m20260820_000000_tenant_baseline.rs"
+-sha256 = "dcf2f848fcdfa03ce78dc4966f48465ba7ae9e8339b07b4e9366fd3d6753ffd8"
++sha256 = "418f89adbe4efbbf262ac0035bc52427ae0d910d8f965efe69832072a4a5b258"
+ storage = "tenant-data"
+ target = "m20260820_000000_tenant_baseline"
++
++[[files]]
++path = "crates/ryframe-tenant-db/src/migration/m20261017_000000_data_scope_projection.rs"
++sha256 = "dfbaa7b21c04c1c460cb2df28918ec75fdbaa258b1797de31dd13b4c5d44da1f"
++storage = "tenant-data"
++target = "m20261017_000000_data_scope_projection"
+diff --git a/crates/ryframe-db/src/entities/background_job.rs b/crates/ryframe-db/src/entities/background_job.rs
+index ecc456e74f22839068daa71e21ce39bd110fcad8..ab4f5dc0f54dc86ec52f8cd7c88d152ad8b07728 100644
+--- a/crates/ryframe-db/src/entities/background_job.rs
++++ b/crates/ryframe-db/src/entities/background_job.rs
+@@ -22,6 +22,9 @@ pub struct Model {
+     pub priority: i32,
+     pub available_at: DateTime<Utc>,
+     pub attempts: i32,
++    /// 数据库单调领取序号，不改变历史任务 DTO。
++    #[serde(skip)]
++    pub claim_sequence: i64,
+     pub max_attempts: i32,
+     pub lease_owner: Option<String>,
+     pub lease_until: Option<DateTime<Utc>>,
+diff --git a/crates/ryframe-db/src/migration/baseline_contract.rs b/crates/ryframe-db/src/migration/baseline_contract.rs
+index 7bac0de5b413eb610e594f2db53d837864a51e2f..4506c551032e03e93c1fede3fd1567ae8faec105 100644
+--- a/crates/ryframe-db/src/migration/baseline_contract.rs
++++ b/crates/ryframe-db/src/migration/baseline_contract.rs
+@@ -9,6 +9,16 @@ mod base;
+ #[path = "m20260820_000000_control_baseline/schema.rs"]
+ mod schema;
+ 
++#[cfg(any(not(feature = "migration"), test))]
++#[allow(clippy::duplicate_mod)]
++#[path = "m20260820_000000_control_baseline/backup.rs"]
++mod backup;
++
++#[cfg(any(not(feature = "migration"), test))]
++#[allow(clippy::duplicate_mod)]
++#[path = "m20260820_000000_control_baseline/jobs.rs"]
++mod jobs;
++
+ /// 当前控制库基线的只读 DDL 事实源，不编译迁移执行 trait。
+ #[cfg(any(not(feature = "migration"), test))]
+ pub fn ddl_statements() -> impl Iterator<Item = &'static str> {
+@@ -20,8 +30,9 @@ pub fn ddl_statements() -> impl Iterator<Item = &'static str> {
+         .chain(schema::tenant_config_table_statements())
+         .chain(schema::product_capability_table_statements())
+         .chain(schema::tenant_data_control_table_statements())
+-        .chain(schema::service_account_table_statements())
++        .chain(backup::BACKUP_TABLE_STATEMENTS)
+         .chain([
++            jobs::BACKGROUND_JOB_ATTEMPT_DDL,
+             schema::OUTBOX_EVENT_DDL,
+             schema::EXPORT_JOB_DDL,
+             schema::RESOURCE_OWNERSHIP_DDL,
+diff --git a/crates/ryframe-db/src/migration/m20260820_000000_control_baseline/backup.rs b/crates/ryframe-db/src/migration/m20260820_000000_control_baseline/backup.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..c009a1e014f6a1329327aa7e5c8ff5c25969f53b
+--- /dev/null
++++ b/crates/ryframe-db/src/migration/m20260820_000000_control_baseline/backup.rs
+@@ -0,0 +1,46 @@
++pub(crate) const BACKUP_TABLE_STATEMENTS: [&str; 3] = [
++    r#"CREATE TABLE IF NOT EXISTS `sys_backup_set` (
++        `id` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
++        `scope_id` varchar(48) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
++        `manifest_hash` char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
++        `captured_at` datetime(6) NOT NULL,
++        `retention_until` datetime(6) NOT NULL,
++        `checked_at` datetime(6) NOT NULL,
++        `valid` tinyint(1) NOT NULL,
++        `payload` json NOT NULL,
++        PRIMARY KEY (`id`),
++        KEY `idx_backup_set_scope_capture` (`scope_id`, `captured_at`),
++        CONSTRAINT `ck_backup_set_time` CHECK (`retention_until` > `captured_at`),
++        CONSTRAINT `ck_backup_set_valid` CHECK (`valid` IN (0, 1))
++    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"#,
++    r#"CREATE TABLE IF NOT EXISTS `sys_backup_resource` (
++        `backup_id` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
++        `resource_key` varchar(140) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
++        PRIMARY KEY (`backup_id`, `resource_key`),
++        KEY `idx_backup_resource_key` (`resource_key`, `backup_id`),
++        CONSTRAINT `fk_backup_resource_set` FOREIGN KEY (`backup_id`)
++            REFERENCES `sys_backup_set` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT
++    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"#,
++    r#"CREATE TABLE IF NOT EXISTS `sys_restore_run` (
++        `id` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
++        `backup_id` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
++        `scope_id` varchar(48) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
++        `status` varchar(24) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
++        `started_at` datetime(6) NOT NULL,
++        `completed_at` datetime(6) DEFAULT NULL,
++        `recovered_at` datetime(6) NOT NULL,
++        `payload` json NOT NULL,
++        PRIMARY KEY (`id`),
++        KEY `idx_restore_run_backup` (`backup_id`, `started_at`),
++        KEY `idx_restore_run_completed` (`completed_at`),
++        CONSTRAINT `fk_restore_run_backup` FOREIGN KEY (`backup_id`)
++            REFERENCES `sys_backup_set` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
++        CONSTRAINT `ck_restore_run_status`
++            CHECK (`status` IN ('running', 'data_verified', 'succeeded', 'failed')),
++        CONSTRAINT `ck_restore_run_completed`
++            CHECK ((`status` IN ('running', 'data_verified') AND `completed_at` IS NULL)
++                OR (`status` IN ('succeeded', 'failed')
++                    AND `completed_at` IS NOT NULL
++                    AND `completed_at` >= `started_at`))
++    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"#,
++];
+diff --git a/crates/ryframe-db/src/migration/m20260820_000000_control_baseline/base.rs b/crates/ryframe-db/src/migration/m20260820_000000_control_baseline/base.rs
+index a5be85725c887d46573162ded3f232270bfed54e..f29ba49353aafe2a2d7fd7bc5e909a3b6db1e86a 100644
+--- a/crates/ryframe-db/src/migration/m20260820_000000_control_baseline/base.rs
++++ b/crates/ryframe-db/src/migration/m20260820_000000_control_baseline/base.rs
+@@ -1,27 +1,9 @@
++#[path = "base/tables.rs"]
++mod tables;
++
+ // 控制库基础表与确定性种子；DDL、菜单和权限共同属于当前唯一基线。
+ pub(crate) const BASELINE_STATEMENTS: &[&str] = &[
+-    r####"CREATE TABLE IF NOT EXISTS `sys_tenant` (
+-    `id`                     BIGINT       NOT NULL COMMENT '租户ID',
+-    `tenant_id`              VARCHAR(64)  NOT NULL COMMENT '租户标识',
+-    `name`                   VARCHAR(128) NOT NULL COMMENT '租户名称',
+-    `domain`                 VARCHAR(255)          DEFAULT NULL COMMENT '绑定域名',
+-    `status`                 VARCHAR(32)  NOT NULL DEFAULT 'enabled' COMMENT '生命周期状态',
+-    `expire_at`              DATETIME              DEFAULT NULL COMMENT '到期时间',
+-    `max_users`              INT          NOT NULL DEFAULT 100 COMMENT '最大用户数',
+-    `max_roles`              INT          NOT NULL DEFAULT 20 COMMENT '最大角色数',
+-    `max_storage_mb`         BIGINT       NOT NULL DEFAULT 1024 COMMENT '最大存储容量(MB)',
+-    `max_requests_per_min`   INT          NOT NULL DEFAULT 1000 COMMENT '每分钟最大请求数',
+-    `session_version`        INT          NOT NULL DEFAULT 1 COMMENT '租户会话版本',
+-    `authorization_epoch`    INT          NOT NULL DEFAULT 1 COMMENT '租户授权规则版本',
+-    `runtime_epoch`          BIGINT       NOT NULL DEFAULT 1 COMMENT '租户运行时产品上下文纪元',
+-    `configuration_version`  BIGINT       NOT NULL DEFAULT 0 COMMENT '租户配置版本',
+-    `created_at`             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+-    `updated_at`             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+-    PRIMARY KEY (`id`),
+-    UNIQUE KEY `uk_tenant_id` (`tenant_id`),
+-    UNIQUE KEY `uk_tenant_domain` (`domain`),
+-    KEY `idx_tenant_status` (`status`, `expire_at`)
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户表'"####,
++    tables::SYS_TENANT_DDL,
+     r####"INSERT INTO `sys_tenant` (`id`, `tenant_id`, `name`, `status`)
+ VALUES (1, 'system', '系统租户', 'enabled')"####,
+     r####"CREATE TABLE IF NOT EXISTS `sys_cache_namespace_version` (
+@@ -60,66 +42,8 @@ VALUES ('system', 'config', 0)"####,
+         FOREIGN KEY (`parent_id`) REFERENCES `sys_dept` (`id`)
+         ON UPDATE CASCADE ON DELETE SET NULL
+ ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='部门表'"####,
+-    r####"CREATE TABLE IF NOT EXISTS `sys_user` (
+-    `id`             BIGINT       NOT NULL                  COMMENT '用户ID',
+-    `tenant_id`      VARCHAR(64)  NOT NULL DEFAULT 'system' COMMENT '租户ID',
+-    `username`       VARCHAR(64)  NOT NULL                  COMMENT '用户名',
+-    `password_hash`  VARCHAR(255) NOT NULL                  COMMENT '密码哈希(argon2)',
+-    `nickname`       VARCHAR(64)  NOT NULL                  COMMENT '昵称',
+-    `email`          VARCHAR(128) NOT NULL DEFAULT ''       COMMENT '邮箱',
+-    `phone`          VARCHAR(32)  NOT NULL DEFAULT ''       COMMENT '手机号',
+-    `avatar`         VARCHAR(255)          DEFAULT NULL     COMMENT '头像URL',
+-    `avatar_file_id` BIGINT                DEFAULT NULL     COMMENT '头像文件ID',
+-    `status`         VARCHAR(32)  NOT NULL DEFAULT '1'      COMMENT '状态: 0停用 1正常 2锁定 pending_activation待激活 must_reset_password需改密',
+-    `authorization_version` INT          NOT NULL DEFAULT 1 COMMENT '用户授权版本，权限或凭据变更时递增',
+-    `preferred_locale` VARCHAR(16)         DEFAULT NULL      COMMENT '用户偏好语言',
+-    `dept_id`        BIGINT                DEFAULT NULL     COMMENT '部门ID(软删除场景由代码校验合法性)',
+-    `remark`         VARCHAR(512)          DEFAULT NULL     COMMENT '备注',
+-    `login_ip`       VARCHAR(128)          DEFAULT NULL     COMMENT '最后登录IP',
+-    `login_date`     DATETIME              DEFAULT NULL     COMMENT '最后登录时间',
+-    `del_flag`       CHAR(1)      NOT NULL DEFAULT '0'      COMMENT '删除标志: 0正常 2删除',
+-    `created_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP    COMMENT '创建时间',
+-    `updated_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+-    PRIMARY KEY (`id`),
+-    UNIQUE KEY `uq_sys_user_tenant_id` (`tenant_id`, `id`),
+-    UNIQUE KEY `uk_tenant_username` (`tenant_id`, `username`),
+-    KEY `idx_tenant_id` (`tenant_id`),
+-    KEY `idx_user_tenant_del` (`tenant_id`, `del_flag`),
+-    KEY `idx_dept_id` (`dept_id`),
+-    KEY `idx_user_avatar_file` (`avatar_file_id`),
+-    CONSTRAINT `fk_sys_user_tenant`
+-        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+-        ON UPDATE CASCADE ON DELETE RESTRICT
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='用户表'"####,
+-    r####"CREATE TABLE IF NOT EXISTS `password_reset_requests` (
+-    `id`             BIGINT       NOT NULL                  COMMENT '重置请求ID',
+-    `tenant_id`      VARCHAR(64)  NOT NULL DEFAULT 'system' COMMENT '租户ID',
+-    `target_user_id` BIGINT       NOT NULL                  COMMENT '目标用户ID',
+-    `requested_by`   BIGINT       NOT NULL                  COMMENT '发起管理员ID',
+-    `reason`         VARCHAR(512) NOT NULL                  COMMENT '发起原因',
+-    `token_hash`     VARCHAR(255) NOT NULL                  COMMENT '重置令牌哈希',
+-    `expires_at`     DATETIME     NOT NULL                  COMMENT '过期时间',
+-    `completed_at`   DATETIME              DEFAULT NULL     COMMENT '完成时间',
+-    `request_ip`     VARCHAR(128)          DEFAULT NULL     COMMENT '发起IP',
+-    `status`         VARCHAR(32)  NOT NULL DEFAULT 'pending' COMMENT '状态: pending/completed/expired',
+-    `created_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+-    `updated_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+-    PRIMARY KEY (`id`),
+-    KEY `idx_password_reset_tenant` (`tenant_id`),
+-    KEY `idx_target_user_id` (`target_user_id`),
+-    KEY `idx_requested_by` (`requested_by`),
+-    KEY `idx_status` (`status`),
+-    KEY `idx_expires_at` (`expires_at`),
+-    CONSTRAINT `fk_password_reset_tenant`
+-        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+-        ON UPDATE CASCADE ON DELETE RESTRICT,
+-    CONSTRAINT `fk_password_reset_target_user`
+-        FOREIGN KEY (`target_user_id`) REFERENCES `sys_user` (`id`)
+-        ON UPDATE CASCADE ON DELETE CASCADE,
+-    CONSTRAINT `fk_password_reset_requested_by`
+-        FOREIGN KEY (`requested_by`) REFERENCES `sys_user` (`id`)
+-        ON UPDATE CASCADE ON DELETE CASCADE
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='密码重置请求表'"####,
++    tables::SYS_USER_DDL,
++    tables::PASSWORD_RESET_REQUESTS_DDL,
+     r####"CREATE TABLE IF NOT EXISTS `sys_role` (
+     `id`          BIGINT       NOT NULL                    COMMENT '角色ID',
+     `tenant_id`   VARCHAR(64)  NOT NULL DEFAULT 'system'   COMMENT '租户ID',
+@@ -142,59 +66,8 @@ VALUES ('system', 'config', 0)"####,
+         FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+         ON UPDATE CASCADE ON DELETE RESTRICT
+ ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='角色表'"####,
+-    r####"CREATE TABLE IF NOT EXISTS `sys_permission` (
+-    `id`          BIGINT       NOT NULL                    COMMENT '权限ID',
+-    `tenant_id`   VARCHAR(64)  NOT NULL DEFAULT 'system'   COMMENT '租户ID',
+-    `name`        VARCHAR(64)  NOT NULL                    COMMENT '权限名称',
+-    `code`        VARCHAR(128) NOT NULL                    COMMENT '权限编码',
+-    `parent_id`   BIGINT                DEFAULT NULL       COMMENT '父权限ID(树形)',
+-    `perm_type`   VARCHAR(16)  NOT NULL                    COMMENT '权限类型: menu/api',
+-    `icon`        VARCHAR(64)           DEFAULT NULL       COMMENT '图标',
+-    `sort`        INT          NOT NULL DEFAULT 0          COMMENT '显示顺序',
+-    `status`      CHAR(1)      NOT NULL DEFAULT '1'        COMMENT '状态: 0停用 1正常',
+-    `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP    COMMENT '创建时间',
+-    `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+-    PRIMARY KEY (`id`),
+-    UNIQUE KEY `uk_tenant_code` (`tenant_id`, `code`),
+-    KEY `idx_tenant_id` (`tenant_id`),
+-    KEY `idx_parent_id` (`parent_id`),
+-    KEY `idx_perm_code` (`code`),
+-    CONSTRAINT `fk_sys_permission_tenant`
+-        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+-        ON UPDATE CASCADE ON DELETE RESTRICT,
+-    CONSTRAINT `fk_sys_permission_parent`
+-        FOREIGN KEY (`parent_id`) REFERENCES `sys_permission` (`id`)
+-        ON UPDATE CASCADE ON DELETE SET NULL
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='权限表'"####,
+-    r####"CREATE TABLE IF NOT EXISTS `sys_menu` (
+-    `id`          BIGINT       NOT NULL                    COMMENT '菜单ID',
+-    `tenant_id`   VARCHAR(64)  NOT NULL DEFAULT 'system'   COMMENT '租户ID',
+-    `name`        VARCHAR(64)  NOT NULL                    COMMENT '菜单名称',
+-    `parent_id`   BIGINT                DEFAULT NULL       COMMENT '父菜单ID(由代码校验父子关系合法性)',
+-    `menu_type`   CHAR(1)      NOT NULL DEFAULT ''         COMMENT '菜单类型: M目录 C菜单 F按钮',
+-    `perm_id`     BIGINT                DEFAULT NULL       COMMENT '关联sys_permission权限ID',
+-    `route_key`   VARCHAR(100)          DEFAULT NULL       COMMENT '前端稳定页面标识',
+-    `icon`        VARCHAR(128)          DEFAULT NULL       COMMENT '图标',
+-    `sort`        INT          NOT NULL DEFAULT 0          COMMENT '显示顺序',
+-    `visible`     TINYINT(1)   NOT NULL DEFAULT 1          COMMENT '是否可见: 0隐藏 1显示',
+-    `status`      CHAR(1)      NOT NULL DEFAULT '1'        COMMENT '状态: 0停用 1正常',
+-    `remark`      VARCHAR(512)          DEFAULT NULL       COMMENT '备注',
+-    `del_flag`    CHAR(1)      NOT NULL DEFAULT '0'        COMMENT '删除标志: 0正常 2删除',
+-    `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP    COMMENT '创建时间',
+-    `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+-    PRIMARY KEY (`id`),
+-    KEY `idx_tenant_id` (`tenant_id`),
+-    KEY `idx_parent_id` (`parent_id`),
+-    KEY `idx_perm_id` (`perm_id`),
+-    KEY `idx_menu_tenant_perm` (`tenant_id`, `perm_id`),
+-    KEY `idx_menu_tenant_route` (`tenant_id`, `route_key`),
+-    CONSTRAINT `fk_sys_menu_tenant`
+-        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+-        ON UPDATE CASCADE ON DELETE RESTRICT,
+-    CONSTRAINT `fk_sys_menu_permission`
+-        FOREIGN KEY (`perm_id`) REFERENCES `sys_permission` (`id`)
+-        ON UPDATE CASCADE ON DELETE SET NULL
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='菜单表(含目录/菜单/按钮)'"####,
++    tables::SYS_PERMISSION_DDL,
++    tables::SYS_MENU_DDL,
+     r####"CREATE TABLE IF NOT EXISTS `sys_post` (
+     `id`          BIGINT       NOT NULL                    COMMENT '岗位ID',
+     `tenant_id`   VARCHAR(64)  NOT NULL DEFAULT 'system'   COMMENT '租户ID',
+@@ -248,30 +121,7 @@ VALUES ('system', 'config', 0)"####,
+         FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+         ON UPDATE CASCADE ON DELETE RESTRICT
+ ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='字典类型表'"####,
+-    r####"CREATE TABLE IF NOT EXISTS `sys_dict_data` (
+-    `id`          BIGINT       NOT NULL                    COMMENT '字典数据ID',
+-    `tenant_id`   VARCHAR(64)  NOT NULL DEFAULT 'system'   COMMENT '租户ID',
+-    `type_code`   VARCHAR(64)  NOT NULL                    COMMENT '所属字典类型编码',
+-    `label`       VARCHAR(64)  NOT NULL                    COMMENT '字典标签',
+-    `value`       VARCHAR(64)  NOT NULL                    COMMENT '字典值',
+-    `sort`        INT          NOT NULL DEFAULT 0          COMMENT '显示顺序',
+-    `status`      CHAR(1)      NOT NULL DEFAULT '1'        COMMENT '状态: 0停用 1正常',
+-    `css_class`   VARCHAR(64)           DEFAULT NULL       COMMENT 'CSS样式',
+-    `remark`      VARCHAR(512)          DEFAULT NULL       COMMENT '备注',
+-    `del_flag`    CHAR(1)      NOT NULL DEFAULT '0'        COMMENT '删除标志: 0正常 2删除',
+-    `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP    COMMENT '创建时间',
+-    `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+-    PRIMARY KEY (`id`),
+-    KEY `idx_tenant_id` (`tenant_id`),
+-    KEY `idx_type_code` (`type_code`),
+-    KEY `idx_dict_data_tenant_type` (`tenant_id`, `type_code`),
+-    CONSTRAINT `fk_sys_dict_data_tenant`
+-        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+-        ON UPDATE CASCADE ON DELETE RESTRICT,
+-    CONSTRAINT `fk_sys_dict_data_type`
+-        FOREIGN KEY (`tenant_id`, `type_code`) REFERENCES `sys_dict_type` (`tenant_id`, `code`)
+-        ON UPDATE CASCADE ON DELETE RESTRICT
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='字典数据表'"####,
++    tables::SYS_DICT_DATA_DDL,
+     r####"CREATE TABLE IF NOT EXISTS `sys_notice` (
+     `id`           BIGINT       NOT NULL                   COMMENT '公告ID',
+     `tenant_id`    VARCHAR(64)  NOT NULL DEFAULT 'system'  COMMENT '租户ID',
+@@ -293,35 +143,7 @@ VALUES ('system', 'config', 0)"####,
+         FOREIGN KEY (`created_by`) REFERENCES `sys_user` (`id`)
+         ON UPDATE CASCADE ON DELETE SET NULL
+ ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='通知公告表'"####,
+-    r####"CREATE TABLE IF NOT EXISTS `sys_oper_log` (
+-    `id`              BIGINT       NOT NULL                COMMENT '日志ID',
+-    `tenant_id`       VARCHAR(64)  NOT NULL DEFAULT 'system' COMMENT '租户ID',
+-    `event_id`        CHAR(36)              DEFAULT NULL   COMMENT '审计事件UUID v7',
+-    `request_id`      CHAR(36)              DEFAULT NULL   COMMENT 'HTTP请求UUID v7',
+-    `title`           VARCHAR(64)  NOT NULL                COMMENT '模块标题',
+-    `business_type`   VARCHAR(32)  NOT NULL                COMMENT '业务类型(INSERT/UPDATE/DELETE等)',
+-    `method`          VARCHAR(255) NOT NULL                COMMENT '操作方法(类名.方法名)',
+-    `request_method`  VARCHAR(16)  NOT NULL                COMMENT '请求方式(GET/POST/PUT/DELETE)',
+-    `oper_name`       VARCHAR(64)  NOT NULL                COMMENT '操作人员',
+-    `oper_url`        VARCHAR(255) NOT NULL                COMMENT '请求URL',
+-    `oper_ip`         VARCHAR(128) NOT NULL                COMMENT '操作IP',
+-    `oper_location`   VARCHAR(128)          DEFAULT NULL   COMMENT '操作地点',
+-    `oper_param`      TEXT                  DEFAULT NULL   COMMENT '请求参数(JSON)',
+-    `json_result`     TEXT                  DEFAULT NULL   COMMENT '返回结果(JSON)',
+-    `status`          CHAR(1)      NOT NULL DEFAULT '1'    COMMENT '操作状态: 0失败 1成功',
+-    `error_msg`       TEXT                  DEFAULT NULL   COMMENT '错误信息',
+-    `oper_time`       DATETIME     NOT NULL                COMMENT '操作时间',
+-    `cost_time`       BIGINT       NOT NULL DEFAULT 0      COMMENT '耗时(毫秒)',
+-    PRIMARY KEY (`id`),
+-    UNIQUE KEY `uq_oper_log_event_id` (`event_id`),
+-    KEY `idx_tenant_id` (`tenant_id`),
+-    KEY `idx_oper_time` (`oper_time`),
+-    KEY `idx_oper_log_tenant_time_status` (`tenant_id`, `oper_time`, `status`),
+-    KEY `idx_business_type` (`business_type`),
+-    CONSTRAINT `fk_sys_oper_log_tenant`
+-        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+-        ON UPDATE CASCADE ON DELETE RESTRICT
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='操作日志表'"####,
++    tables::SYS_OPER_LOG_DDL,
+     r####"CREATE TABLE IF NOT EXISTS `sys_login_info` (
+     `id`              BIGINT       NOT NULL                COMMENT '日志ID',
+     `tenant_id`       VARCHAR(64)  NOT NULL DEFAULT 'system' COMMENT '租户ID',
+@@ -386,69 +208,8 @@ VALUES ('system', 'config', 0)"####,
+         FOREIGN KEY (`dept_id`) REFERENCES `sys_dept` (`id`)
+         ON UPDATE CASCADE ON DELETE CASCADE
+ ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='角色-部门关联表(自定义数据权限)'"####,
+-    r####"CREATE TABLE IF NOT EXISTS `sys_file` (
+-    `id`            BIGINT       NOT NULL                    COMMENT '文件ID',
+-    `tenant_id`     VARCHAR(64)  NOT NULL DEFAULT 'system'   COMMENT '租户ID',
+-    `original_name` VARCHAR(255) NOT NULL                    COMMENT '原始文件名',
+-    `storage_name`  VARCHAR(255) NOT NULL                    COMMENT '存储文件名(UUID)',
+-    `storage_path`  VARCHAR(500) NOT NULL                    COMMENT '对象存储 key',
+-    `bucket`        VARCHAR(100) NOT NULL DEFAULT 'uploads'  COMMENT '存储桶',
+-    `file_url`      VARCHAR(1000)NOT NULL                    COMMENT '相对路径(bucket/date/uuid.ext)',
+-    `file_size`     BIGINT       NOT NULL DEFAULT 0          COMMENT '字节数',
+-    `content_type`  VARCHAR(100) NOT NULL                    COMMENT 'MIME类型',
+-    `file_sha256`   CHAR(64)     NOT NULL                    COMMENT 'SHA-256内容摘要',
+-    `upload_by`     VARCHAR(64)           DEFAULT NULL       COMMENT '上传者',
+-    `upload_status` VARCHAR(16)  NOT NULL DEFAULT 'ready'    COMMENT '上传状态: pending/ready/cleanup',
+-    `reservation_token` VARCHAR(64)       DEFAULT NULL       COMMENT '上传预留所有权令牌',
+-    `reservation_expires_at` DATETIME     DEFAULT NULL       COMMENT '上传预留过期时间',
+-    `del_flag`      CHAR(1)      NOT NULL DEFAULT '0'        COMMENT '文件状态: 0正常 2删除',
+-    `created_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP    COMMENT '创建时间',
+-    `updated_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+-    PRIMARY KEY (`id`),
+-    UNIQUE KEY `uq_sys_file_tenant_id` (`tenant_id`, `id`),
+-    KEY `idx_tenant_id` (`tenant_id`),
+-    KEY `idx_bucket` (`bucket`),
+-    KEY `idx_upload_by` (`upload_by`),
+-    KEY `idx_del_flag` (`del_flag`),
+-    KEY `idx_file_sha256` (`tenant_id`, `bucket`, `file_sha256`, `upload_status`),
+-    KEY `idx_file_reservation_expiry` (`upload_status`, `reservation_expires_at`),
+-    KEY `idx_file_tenant_del_size` (`tenant_id`, `del_flag`, `file_size`),
+-    CONSTRAINT `fk_sys_file_tenant`
+-        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+-        ON UPDATE CASCADE ON DELETE RESTRICT
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='文件元数据表'"####,
+-    r####"CREATE TABLE IF NOT EXISTS `sys_background_job` (
+-    `id`            BIGINT       NOT NULL COMMENT '任务ID',
+-    `tenant_id`     VARCHAR(64)           DEFAULT NULL COMMENT '租户标识',
+-    `schedule_id`   BIGINT                DEFAULT NULL COMMENT '来源调度计划ID',
+-    `scheduled_for` DATETIME(6)           DEFAULT NULL COMMENT '计划或立即执行时间',
+-    `max_runtime_seconds` INT              DEFAULT NULL COMMENT '最大运行时长（秒）',
+-    `job_type`      VARCHAR(96)  NOT NULL COMMENT '任务类型',
+-    `payload_version` SMALLINT UNSIGNED NOT NULL DEFAULT 1 COMMENT '任务载荷版本',
+-    `payload`       JSON         NOT NULL COMMENT '任务载荷',
+-    `status`        VARCHAR(16)  NOT NULL DEFAULT 'pending' COMMENT '状态: pending/running/succeeded/dead',
+-    `priority`      INT          NOT NULL DEFAULT 0 COMMENT '优先级，数值越大越优先',
+-    `available_at`  DATETIME     NOT NULL COMMENT '最早可执行时间',
+-    `attempts`      INT          NOT NULL DEFAULT 0 COMMENT '已领取次数',
+-    `max_attempts`  INT          NOT NULL DEFAULT 5 COMMENT '最大领取次数',
+-    `lease_owner`   VARCHAR(128)          DEFAULT NULL COMMENT '当前租约持有者',
+-    `lease_until`   DATETIME              DEFAULT NULL COMMENT '租约失效时间',
+-    `dedupe_key`    VARCHAR(191)          DEFAULT NULL COMMENT '同类型幂等键',
+-    `traceparent`   VARCHAR(255)          DEFAULT NULL COMMENT 'W3C Trace Context',
+-    `tracestate`    VARCHAR(512)          DEFAULT NULL COMMENT 'W3C Trace Context 状态',
+-    `last_error`    TEXT                  DEFAULT NULL COMMENT '最后失败原因',
+-    `created_at`    DATETIME     NOT NULL COMMENT '创建时间',
+-    `updated_at`    DATETIME     NOT NULL COMMENT '更新时间',
+-    `completed_at`  DATETIME              DEFAULT NULL COMMENT '终态时间',
+-    PRIMARY KEY (`id`),
+-    UNIQUE KEY `uq_bg_job_dedupe` (`job_type`, `dedupe_key`),
+-    KEY `idx_bg_job_claim` (`status`, `available_at`, `priority`, `id`),
+-    KEY `idx_bg_job_lease` (`status`, `lease_until`),
+-    KEY `idx_bg_job_tenant` (`tenant_id`, `status`, `created_at`),
+-    KEY `idx_bg_job_schedule_status` (`schedule_id`, `status`, `created_at`),
+-    KEY `idx_bg_job_retention` (`status`, `completed_at`, `id`),
+-    KEY `idx_bg_job_tenant_created_status` (`tenant_id`, `created_at`, `status`)
+-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='持久化后台任务'"####,
++    tables::SYS_FILE_DDL,
++    tables::SYS_BACKGROUND_JOB_DDL,
+     r####"CREATE TABLE IF NOT EXISTS `sys_job_schedule` (
+     `id` BIGINT NOT NULL COMMENT '计划ID',
+     `tenant_id` VARCHAR(64) NOT NULL COMMENT '租户标识',
+diff --git a/crates/ryframe-db/src/migration/m20260820_000000_control_baseline/base/tables.rs b/crates/ryframe-db/src/migration/m20260820_000000_control_baseline/base/tables.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..ac89a7bd98c9278fc2df153df7b9307784eb0aee
+--- /dev/null
++++ b/crates/ryframe-db/src/migration/m20260820_000000_control_baseline/base/tables.rs
+@@ -0,0 +1,266 @@
++// 控制基线的大表 DDL；原语句与 BASELINE_STATEMENTS 顺序保持不变。
++pub(super) const SYS_TENANT_DDL: &str = r####"CREATE TABLE IF NOT EXISTS `sys_tenant` (
++    `id`                     BIGINT       NOT NULL COMMENT '租户ID',
++    `tenant_id`              VARCHAR(64)  NOT NULL COMMENT '租户标识',
++    `name`                   VARCHAR(128) NOT NULL COMMENT '租户名称',
++    `domain`                 VARCHAR(255)          DEFAULT NULL COMMENT '绑定域名',
++    `status`                 VARCHAR(32)  NOT NULL DEFAULT 'enabled' COMMENT '生命周期状态',
++    `expire_at`              DATETIME              DEFAULT NULL COMMENT '到期时间',
++    `max_users`              INT          NOT NULL DEFAULT 100 COMMENT '最大用户数',
++    `max_roles`              INT          NOT NULL DEFAULT 20 COMMENT '最大角色数',
++    `max_storage_mb`         BIGINT       NOT NULL DEFAULT 1024 COMMENT '最大存储容量(MB)',
++    `max_requests_per_min`   INT          NOT NULL DEFAULT 1000 COMMENT '每分钟最大请求数',
++    `session_version`        INT          NOT NULL DEFAULT 1 COMMENT '租户会话版本',
++    `authorization_epoch`    INT          NOT NULL DEFAULT 1 COMMENT '租户授权规则版本',
++    `data_scope_version`     BIGINT       NOT NULL DEFAULT 1 COMMENT '租户数据范围投影权威版本',
++    `runtime_epoch`          BIGINT       NOT NULL DEFAULT 1 COMMENT '租户运行时产品上下文纪元',
++    `configuration_version`  BIGINT       NOT NULL DEFAULT 0 COMMENT '租户配置版本',
++    `created_at`             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
++    `updated_at`             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
++    PRIMARY KEY (`id`),
++    UNIQUE KEY `uk_tenant_id` (`tenant_id`),
++    UNIQUE KEY `uk_tenant_domain` (`domain`),
++    KEY `idx_tenant_status` (`status`, `expire_at`)
++) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户表'"####;
++
++pub(super) const SYS_USER_DDL: &str = r####"CREATE TABLE IF NOT EXISTS `sys_user` (
++    `id`             BIGINT       NOT NULL                  COMMENT '用户ID',
++    `tenant_id`      VARCHAR(64)  NOT NULL DEFAULT 'system' COMMENT '租户ID',
++    `username`       VARCHAR(64)  NOT NULL                  COMMENT '用户名',
++    `password_hash`  VARCHAR(255) NOT NULL                  COMMENT '密码哈希(argon2)',
++    `password_change_required` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '首次登录必须修改密码',
++    `nickname`       VARCHAR(64)  NOT NULL                  COMMENT '昵称',
++    `email`          VARCHAR(128) NOT NULL DEFAULT ''       COMMENT '邮箱',
++    `phone`          VARCHAR(32)  NOT NULL DEFAULT ''       COMMENT '手机号',
++    `avatar`         VARCHAR(255)          DEFAULT NULL     COMMENT '头像URL',
++    `avatar_file_id` BIGINT                DEFAULT NULL     COMMENT '头像文件ID',
++    `status`         VARCHAR(32)  NOT NULL DEFAULT '1'      COMMENT '状态: 0停用 1正常 2锁定 pending_activation待激活 must_reset_password需改密',
++    `authorization_version` INT          NOT NULL DEFAULT 1 COMMENT '用户授权版本，权限或凭据变更时递增',
++    `preferred_locale` VARCHAR(16)         DEFAULT NULL      COMMENT '用户偏好语言',
++    `dept_id`        BIGINT                DEFAULT NULL     COMMENT '部门ID(软删除场景由代码校验合法性)',
++    `remark`         VARCHAR(512)          DEFAULT NULL     COMMENT '备注',
++    `login_ip`       VARCHAR(128)          DEFAULT NULL     COMMENT '最后登录IP',
++    `login_date`     DATETIME              DEFAULT NULL     COMMENT '最后登录时间',
++    `del_flag`       CHAR(1)      NOT NULL DEFAULT '0'      COMMENT '删除标志: 0正常 2删除',
++    `created_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP    COMMENT '创建时间',
++    `updated_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
++    PRIMARY KEY (`id`),
++    UNIQUE KEY `uq_sys_user_tenant_id` (`tenant_id`, `id`),
++    UNIQUE KEY `uk_tenant_username` (`tenant_id`, `username`),
++    KEY `idx_tenant_id` (`tenant_id`),
++    KEY `idx_user_tenant_del` (`tenant_id`, `del_flag`),
++    KEY `idx_dept_id` (`dept_id`),
++    KEY `idx_user_avatar_file` (`avatar_file_id`),
++    CONSTRAINT `fk_sys_user_tenant`
++        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
++        ON UPDATE CASCADE ON DELETE RESTRICT
++) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='用户表'"####;
++
++pub(super) const PASSWORD_RESET_REQUESTS_DDL: &str = r####"CREATE TABLE IF NOT EXISTS `password_reset_requests` (
++    `id`             BIGINT       NOT NULL                  COMMENT '重置请求ID',
++    `tenant_id`      VARCHAR(64)  NOT NULL DEFAULT 'system' COMMENT '租户ID',
++    `target_user_id` BIGINT       NOT NULL                  COMMENT '目标用户ID',
++    `requested_by`   BIGINT       NOT NULL                  COMMENT '发起管理员ID',
++    `reason`         VARCHAR(512) NOT NULL                  COMMENT '发起原因',
++    `token_hash`     VARCHAR(255) NOT NULL                  COMMENT '重置令牌哈希',
++    `expires_at`     DATETIME     NOT NULL                  COMMENT '过期时间',
++    `completed_at`   DATETIME              DEFAULT NULL     COMMENT '完成时间',
++    `request_ip`     VARCHAR(128)          DEFAULT NULL     COMMENT '发起IP',
++    `status`         VARCHAR(32)  NOT NULL DEFAULT 'pending' COMMENT '状态: pending/completed/expired',
++    `created_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
++    `updated_at`     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
++    PRIMARY KEY (`id`),
++    KEY `idx_password_reset_tenant` (`tenant_id`),
++    KEY `idx_target_user_id` (`target_user_id`),
++    KEY `idx_requested_by` (`requested_by`),
++    KEY `idx_status` (`status`),
++    KEY `idx_expires_at` (`expires_at`),
++    CONSTRAINT `fk_password_reset_tenant`
++        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
++        ON UPDATE CASCADE ON DELETE RESTRICT,
++    CONSTRAINT `fk_password_reset_target_user`
++        FOREIGN KEY (`target_user_id`) REFERENCES `sys_user` (`id`)
++        ON UPDATE CASCADE ON DELETE CASCADE,
++    CONSTRAINT `fk_password_reset_requested_by`
++        FOREIGN KEY (`requested_by`) REFERENCES `sys_user` (`id`)
++        ON UPDATE CASCADE ON DELETE CASCADE
++) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='密码重置请求表'"####;
++
++pub(super) const SYS_PERMISSION_DDL: &str = r####"CREATE TABLE IF NOT EXISTS `sys_permission` (
++    `id`          BIGINT       NOT NULL                    COMMENT '权限ID',
++    `tenant_id`   VARCHAR(64)  NOT NULL DEFAULT 'system'   COMMENT '租户ID',
++    `name`        VARCHAR(64)  NOT NULL                    COMMENT '权限名称',
++    `code`        VARCHAR(128) NOT NULL                    COMMENT '权限编码',
++    `parent_id`   BIGINT                DEFAULT NULL       COMMENT '父权限ID(树形)',
++    `perm_type`   VARCHAR(16)  NOT NULL                    COMMENT '权限类型: menu/api',
++    `icon`        VARCHAR(64)           DEFAULT NULL       COMMENT '图标',
++    `sort`        INT          NOT NULL DEFAULT 0          COMMENT '显示顺序',
++    `status`      CHAR(1)      NOT NULL DEFAULT '1'        COMMENT '状态: 0停用 1正常',
++    `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP    COMMENT '创建时间',
++    `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
++    PRIMARY KEY (`id`),
++    UNIQUE KEY `uk_tenant_code` (`tenant_id`, `code`),
++    KEY `idx_tenant_id` (`tenant_id`),
++    KEY `idx_parent_id` (`parent_id`),
++    KEY `idx_perm_code` (`code`),
++    CONSTRAINT `fk_sys_permission_tenant`
++        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
++        ON UPDATE CASCADE ON DELETE RESTRICT,
++    CONSTRAINT `fk_sys_permission_parent`
++        FOREIGN KEY (`parent_id`) REFERENCES `sys_permission` (`id`)
++        ON UPDATE CASCADE ON DELETE SET NULL
++) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='权限表'"####;
++
++pub(super) const SYS_MENU_DDL: &str = r####"CREATE TABLE IF NOT EXISTS `sys_menu` (
++    `id`          BIGINT       NOT NULL                    COMMENT '菜单ID',
++    `tenant_id`   VARCHAR(64)  NOT NULL DEFAULT 'system'   COMMENT '租户ID',
++    `name`        VARCHAR(64)  NOT NULL                    COMMENT '菜单名称',
++    `parent_id`   BIGINT                DEFAULT NULL       COMMENT '父菜单ID(由代码校验父子关系合法性)',
++    `menu_type`   CHAR(1)      NOT NULL DEFAULT ''         COMMENT '菜单类型: M目录 C菜单 F按钮',
++    `perm_id`     BIGINT                DEFAULT NULL       COMMENT '关联sys_permission权限ID',
++    `route_key`   VARCHAR(100)          DEFAULT NULL       COMMENT '前端稳定页面标识',
++    `icon`        VARCHAR(128)          DEFAULT NULL       COMMENT '图标',
++    `sort`        INT          NOT NULL DEFAULT 0          COMMENT '显示顺序',
++    `visible`     TINYINT(1)   NOT NULL DEFAULT 1          COMMENT '是否可见: 0隐藏 1显示',
++    `status`      CHAR(1)      NOT NULL DEFAULT '1'        COMMENT '状态: 0停用 1正常',
++    `remark`      VARCHAR(512)          DEFAULT NULL       COMMENT '备注',
++    `del_flag`    CHAR(1)      NOT NULL DEFAULT '0'        COMMENT '删除标志: 0正常 2删除',
++    `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP    COMMENT '创建时间',
++    `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
++    PRIMARY KEY (`id`),
++    KEY `idx_tenant_id` (`tenant_id`),
++    KEY `idx_parent_id` (`parent_id`),
++    KEY `idx_perm_id` (`perm_id`),
++    KEY `idx_menu_tenant_perm` (`tenant_id`, `perm_id`),
++    KEY `idx_menu_tenant_route` (`tenant_id`, `route_key`),
++    CONSTRAINT `fk_sys_menu_tenant`
++        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
++        ON UPDATE CASCADE ON DELETE RESTRICT,
++    CONSTRAINT `fk_sys_menu_permission`
++        FOREIGN KEY (`perm_id`) REFERENCES `sys_permission` (`id`)
++        ON UPDATE CASCADE ON DELETE SET NULL
++) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='菜单表(含目录/菜单/按钮)'"####;
++
++pub(super) const SYS_DICT_DATA_DDL: &str = r####"CREATE TABLE IF NOT EXISTS `sys_dict_data` (
++    `id`          BIGINT       NOT NULL                    COMMENT '字典数据ID',
++    `tenant_id`   VARCHAR(64)  NOT NULL DEFAULT 'system'   COMMENT '租户ID',
++    `type_code`   VARCHAR(64)  NOT NULL                    COMMENT '所属字典类型编码',
++    `label`       VARCHAR(64)  NOT NULL                    COMMENT '字典标签',
++    `value`       VARCHAR(64)  NOT NULL                    COMMENT '字典值',
++    `sort`        INT          NOT NULL DEFAULT 0          COMMENT '显示顺序',
++    `status`      CHAR(1)      NOT NULL DEFAULT '1'        COMMENT '状态: 0停用 1正常',
++    `css_class`   VARCHAR(64)           DEFAULT NULL       COMMENT 'CSS样式',
++    `remark`      VARCHAR(512)          DEFAULT NULL       COMMENT '备注',
++    `del_flag`    CHAR(1)      NOT NULL DEFAULT '0'        COMMENT '删除标志: 0正常 2删除',
++    `created_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP    COMMENT '创建时间',
++    `updated_at`  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
++    PRIMARY KEY (`id`),
++    KEY `idx_tenant_id` (`tenant_id`),
++    KEY `idx_type_code` (`type_code`),
++    KEY `idx_dict_data_tenant_type` (`tenant_id`, `type_code`),
++    CONSTRAINT `fk_sys_dict_data_tenant`
++        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
++        ON UPDATE CASCADE ON DELETE RESTRICT,
++    CONSTRAINT `fk_sys_dict_data_type`
++        FOREIGN KEY (`tenant_id`, `type_code`) REFERENCES `sys_dict_type` (`tenant_id`, `code`)
++        ON UPDATE CASCADE ON DELETE RESTRICT
++) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='字典数据表'"####;
++
++pub(super) const SYS_OPER_LOG_DDL: &str = r####"CREATE TABLE IF NOT EXISTS `sys_oper_log` (
++    `id`              BIGINT       NOT NULL                COMMENT '日志ID',
++    `tenant_id`       VARCHAR(64)  NOT NULL DEFAULT 'system' COMMENT '租户ID',
++    `event_id`        CHAR(36)              DEFAULT NULL   COMMENT '审计事件UUID v7',
++    `request_id`      CHAR(36)              DEFAULT NULL   COMMENT 'HTTP请求UUID v7',
++    `title`           VARCHAR(64)  NOT NULL                COMMENT '模块标题',
++    `business_type`   VARCHAR(32)  NOT NULL                COMMENT '业务类型(INSERT/UPDATE/DELETE等)',
++    `method`          VARCHAR(255) NOT NULL                COMMENT '操作方法(类名.方法名)',
++    `request_method`  VARCHAR(16)  NOT NULL                COMMENT '请求方式(GET/POST/PUT/DELETE)',
++    `oper_name`       VARCHAR(64)  NOT NULL                COMMENT '操作人员',
++    `oper_url`        VARCHAR(255) NOT NULL                COMMENT '请求URL',
++    `oper_ip`         VARCHAR(128) NOT NULL                COMMENT '操作IP',
++    `oper_location`   VARCHAR(128)          DEFAULT NULL   COMMENT '操作地点',
++    `oper_param`      TEXT                  DEFAULT NULL   COMMENT '请求参数(JSON)',
++    `json_result`     TEXT                  DEFAULT NULL   COMMENT '返回结果(JSON)',
++    `status`          CHAR(1)      NOT NULL DEFAULT '1'    COMMENT '操作状态: 0失败 1成功',
++    `error_msg`       TEXT                  DEFAULT NULL   COMMENT '错误信息',
++    `oper_time`       DATETIME     NOT NULL                COMMENT '操作时间',
++    `cost_time`       BIGINT       NOT NULL DEFAULT 0      COMMENT '耗时(毫秒)',
++    PRIMARY KEY (`id`),
++    UNIQUE KEY `uq_oper_log_event_id` (`event_id`),
++    KEY `idx_tenant_id` (`tenant_id`),
++    KEY `idx_oper_time` (`oper_time`),
++    KEY `idx_oper_log_tenant_time_status` (`tenant_id`, `oper_time`, `status`),
++    KEY `idx_business_type` (`business_type`),
++    CONSTRAINT `fk_sys_oper_log_tenant`
++        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
++        ON UPDATE CASCADE ON DELETE RESTRICT
++) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='操作日志表'"####;
++
++pub(super) const SYS_FILE_DDL: &str = r####"CREATE TABLE IF NOT EXISTS `sys_file` (
++    `id`            BIGINT       NOT NULL                    COMMENT '文件ID',
++    `tenant_id`     VARCHAR(64)  NOT NULL DEFAULT 'system'   COMMENT '租户ID',
++    `original_name` VARCHAR(255) NOT NULL                    COMMENT '原始文件名',
++    `storage_name`  VARCHAR(255) NOT NULL                    COMMENT '存储文件名(UUID)',
++    `storage_path`  VARCHAR(500) NOT NULL                    COMMENT '对象存储 key',
++    `bucket`        VARCHAR(100) NOT NULL DEFAULT 'uploads'  COMMENT '存储桶',
++    `file_url`      VARCHAR(1000)NOT NULL                    COMMENT '相对路径(bucket/date/uuid.ext)',
++    `file_size`     BIGINT       NOT NULL DEFAULT 0          COMMENT '字节数',
++    `content_type`  VARCHAR(100) NOT NULL                    COMMENT 'MIME类型',
++    `file_sha256`   CHAR(64)     NOT NULL                    COMMENT 'SHA-256内容摘要',
++    `upload_by`     VARCHAR(64)           DEFAULT NULL       COMMENT '上传者',
++    `upload_status` VARCHAR(16)  NOT NULL DEFAULT 'ready'    COMMENT '上传状态: pending/ready/cleanup',
++    `reservation_token` VARCHAR(64)       DEFAULT NULL       COMMENT '上传预留所有权令牌',
++    `reservation_expires_at` DATETIME     DEFAULT NULL       COMMENT '上传预留过期时间',
++    `del_flag`      CHAR(1)      NOT NULL DEFAULT '0'        COMMENT '文件状态: 0正常 2删除',
++    `created_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP    COMMENT '创建时间',
++    `updated_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
++    PRIMARY KEY (`id`),
++    UNIQUE KEY `uq_sys_file_tenant_id` (`tenant_id`, `id`),
++    KEY `idx_tenant_id` (`tenant_id`),
++    KEY `idx_bucket` (`bucket`),
++    KEY `idx_upload_by` (`upload_by`),
++    KEY `idx_del_flag` (`del_flag`),
++    KEY `idx_file_sha256` (`tenant_id`, `bucket`, `file_sha256`, `upload_status`),
++    KEY `idx_file_reservation_expiry` (`upload_status`, `reservation_expires_at`),
++    KEY `idx_file_tenant_del_size` (`tenant_id`, `del_flag`, `file_size`),
++    CONSTRAINT `fk_sys_file_tenant`
++        FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
++        ON UPDATE CASCADE ON DELETE RESTRICT
++) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='文件元数据表'"####;
++
++pub(super) const SYS_BACKGROUND_JOB_DDL: &str = r####"CREATE TABLE IF NOT EXISTS `sys_background_job` (
++    `id`            BIGINT       NOT NULL COMMENT '任务ID',
++    `tenant_id`     VARCHAR(64)           DEFAULT NULL COMMENT '租户标识',
++    `schedule_id`   BIGINT                DEFAULT NULL COMMENT '来源调度计划ID',
++    `scheduled_for` DATETIME(6)           DEFAULT NULL COMMENT '计划或立即执行时间',
++    `max_runtime_seconds` INT              DEFAULT NULL COMMENT '最大运行时长（秒）',
++    `job_type`      VARCHAR(96)  NOT NULL COMMENT '任务类型',
++    `payload_version` SMALLINT UNSIGNED NOT NULL DEFAULT 1 COMMENT '任务载荷版本',
++    `payload`       JSON         NOT NULL COMMENT '任务载荷',
++    `status`        VARCHAR(16)  NOT NULL DEFAULT 'pending' COMMENT '状态: pending/running/succeeded/dead',
++    `priority`      INT          NOT NULL DEFAULT 0 COMMENT '优先级，数值越大越优先',
++    `available_at`  DATETIME(6)  NOT NULL COMMENT '最早可执行时间',
++    `attempts`      INT          NOT NULL DEFAULT 0 COMMENT '已领取次数',
++    `claim_sequence` BIGINT      NOT NULL DEFAULT 0 COMMENT '单调领取序号，不随重试预算重置',
++    `max_attempts`  INT          NOT NULL DEFAULT 5 COMMENT '最大领取次数',
++    `lease_owner`   VARCHAR(128)          DEFAULT NULL COMMENT '当前租约持有者',
++    `lease_until`   DATETIME(6)           DEFAULT NULL COMMENT '租约失效时间',
++    `dedupe_key`    VARCHAR(191)          DEFAULT NULL COMMENT '同类型幂等键',
++    `traceparent`   VARCHAR(255)          DEFAULT NULL COMMENT 'W3C Trace Context',
++    `tracestate`    VARCHAR(512)          DEFAULT NULL COMMENT 'W3C Trace Context 状态',
++    `last_error`    TEXT                  DEFAULT NULL COMMENT '最后失败原因',
++    `created_at`    DATETIME(6)  NOT NULL COMMENT '创建时间',
++    `updated_at`    DATETIME(6)  NOT NULL COMMENT '更新时间',
++    `completed_at`  DATETIME(6)           DEFAULT NULL COMMENT '终态时间',
++    PRIMARY KEY (`id`),
++    UNIQUE KEY `uq_bg_job_dedupe` (`job_type`, `dedupe_key`),
++    KEY `idx_bg_job_claim` (`status`, `available_at`, `priority`, `id`),
++    KEY `idx_bg_job_lease` (`status`, `lease_until`),
++    KEY `idx_bg_job_tenant` (`tenant_id`, `status`, `created_at`),
++    KEY `idx_bg_job_schedule_status` (`schedule_id`, `status`, `created_at`),
++    KEY `idx_bg_job_retention` (`status`, `completed_at`, `id`),
++    KEY `idx_bg_job_tenant_created_status` (`tenant_id`, `created_at`, `status`),
++    CONSTRAINT `ck_bg_job_attempt_budget` CHECK (
++        `attempts` >= 0 AND `max_attempts` BETWEEN 1 AND 100
++        AND `claim_sequence` >= `attempts`)
++) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='持久化后台任务'"####;
+diff --git a/crates/ryframe-db/src/migration/m20260820_000000_control_baseline/jobs.rs b/crates/ryframe-db/src/migration/m20260820_000000_control_baseline/jobs.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..0c6fc3e2d967f339e9547f0f5c579ae7f24b25f5
+--- /dev/null
++++ b/crates/ryframe-db/src/migration/m20260820_000000_control_baseline/jobs.rs
+@@ -0,0 +1,23 @@
++pub(crate) const BACKGROUND_JOB_ATTEMPT_DDL: &str = r#"CREATE TABLE IF NOT EXISTS `sys_background_job_attempt` (
++    `job_id` BIGINT NOT NULL COMMENT '后台任务ID',
++    `sequence` BIGINT NOT NULL COMMENT '该任务的单调领取序号',
++    `available_at` DATETIME(6) NOT NULL COMMENT '本次领取的最早可执行时间',
++    `started_at` DATETIME(6) NOT NULL COMMENT '领取事务记录的实际开始时间',
++    `finished_at` DATETIME(6) DEFAULT NULL COMMENT '处理器完成或失败时间，租约失效时未知',
++    `closed_at` DATETIME(6) DEFAULT NULL COMMENT '尝试闭合时间，包含租约回收时间',
++    `outcome` VARCHAR(32) NOT NULL COMMENT 'running/succeeded/failed/dead/deferred/lease_expired',
++    PRIMARY KEY (`job_id`, `sequence`),
++    CONSTRAINT `fk_bg_attempt_job` FOREIGN KEY (`job_id`)
++        REFERENCES `sys_background_job` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT,
++    CONSTRAINT `ck_bg_attempt_sequence` CHECK (`sequence` > 0),
++    CONSTRAINT `ck_bg_attempt_times` CHECK (
++        `started_at` >= `available_at`
++        AND (`finished_at` IS NULL OR `finished_at` >= `started_at`)
++        AND (`closed_at` IS NULL OR `closed_at` >= `started_at`)),
++    CONSTRAINT `ck_bg_attempt_outcome` CHECK (
++        (`outcome` = 'running' AND `finished_at` IS NULL AND `closed_at` IS NULL)
++        OR (`outcome` = 'lease_expired' AND `finished_at` IS NULL AND `closed_at` IS NOT NULL)
++        OR (`outcome` IN ('succeeded', 'failed', 'dead', 'deferred')
++            AND `finished_at` IS NOT NULL AND `closed_at` IS NOT NULL
++            AND `closed_at` = `finished_at`))
++) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='后台任务单次执行事实'"#;
+diff --git a/crates/ryframe-db/src/migration/m20260820_000000_control_baseline/mod.rs b/crates/ryframe-db/src/migration/m20260820_000000_control_baseline/mod.rs
+index cbeb5aed15c0b5b2f81cfa8e7f525c5b3531d768..4e89027306bdd9f687ce3e7fdb6a455ec37870b2 100644
+--- a/crates/ryframe-db/src/migration/m20260820_000000_control_baseline/mod.rs
++++ b/crates/ryframe-db/src/migration/m20260820_000000_control_baseline/mod.rs
+@@ -1,7 +1,9 @@
+ use sea_orm::DatabaseBackend;
+ use sea_orm_migration::prelude::*;
+ 
++mod backup;
+ mod base;
++mod jobs;
+ mod schema;
+ 
+ pub struct Migration;
+@@ -32,7 +34,7 @@ impl MigrationTrait for Migration {
+         for statement in ddl_statements() {
+             connection.execute_unprepared(statement).await?;
+         }
+-        for statement in POST_TABLE_STATEMENTS {
++        for statement in post_table_statements() {
+             connection.execute_unprepared(statement).await?;
+         }
+         Ok(())
+@@ -54,8 +56,9 @@ pub fn ddl_statements() -> impl Iterator<Item = &'static str> {
+         .chain(schema::tenant_config_table_statements())
+         .chain(schema::product_capability_table_statements())
+         .chain(schema::tenant_data_control_table_statements())
+-        .chain(schema::service_account_table_statements())
++        .chain(backup::BACKUP_TABLE_STATEMENTS)
+         .chain([
++            jobs::BACKGROUND_JOB_ATTEMPT_DDL,
+             schema::OUTBOX_EVENT_DDL,
+             schema::EXPORT_JOB_DDL,
+             schema::RESOURCE_OWNERSHIP_DDL,
+@@ -84,6 +87,11 @@ fn is_seed_statement(statement: &str) -> bool {
+     statement.trim_start().starts_with("INSERT INTO")
+ }
+ 
++/// 所有表创建完成后安装的跨表约束，SQL 导出与迁移共用。
++pub(crate) fn post_table_statements() -> impl Iterator<Item = &'static str> {
++    POST_TABLE_STATEMENTS.iter().copied()
++}
++
+ const POST_TABLE_STATEMENTS: &[&str] = &[r#"ALTER TABLE `sys_user`
+     ADD CONSTRAINT `fk_user_avatar_file`
+     FOREIGN KEY (`avatar_file_id`) REFERENCES `sys_file` (`id`)
+diff --git a/crates/ryframe-db/src/migration/m20260820_000000_control_baseline/schema.rs b/crates/ryframe-db/src/migration/m20260820_000000_control_baseline/schema.rs
+index facce0f5dbb11544d6defe43fd038cdd4b4a2433..06bddc2ab5dc1693d08775ff9058bc8f4244792b 100644
+--- a/crates/ryframe-db/src/migration/m20260820_000000_control_baseline/schema.rs
++++ b/crates/ryframe-db/src/migration/m20260820_000000_control_baseline/schema.rs
+@@ -476,188 +476,6 @@ pub(crate) fn tenant_data_control_table_statements() -> [&'static str; 4] {
+     ]
+ }
+ 
+-pub(crate) fn service_account_table_statements() -> [&'static str; 6] {
+-    [
+-        r#"CREATE TABLE IF NOT EXISTS `sys_service_account` (
+-            `id` BIGINT NOT NULL,
+-            `tenant_id` VARCHAR(64) NOT NULL,
+-            `code` VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+-            `name` VARCHAR(128) NOT NULL,
+-            `description` VARCHAR(500) DEFAULT NULL,
+-            `dept_id` BIGINT DEFAULT NULL,
+-            `status` CHAR(1) NOT NULL DEFAULT '1',
+-            `authorization_version` INT NOT NULL DEFAULT 1,
+-            `max_requests_per_minute` INT NOT NULL DEFAULT 60,
+-            `created_by` BIGINT NOT NULL,
+-            `del_flag` CHAR(1) NOT NULL DEFAULT '0',
+-            `created_at` DATETIME(6) NOT NULL,
+-            `updated_at` DATETIME(6) NOT NULL,
+-            PRIMARY KEY (`id`),
+-            UNIQUE KEY `uq_service_account_tenant_id` (`tenant_id`, `id`),
+-            UNIQUE KEY `uq_service_account_code` (`tenant_id`, `code`),
+-            KEY `idx_service_account_list` (`tenant_id`, `del_flag`, `created_at`, `id`),
+-            KEY `idx_service_account_dept` (`tenant_id`, `dept_id`),
+-            KEY `fk_service_account_creator` (`tenant_id`, `created_by`),
+-            CONSTRAINT `fk_service_account_tenant`
+-                FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+-                ON UPDATE CASCADE ON DELETE RESTRICT,
+-            CONSTRAINT `fk_service_account_dept`
+-                FOREIGN KEY (`tenant_id`, `dept_id`) REFERENCES `sys_dept` (`tenant_id`, `id`)
+-                ON UPDATE CASCADE ON DELETE RESTRICT,
+-            CONSTRAINT `fk_service_account_creator`
+-                FOREIGN KEY (`tenant_id`, `created_by`) REFERENCES `sys_user` (`tenant_id`, `id`)
+-                ON UPDATE CASCADE ON DELETE RESTRICT,
+-            CONSTRAINT `ck_service_account_status` CHECK (`status` IN ('0', '1')),
+-            CONSTRAINT `ck_service_account_del_flag` CHECK (`del_flag` IN ('0', '2')),
+-            CONSTRAINT `ck_service_account_rate` CHECK (`max_requests_per_minute` > 0)
+-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='服务账号'"#,
+-        r#"CREATE TABLE IF NOT EXISTS `sys_service_account_role` (
+-            `tenant_id` VARCHAR(64) NOT NULL,
+-            `account_id` BIGINT NOT NULL,
+-            `role_id` BIGINT NOT NULL,
+-            PRIMARY KEY (`tenant_id`, `account_id`, `role_id`),
+-            KEY `idx_service_account_role_role` (`tenant_id`, `role_id`, `account_id`),
+-            CONSTRAINT `fk_service_account_role_account`
+-                FOREIGN KEY (`tenant_id`, `account_id`)
+-                REFERENCES `sys_service_account` (`tenant_id`, `id`)
+-                ON UPDATE CASCADE ON DELETE CASCADE,
+-            CONSTRAINT `fk_service_account_role_role`
+-                FOREIGN KEY (`tenant_id`, `role_id`) REFERENCES `sys_role` (`tenant_id`, `id`)
+-                ON UPDATE CASCADE ON DELETE CASCADE
+-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='服务账号角色关系'"#,
+-        r#"CREATE TABLE IF NOT EXISTS `sys_service_credential` (
+-            `id` BIGINT NOT NULL,
+-            `tenant_id` VARCHAR(64) NOT NULL,
+-            `account_id` BIGINT NOT NULL,
+-            `key_id` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+-            `secret_mac` BINARY(32) NOT NULL,
+-            `pepper_version` INT NOT NULL,
+-            `label` VARCHAR(128) NOT NULL,
+-            `status` VARCHAR(16) NOT NULL DEFAULT 'active',
+-            `expires_at` DATETIME(6) NOT NULL,
+-            `last_used_at` DATETIME(6) DEFAULT NULL,
+-            `created_by` BIGINT NOT NULL,
+-            `revoked_at` DATETIME(6) DEFAULT NULL,
+-            `revoked_by` BIGINT DEFAULT NULL,
+-            `created_at` DATETIME(6) NOT NULL,
+-            `updated_at` DATETIME(6) NOT NULL,
+-            `idempotency_key_hash` BINARY(32) NOT NULL,
+-            `request_fingerprint` BINARY(32) NOT NULL,
+-            PRIMARY KEY (`id`),
+-            UNIQUE KEY `uq_service_credential_key_id` (`key_id`),
+-            UNIQUE KEY `uq_service_credential_idempotency` (`tenant_id`, `account_id`, `idempotency_key_hash`),
+-            KEY `idx_service_credential_active` (`tenant_id`, `account_id`, `status`, `expires_at`, `id`),
+-            KEY `idx_service_credential_expiry` (`status`, `expires_at`, `id`),
+-            KEY `fk_service_credential_creator` (`tenant_id`, `created_by`),
+-            KEY `fk_service_credential_revoker` (`tenant_id`, `revoked_by`),
+-            CONSTRAINT `fk_service_credential_account`
+-                FOREIGN KEY (`tenant_id`, `account_id`)
+-                REFERENCES `sys_service_account` (`tenant_id`, `id`)
+-                ON UPDATE CASCADE ON DELETE CASCADE,
+-            CONSTRAINT `fk_service_credential_creator`
+-                FOREIGN KEY (`tenant_id`, `created_by`) REFERENCES `sys_user` (`tenant_id`, `id`)
+-                ON UPDATE CASCADE ON DELETE RESTRICT,
+-            CONSTRAINT `fk_service_credential_revoker`
+-                FOREIGN KEY (`tenant_id`, `revoked_by`) REFERENCES `sys_user` (`tenant_id`, `id`)
+-                ON UPDATE CASCADE ON DELETE RESTRICT,
+-            CONSTRAINT `ck_service_credential_status` CHECK (`status` IN ('active', 'revoked'))
+-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='服务账号 API Key 凭据'"#,
+-        r#"CREATE TABLE IF NOT EXISTS `sys_service_delegation` (
+-            `id` BIGINT NOT NULL,
+-            `tenant_id` VARCHAR(64) NOT NULL,
+-            `account_id` BIGINT NOT NULL,
+-            `user_id` BIGINT NOT NULL,
+-            `token_mac` BINARY(32) NOT NULL,
+-            `pepper_version` INT NOT NULL,
+-            `status` VARCHAR(16) NOT NULL DEFAULT 'active',
+-            `version` INT NOT NULL DEFAULT 1,
+-            `not_before` DATETIME(6) NOT NULL,
+-            `expires_at` DATETIME(6) NOT NULL,
+-            `reason` VARCHAR(500) NOT NULL,
+-            `created_by_user_id` BIGINT NOT NULL,
+-            `revoked_at` DATETIME(6) DEFAULT NULL,
+-            `revoked_by` BIGINT DEFAULT NULL,
+-            `created_at` DATETIME(6) NOT NULL,
+-            `updated_at` DATETIME(6) NOT NULL,
+-            `idempotency_key_hash` BINARY(32) NOT NULL,
+-            `request_fingerprint` BINARY(32) NOT NULL,
+-            PRIMARY KEY (`id`),
+-            UNIQUE KEY `uq_service_delegation_tenant_id` (`tenant_id`, `id`),
+-            UNIQUE KEY `uq_service_delegation_token_mac` (`token_mac`),
+-            UNIQUE KEY `uq_service_delegation_idempotency` (`tenant_id`, `user_id`, `idempotency_key_hash`),
+-            KEY `idx_service_delegation_account` (`tenant_id`, `account_id`, `status`, `expires_at`, `id`),
+-            KEY `idx_service_delegation_user` (`tenant_id`, `user_id`, `status`, `expires_at`, `id`),
+-            KEY `idx_service_delegation_expiry` (`status`, `expires_at`, `id`),
+-            KEY `fk_service_delegation_creator` (`tenant_id`, `created_by_user_id`),
+-            KEY `fk_service_delegation_revoker` (`tenant_id`, `revoked_by`),
+-            CONSTRAINT `fk_service_delegation_account`
+-                FOREIGN KEY (`tenant_id`, `account_id`)
+-                REFERENCES `sys_service_account` (`tenant_id`, `id`)
+-                ON UPDATE CASCADE ON DELETE CASCADE,
+-            CONSTRAINT `fk_service_delegation_user`
+-                FOREIGN KEY (`tenant_id`, `user_id`) REFERENCES `sys_user` (`tenant_id`, `id`)
+-                ON UPDATE CASCADE ON DELETE RESTRICT,
+-            CONSTRAINT `fk_service_delegation_creator`
+-                FOREIGN KEY (`tenant_id`, `created_by_user_id`) REFERENCES `sys_user` (`tenant_id`, `id`)
+-                ON UPDATE CASCADE ON DELETE RESTRICT,
+-            CONSTRAINT `fk_service_delegation_revoker`
+-                FOREIGN KEY (`tenant_id`, `revoked_by`) REFERENCES `sys_user` (`tenant_id`, `id`)
+-                ON UPDATE CASCADE ON DELETE RESTRICT,
+-            CONSTRAINT `ck_service_delegation_status` CHECK (`status` IN ('active', 'revoked')),
+-            CONSTRAINT `ck_service_delegation_window` CHECK (`not_before` < `expires_at`)
+-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='用户显式查询委托'"#,
+-        r#"CREATE TABLE IF NOT EXISTS `sys_service_delegation_capability` (
+-            `tenant_id` VARCHAR(64) NOT NULL,
+-            `delegation_id` BIGINT NOT NULL,
+-            `capability_key` VARCHAR(96) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+-            PRIMARY KEY (`tenant_id`, `delegation_id`, `capability_key`),
+-            KEY `idx_service_delegation_capability` (`tenant_id`, `capability_key`, `delegation_id`),
+-            CONSTRAINT `fk_service_delegation_capability_delegation`
+-                FOREIGN KEY (`tenant_id`, `delegation_id`)
+-                REFERENCES `sys_service_delegation` (`tenant_id`, `id`)
+-                ON UPDATE CASCADE ON DELETE CASCADE
+-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='委托查询能力白名单'"#,
+-        r#"CREATE TABLE IF NOT EXISTS `sys_service_access_audit` (
+-            `id` BIGINT NOT NULL,
+-            `request_id` CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+-            `tenant_id` VARCHAR(64) DEFAULT NULL,
+-            `account_id` BIGINT DEFAULT NULL,
+-            `credential_id` BIGINT DEFAULT NULL,
+-            `delegation_id` BIGINT DEFAULT NULL,
+-            `represented_user_id` BIGINT DEFAULT NULL,
+-            `operation_id` VARCHAR(96) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+-            `capability_key` VARCHAR(96) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+-            `required_permission` VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+-            `access_mode` VARCHAR(16) NOT NULL,
+-            `result` VARCHAR(16) NOT NULL,
+-            `reason_code` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+-            `http_status` INT NOT NULL,
+-            `request_ip_digest` BINARY(32) DEFAULT NULL,
+-            `user_agent_digest` BINARY(32) DEFAULT NULL,
+-            `row_count` INT DEFAULT NULL,
+-            `response_bytes` BIGINT DEFAULT NULL,
+-            `tenant_epoch` INT DEFAULT NULL,
+-            `account_authorization_version` INT DEFAULT NULL,
+-            `user_authorization_version` INT DEFAULT NULL,
+-            `delegation_version` INT DEFAULT NULL,
+-            `started_at` DATETIME(6) NOT NULL,
+-            `completed_at` DATETIME(6) NOT NULL,
+-            PRIMARY KEY (`id`),
+-            UNIQUE KEY `uq_service_access_audit_request` (`request_id`),
+-            KEY `idx_service_access_audit_retention` (`completed_at`, `id`),
+-            KEY `idx_service_access_audit_tenant` (`tenant_id`, `completed_at`, `id`),
+-            KEY `idx_service_access_audit_account` (`tenant_id`, `account_id`, `completed_at`, `id`),
+-            KEY `idx_service_access_audit_user` (`tenant_id`, `represented_user_id`, `completed_at`, `id`),
+-            CONSTRAINT `ck_service_access_audit_mode` CHECK (`access_mode` IN ('direct', 'delegated', 'unknown')),
+-            CONSTRAINT `ck_service_access_audit_result` CHECK (`result` IN ('success', 'denied', 'error')),
+-            CONSTRAINT `ck_service_access_audit_counts` CHECK (
+-                (`row_count` IS NULL OR `row_count` >= 0)
+-                AND (`response_bytes` IS NULL OR `response_bytes` >= 0)
+-            )
+-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Agent API 访问审计'"#,
+-    ]
+-}
+-
+ pub(crate) const OUTBOX_EVENT_DDL: &str = r####"CREATE TABLE IF NOT EXISTS `sys_outbox_event` (
+     `id` BIGINT NOT NULL,
+     `tenant_id` VARCHAR(64) DEFAULT NULL,
+diff --git a/crates/ryframe-db/src/migration/m20261013_000000_password_change.rs b/crates/ryframe-db/src/migration/m20261013_000000_password_change.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..f96d88632093c708141369b3bcbf194541aab19a
+--- /dev/null
++++ b/crates/ryframe-db/src/migration/m20261013_000000_password_change.rs
+@@ -0,0 +1,26 @@
++use sea_orm_migration::prelude::*;
++
++#[derive(DeriveMigrationName)]
++pub struct Migration;
++
++#[async_trait::async_trait]
++impl MigrationTrait for Migration {
++    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
++        // 新基线已有该列；升级已有库时不重置正常账号的密码或改密状态。
++        if !manager
++            .has_column("sys_user", "password_change_required")
++            .await?
++        {
++            manager.get_connection().execute_unprepared(
++                "ALTER TABLE `sys_user` ADD COLUMN `password_change_required` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '首次登录必须修改密码'",
++            ).await?;
++        }
++        Ok(())
++    }
++
++    async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
++        Err(DbErr::Custom(
++            "密码状态迁移不支持回滚，请追加 roll-forward 迁移修复".into(),
++        ))
++    }
++}
+diff --git a/crates/ryframe-db/src/migration/m20261017_000000_data_scope_projection.rs b/crates/ryframe-db/src/migration/m20261017_000000_data_scope_projection.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..5e0a28f1cefbfbfd12c059fc297c57cc24c5cdd4
+--- /dev/null
++++ b/crates/ryframe-db/src/migration/m20261017_000000_data_scope_projection.rs
+@@ -0,0 +1,27 @@
++use sea_orm_migration::prelude::*;
++
++#[derive(DeriveMigrationName)]
++pub struct Migration;
++
++#[async_trait::async_trait]
++impl MigrationTrait for Migration {
++    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
++        // 新基线已包含该列；已有开发库只追加独立计数，不扫描或改写身份数据。
++        if !manager
++            .has_column("sys_tenant", "data_scope_version")
++            .await?
++        {
++            manager.get_connection().execute_unprepared(
++                "ALTER TABLE `sys_tenant` ADD COLUMN `data_scope_version` BIGINT NOT NULL DEFAULT 1 \
++                 COMMENT '租户数据范围投影权威版本' AFTER `authorization_epoch`",
++            ).await?;
++        }
++        Ok(())
++    }
++
++    async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
++        Err(DbErr::Custom(
++            "数据范围投影版本迁移不支持回滚，请追加 roll-forward 迁移修复".into(),
++        ))
++    }
++}
+diff --git a/crates/ryframe-db/src/migration/mod.rs b/crates/ryframe-db/src/migration/mod.rs
+index 23a18b7cd8766fbc968a21c5f93d643b0508b689..9af80cc3694fe253d9bec31ecc3e3a7ddc921a70 100644
+--- a/crates/ryframe-db/src/migration/mod.rs
++++ b/crates/ryframe-db/src/migration/mod.rs
+@@ -15,6 +15,10 @@ mod access_catalog;
+ mod baseline_contract;
+ #[cfg(feature = "migration")]
+ mod m20260820_000000_control_baseline;
++#[cfg(feature = "migration")]
++mod m20261013_000000_password_change;
++#[cfg(feature = "migration")]
++mod m20261017_000000_data_scope_projection;
+ mod schema;
+ #[cfg(feature = "migration")]
+ mod seeder;
+@@ -24,7 +28,8 @@ pub use access_catalog::{
+ };
+ pub use baseline_contract::ddl_statements as control_ddl_statements;
+ pub use schema::{
+-    expected_extra, extract_column_type, normalize_column_type, verify_current_schema,
++    expected_extra, extract_column_type, normalize_column_type, verify_business_migration_ledger,
++    verify_current_schema,
+ };
+ #[cfg(feature = "migration")]
+ pub use seeder::{mysql_snapshot_sql, seed, validate_seed_statements};
+@@ -32,7 +37,11 @@ pub use seeder::{mysql_snapshot_sql, seed, validate_seed_statements};
+ #[cfg(feature = "migration")]
+ const MIGRATION_LOCK_SQL_PREFIX: &str = "ryframe:migration:";
+ pub const CONTROL_MIGRATION_LEDGER: &str = "seaql_migrations";
+-const HANDWRITTEN_MIGRATION_NAMES: &[&str] = &["m20260820_000000_control_baseline"];
++const HANDWRITTEN_MIGRATION_NAMES: &[&str] = &[
++    "m20260820_000000_control_baseline",
++    "m20261013_000000_password_change",
++    "m20261017_000000_data_scope_projection",
++];
+ 
+ pub fn expected_migration_names() -> impl Iterator<Item = &'static str> {
+     HANDWRITTEN_MIGRATION_NAMES
+@@ -93,8 +102,11 @@ pub fn schema_fingerprint() -> String {
+ #[async_trait::async_trait]
+ impl MigratorTrait for Migrator {
+     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
+-        let mut migrations: Vec<Box<dyn MigrationTrait>> =
+-            vec![Box::new(m20260820_000000_control_baseline::Migration)];
++        let mut migrations: Vec<Box<dyn MigrationTrait>> = vec![
++            Box::new(m20260820_000000_control_baseline::Migration),
++            Box::new(m20261013_000000_password_change::Migration),
++            Box::new(m20261017_000000_data_scope_projection::Migration),
++        ];
+         migrations.extend(crate::generated::migrations());
+         migrations
+     }
+diff --git a/crates/ryframe-db/src/migration/schema.rs b/crates/ryframe-db/src/migration/schema.rs
+index 8faeb0d8595e44a1681ec041c18c285b1a6665b9..e4bb56049a123e6ebd87db81e57ec169f42adfbb 100644
+--- a/crates/ryframe-db/src/migration/schema.rs
++++ b/crates/ryframe-db/src/migration/schema.rs
+@@ -1,9 +1,11 @@
++mod business_migration_ledger;
+ mod expected;
+ mod inspect;
+ mod normalize;
+ mod types;
+ mod verify;
+ 
++pub use business_migration_ledger::verify_business_migration_ledger;
+ #[cfg(feature = "migration")]
+ pub(crate) use inspect::user_tables;
+ pub use normalize::{expected_extra, extract_column_type, normalize_column_type};
+diff --git a/crates/ryframe-db/src/migration/schema/business_migration_ledger.rs b/crates/ryframe-db/src/migration/schema/business_migration_ledger.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..9eb2b58acc515f8ea74ff45c54e24a98480dec26
+--- /dev/null
++++ b/crates/ryframe-db/src/migration/schema/business_migration_ledger.rs
+@@ -0,0 +1,31 @@
++//! 独立 B0 结构适配构建使用的 P2 业务迁移账本事实，不执行 DDL 或改写账本。
++use sea_orm::{ConnectionTrait, DbErr};
++
++pub(super) const NAME: &str = "ryframe_business_migration";
++
++// 来源：P2 636d940b 的 ryframe-sdk/src/migration/ledger.rs；仅展开等价 DDL。
++pub(super) const DDL: &str = r#"CREATE TABLE `ryframe_business_migration` (
++    `scope` VARCHAR(8) NOT NULL,
++    `module_name` VARCHAR(64) NOT NULL,
++    `migration_id` VARCHAR(128) NOT NULL,
++    `checksum` CHAR(64) NOT NULL,
++    `before_fingerprint` CHAR(64) NULL,
++    `after_fingerprint` CHAR(64) NOT NULL,
++    `origin` VARCHAR(16) NOT NULL,
++    `tables_json` JSON NOT NULL,
++    `adoption_hash` CHAR(64) NULL,
++    `applied_at` TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
++    PRIMARY KEY (`scope`, `module_name`, `migration_id`),
++    CONSTRAINT `chk_business_origin` CHECK (
++        (`origin` = 'executed' AND `adoption_hash` IS NULL)
++        OR (`origin` = 'adopted' AND `adoption_hash` IS NOT NULL))
++) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"#;
++
++/// 只读核对业务迁移账本的完整结构；目标其他表由调用方的完整表集核验覆盖。
++pub async fn verify_business_migration_ledger<C: ConnectionTrait + ?Sized>(
++    db: &C,
++) -> Result<(), DbErr> {
++    let mut expected = super::types::ExpectedSchema::default();
++    super::expected::extend_schema(&mut expected, [DDL])?;
++    super::verify::verify_expected_schema(db, expected, Some(NAME)).await
++}
+diff --git a/crates/ryframe-db/src/migration/schema/expected.rs b/crates/ryframe-db/src/migration/schema/expected.rs
+index 5fe4160a8f1144d2bc2e07240a731318b4f92f2f..0097c2de37e59fdf4d4e65a689c2e5525c4b7e9b 100644
+--- a/crates/ryframe-db/src/migration/schema/expected.rs
++++ b/crates/ryframe-db/src/migration/schema/expected.rs
+@@ -1,17 +1,33 @@
+ use sea_orm::DbErr;
+ 
++mod clauses;
++
+ use super::{
+     normalize::{
+-        expected_extra, extract_column_type, normalize_action, normalize_column_type,
+-        normalize_default, normalize_generation_expression, normalize_identifier,
++        expected_extra, extract_column_type, normalize_action, normalize_check_clause,
++        normalize_column_type, normalize_default, normalize_generation_expression,
++        normalize_identifier,
++    },
++    types::{
++        ExpectedCheck, ExpectedColumn, ExpectedForeignKey, ExpectedIndex, ExpectedSchema,
++        ExpectedTable,
+     },
+-    types::{ExpectedColumn, ExpectedForeignKey, ExpectedIndex, ExpectedSchema, ExpectedTable},
+ };
+ use crate::migration::baseline_contract::ddl_statements;
+ 
+ pub(super) fn expected_schema() -> Result<ExpectedSchema, DbErr> {
+     let mut schema = ExpectedSchema::default();
+-    for statement in ddl_statements() {
++    extend_schema(&mut schema, ddl_statements())?;
++    extend_schema(&mut schema, [super::business_migration_ledger::DDL])?;
++    add_post_baseline_constraints(&mut schema);
++    Ok(schema)
++}
++
++pub(super) fn extend_schema<'a>(
++    schema: &mut ExpectedSchema,
++    statements: impl IntoIterator<Item = &'a str>,
++) -> Result<(), DbErr> {
++    for statement in statements {
+         let table = extract_table_name(statement).ok_or_else(|| {
+             DbErr::Custom("canonical baseline contains an invalid CREATE TABLE statement".into())
+         })?;
+@@ -27,15 +43,14 @@ pub(super) fn expected_schema() -> Result<ExpectedSchema, DbErr> {
+             },
+         );
+         add_table_parts(
+-            &mut schema,
++            schema,
+             &table,
+             statement,
+             &table_character_set,
+             &table_collation,
+         )?;
+     }
+-    add_post_baseline_constraints(&mut schema);
+-    Ok(schema)
++    Ok(())
+ }
+ 
+ fn add_table_parts(
+@@ -45,13 +60,11 @@ fn add_table_parts(
+     table_character_set: &str,
+     table_collation: &str,
+ ) -> Result<(), DbErr> {
+-    let lines = statement.lines().collect::<Vec<_>>();
+-    let mut pending_constraint = None;
+-    let mut index = 0;
+-    while index < lines.len() {
+-        let line = lines[index].trim().trim_end_matches(',');
++    let mut ordinal = 0;
++    for line in clauses::table_clauses(statement)? {
+         let upper = line.to_ascii_uppercase();
+         if line.starts_with('`') {
++            ordinal += 1;
+             add_column(
+                 schema,
+                 table,
+@@ -59,6 +72,7 @@ fn add_table_parts(
+                 &upper,
+                 table_character_set,
+                 table_collation,
++                ordinal,
+             );
+         } else if upper.starts_with("PRIMARY KEY") {
+             schema.indexes.insert(
+@@ -70,19 +84,46 @@ fn add_table_parts(
+             );
+         } else if upper.starts_with("UNIQUE KEY") || upper.starts_with("KEY ") {
+             add_named_index(schema, table, line, &upper);
+-        } else if upper.starts_with("CONSTRAINT ") {
+-            pending_constraint = backtick_identifiers(line).into_iter().next();
+-        } else if upper.starts_with("FOREIGN KEY") {
+-            let (name, clause, next_index) =
+-                foreign_key_clause(table, pending_constraint.take(), line, &lines, index)?;
+-            add_foreign_key(schema, table, name, &clause)?;
+-            index = next_index;
+         }
+-        index += 1;
++        if upper.starts_with("CONSTRAINT ") {
++            let (name, definition) = split_named_constraint(table, line)?;
++            let definition_upper = definition.to_ascii_uppercase();
++            if definition_upper.starts_with("FOREIGN KEY") {
++                add_foreign_key(schema, table, name, definition)?;
++            } else if definition_upper.starts_with("CHECK") {
++                add_check(schema, table, name, definition)?;
++            } else {
++                return Err(DbErr::Custom(format!(
++                    "constraint {table}.{name} has an unsupported definition"
++                )));
++            }
++        } else if upper.starts_with("FOREIGN KEY") || upper.starts_with("CHECK") {
++            return Err(DbErr::Custom(format!(
++                "constraint in {table} is missing a constraint name"
++            )));
++        }
+     }
+     Ok(())
+ }
+ 
++fn split_named_constraint<'a>(table: &str, line: &'a str) -> Result<(String, &'a str), DbErr> {
++    let name_start = line
++        .find('`')
++        .ok_or_else(|| DbErr::Custom(format!("constraint in {table} is missing a quoted name")))?;
++    let name_end = line[name_start + 1..]
++        .find('`')
++        .map(|offset| name_start + 1 + offset)
++        .ok_or_else(|| DbErr::Custom(format!("constraint in {table} has an unclosed name")))?;
++    let name = &line[name_start + 1..name_end];
++    let definition = line[name_end + 1..].trim_start();
++    if name.is_empty() || definition.is_empty() {
++        return Err(DbErr::Custom(format!(
++            "constraint in {table} has an incomplete definition"
++        )));
++    }
++    Ok((name.to_owned(), definition))
++}
++
+ fn add_column(
+     schema: &mut ExpectedSchema,
+     table: &str,
+@@ -90,6 +131,7 @@ fn add_column(
+     upper: &str,
+     table_character_set: &str,
+     table_collation: &str,
++    ordinal: usize,
+ ) {
+     let identifiers = backtick_identifiers(line);
+     let Some(column) = identifiers.first() else {
+@@ -100,6 +142,9 @@ fn add_column(
+         .and_then(|(_, rest)| rest.split_once('`'))
+         .map(|(_, rest)| rest.trim_start())
+         .unwrap_or_default();
++    schema
++        .column_order
++        .insert((table.into(), column.clone()), ordinal);
+     let column_type = normalize_column_type(extract_column_type(after_name));
+     let uses_character_set = column_type_uses_character_set(&column_type);
+     schema.columns.insert(
+@@ -135,36 +180,6 @@ fn add_named_index(schema: &mut ExpectedSchema, table: &str, line: &str, upper:
+     }
+ }
+ 
+-fn foreign_key_clause(
+-    table: &str,
+-    name: Option<String>,
+-    line: &str,
+-    lines: &[&str],
+-    mut index: usize,
+-) -> Result<(String, String, usize), DbErr> {
+-    let name = name.ok_or_else(|| {
+-        DbErr::Custom(format!(
+-            "foreign key in {table} is missing a constraint name"
+-        ))
+-    })?;
+-    let mut clause = line.to_owned();
+-    while index + 1 < lines.len() {
+-        let next = lines[index + 1].trim().trim_end_matches(',');
+-        if next.is_empty() {
+-            index += 1;
+-            continue;
+-        }
+-        let next_upper = next.to_ascii_uppercase();
+-        if !next_upper.starts_with("REFERENCES") && !next_upper.starts_with("ON ") {
+-            break;
+-        }
+-        index += 1;
+-        clause.push(' ');
+-        clause.push_str(next);
+-    }
+-    Ok((name, clause, index))
+-}
+-
+ fn add_foreign_key(
+     schema: &mut ExpectedSchema,
+     table: &str,
+@@ -193,6 +208,49 @@ fn add_foreign_key(
+     Ok(())
+ }
+ 
++fn add_check(
++    schema: &mut ExpectedSchema,
++    table: &str,
++    name: String,
++    definition: &str,
++) -> Result<(), DbErr> {
++    let clause_with_enforcement = definition["CHECK".len()..].trim();
++    let upper = clause_with_enforcement.to_ascii_uppercase();
++    let (clause, enforced) = if upper.ends_with(" NOT ENFORCED") {
++        (
++            &clause_with_enforcement[..clause_with_enforcement.len() - " NOT ENFORCED".len()],
++            false,
++        )
++    } else if upper.ends_with(" ENFORCED") {
++        (
++            &clause_with_enforcement[..clause_with_enforcement.len() - " ENFORCED".len()],
++            true,
++        )
++    } else {
++        (clause_with_enforcement, true)
++    };
++    let clause = clause.trim();
++    if !clause.starts_with('(') || !clause.ends_with(')') {
++        return Err(DbErr::Custom(format!(
++            "check constraint {table}.{name} has an invalid expression"
++        )));
++    }
++    let key = (table.to_owned(), name.clone());
++    let previous = schema.checks.insert(
++        key,
++        ExpectedCheck {
++            clause: normalize_check_clause(clause),
++            enforced,
++        },
++    );
++    if previous.is_some() {
++        return Err(DbErr::Custom(format!(
++            "canonical baseline contains duplicate check constraint {table}.{name}"
++        )));
++    }
++    Ok(())
++}
++
+ /// 补充必须等被引用表创建完成后再由同一基线安装的跨表约束。
+ fn add_post_baseline_constraints(schema: &mut ExpectedSchema) {
+     schema.foreign_keys.insert(
+@@ -318,3 +376,162 @@ fn backtick_identifiers(value: &str) -> Vec<String> {
+         .map(|(_, identifier)| identifier.to_owned())
+         .collect()
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::{ExpectedSchema, add_table_parts, normalize_check_clause};
++
++    fn parse_table(statement: &str) -> ExpectedSchema {
++        let mut schema = ExpectedSchema::default();
++        add_table_parts(
++            &mut schema,
++            "child",
++            statement,
++            "utf8mb4",
++            "utf8mb4_general_ci",
++        )
++        .unwrap();
++        schema
++    }
++
++    #[test]
++    fn synthetic_multiline_check_and_foreign_key_keep_complete_clauses() {
++        let schema = parse_table(
++            r#"CREATE TABLE `child` (
++                `id` BIGINT NOT NULL,
++                `parent_id` BIGINT NOT NULL,
++                `state` VARCHAR(16) NOT NULL DEFAULT 'queued,ready',
++                CONSTRAINT `ck_child_state` CHECK (
++                    (`state` IN ('queued,ready', 'done'))
++                    AND (`id` > 0)),
++                CONSTRAINT `fk_child_parent`
++                    FOREIGN KEY (`parent_id`)
++                    REFERENCES `parent` (`id`)
++                    ON DELETE CASCADE ON UPDATE RESTRICT
++            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"#,
++        );
++
++        assert_eq!(
++            schema
++                .columns
++                .keys()
++                .filter(|(table, _)| table == "child")
++                .count(),
++            3
++        );
++        let key = &schema.foreign_keys[&("child".into(), "fk_child_parent".into())];
++        assert_eq!(key.columns, ["parent_id"]);
++        assert_eq!(key.referenced_table, "parent");
++        assert_eq!(key.referenced_columns, ["id"]);
++        assert_eq!(key.delete_rule, "cascade");
++        assert_eq!(key.update_rule, "restrict");
++        let check = &schema.checks[&("child".into(), "ck_child_state".into())];
++        assert_eq!(
++            check.clause,
++            normalize_check_clause("((`state` IN ('queued,ready', 'done')) AND (`id` > 0))")
++        );
++        assert!(check.enforced);
++    }
++
++    #[test]
++    fn synthetic_inline_foreign_key_keeps_actions() {
++        let schema = parse_table(
++            r#"CREATE TABLE `child` (
++                `id` BIGINT NOT NULL,
++                `owner_id` BIGINT NULL,
++                CONSTRAINT `fk_child_owner` FOREIGN KEY (`owner_id`) REFERENCES `owner` (`id`) ON DELETE SET NULL ON UPDATE CASCADE
++            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"#,
++        );
++
++        let key = &schema.foreign_keys[&("child".into(), "fk_child_owner".into())];
++        assert_eq!(key.columns, ["owner_id"]);
++        assert_eq!(key.referenced_table, "owner");
++        assert_eq!(key.referenced_columns, ["id"]);
++        assert_eq!(key.delete_rule, "set null");
++        assert_eq!(key.update_rule, "cascade");
++    }
++
++    #[test]
++    fn multiline_checks_preserve_attempt_columns_and_foreign_key() {
++        let schema = super::expected_schema().unwrap();
++        let table = "sys_background_job_attempt";
++        let columns = schema
++            .columns
++            .iter()
++            .filter(|((name, _), _)| name == table)
++            .collect::<Vec<_>>();
++        assert_eq!(columns.len(), 7);
++        for name in ["available_at", "started_at"] {
++            let column = &schema.columns[&(table.into(), name.into())];
++            assert_eq!(column.column_type, "datetime(6)");
++            assert!(!column.nullable);
++        }
++        for name in ["finished_at", "closed_at"] {
++            let column = &schema.columns[&(table.into(), name.into())];
++            assert_eq!(column.column_type, "datetime(6)");
++            assert!(column.nullable);
++        }
++        let key = &schema.foreign_keys[&(table.into(), "fk_bg_attempt_job".into())];
++        assert_eq!(key.columns, ["job_id"]);
++        assert_eq!(key.referenced_table, "sys_background_job");
++        assert_eq!(key.delete_rule, "cascade");
++        assert_eq!(key.update_rule, "restrict");
++    }
++
++    #[test]
++    fn inline_backup_constraints_are_verified_against_their_columns_and_target() {
++        let schema = super::expected_schema().unwrap();
++        for (table, name) in [
++            ("sys_backup_resource", "fk_backup_resource_set"),
++            ("sys_restore_run", "fk_restore_run_backup"),
++        ] {
++            let key = schema
++                .foreign_keys
++                .get(&(table.into(), name.into()))
++                .unwrap();
++            assert_eq!(key.columns, ["backup_id"]);
++            assert_eq!(key.referenced_table, "sys_backup_set");
++            assert_eq!(key.referenced_columns, ["id"]);
++            assert_eq!(key.delete_rule, "restrict");
++            assert_eq!(key.update_rule, "restrict");
++        }
++    }
++
++    #[test]
++    fn canonical_checks_include_restore_completion_and_every_declared_constraint() {
++        let schema = super::expected_schema().unwrap();
++        assert_eq!(schema.checks.len(), 33);
++        let completed =
++            &schema.checks[&("sys_restore_run".into(), "ck_restore_run_completed".into())];
++        assert_eq!(
++            completed.clause,
++            normalize_check_clause(
++                "((`status` IN ('running', 'data_verified') AND `completed_at` IS NULL) \
++                 OR (`status` IN ('succeeded', 'failed') AND `completed_at` IS NOT NULL \
++                 AND `completed_at` >= `started_at`))"
++            )
++        );
++        assert!(completed.enforced);
++    }
++
++    #[test]
++    fn unnamed_or_incomplete_check_constraints_fail_closed() {
++        for statement in [
++            "CREATE TABLE `child` (`id` BIGINT, CHECK (`id` > 0)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
++            "CREATE TABLE `child` (`id` BIGINT, CONSTRAINT `ck_id`) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
++        ] {
++            let mut schema = ExpectedSchema::default();
++            assert!(
++                add_table_parts(
++                    &mut schema,
++                    "child",
++                    statement,
++                    "utf8mb4",
++                    "utf8mb4_general_ci"
++                )
++                .is_err(),
++                "{statement}"
++            );
++        }
++    }
++}
+diff --git a/crates/ryframe-db/src/migration/schema/expected/clauses.rs b/crates/ryframe-db/src/migration/schema/expected/clauses.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..cbe87708dd619f4eeefdd50580c5e1d99c156488
+--- /dev/null
++++ b/crates/ryframe-db/src/migration/schema/expected/clauses.rs
+@@ -0,0 +1,101 @@
++use sea_orm::DbErr;
++
++/// 仅在建表主体的顶层逗号处分段，约束表达式和字符串中的换行不改变结构。
++pub(super) fn table_clauses(statement: &str) -> Result<Vec<&str>, DbErr> {
++    let mut clauses = Vec::new();
++    let mut depth = 0usize;
++    let mut start = None;
++    let mut quote = None;
++    let mut escaped = false;
++    for (index, character) in statement.char_indices() {
++        if let Some(delimiter) = quote {
++            if escaped {
++                escaped = false;
++            } else if character == '\\' {
++                escaped = true;
++            } else if character == delimiter {
++                quote = None;
++            }
++            continue;
++        }
++        match character {
++            '\'' | '"' | '`' => quote = Some(character),
++            '(' => {
++                if depth == 0 {
++                    start = Some(index + 1);
++                }
++                depth += 1;
++            }
++            ')' if depth > 0 => {
++                depth -= 1;
++                if depth == 0 {
++                    push_clause(&mut clauses, statement, start, index)?;
++                    return Ok(clauses);
++                }
++            }
++            ',' if depth == 1 => {
++                push_clause(&mut clauses, statement, start, index)?;
++                start = Some(index + 1);
++            }
++            _ => {}
++        }
++    }
++    Err(DbErr::Custom(
++        "canonical baseline contains an unclosed CREATE TABLE body".into(),
++    ))
++}
++
++fn push_clause<'a>(
++    clauses: &mut Vec<&'a str>,
++    statement: &'a str,
++    start: Option<usize>,
++    end: usize,
++) -> Result<(), DbErr> {
++    let clause = start.map(|start| statement[start..end].trim());
++    let Some(clause) = clause.filter(|clause| !clause.is_empty()) else {
++        return Err(DbErr::Custom(
++            "canonical baseline contains an empty CREATE TABLE clause".into(),
++        ));
++    };
++    clauses.push(clause);
++    Ok(())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::table_clauses;
++
++    #[test]
++    fn nested_expressions_and_quoted_delimiters_stay_in_their_clause() {
++        let statement = r#"CREATE TABLE `example` (
++            `id` BIGINT NOT NULL,
++            `value` VARCHAR(32) DEFAULT 'a, ) ''b' COMMENT '文字 \' (,',
++            CONSTRAINT `ck_value` CHECK (
++                `id` > 0 AND (`value` IN ('a,b', 'c'))),
++            CONSTRAINT `fk_example`
++                FOREIGN KEY (`id`)
++                REFERENCES `parent` (`id`) ON DELETE CASCADE,
++            PRIMARY KEY (
++                `id`, `value`)
++        ) ENGINE=InnoDB"#;
++        let clauses = table_clauses(statement).unwrap();
++        assert_eq!(clauses.len(), 5);
++        assert!(clauses[1].ends_with("COMMENT '文字 \\' (,'"));
++        assert!(clauses[2].starts_with("CONSTRAINT `ck_value` CHECK"));
++        assert!(clauses[3].ends_with("ON DELETE CASCADE"));
++        assert!(clauses[4].contains("`id`, `value`"));
++    }
++
++    #[test]
++    fn incomplete_or_empty_bodies_fail_closed() {
++        for statement in [
++            "CREATE TABLE `example`",
++            "CREATE TABLE `example` ()",
++            "CREATE TABLE `example` (`id` BIGINT,)",
++            "CREATE TABLE `example` (`value` VARCHAR(32) DEFAULT 'unclosed)",
++            "CREATE TABLE `example` (`id` BIGINT, CHECK ((`id` > 0))",
++        ] {
++            assert!(table_clauses(statement).is_err(), "{statement}");
++        }
++    }
++}
+diff --git a/crates/ryframe-db/src/migration/schema/inspect.rs b/crates/ryframe-db/src/migration/schema/inspect.rs
+index 200c82bc45dd669b59246b91f8e3a0471d0e43e2..afab43348c2cae21e119dfdf224070e5e6d926af 100644
+--- a/crates/ryframe-db/src/migration/schema/inspect.rs
++++ b/crates/ryframe-db/src/migration/schema/inspect.rs
+@@ -4,10 +4,10 @@ use sea_orm::{ConnectionTrait, DbBackend, DbErr, Statement, TryGetable};
+ 
+ use super::{
+     normalize::{
+-        normalize_action, normalize_actual_extra, normalize_column_type, normalize_default,
+-        normalize_generation_expression, normalize_identifier,
++        normalize_action, normalize_actual_extra, normalize_check_clause, normalize_column_type,
++        normalize_default, normalize_generation_expression, normalize_identifier,
+     },
+-    types::{ActualColumn, ActualForeignKey, ActualIndex, ActualTable},
++    types::{ActualCheck, ActualColumn, ActualForeignKey, ActualIndex, ActualTable},
+ };
+ 
+ #[cfg(any(feature = "migration", test))]
+@@ -65,6 +65,18 @@ const ACTUAL_FOREIGN_KEYS_SQL: &str = concat!(
+     "ORDER BY k.TABLE_NAME, k.CONSTRAINT_NAME, k.ORDINAL_POSITION",
+ );
+ 
++const ACTUAL_CHECKS_SQL: &str = concat!(
++    "SELECT tc.TABLE_NAME AS `table_name`, tc.CONSTRAINT_NAME AS `constraint_name`, ",
++    "cc.CHECK_CLAUSE AS `check_clause`, tc.ENFORCED AS `enforced` ",
++    "FROM information_schema.TABLE_CONSTRAINTS tc ",
++    "JOIN information_schema.CHECK_CONSTRAINTS cc ",
++    "ON cc.CONSTRAINT_CATALOG = tc.CONSTRAINT_CATALOG ",
++    "AND cc.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA ",
++    "AND cc.CONSTRAINT_NAME = tc.CONSTRAINT_NAME ",
++    "WHERE tc.TABLE_SCHEMA = DATABASE() AND tc.CONSTRAINT_TYPE = 'CHECK' ",
++    "ORDER BY tc.TABLE_NAME, tc.CONSTRAINT_NAME",
++);
++
+ #[cfg(feature = "migration")]
+ pub(crate) async fn user_tables<C>(db: &C) -> Result<Vec<String>, DbErr>
+ where
+@@ -220,6 +232,29 @@ where
+     Ok(foreign_keys)
+ }
+ 
++pub(super) async fn actual_checks<C>(
++    db: &C,
++) -> Result<BTreeMap<(String, String), ActualCheck>, DbErr>
++where
++    C: ConnectionTrait + ?Sized,
++{
++    let rows = db
++        .query_all_raw(Statement::from_string(
++            DbBackend::MySql,
++            ACTUAL_CHECKS_SQL.to_owned(),
++        ))
++        .await?;
++    let mut checks = BTreeMap::new();
++    for row in rows {
++        let table = String::try_get_by_index(&row, 0)?;
++        let name = String::try_get_by_index(&row, 1)?;
++        let clause = normalize_check_clause(&String::try_get_by_index(&row, 2)?);
++        let enforced = String::try_get_by_index(&row, 3)? == "YES";
++        checks.insert((table, name), ActualCheck { clause, enforced });
++    }
++    Ok(checks)
++}
++
+ fn is_tenant_data_object(table: &str) -> bool {
+     table == "seaql_tenant_data_migrations" || table.starts_with("biz_")
+ }
+@@ -236,6 +271,7 @@ mod tests {
+             ACTUAL_COLUMNS_SQL,
+             ACTUAL_INDEXES_SQL,
+             ACTUAL_FOREIGN_KEYS_SQL,
++            ACTUAL_CHECKS_SQL,
+         ] {
+             assert!(!query.contains('\\'));
+             assert!(!query.contains('\n'));
+diff --git a/crates/ryframe-db/src/migration/schema/normalize.rs b/crates/ryframe-db/src/migration/schema/normalize.rs
+index d5c1b5b6cd6bdfa4bee797538a8074420159fb48..f069c9ab55c114f757886882bd1ddb7b2a585542 100644
+--- a/crates/ryframe-db/src/migration/schema/normalize.rs
++++ b/crates/ryframe-db/src/migration/schema/normalize.rs
+@@ -1,3 +1,7 @@
++mod check;
++
++pub use check::normalize_check_clause;
++
+ pub fn extract_column_type(value: &str) -> &str {
+     let value = value.trim_start();
+     let first_whitespace = value.find(char::is_whitespace).unwrap_or(value.len());
+diff --git a/crates/ryframe-db/src/migration/schema/normalize/check.rs b/crates/ryframe-db/src/migration/schema/normalize/check.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..60fd16a70eb62a61bcf47c6150378fcb259d34d4
+--- /dev/null
++++ b/crates/ryframe-db/src/migration/schema/normalize/check.rs
+@@ -0,0 +1,414 @@
++mod rules;
++
++pub fn normalize_check_clause(value: &str) -> String {
++    // MySQL information_schema 可能增加外层括号、反引号及字符集引介符。
++    // 先按词法 token 解析，再用类型和长度编码，避免删除空白后把不同表达式拼成同一串。
++    let mut tokens = check_tokens(value);
++    strip_redundant_outer_parentheses(&mut tokens);
++    strip_redundant_atomic_parentheses(&mut tokens);
++    encode_check_tokens(&tokens)
++}
++
++#[derive(Debug, Eq, PartialEq)]
++enum CheckToken {
++    Identifier(String),
++    Keyword(String),
++    Number(String),
++    Literal(String),
++    Symbol(String),
++    OpenParenthesis,
++    CloseParenthesis,
++}
++
++fn check_tokens(value: &str) -> Vec<CheckToken> {
++    let bytes = value.as_bytes();
++    let mut tokens = Vec::new();
++    let mut index = 0;
++    while index < bytes.len() {
++        if bytes[index].is_ascii_whitespace() {
++            index += 1;
++            continue;
++        }
++        if let Some(introducer_len) = charset_introducer_len(bytes, index) {
++            index += introducer_len;
++            continue;
++        }
++        if let Some((delimiter, consumed)) = quote_token_at(bytes, index) {
++            let mut literal = vec![delimiter];
++            index += consumed;
++            index = normalize_quoted_literal(bytes, index, delimiter, consumed == 2, &mut literal);
++            tokens.push(CheckToken::Literal(
++                String::from_utf8(literal).expect("CHECK literal normalization preserves UTF-8"),
++            ));
++            continue;
++        }
++        if bytes[index] == b'`' {
++            let (identifier, next) = quoted_identifier(bytes, index + 1);
++            tokens.push(CheckToken::Identifier(identifier));
++            index = next;
++            continue;
++        }
++        if bytes[index].is_ascii_digit()
++            || (bytes[index] == b'.' && bytes.get(index + 1).is_some_and(u8::is_ascii_digit))
++        {
++            let end = number_end(bytes, index);
++            tokens.push(CheckToken::Number(lower_ascii(&bytes[index..end])));
++            index = end;
++            continue;
++        }
++        if is_word_byte(bytes[index]) {
++            let end = word_end(bytes, index);
++            let word = lower_ascii(&bytes[index..end]);
++            if is_check_keyword(&word) {
++                tokens.push(CheckToken::Keyword(word));
++            } else {
++                tokens.push(CheckToken::Identifier(word));
++            }
++            index = end;
++            continue;
++        }
++        match bytes[index] {
++            b'(' => tokens.push(CheckToken::OpenParenthesis),
++            b')' => tokens.push(CheckToken::CloseParenthesis),
++            _ => {
++                let end = symbol_end(bytes, index);
++                tokens.push(CheckToken::Symbol(lower_ascii(&bytes[index..end])));
++                index = end;
++                continue;
++            }
++        }
++        index += 1;
++    }
++    tokens
++}
++
++fn charset_introducer_len(bytes: &[u8], index: usize) -> Option<usize> {
++    rules::INTRODUCERS
++        .iter()
++        .map(|value| value.as_bytes())
++        .find(|introducer| {
++            let end = index + introducer.len();
++            bytes
++                .get(index..end)
++                .is_some_and(|candidate| candidate.eq_ignore_ascii_case(introducer))
++                && quote_token_at(bytes, end).is_some()
++        })
++        .map(<[u8]>::len)
++}
++
++fn quote_token_at(bytes: &[u8], index: usize) -> Option<(u8, usize)> {
++    match bytes.get(index).copied() {
++        Some(delimiter @ (b'\'' | b'"')) => Some((delimiter, 1)),
++        Some(b'\\') => bytes
++            .get(index + 1)
++            .copied()
++            .filter(|byte| matches!(byte, b'\'' | b'"'))
++            .map(|delimiter| (delimiter, 2)),
++        _ => None,
++    }
++}
++
++fn normalize_quoted_literal(
++    bytes: &[u8],
++    mut index: usize,
++    delimiter: u8,
++    escaped_delimiters: bool,
++    output: &mut Vec<u8>,
++) -> usize {
++    while index < bytes.len() {
++        if escaped_delimiters && bytes.get(index) == Some(&b'\\') {
++            let slash_start = index;
++            while bytes.get(index) == Some(&b'\\') {
++                index += 1;
++            }
++            let slash_count = index - slash_start;
++            if bytes.get(index) == Some(&delimiter) {
++                if slash_count == 1 {
++                    output.push(delimiter);
++                    return index + 1;
++                }
++                if slash_count >= 3 && slash_count % 2 == 1 {
++                    output.extend(std::iter::repeat_n(b'\\', (slash_count - 3) / 2));
++                    output.extend_from_slice(&[delimiter, delimiter]);
++                    index += 1;
++                    continue;
++                }
++            }
++            output.extend_from_slice(&bytes[slash_start..index]);
++            continue;
++        }
++        if !escaped_delimiters
++            && bytes.get(index) == Some(&b'\\')
++            && bytes.get(index + 1) == Some(&delimiter)
++        {
++            output.extend_from_slice(&[delimiter, delimiter]);
++            index += 2;
++            continue;
++        }
++        if bytes[index] == delimiter {
++            if !escaped_delimiters && bytes.get(index + 1) == Some(&delimiter) {
++                output.extend_from_slice(&[delimiter, delimiter]);
++                index += 2;
++                continue;
++            }
++            output.push(delimiter);
++            return index + 1;
++        }
++        output.push(bytes[index]);
++        index += 1;
++    }
++    index
++}
++
++fn quoted_identifier(bytes: &[u8], mut index: usize) -> (String, usize) {
++    let mut identifier = Vec::new();
++    while index < bytes.len() {
++        if bytes[index] == b'`' {
++            if bytes.get(index + 1) == Some(&b'`') {
++                identifier.push(b'`');
++                index += 2;
++                continue;
++            }
++            return (
++                String::from_utf8(identifier)
++                    .expect("CHECK identifier normalization preserves UTF-8")
++                    .to_ascii_lowercase(),
++                index + 1,
++            );
++        }
++        identifier.push(bytes[index]);
++        index += 1;
++    }
++    (
++        String::from_utf8(identifier)
++            .expect("CHECK identifier normalization preserves UTF-8")
++            .to_ascii_lowercase(),
++        index,
++    )
++}
++
++fn number_end(bytes: &[u8], start: usize) -> usize {
++    if bytes.get(start..start + 2).is_some_and(|prefix| {
++        prefix.eq_ignore_ascii_case(b"0x") || prefix.eq_ignore_ascii_case(b"0b")
++    }) {
++        return (start + 2..bytes.len())
++            .find(|index| !bytes[*index].is_ascii_hexdigit())
++            .unwrap_or(bytes.len());
++    }
++    let mut index = start;
++    while bytes.get(index).is_some_and(u8::is_ascii_digit) {
++        index += 1;
++    }
++    if bytes.get(index) == Some(&b'.') {
++        index += 1;
++        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
++            index += 1;
++        }
++    }
++    if matches!(bytes.get(index), Some(b'e' | b'E')) {
++        let exponent = index;
++        index += 1;
++        if matches!(bytes.get(index), Some(b'+' | b'-')) {
++            index += 1;
++        }
++        let digits = index;
++        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
++            index += 1;
++        }
++        if index == digits {
++            return exponent;
++        }
++    }
++    index.max(start + 1)
++}
++
++fn word_end(bytes: &[u8], start: usize) -> usize {
++    (start + 1..bytes.len())
++        .find(|index| !is_word_byte(bytes[*index]))
++        .unwrap_or(bytes.len())
++}
++
++fn is_word_byte(byte: u8) -> bool {
++    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$') || !byte.is_ascii()
++}
++
++fn is_check_keyword(value: &str) -> bool {
++    rules::KEYWORDS.contains(&value)
++}
++
++fn symbol_end(bytes: &[u8], index: usize) -> usize {
++    for symbol in rules::SYMBOLS {
++        if bytes.get(index..index + symbol.len()) == Some(symbol.as_bytes()) {
++            return index + symbol.len();
++        }
++    }
++    index + 1
++}
++
++fn lower_ascii(value: &[u8]) -> String {
++    String::from_utf8(value.iter().map(u8::to_ascii_lowercase).collect())
++        .expect("CHECK token normalization preserves UTF-8")
++}
++
++fn strip_redundant_outer_parentheses(tokens: &mut Vec<CheckToken>) {
++    while is_wrapped_by_single_outer_group(tokens) {
++        tokens.remove(0);
++        tokens.pop();
++    }
++}
++
++fn is_wrapped_by_single_outer_group(tokens: &[CheckToken]) -> bool {
++    if !matches!(tokens.first(), Some(CheckToken::OpenParenthesis))
++        || !matches!(tokens.last(), Some(CheckToken::CloseParenthesis))
++    {
++        return false;
++    }
++    let mut depth = 0usize;
++    for (index, token) in tokens.iter().enumerate() {
++        if matches!(token, CheckToken::OpenParenthesis) {
++            depth += 1;
++        } else if matches!(token, CheckToken::CloseParenthesis) {
++            let Some(next_depth) = depth.checked_sub(1) else {
++                return false;
++            };
++            depth = next_depth;
++            if depth == 0 && index + 1 != tokens.len() {
++                return false;
++            }
++        }
++    }
++    depth == 0
++}
++
++fn strip_redundant_atomic_parentheses(tokens: &mut Vec<CheckToken>) {
++    // MySQL 会给比较项补上括号。只移除逻辑表达式之外的分组；IN 列表、函数调用和
++    // 含 AND/OR 的组继续保留，避免把具有不同优先级的表达式归为同一约束。
++    while let Some((open, close)) = redundant_atomic_group(tokens) {
++        tokens.remove(close);
++        tokens.remove(open);
++    }
++}
++
++fn redundant_atomic_group(tokens: &[CheckToken]) -> Option<(usize, usize)> {
++    let mut opens = Vec::new();
++    for (index, token) in tokens.iter().enumerate() {
++        match token {
++            CheckToken::OpenParenthesis => opens.push(index),
++            CheckToken::CloseParenthesis => {
++                let open = opens.pop()?;
++                if atomic_group(tokens, open, index) {
++                    return Some((open, index));
++                }
++            }
++            _ => {}
++        }
++    }
++    None
++}
++
++fn atomic_group(tokens: &[CheckToken], open: usize, close: usize) -> bool {
++    let preceding = open.checked_sub(1).and_then(|index| tokens.get(index));
++    if matches!(preceding, Some(CheckToken::Identifier(_)))
++        || matches!(preceding, Some(CheckToken::Keyword(value)) if value == "in")
++    {
++        return false;
++    }
++    let mut depth = 0usize;
++    let mut between_range = false;
++    for token in &tokens[open + 1..close] {
++        match token {
++            CheckToken::OpenParenthesis => depth += 1,
++            CheckToken::CloseParenthesis => depth = depth.saturating_sub(1),
++            CheckToken::Keyword(value) if depth == 0 && value == "between" => between_range = true,
++            CheckToken::Keyword(value) if depth == 0 && value == "and" && between_range => {
++                between_range = false;
++            }
++            CheckToken::Keyword(value) if depth == 0 && matches!(value.as_str(), "and" | "or") => {
++                return false;
++            }
++            CheckToken::Symbol(value) if depth == 0 && value == "," => return false,
++            _ => {}
++        }
++    }
++    true
++}
++
++fn encode_check_tokens(tokens: &[CheckToken]) -> String {
++    let mut encoded = String::new();
++    for token in tokens {
++        let (kind, value) = match token {
++            CheckToken::Identifier(value) => ('i', value.as_str()),
++            CheckToken::Keyword(value) => ('k', value.as_str()),
++            CheckToken::Number(value) => ('n', value.as_str()),
++            CheckToken::Literal(value) => ('l', value.as_str()),
++            CheckToken::Symbol(value) => ('s', value.as_str()),
++            CheckToken::OpenParenthesis => ('p', "("),
++            CheckToken::CloseParenthesis => ('p', ")"),
++        };
++        encoded.push(kind);
++        encoded.push_str(&value.len().to_string());
++        encoded.push(':');
++        encoded.push_str(value);
++        encoded.push(';');
++    }
++    encoded
++}
++
++#[cfg(test)]
++mod tests {
++    use super::normalize_check_clause;
++
++    #[test]
++    fn check_normalization_matches_mysql_rendering_without_changing_literals() {
++        assert_eq!(
++            normalize_check_clause(r#"(`state` IN (_utf8mb4\'active\', _ascii\'failed\'))"#),
++            normalize_check_clause("((state in ('active', 'failed')))")
++        );
++        assert_eq!(
++            normalize_check_clause(r#"(`code` = _utf8mb4\'O\\\'Reilly\')"#),
++            normalize_check_clause("`code` = 'O''Reilly'"),
++        );
++        assert_ne!(
++            normalize_check_clause("`code` = 'A B'"),
++            normalize_check_clause("`code` = 'a b'"),
++        );
++        assert_ne!(
++            normalize_check_clause("((`a` AND `b`) OR `c`)"),
++            normalize_check_clause("(`a` AND (`b` OR `c`))"),
++        );
++    }
++
++    #[test]
++    fn check_normalization_preserves_token_types_and_boundaries() {
++        assert_ne!(
++            normalize_check_clause("`a-b` > 0"),
++            normalize_check_clause("`a` - `b` > 0"),
++        );
++        assert_ne!(
++            normalize_check_clause("`a` IS NULL"),
++            normalize_check_clause("`aisnull`"),
++        );
++        assert_ne!(
++            normalize_check_clause("TRUE"),
++            normalize_check_clause("`true`"),
++        );
++    }
++
++    #[test]
++    fn check_normalization_matches_mysql_parenthesized_comparisons() {
++        assert_eq!(
++            normalize_check_clause(
++                "((`attempts` >= 0) and (`max_attempts` between 1 and 100) and (`claim_sequence` >= `attempts`))",
++            ),
++            normalize_check_clause(
++                "`attempts` >= 0 AND `max_attempts` BETWEEN 1 AND 100 AND `claim_sequence` >= `attempts`"
++            ),
++        );
++        assert_eq!(
++            normalize_check_clause(
++                "((`status` in (_utf8mb4\\'running\\',_utf8mb4\\'failed\\')) and (`completed_at` is null))"
++            ),
++            normalize_check_clause("`status` IN ('running', 'failed') AND `completed_at` IS NULL"),
++        );
++    }
++}
+diff --git a/crates/ryframe-db/src/migration/schema/normalize/check/rules.rs b/crates/ryframe-db/src/migration/schema/normalize/check/rules.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..4ebaa78bf820f3573b965c07c8b624ce22cb782d
+--- /dev/null
++++ b/crates/ryframe-db/src/migration/schema/normalize/check/rules.rs
+@@ -0,0 +1,10 @@
++// CHECK 词法 token 分类事实；顺序保持最长符号优先。
++pub(super) const INTRODUCERS: &[&str] = &["_utf8mb4", "_ascii"];
++pub(super) const SYMBOLS: &[&str] = &[
++    "<=>", "->>", ">=", "<=", "<>", "!=", "&&", "||", "<<", ">>", "->", ":=",
++];
++pub(super) const KEYWORDS: &[&str] = &[
++    "and", "as", "between", "binary", "case", "collate", "div", "else", "end", "escape", "false",
++    "in", "interval", "is", "like", "member", "mod", "not", "null", "of", "or", "regexp", "rlike",
++    "sounds", "then", "true", "unknown", "when", "xor",
++];
+diff --git a/crates/ryframe-db/src/migration/schema/types.rs b/crates/ryframe-db/src/migration/schema/types.rs
+index bf6db4837caf17fb0b071d2a11009244298f518a..1ba27efda90a360b47183449f6dcb2759d060403 100644
+--- a/crates/ryframe-db/src/migration/schema/types.rs
++++ b/crates/ryframe-db/src/migration/schema/types.rs
+@@ -33,12 +33,20 @@ pub(super) struct ExpectedForeignKey {
+     pub(super) delete_rule: String,
+ }
+ 
++#[derive(Debug, PartialEq, Eq)]
++pub(super) struct ExpectedCheck {
++    pub(super) clause: String,
++    pub(super) enforced: bool,
++}
++
+ #[derive(Default)]
+ pub(super) struct ExpectedSchema {
+     pub(super) tables: BTreeMap<String, ExpectedTable>,
+     pub(super) columns: BTreeMap<(String, String), ExpectedColumn>,
++    pub(super) column_order: BTreeMap<(String, String), usize>,
+     pub(super) indexes: BTreeMap<(String, String), ExpectedIndex>,
+     pub(super) foreign_keys: BTreeMap<(String, String), ExpectedForeignKey>,
++    pub(super) checks: BTreeMap<(String, String), ExpectedCheck>,
+ }
+ 
+ #[derive(Debug)]
+@@ -75,3 +83,9 @@ pub(super) struct ActualForeignKey {
+     pub(super) update_rule: String,
+     pub(super) delete_rule: String,
+ }
++
++#[derive(Debug)]
++pub(super) struct ActualCheck {
++    pub(super) clause: String,
++    pub(super) enforced: bool,
++}
+diff --git a/crates/ryframe-db/src/migration/schema/verify.rs b/crates/ryframe-db/src/migration/schema/verify.rs
+index eaa36f9bb57313e36005a706e6e04506b578eb8c..2e57f0dab854e729b2142a7467ab5132183e8bc9 100644
+--- a/crates/ryframe-db/src/migration/schema/verify.rs
++++ b/crates/ryframe-db/src/migration/schema/verify.rs
+@@ -1,17 +1,31 @@
+ use sea_orm::{ConnectionTrait, DbBackend, DbErr};
+ 
++#[cfg(test)]
++mod ledger_tests;
++
+ use super::{
+     expected::expected_schema,
+-    inspect::{actual_columns, actual_foreign_keys, actual_indexes, actual_tables},
++    inspect::{actual_checks, actual_columns, actual_foreign_keys, actual_indexes, actual_tables},
+     normalize::{compatible_column_type, nullable_label},
+ };
+ 
+ /// 校验完整的规范 MySQL 指纹。
+ ///
+ /// 该指纹有意覆盖表引擎、字符集、排序规则，列的类型、可空性、默认值、EXTRA、
+-/// 字符集、排序规则、生成表达式，以及有序索引和具名外键操作。
++/// 字符集、排序规则、生成表达式、有序索引、具名外键操作和具名 CHECK 约束。
+ /// 额外的应用表和规范表上的额外对象均会被拒绝。
+ pub async fn verify_current_schema<C>(db: &C) -> Result<(), DbErr>
++where
++    C: ConnectionTrait + ?Sized,
++{
++    verify_expected_schema(db, expected_schema()?, None).await
++}
++
++pub(super) async fn verify_expected_schema<C>(
++    db: &C,
++    expected: super::types::ExpectedSchema,
++    selected_table: Option<&str>,
++) -> Result<(), DbErr>
+ where
+     C: ConnectionTrait + ?Sized,
+ {
+@@ -19,8 +33,7 @@ where
+         return Err(DbErr::Custom("RyFrame v0.5 only supports MySQL".into()));
+     }
+ 
+-    let expected = expected_schema()?;
+-    let actual_tables = actual_tables(db)
++    let mut actual_tables = actual_tables(db)
+         .await
+         .map_err(|error| DbErr::Custom(format!("cannot inspect MySQL tables: {error}")))?;
+     let actual_columns = actual_columns(db)
+@@ -32,8 +45,15 @@ where
+     let actual_foreign_keys = actual_foreign_keys(db)
+         .await
+         .map_err(|error| DbErr::Custom(format!("cannot inspect MySQL foreign keys: {error}")))?;
++    let actual_checks = actual_checks(db).await.map_err(|error| {
++        DbErr::Custom(format!("cannot inspect MySQL check constraints: {error}"))
++    })?;
+     let mut problems = Vec::new();
+ 
++    if let Some(table) = selected_table {
++        actual_tables.retain(|name, _| name == table);
++    }
++
+     verify_tables(&expected, &actual_tables, &mut problems);
+     verify_columns(&expected, &actual_tables, &actual_columns, &mut problems);
+     verify_indexes(&expected, &actual_tables, &actual_indexes, &mut problems);
+@@ -43,6 +63,7 @@ where
+         &actual_foreign_keys,
+         &mut problems,
+     );
++    verify_checks(&expected, &actual_tables, &actual_checks, &mut problems);
+     schema_problems(problems)
+ }
+ 
+@@ -225,6 +246,45 @@ fn verify_foreign_keys(
+     }
+ }
+ 
++fn verify_checks(
++    expected: &super::types::ExpectedSchema,
++    actual_tables: &std::collections::BTreeMap<String, super::types::ActualTable>,
++    actual_checks: &std::collections::BTreeMap<(String, String), super::types::ActualCheck>,
++    problems: &mut Vec<String>,
++) {
++    for ((table, name), expected_check) in &expected.checks {
++        if !actual_tables.contains_key(table) {
++            continue;
++        }
++        let Some(actual) = actual_checks.get(&(table.clone(), name.clone())) else {
++            problems.push(format!("missing check constraint {table}.{name}"));
++            continue;
++        };
++        if actual.clause != expected_check.clause {
++            problems.push(format!(
++                "check constraint {table}.{name} does not match canonical expression"
++            ));
++        }
++        if actual.enforced != expected_check.enforced {
++            problems.push(format!(
++                "check constraint {table}.{name} enforcement is {}, expected {}",
++                enforcement_label(actual.enforced),
++                enforcement_label(expected_check.enforced)
++            ));
++        }
++    }
++    for table_and_name in actual_checks.keys() {
++        let (table, name) = table_and_name;
++        if expected.tables.contains_key(table) && !expected.checks.contains_key(table_and_name) {
++            problems.push(format!("unexpected check constraint {table}.{name}"));
++        }
++    }
++}
++
++fn enforcement_label(enforced: bool) -> &'static str {
++    if enforced { "ENFORCED" } else { "NOT ENFORCED" }
++}
++
+ fn ordered_columns(columns: &[(i64, String)]) -> Vec<String> {
+     let mut columns = columns.to_vec();
+     columns.sort_by_key(|(sequence, _)| *sequence);
+@@ -256,3 +316,110 @@ fn schema_problems(problems: Vec<String>) -> Result<(), DbErr> {
+         "RyFrame schema verification failed ({total} mismatches): {summary}{suffix}"
+     )))
+ }
++
++#[cfg(test)]
++mod tests {
++    use std::collections::BTreeMap;
++
++    use super::verify_checks;
++    use crate::migration::schema::types::{
++        ActualCheck, ActualTable, ExpectedCheck, ExpectedSchema, ExpectedTable,
++    };
++
++    fn check_problems(actual_checks: BTreeMap<(String, String), ActualCheck>) -> Vec<String> {
++        let mut expected = ExpectedSchema::default();
++        expected.tables.insert(
++            "sys_restore_run".into(),
++            ExpectedTable {
++                engine: "innodb".into(),
++                character_set: "utf8mb4".into(),
++                collation: "utf8mb4_general_ci".into(),
++            },
++        );
++        expected.checks.insert(
++            ("sys_restore_run".into(), "ck_restore_run_completed".into()),
++            ExpectedCheck {
++                clause: "terminal_completed_at_contract".into(),
++                enforced: true,
++            },
++        );
++        let actual_tables = BTreeMap::from([(
++            "sys_restore_run".into(),
++            ActualTable {
++                engine: "innodb".into(),
++                character_set: "utf8mb4".into(),
++                collation: "utf8mb4_general_ci".into(),
++            },
++        )]);
++        let mut problems = Vec::new();
++        verify_checks(&expected, &actual_tables, &actual_checks, &mut problems);
++        problems
++    }
++
++    #[test]
++    fn check_constraints_require_name_expression_enforcement_and_no_extras() {
++        let key = ("sys_restore_run".into(), "ck_restore_run_completed".into());
++        let matching = BTreeMap::from([(
++            key.clone(),
++            ActualCheck {
++                clause: "terminal_completed_at_contract".into(),
++                enforced: true,
++            },
++        )]);
++        assert!(check_problems(matching).is_empty());
++
++        let changed = BTreeMap::from([(
++            key.clone(),
++            ActualCheck {
++                clause: "weakened_terminal_contract".into(),
++                enforced: true,
++            },
++        )]);
++        assert_eq!(
++            check_problems(changed),
++            [
++                "check constraint sys_restore_run.ck_restore_run_completed does not match canonical expression"
++            ]
++        );
++
++        let disabled = BTreeMap::from([(
++            key.clone(),
++            ActualCheck {
++                clause: "terminal_completed_at_contract".into(),
++                enforced: false,
++            },
++        )]);
++        assert_eq!(
++            check_problems(disabled),
++            [
++                "check constraint sys_restore_run.ck_restore_run_completed enforcement is NOT ENFORCED, expected ENFORCED"
++            ]
++        );
++
++        assert_eq!(
++            check_problems(BTreeMap::new()),
++            ["missing check constraint sys_restore_run.ck_restore_run_completed"]
++        );
++
++        let with_extra = BTreeMap::from([
++            (
++                key,
++                ActualCheck {
++                    clause: "terminal_completed_at_contract".into(),
++                    enforced: true,
++                },
++            ),
++            (
++                ("sys_restore_run".into(), "ck_unexpected".into()),
++                ActualCheck {
++                    clause: "status='running'".into(),
++                    enforced: true,
++                },
++            ),
++        ]);
++        assert_eq!(
++            check_problems(with_extra),
++            ["unexpected check constraint sys_restore_run.ck_unexpected"]
++        );
++    }
++}
+diff --git a/crates/ryframe-db/src/migration/schema/verify/ledger_tests.rs b/crates/ryframe-db/src/migration/schema/verify/ledger_tests.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..5391a7dc899c947009c8512f6da8c0f8cd8e4b6b
+--- /dev/null
++++ b/crates/ryframe-db/src/migration/schema/verify/ledger_tests.rs
+@@ -0,0 +1,149 @@
++use std::collections::BTreeMap;
++
++use super::super::{
++    business_migration_ledger::{DDL, NAME},
++    expected::extend_schema,
++    normalize::normalize_check_clause,
++    types::{ActualCheck, ActualColumn, ActualIndex, ActualTable, ExpectedSchema},
++};
++use super::{verify_checks, verify_columns, verify_indexes, verify_tables};
++
++fn ledger_schema() -> ExpectedSchema {
++    let mut expected = ExpectedSchema::default();
++    extend_schema(&mut expected, [DDL]).unwrap();
++    expected
++}
++
++fn ledger_tables() -> BTreeMap<String, ActualTable> {
++    BTreeMap::from([(
++        NAME.into(),
++        ActualTable {
++            engine: "innodb".into(),
++            character_set: "utf8mb4".into(),
++            collation: "utf8mb4_0900_ai_ci".into(),
++        },
++    )])
++}
++
++#[test]
++fn business_ledger_requires_exact_table_collation_columns_and_primary_key() {
++    let expected = ledger_schema();
++    assert_eq!(expected.tables.len(), 1);
++    assert_eq!(expected.columns.len(), 10);
++    assert_eq!(expected.indexes.len(), 1);
++    assert!(expected.foreign_keys.is_empty());
++    let mut tables = ledger_tables();
++    let mut indexes = BTreeMap::from([(
++        (NAME.into(), "PRIMARY".into()),
++        ActualIndex {
++            unique: true,
++            index_type: "btree".into(),
++            visible: true,
++            columns: [(1, "scope"), (2, "module_name"), (3, "migration_id")]
++                .map(|(index, name)| (index, name.into(), None))
++                .to_vec(),
++        },
++    )]);
++    let mut problems = Vec::new();
++    verify_tables(&expected, &tables, &mut problems);
++    verify_indexes(&expected, &tables, &indexes, &mut problems);
++    assert!(problems.is_empty(), "{problems:?}");
++
++    tables.get_mut(NAME).unwrap().collation = "utf8mb4_general_ci".into();
++    tables.insert(
++        "unknown_business_table".into(),
++        ledger_tables().remove(NAME).unwrap(),
++    );
++    indexes
++        .get_mut(&(NAME.into(), "PRIMARY".into()))
++        .unwrap()
++        .columns
++        .pop();
++    verify_tables(&expected, &tables, &mut problems);
++    verify_indexes(&expected, &tables, &indexes, &mut problems);
++    assert!(problems.iter().any(|value| value.contains("collation")));
++    assert!(
++        problems
++            .iter()
++            .any(|value| value == "unexpected application table unknown_business_table")
++    );
++    assert!(problems.iter().any(|value| value
++        == "index ryframe_business_migration.PRIMARY does not match canonical definition"));
++}
++
++#[test]
++fn business_ledger_preserves_timestamp_precision_and_nullable_adoption_hash() {
++    let mut expected = ledger_schema();
++    expected
++        .columns
++        .retain(|(_, name), _| matches!(name.as_str(), "applied_at" | "adoption_hash"));
++    let tables = ledger_tables();
++    let mut columns = BTreeMap::from([
++        (
++            (NAME.into(), "applied_at".into()),
++            ActualColumn {
++                column_type: "timestamp(6)".into(),
++                nullable: false,
++                default: Some("CURRENT_TIMESTAMP(6)".into()),
++                extra: String::new(),
++                character_set: None,
++                collation: None,
++                generation_expression: String::new(),
++            },
++        ),
++        (
++            (NAME.into(), "adoption_hash".into()),
++            ActualColumn {
++                column_type: "char(64)".into(),
++                nullable: true,
++                default: None,
++                extra: String::new(),
++                character_set: Some("utf8mb4".into()),
++                collation: Some("utf8mb4_0900_ai_ci".into()),
++                generation_expression: String::new(),
++            },
++        ),
++    ]);
++    let mut problems = Vec::new();
++    verify_columns(&expected, &tables, &columns, &mut problems);
++    assert!(problems.is_empty(), "{problems:?}");
++    columns
++        .get_mut(&(NAME.into(), "applied_at".into()))
++        .unwrap()
++        .column_type = "timestamp".into();
++    columns
++        .get_mut(&(NAME.into(), "adoption_hash".into()))
++        .unwrap()
++        .nullable = false;
++    verify_columns(&expected, &tables, &columns, &mut problems);
++    assert_eq!(problems.len(), 2, "{problems:?}");
++    columns.remove(&(NAME.into(), "adoption_hash".into()));
++    problems.clear();
++    verify_columns(&expected, &tables, &columns, &mut problems);
++    assert!(problems.contains(&"missing column ryframe_business_migration.adoption_hash".into()));
++}
++
++#[test]
++fn business_ledger_origin_check_requires_both_adoption_branches_and_enforcement() {
++    let expected = ledger_schema();
++    assert_eq!(expected.checks.len(), 1);
++    let tables = ledger_tables();
++    let key = (NAME.into(), "chk_business_origin".into());
++    let mut checks = BTreeMap::from([(
++        key.clone(),
++        ActualCheck {
++            clause: normalize_check_clause(
++                "((`origin` = _utf8mb4'executed' AND `adoption_hash` IS NULL) OR (`origin` = _utf8mb4'adopted' AND `adoption_hash` IS NOT NULL))",
++            ),
++            enforced: true,
++        },
++    )]);
++    let mut problems = Vec::new();
++    verify_checks(&expected, &tables, &checks, &mut problems);
++    assert!(problems.is_empty(), "{problems:?}");
++    let actual = checks.get_mut(&key).unwrap();
++    actual.clause = normalize_check_clause("origin = 'executed'");
++    actual.enforced = false;
++    verify_checks(&expected, &tables, &checks, &mut problems);
++    assert_eq!(problems.len(), 2, "{problems:?}");
++}
+diff --git a/crates/ryframe-db/src/repositories/background_job_repo/claim.rs b/crates/ryframe-db/src/repositories/background_job_repo/claim.rs
+index 32003aa3f2e7ed4cf499dd876fdd817040058cf7..4d6d7b762b17d21f669b6cabe347171c32bdd476 100644
+--- a/crates/ryframe-db/src/repositories/background_job_repo/claim.rs
++++ b/crates/ryframe-db/src/repositories/background_job_repo/claim.rs
+@@ -39,13 +39,12 @@ impl BackgroundJobRepository {
+             return Ok(None);
+         };
+ 
+-        let attempts = job
+-            .attempts
+-            .checked_add(1)
+-            .ok_or_else(|| AppError::Database("background job attempts overflowed".into()))?;
++        let (attempts, claim_sequence) =
++            next_claim_counts(job.attempts, job.max_attempts, job.claim_sequence)?;
+         let mut active: background_job::ActiveModel = job.into();
+         active.status = Set(background_job::Model::STATUS_RUNNING.to_owned());
+         active.attempts = Set(attempts);
++        active.claim_sequence = Set(claim_sequence);
+         active.lease_owner = Set(Some(worker_id.to_owned()));
+         active.lease_until = Set(Some(now + lease_duration));
+         active.updated_at = Set(now);
+@@ -77,3 +76,47 @@ impl BackgroundJobRepository {
+         query
+     }
+ }
++
++fn next_claim_counts(attempts: i32, max_attempts: i32, sequence: i64) -> AppResult<(i32, i64)> {
++    if attempts < 0 || !(1..=100).contains(&max_attempts) || sequence < i64::from(attempts) {
++        return Err(AppError::Database("后台任务领取计数违反数据库约束".into()));
++    }
++    if attempts >= max_attempts {
++        return Err(AppError::Database("后台任务领取预算已耗尽".into()));
++    }
++    let attempts = attempts
++        .checked_add(1)
++        .ok_or_else(|| AppError::Database("后台任务尝试次数溢出".into()))?;
++    let sequence = sequence
++        .checked_add(1)
++        .ok_or_else(|| AppError::Database("后台任务领取序号溢出".into()))?;
++    Ok((attempts, sequence))
++}
++
++#[cfg(test)]
++mod database_contract_tests {
++    use super::next_claim_counts;
++
++    #[test]
++    fn first_claim_and_budget_reset_preserve_monotonic_sequence() {
++        assert_eq!(next_claim_counts(0, 5, 0).unwrap(), (1, 1));
++        assert_eq!(next_claim_counts(4, 5, 9).unwrap(), (5, 10));
++        assert_eq!(next_claim_counts(0, 5, 10).unwrap(), (1, 11));
++    }
++
++    #[test]
++    fn invalid_budget_counts_and_sequence_overflow_are_rejected() {
++        for (attempts, maximum, sequence) in [
++            (-1, 5, 0),
++            (0, 0, 0),
++            (0, 101, 0),
++            (2, 5, 1),
++            (0, 5, -1),
++            (5, 5, 5),
++            (i32::MAX, 100, i64::MAX),
++            (0, 5, i64::MAX),
++        ] {
++            assert!(next_claim_counts(attempts, maximum, sequence).is_err());
++        }
++    }
++}
+diff --git a/crates/ryframe-db/src/repositories/background_job_repo/enqueue.rs b/crates/ryframe-db/src/repositories/background_job_repo/enqueue.rs
+index f5fabca02f49f88857c401ab229962d10196925a..c9a09564ea1344582f5082d9b04bf77d74faae3e 100644
+--- a/crates/ryframe-db/src/repositories/background_job_repo/enqueue.rs
++++ b/crates/ryframe-db/src/repositories/background_job_repo/enqueue.rs
+@@ -66,6 +66,7 @@ impl BackgroundJobRepository {
+             priority: Set(command.priority),
+             available_at: Set(command.available_at),
+             attempts: Set(0),
++            claim_sequence: Set(0),
+             max_attempts: Set(command.max_attempts),
+             lease_owner: Set(None),
+             lease_until: Set(None),
+diff --git a/crates/ryframe-db/tests/mapping_contracts/export_mappings.rs b/crates/ryframe-db/tests/mapping_contracts/export_mappings.rs
+index 9fd08896e8afb8a7402cc23f33c3e2bb2b768b56..9c4b347537c9e29e2549dff2a0a4e3c30dba2dec 100644
+--- a/crates/ryframe-db/tests/mapping_contracts/export_mappings.rs
++++ b/crates/ryframe-db/tests/mapping_contracts/export_mappings.rs
+@@ -60,6 +60,7 @@ fn background(status: &str, lease_until: Option<DateTime<Utc>>) -> background_jo
+         priority: 0,
+         available_at: now,
+         attempts: 1,
++        claim_sequence: 1,
+         max_attempts: 3,
+         lease_owner: lease_until.map(|_| "worker-a".into()),
+         lease_until,
+diff --git a/crates/ryframe-db/tests/mapping_contracts/job_and_file_mappings.rs b/crates/ryframe-db/tests/mapping_contracts/job_and_file_mappings.rs
+index 4532bd3f3d41d8edef3b1597e11d500f1ebc38fd..4a2e7d970861af33ac512478cebfc9f4d6da728f 100644
+--- a/crates/ryframe-db/tests/mapping_contracts/job_and_file_mappings.rs
++++ b/crates/ryframe-db/tests/mapping_contracts/job_and_file_mappings.rs
+@@ -112,7 +112,7 @@ fn enqueue_mapping_moves_every_command_field() {
+ #[test]
+ fn persistence_mapping_keeps_job_fields() {
+     let now = Utc.with_ymd_and_hms(2026, 8, 21, 1, 2, 3).unwrap();
+-    let record = to_job_record(background_job::Model {
++    let model = background_job::Model {
+         id: 9,
+         tenant_id: Some("tenant-a".into()),
+         schedule_id: Some(8),
+@@ -124,6 +124,7 @@ fn persistence_mapping_keeps_job_fields() {
+         priority: 3,
+         available_at: now,
+         attempts: 2,
++        claim_sequence: 2,
+         max_attempts: 5,
+         lease_owner: Some("worker-a".into()),
+         lease_until: Some(now),
+@@ -134,8 +135,14 @@ fn persistence_mapping_keeps_job_fields() {
+         created_at: now,
+         updated_at: now,
+         completed_at: None,
+-    });
+-
++    };
++    assert!(
++        serde_json::to_value(&model)
++            .unwrap()
++            .get("claim_sequence")
++            .is_none()
++    );
++    let record = to_job_record(model);
+     assert_eq!(record.id, 9);
+     assert_eq!(record.tenant_id.as_deref(), Some("tenant-a"));
+     assert_eq!(record.schedule_id, Some(8));
+diff --git a/crates/ryframe-db/tests/mapping_contracts/migration_contracts.rs b/crates/ryframe-db/tests/mapping_contracts/migration_contracts.rs
+index 1707bca150a5d8e4662cb58be84119988035edc7..fab880c13477d7bffdca07dedfa24ba53029ef3a 100644
+--- a/crates/ryframe-db/tests/mapping_contracts/migration_contracts.rs
++++ b/crates/ryframe-db/tests/mapping_contracts/migration_contracts.rs
+@@ -143,8 +143,8 @@ fn generated_resource_access_is_owned_once_by_the_merged_seed_catalog() {
+ #[test]
+ fn review_snapshot_matches_the_fresh_schema() {
+     let snapshot = mysql_snapshot_sql();
+-    assert!(snapshot.contains("schema fingerprint: 595a420d869c5fdb"));
+-    assert_eq!(snapshot.matches("CREATE TABLE IF NOT EXISTS").count(), 51);
++    assert!(snapshot.contains("schema fingerprint: 3f5f39d1b9783bb1"));
++    assert_eq!(snapshot.matches("CREATE TABLE IF NOT EXISTS").count(), 49);
+     for required in [
+         "`sys_background_job`",
+         "`payload_version`",
+@@ -201,7 +201,7 @@ fn supported_version_rejects_old_mysql_mariadb_and_invalid_identity() {
+ }
+ 
+ #[test]
+-fn control_schema_is_one_fresh_baseline() {
++fn control_schema_matches_the_registered_restore_migrations() {
+     let migrations = Migrator::migrations();
+     let actual_names = migrations
+         .iter()
+@@ -211,7 +211,7 @@ fn control_schema_is_one_fresh_baseline() {
+     assert_eq!(actual_names, expected_names);
+     assert_eq!(
+         migrations.len(),
+-        1 + ryframe_db::generated::migrations().len()
++        3 + ryframe_db::generated::migrations().len()
+     );
+     assert_eq!(CONTROL_MIGRATION_LEDGER, "seaql_migrations");
+     assert_eq!(migrations[0].name(), "m20260820_000000_control_baseline");
+@@ -253,6 +253,6 @@ fn baseline_table_set_and_schema_fingerprint_are_stable() {
+     tables.sort_unstable();
+     tables.dedup();
+     assert_eq!(tables.len(), count);
+-    assert_eq!(count, 51);
+-    assert_eq!(schema_fingerprint(), "595a420d869c5fdb");
++    assert_eq!(count, 49);
++    assert_eq!(schema_fingerprint(), "3f5f39d1b9783bb1");
+ }
+diff --git a/crates/ryframe-tenant-db/src/migration/catalog.rs b/crates/ryframe-tenant-db/src/migration/catalog.rs
+index 0301e696f3b238439f1771a470943816ec361b6f..d658a3c1884d57b468bea357a6f8096d290123c6 100644
+--- a/crates/ryframe-tenant-db/src/migration/catalog.rs
++++ b/crates/ryframe-tenant-db/src/migration/catalog.rs
+@@ -8,8 +8,7 @@ const TENANT_DATA_TARGET_SLOT_SCHEMA_CANONICAL: &str = "v4|table=biz_tenant_targ
+ const RESOURCE_OWNERSHIP_SCHEMA_CANONICAL: &str = "v4|table=ryframe_resource_ownership|engine=innodb|charset=utf8mb4|collation=utf8mb4_general_ci|columns=resource_kind:varchar(32):not-null:null-default:no-extra:ascii:ascii_bin;scope_id:varchar(48):not-null:null-default:no-extra:ascii:ascii_bin;marker:varchar(128):not-null:null-default:no-extra:ascii:ascii_bin;created_at:datetime(6):not-null:current_timestamp(6):no-extra:none:none;updated_at:datetime(6):not-null:current_timestamp(6):on update current_timestamp(6):none:none|indexes=PRIMARY:unique:btree:resource_kind;uq_resource_ownership_marker:unique:btree:marker;uq_resource_ownership_scope:unique:btree:scope_id,resource_kind|constraints=PRIMARY:PRIMARY KEY;uq_resource_ownership_marker:UNIQUE;uq_resource_ownership_scope:UNIQUE";
+ 
+ /// 应用构建所要求的稳定、小写十六进制 SHA-256 schema 指纹。
+-pub const TENANT_DATA_SCHEMA_FINGERPRINT: &str =
+-    super::generated_catalog::GENERATED_TENANT_DATA_SCHEMA_FINGERPRINT;
++pub const TENANT_DATA_SCHEMA_FINGERPRINT: &str = super::database_adapter::FINGERPRINT;
+ 
+ /// 编译期业务表复制描述。表名和列名不能来自配置或请求。
+ #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+@@ -41,9 +40,9 @@ pub struct TenantDataCatalog {
+     tables: &'static [TenantDataTableDescriptor],
+ }
+ 
+-/// 当前阶段尚未迁入业务表；fence 是路由基础设施，不参与租户数据复制。
++/// 组合原生成目录与适配构建的精确业务表；fence 和投影不参与业务表复制。
+ pub const TENANT_DATA_CATALOG: TenantDataCatalog = TenantDataCatalog {
+-    tables: super::generated_catalog::GENERATED_TENANT_DATA_TABLES,
++    tables: &super::database_adapter::TABLES,
+ };
+ 
+ impl TenantDataCatalog {
+@@ -60,6 +59,12 @@ impl TenantDataCatalog {
+     /// 启动时验证安全命名、租户列、游标/校验列和 FK DAG。
+     pub fn validate(&self) -> Result<(), String> {
+         self.validate_structure()?;
++        let generated = Self::new(super::generated_catalog::GENERATED_TENANT_DATA_TABLES);
++        if schema_fingerprint(&generated.entries(), &[])
++            != super::generated_catalog::GENERATED_TENANT_DATA_SCHEMA_FINGERPRINT
++        {
++            return Err("original generated tenant-data schema fingerprint is stale".into());
++        }
+         let computed = self.schema_fingerprint();
+         if computed != TENANT_DATA_SCHEMA_FINGERPRINT {
+             return Err("tenant-data schema fingerprint constant is stale".into());
+@@ -69,8 +74,11 @@ impl TenantDataCatalog {
+ 
+     /// 由当前 catalog 的完整 canonical schema 计算指纹，测试注入与生产目录共用。
+     pub fn schema_fingerprint(&self) -> String {
+-        let entries = self
+-            .tables
++        schema_fingerprint_for_catalog(&self.entries())
++    }
++
++    fn entries(&self) -> Vec<String> {
++        self.tables
+             .iter()
+             .map(|table| {
+                 catalog_entry_canonical(
+@@ -83,8 +91,7 @@ impl TenantDataCatalog {
+                     table.schema_canonical,
+                 )
+             })
+-            .collect::<Vec<_>>();
+-        schema_fingerprint_for_catalog(&entries)
++            .collect()
+     }
+ 
+     /// 仅校验目录自身的安全结构，不绑定生产生成指纹。用于测试专用静态 catalog。
+@@ -318,11 +325,26 @@ fn join_values<T: AsRef<str>>(values: &[T]) -> String {
+ 
+ /// 由完整基础设施 schema 与有序 catalog 项生成稳定小写 SHA-256。
+ pub fn schema_fingerprint_for_catalog(entries: &[String]) -> String {
++    schema_fingerprint(
++        entries,
++        &[
++            super::database_adapter::DATA_SCOPE_PROJECTION_SCHEMA_CANONICAL,
++            super::database_adapter::DATA_SCOPE_OWNER_SCHEMA_CANONICAL,
++            super::database_adapter::DATA_SCOPE_DEPT_SCHEMA_CANONICAL,
++        ],
++    )
++}
++
++fn schema_fingerprint(entries: &[String], projections: &[&str]) -> String {
+     let mut canonical = String::from(TENANT_DATA_FENCE_SCHEMA_CANONICAL);
+     canonical.push('|');
+     canonical.push_str(TENANT_DATA_TARGET_SLOT_SCHEMA_CANONICAL);
+     canonical.push('|');
+     canonical.push_str(RESOURCE_OWNERSHIP_SCHEMA_CANONICAL);
++    for value in projections {
++        canonical.push('|');
++        canonical.push_str(value);
++    }
+     canonical.push_str("|catalog=[");
+     canonical.push_str(&entries.join(";"));
+     canonical.push(']');
+diff --git a/crates/ryframe-tenant-db/src/migration/database_adapter.rs b/crates/ryframe-tenant-db/src/migration/database_adapter.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..aa8240dee2db0a6213667dbb87098c8e4acbdb9e
+--- /dev/null
++++ b/crates/ryframe-tenant-db/src/migration/database_adapter.rs
+@@ -0,0 +1,32 @@
++//! B0 数据库结构适配：P2 精确投影与 Order 声明；不注册业务 API。
++use super::catalog::TenantDataTableDescriptor;
++pub(super) const DATA_SCOPE_PROJECTION_SCHEMA_CANONICAL: &str = "v2|table=\"biz_data_scope_projection\"|engine=\"innodb\"|charset=\"utf8mb4\"|collation=\"utf8mb4_general_ci\"|columns=[\"tenant_id\":\"varchar(64)\":\"NO\":Some(\"utf8mb4\"):Some(\"utf8mb4_general_ci\"):\"PRI\":None:\"\":\"\";\"source_version\":\"bigint\":\"NO\":None:None:\"\":None:\"\":\"\";\"build_token\":\"char(64)\":\"NO\":Some(\"ascii\"):Some(\"ascii_bin\"):\"\":None:\"\":\"\";\"placement_generation\":\"bigint\":\"NO\":None:None:\"\":None:\"\":\"\";\"switch_token\":\"varchar(64)\":\"NO\":Some(\"ascii\"):Some(\"ascii_bin\"):\"\":None:\"\":\"\";\"digest\":\"char(64)\":\"NO\":Some(\"ascii\"):Some(\"ascii_bin\"):\"\":None:\"\":\"\";\"owner_count\":\"bigint\":\"NO\":None:None:\"\":None:\"\":\"\";\"dept_count\":\"bigint\":\"NO\":None:None:\"\":None:\"\":\"\";\"ready\":\"tinyint(1)\":\"NO\":None:None:\"\":None:\"\":\"\";\"published_at\":\"datetime(6)\":\"YES\":None:None:\"\":None:\"\":\"\";\"updated_at\":\"datetime(6)\":\"NO\":None:None:\"\":Some(\"current_timestamp(6)\"):\"on update current_timestamp(6)\":\"\";]|indexes=[\"PRIMARY\":\"tenant_id\":1:0:\"btree\":None:\"YES\";]|constraints=[\"PRIMARY\":\"PRIMARY KEY\":\"YES\";]|checks=[]|foreign_keys=[]";
++pub(super) const DATA_SCOPE_OWNER_SCHEMA_CANONICAL: &str = "v2|table=\"biz_data_scope_owner\"|engine=\"innodb\"|charset=\"utf8mb4\"|collation=\"utf8mb4_general_ci\"|columns=[\"tenant_id\":\"varchar(64)\":\"NO\":Some(\"utf8mb4\"):Some(\"utf8mb4_general_ci\"):\"PRI\":None:\"\":\"\";\"build_token\":\"char(64)\":\"NO\":Some(\"ascii\"):Some(\"ascii_bin\"):\"PRI\":None:\"\":\"\";\"user_id\":\"bigint\":\"NO\":None:None:\"PRI\":None:\"\":\"\";\"dept_id\":\"bigint\":\"YES\":None:None:\"\":None:\"\":\"\";]|indexes=[\"idx_data_scope_owner_dept\":\"tenant_id\":1:1:\"btree\":None:\"YES\";\"idx_data_scope_owner_dept\":\"build_token\":2:1:\"btree\":None:\"YES\";\"idx_data_scope_owner_dept\":\"dept_id\":3:1:\"btree\":None:\"YES\";\"idx_data_scope_owner_dept\":\"user_id\":4:1:\"btree\":None:\"YES\";\"PRIMARY\":\"tenant_id\":1:0:\"btree\":None:\"YES\";\"PRIMARY\":\"build_token\":2:0:\"btree\":None:\"YES\";\"PRIMARY\":\"user_id\":3:0:\"btree\":None:\"YES\";]|constraints=[\"PRIMARY\":\"PRIMARY KEY\":\"YES\";]|checks=[]|foreign_keys=[]";
++pub(super) const DATA_SCOPE_DEPT_SCHEMA_CANONICAL: &str = "v2|table=\"biz_data_scope_dept\"|engine=\"innodb\"|charset=\"utf8mb4\"|collation=\"utf8mb4_general_ci\"|columns=[\"tenant_id\":\"varchar(64)\":\"NO\":Some(\"utf8mb4\"):Some(\"utf8mb4_general_ci\"):\"PRI\":None:\"\":\"\";\"build_token\":\"char(64)\":\"NO\":Some(\"ascii\"):Some(\"ascii_bin\"):\"PRI\":None:\"\":\"\";\"dept_id\":\"bigint\":\"NO\":None:None:\"PRI\":None:\"\":\"\";\"ancestors\":\"varchar(512)\":\"NO\":Some(\"utf8mb4\"):Some(\"utf8mb4_general_ci\"):\"\":None:\"\":\"\";]|indexes=[\"idx_data_scope_dept_ancestors\":\"tenant_id\":1:1:\"btree\":None:\"YES\";\"idx_data_scope_dept_ancestors\":\"build_token\":2:1:\"btree\":None:\"YES\";\"idx_data_scope_dept_ancestors\":\"ancestors\":3:1:\"btree\":None:\"YES\";\"PRIMARY\":\"tenant_id\":1:0:\"btree\":None:\"YES\";\"PRIMARY\":\"build_token\":2:0:\"btree\":None:\"YES\";\"PRIMARY\":\"dept_id\":3:0:\"btree\":None:\"YES\";]|constraints=[\"PRIMARY\":\"PRIMARY KEY\":\"YES\";]|checks=[]|foreign_keys=[]";
++const ORDER: TenantDataTableDescriptor = TenantDataTableDescriptor {
++    table: "biz_order",
++    copy_order: 1,
++    tenant_column: "tenant_id",
++    primary_key_cursor_columns: &["tenant_id", "id"],
++    checksum_columns: &["tenant_id", "id", "code", "created_at", "updated_at"],
++    column_types: &["varchar", "bigint", "varchar", "datetime", "datetime"],
++    has_generated_columns: false,
++    foreign_key_dependencies: &[],
++    foreign_keys: &[],
++    schema_canonical: "v2|table=\"biz_order\"|engine=\"innodb\"|charset=\"utf8mb4\"|collation=\"utf8mb4_general_ci\"|columns=[\"tenant_id\":\"varchar(64)\":\"NO\":Some(\"utf8mb4\"):Some(\"utf8mb4_general_ci\"):\"PRI\":None:\"\":\"\";\"id\":\"bigint\":\"NO\":None:None:\"PRI\":None:\"\":\"\";\"code\":\"varchar(255)\":\"NO\":Some(\"utf8mb4\"):Some(\"utf8mb4_general_ci\"):\"\":None:\"\":\"\";\"created_at\":\"datetime(6)\":\"NO\":None:None:\"\":None:\"\":\"\";\"updated_at\":\"datetime(6)\":\"NO\":None:None:\"\":None:\"\":\"\";]|indexes=[\"PRIMARY\":\"tenant_id\":1:0:\"btree\":None:\"YES\";\"PRIMARY\":\"id\":2:0:\"btree\":None:\"YES\";\"uk_order_code\":\"tenant_id\":1:0:\"btree\":None:\"YES\";\"uk_order_code\":\"code\":2:0:\"btree\":None:\"YES\";]|constraints=[\"PRIMARY\":\"PRIMARY KEY\":\"YES\";\"uk_order_code\":\"UNIQUE\":\"YES\";]|checks=[]|foreign_keys=[]",
++};
++pub(super) const FINGERPRINT: &str =
++    "67076aa3d604ad6ead9ef968ffbd8f540803ef3693245bcbb72ec8763ee288dd";
++pub(super) const TABLES: [TenantDataTableDescriptor;
++    super::generated_catalog::GENERATED_TENANT_DATA_TABLES.len() + 1] = compose();
++const fn compose()
++-> [TenantDataTableDescriptor; super::generated_catalog::GENERATED_TENANT_DATA_TABLES.len() + 1] {
++    let generated = super::generated_catalog::GENERATED_TENANT_DATA_TABLES;
++    let mut tables = [ORDER; super::generated_catalog::GENERATED_TENANT_DATA_TABLES.len() + 1];
++    let mut index = 0;
++    while index < generated.len() {
++        tables[index] = generated[index];
++        index += 1;
++    }
++    tables
++}
+diff --git a/crates/ryframe-tenant-db/src/migration/m20260820_000000_tenant_baseline.rs b/crates/ryframe-tenant-db/src/migration/m20260820_000000_tenant_baseline.rs
+index dca355af3492bee763371ece6e287041a795fee2..c82c6b3a160b7320b3503c643c9d4f4981b3b77e 100644
+--- a/crates/ryframe-tenant-db/src/migration/m20260820_000000_tenant_baseline.rs
++++ b/crates/ryframe-tenant-db/src/migration/m20260820_000000_tenant_baseline.rs
+@@ -39,8 +39,71 @@ pub const RESOURCE_OWNERSHIP_DDL: &str = r#"CREATE TABLE IF NOT EXISTS `ryframe_
+     UNIQUE KEY `uq_resource_ownership_scope` (`scope_id`, `resource_kind`)
+ ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='物理数据库资源作用域所有权'"#;
+ 
++pub const DATA_SCOPE_PROJECTION_DDL: &str = r#"CREATE TABLE IF NOT EXISTS `biz_data_scope_projection` (
++    `tenant_id` VARCHAR(64) NOT NULL,
++    `source_version` BIGINT NOT NULL,
++    `build_token` CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
++    `placement_generation` BIGINT NOT NULL,
++    `switch_token` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
++    `digest` CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
++    `owner_count` BIGINT NOT NULL,
++    `dept_count` BIGINT NOT NULL,
++    `ready` TINYINT(1) NOT NULL,
++    `published_at` DATETIME(6) DEFAULT NULL,
++    `updated_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
++    PRIMARY KEY (`tenant_id`)
++) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户数据范围投影发布状态'"#;
++
++pub const DATA_SCOPE_OWNER_DDL: &str = r#"CREATE TABLE IF NOT EXISTS `biz_data_scope_owner` (
++    `tenant_id` VARCHAR(64) NOT NULL,
++    `build_token` CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
++    `user_id` BIGINT NOT NULL,
++    `dept_id` BIGINT DEFAULT NULL,
++    PRIMARY KEY (`tenant_id`, `build_token`, `user_id`),
++    KEY `idx_data_scope_owner_dept` (`tenant_id`, `build_token`, `dept_id`, `user_id`)
++) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户数据范围用户归属投影'"#;
++
++pub const DATA_SCOPE_DEPT_DDL: &str = r#"CREATE TABLE IF NOT EXISTS `biz_data_scope_dept` (
++    `tenant_id` VARCHAR(64) NOT NULL,
++    `build_token` CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
++    `dept_id` BIGINT NOT NULL,
++    `ancestors` VARCHAR(512) NOT NULL,
++    PRIMARY KEY (`tenant_id`, `build_token`, `dept_id`),
++    KEY `idx_data_scope_dept_ancestors` (`tenant_id`, `build_token`, `ancestors`)
++) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户数据范围部门树投影'"#;
++
+ pub(crate) const RESOURCE_OWNERSHIP_SCHEMA_DESCRIPTOR: &str = "v2|table=\"ryframe_resource_ownership\"|engine=\"innodb\"|charset=\"utf8mb4\"|collation=\"utf8mb4_general_ci\"|columns=[\"resource_kind\":\"varchar(32)\":\"NO\":Some(\"ascii\"):Some(\"ascii_bin\"):\"PRI\":None:\"\":\"\";\"scope_id\":\"varchar(48)\":\"NO\":Some(\"ascii\"):Some(\"ascii_bin\"):\"MUL\":None:\"\":\"\";\"marker\":\"varchar(128)\":\"NO\":Some(\"ascii\"):Some(\"ascii_bin\"):\"UNI\":None:\"\":\"\";\"created_at\":\"datetime(6)\":\"NO\":None:None:\"\":Some(\"current_timestamp(6)\"):\"\":\"\";\"updated_at\":\"datetime(6)\":\"NO\":None:None:\"\":Some(\"current_timestamp(6)\"):\"on update current_timestamp(6)\":\"\";]|indexes=[\"PRIMARY\":\"resource_kind\":1:0:\"btree\":None:\"YES\";\"uq_resource_ownership_marker\":\"marker\":1:0:\"btree\":None:\"YES\";\"uq_resource_ownership_scope\":\"scope_id\":1:0:\"btree\":None:\"YES\";\"uq_resource_ownership_scope\":\"resource_kind\":2:0:\"btree\":None:\"YES\";]|constraints=[\"PRIMARY\":\"PRIMARY KEY\":\"YES\";\"uq_resource_ownership_marker\":\"UNIQUE\":\"YES\";\"uq_resource_ownership_scope\":\"UNIQUE\":\"YES\";]|checks=[]|foreign_keys=[]";
+ 
++pub(super) const TARGET_SLOT_SEED: &str = "INSERT INTO `biz_tenant_target_slot` (`slot_id`, `updated_at`) \
++                 VALUES (1, CURRENT_TIMESTAMP(6)) \
++                 ON DUPLICATE KEY UPDATE `slot_id` = `slot_id`";
++
++pub(super) const SHARED_CONTROL_FENCE_SEED: &str = r#"INSERT INTO `biz_tenant_fence`
++                        (`tenant_id`, `target_key`, `placement_generation`, `state`, `switch_token`, `updated_at`)
++                       SELECT tenant.`tenant_id`, 'shared-control', 1, 'active',
++                              COALESCE(placement.`switch_token`,
++                                  SHA2(CONCAT('ryframe:tenant-data:shared-control:v1:', tenant.`tenant_id`), 256)),
++                              CURRENT_TIMESTAMP(6)
++                       FROM `sys_tenant` AS tenant
++                       LEFT JOIN `sys_tenant_data_placement` AS placement
++                         ON placement.`tenant_id` = tenant.`tenant_id`
++                        AND placement.`current_target_key` = 'shared-control'
++                        AND placement.`placement_generation` = 1
++                        AND placement.`state` = 'active'
++                       ON DUPLICATE KEY UPDATE
++                         `tenant_id` = `biz_tenant_fence`.`tenant_id`"#;
++
++pub(super) fn table_statements() -> [&'static str; 6] {
++    [
++        TENANT_FENCE_DDL,
++        TENANT_TARGET_SLOT_DDL,
++        RESOURCE_OWNERSHIP_DDL,
++        DATA_SCOPE_PROJECTION_DDL,
++        DATA_SCOPE_OWNER_DDL,
++        DATA_SCOPE_DEPT_DDL,
++    ]
++}
++
+ #[derive(DeriveMigrationName)]
+ pub struct Migration;
+ 
+@@ -54,40 +117,15 @@ impl MigrationTrait for Migration {
+         }
+ 
+         let connection = manager.get_connection();
+-        connection.execute_unprepared(TENANT_FENCE_DDL).await?;
+-        connection
+-            .execute_unprepared(TENANT_TARGET_SLOT_DDL)
+-            .await?;
+-        connection
+-            .execute_unprepared(RESOURCE_OWNERSHIP_DDL)
+-            .await?;
+-        connection
+-            .execute_unprepared(
+-                "INSERT INTO `biz_tenant_target_slot` (`slot_id`, `updated_at`) \
+-                 VALUES (1, CURRENT_TIMESTAMP(6)) \
+-                 ON DUPLICATE KEY UPDATE `slot_id` = `slot_id`",
+-            )
+-            .await?;
++        for statement in table_statements() {
++            connection.execute_unprepared(statement).await?;
++        }
++        connection.execute_unprepared(TARGET_SLOT_SEED).await?;
+ 
+         // shared-control 拥有 sys_tenant；dedicated 目标保持空围栏，等待放置流程写入。
+         if manager.has_table("sys_tenant").await? {
+             connection
+-                .execute_unprepared(
+-                    r#"INSERT INTO `biz_tenant_fence`
+-                        (`tenant_id`, `target_key`, `placement_generation`, `state`, `switch_token`, `updated_at`)
+-                       SELECT tenant.`tenant_id`, 'shared-control', 1, 'active',
+-                              COALESCE(placement.`switch_token`,
+-                                  SHA2(CONCAT('ryframe:tenant-data:shared-control:v1:', tenant.`tenant_id`), 256)),
+-                              CURRENT_TIMESTAMP(6)
+-                       FROM `sys_tenant` AS tenant
+-                       LEFT JOIN `sys_tenant_data_placement` AS placement
+-                         ON placement.`tenant_id` = tenant.`tenant_id`
+-                        AND placement.`current_target_key` = 'shared-control'
+-                        AND placement.`placement_generation` = 1
+-                        AND placement.`state` = 'active'
+-                       ON DUPLICATE KEY UPDATE
+-                         `tenant_id` = `biz_tenant_fence`.`tenant_id`"#,
+-                )
++                .execute_unprepared(SHARED_CONTROL_FENCE_SEED)
+                 .await?;
+         }
+         Ok(())
+diff --git a/crates/ryframe-tenant-db/src/migration/m20261017_000000_data_scope_projection.rs b/crates/ryframe-tenant-db/src/migration/m20261017_000000_data_scope_projection.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..1059f7ea1ca2cbce30ed1d96c5005c1dabd02b3c
+--- /dev/null
++++ b/crates/ryframe-tenant-db/src/migration/m20261017_000000_data_scope_projection.rs
+@@ -0,0 +1,41 @@
++use sea_orm::DbBackend;
++use sea_orm_migration::prelude::*;
++
++use super::m20260820_000000_tenant_baseline::{
++    DATA_SCOPE_DEPT_DDL, DATA_SCOPE_OWNER_DDL, DATA_SCOPE_PROJECTION_DDL,
++};
++
++pub(super) fn table_statements() -> [&'static str; 3] {
++    [
++        DATA_SCOPE_PROJECTION_DDL,
++        DATA_SCOPE_OWNER_DDL,
++        DATA_SCOPE_DEPT_DDL,
++    ]
++}
++
++#[derive(DeriveMigrationName)]
++pub struct Migration;
++
++#[async_trait::async_trait]
++impl MigrationTrait for Migration {
++    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
++        if manager.get_database_backend() != DbBackend::MySql {
++            return Err(DbErr::Custom(
++                "tenant-data data scope projection requires MySQL".into(),
++            ));
++        }
++        for statement in table_statements() {
++            manager
++                .get_connection()
++                .execute_unprepared(statement)
++                .await?;
++        }
++        Ok(())
++    }
++
++    async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
++        Err(DbErr::Custom(
++            "数据范围投影迁移不支持回滚，请追加 roll-forward 迁移修复".into(),
++        ))
++    }
++}
+diff --git a/crates/ryframe-tenant-db/src/migration/mod.rs b/crates/ryframe-tenant-db/src/migration/mod.rs
+index 97b331eda82403f58da4903195630dadf51d730e..ff1d0dd43f9446981ef574b2104271bd8635be3e 100644
+--- a/crates/ryframe-tenant-db/src/migration/mod.rs
++++ b/crates/ryframe-tenant-db/src/migration/mod.rs
+@@ -6,16 +6,22 @@
+ 
+ mod baseline_contract;
+ mod catalog;
++mod database_adapter;
+ mod generated_catalog;
+ #[cfg(feature = "migration")]
+ mod m20260820_000000_tenant_baseline;
++#[cfg(feature = "migration")]
++mod m20261017_000000_data_scope_projection;
+ mod normalization;
+ #[cfg(feature = "migration")]
+ mod runtime;
+ mod schema;
+ mod status;
+ 
+-const HANDWRITTEN_MIGRATION_NAMES: &[&str] = &["m20260820_000000_tenant_baseline"];
++const HANDWRITTEN_MIGRATION_NAMES: &[&str] = &[
++    "m20260820_000000_tenant_baseline",
++    "m20261017_000000_data_scope_projection",
++];
+ 
+ pub fn expected_migration_names() -> impl Iterator<Item = &'static str> {
+     HANDWRITTEN_MIGRATION_NAMES
+diff --git a/crates/ryframe-tenant-db/src/migration/runtime.rs b/crates/ryframe-tenant-db/src/migration/runtime.rs
+index 5c7e89eb562c33129c98dc847358794560303c48..bb6e997edcaded9b69205e7fd6b0c5b4bd3dd4e6 100644
+--- a/crates/ryframe-tenant-db/src/migration/runtime.rs
++++ b/crates/ryframe-tenant-db/src/migration/runtime.rs
+@@ -16,8 +16,10 @@ pub struct Migrator;
+ #[async_trait::async_trait]
+ impl MigratorTrait for Migrator {
+     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
+-        let mut migrations: Vec<Box<dyn MigrationTrait>> =
+-            vec![Box::new(super::m20260820_000000_tenant_baseline::Migration)];
++        let mut migrations: Vec<Box<dyn MigrationTrait>> = vec![
++            Box::new(super::m20260820_000000_tenant_baseline::Migration),
++            Box::new(super::m20261017_000000_data_scope_projection::Migration),
++        ];
+         migrations.extend(crate::generated::migrations());
+         migrations
+     }
+diff --git a/crates/ryframe-tenant-db/src/migration/schema.rs b/crates/ryframe-tenant-db/src/migration/schema.rs
+index d6278281f63a24491107f54c4050799accc92b3e..5a18a79442fa699963d24f1d711de2d10c3caa98 100644
+--- a/crates/ryframe-tenant-db/src/migration/schema.rs
++++ b/crates/ryframe-tenant-db/src/migration/schema.rs
+@@ -93,11 +93,7 @@ pub async fn verify_mysql_target_for_catalog(
+     verify_for_catalog(db, catalog).await?;
+     let actual = mysql_target_table_names(db).await?;
+     let expected = expected_mysql_target_table_names(catalog);
+-    if actual != expected {
+-        return Err(DbErr::Custom(
+-            "mysql tenant-data target table set does not match the compiled catalog".into(),
+-        ));
+-    }
++    verify_table_set(&actual, &expected)?;
+     Ok(())
+ }
+ 
+@@ -120,6 +116,10 @@ fn expected_mysql_target_table_names(catalog: &TenantDataCatalog) -> Vec<String>
+         "biz_tenant_fence".to_owned(),
+         "biz_tenant_target_slot".to_owned(),
+         "ryframe_resource_ownership".to_owned(),
++        "biz_data_scope_projection".to_owned(),
++        "biz_data_scope_owner".to_owned(),
++        "biz_data_scope_dept".to_owned(),
++        "ryframe_business_migration".to_owned(),
+     ];
+     expected.extend(
+         catalog
+@@ -172,12 +172,34 @@ async fn verify_fence_schema(
+     ))
+     .all(db)
+     .await?;
++    verify_business_table_set(&tables, catalog)?;
++    verify_fence_table_metadata(&tables)?;
++    verify_fence_columns(db).await?;
++    verify_fence_indexes(db).await?;
++    verify_fence_constraints(db).await?;
++    verify_target_slot_schema(db, &tables).await?;
++    verify_resource_ownership_schema(db).await?;
++    verify_data_scope_schema(db).await?;
++    ryframe_db::migration::verify_business_migration_ledger(db).await?;
++    verify_catalog_tables(db, catalog).await
++}
++
++fn verify_business_table_set(
++    tables: &[TenantDataTableRow],
++    catalog: &TenantDataCatalog,
++) -> Result<(), DbErr> {
+     let mut actual_business_tables = tables
+         .iter()
+         .filter(|table| table.table_name.starts_with("biz_"))
+         .map(|table| table.table_name.as_str())
+         .collect::<Vec<_>>();
+-    let mut expected_business_tables = vec!["biz_tenant_fence", "biz_tenant_target_slot"];
++    let mut expected_business_tables = vec![
++        "biz_tenant_fence",
++        "biz_tenant_target_slot",
++        "biz_data_scope_projection",
++        "biz_data_scope_owner",
++        "biz_data_scope_dept",
++    ];
+     expected_business_tables.extend(catalog.tables().iter().map(|table| table.table));
+     actual_business_tables.sort_unstable();
+     expected_business_tables.sort_unstable();
+@@ -186,6 +208,10 @@ async fn verify_fence_schema(
+             "tenant-data table set (unknown or missing biz_ table)",
+         ));
+     }
++    Ok(())
++}
++
++fn verify_fence_table_metadata(tables: &[TenantDataTableRow]) -> Result<(), DbErr> {
+     let fence = tables
+         .iter()
+         .find(|table| table.table_name == "biz_tenant_fence")
+@@ -200,7 +226,10 @@ async fn verify_fence_schema(
+             "fence engine/character-set/collation",
+         ));
+     }
++    Ok(())
++}
+ 
++async fn verify_fence_columns(db: &DatabaseConnection) -> Result<(), DbErr> {
+     let columns = FenceColumnRow::find_by_statement(Statement::from_string(
+         DbBackend::MySql,
+         "SELECT column_name AS `column_name`, column_type AS `column_type`, \
+@@ -279,7 +308,10 @@ async fn verify_fence_schema(
+             return Err(schema_fingerprint_mismatch("fence column definition"));
+         }
+     }
++    Ok(())
++}
+ 
++async fn verify_fence_indexes(db: &DatabaseConnection) -> Result<(), DbErr> {
+     let indexes = FenceIndexRow::find_by_statement(Statement::from_string(
+         DbBackend::MySql,
+         "SELECT index_name AS `index_name`, column_name AS `column_name`, \
+@@ -322,7 +354,10 @@ async fn verify_fence_schema(
+     {
+         return Err(schema_fingerprint_mismatch("fence primary/key index"));
+     }
++    Ok(())
++}
+ 
++async fn verify_fence_constraints(db: &DatabaseConnection) -> Result<(), DbErr> {
+     let constraints = FenceConstraintRow::find_by_statement(Statement::from_string(
+         DbBackend::MySql,
+         "SELECT constraint_name AS `constraint_name`, constraint_type AS `constraint_type`, \
+@@ -378,8 +413,13 @@ async fn verify_fence_schema(
+     {
+         return Err(schema_fingerprint_mismatch("fence check constraints"));
+     }
+-    verify_target_slot_schema(db, &tables).await?;
+-    verify_resource_ownership_schema(db).await?;
++    Ok(())
++}
++
++async fn verify_catalog_tables(
++    db: &DatabaseConnection,
++    catalog: &TenantDataCatalog,
++) -> Result<(), DbErr> {
+     for descriptor in catalog.tables() {
+         let actual = canonical_table_schema(db, descriptor.table).await?;
+         if actual != descriptor.schema_canonical {
+@@ -389,6 +429,35 @@ async fn verify_fence_schema(
+     Ok(())
+ }
+ 
++fn verify_table_set(actual: &[String], expected: &[String]) -> Result<(), DbErr> {
++    if actual != expected {
++        return Err(schema_fingerprint_mismatch(
++            "完整目标表集存在缺失或未知对象",
++        ));
++    }
++    Ok(())
++}
++
++async fn verify_data_scope_schema(db: &DatabaseConnection) -> Result<(), DbErr> {
++    use super::database_adapter::{
++        DATA_SCOPE_DEPT_SCHEMA_CANONICAL, DATA_SCOPE_OWNER_SCHEMA_CANONICAL,
++        DATA_SCOPE_PROJECTION_SCHEMA_CANONICAL,
++    };
++    for (table, expected) in [
++        (
++            "biz_data_scope_projection",
++            DATA_SCOPE_PROJECTION_SCHEMA_CANONICAL,
++        ),
++        ("biz_data_scope_owner", DATA_SCOPE_OWNER_SCHEMA_CANONICAL),
++        ("biz_data_scope_dept", DATA_SCOPE_DEPT_SCHEMA_CANONICAL),
++    ] {
++        if canonical_table_schema(db, table).await? != expected {
++            return Err(schema_fingerprint_mismatch("数据范围投影完整结构"));
++        }
++    }
++    Ok(())
++}
++
+ async fn verify_resource_ownership_schema(db: &DatabaseConnection) -> Result<(), DbErr> {
+     let actual = canonical_table_schema(db, "ryframe_resource_ownership").await?;
+     if actual != super::baseline_contract::RESOURCE_OWNERSHIP_SCHEMA_DESCRIPTOR {
+@@ -421,3 +490,42 @@ pub(super) fn schema_fingerprint_mismatch(detail: &str) -> DbErr {
+         "tenant-data schema fingerprint mismatch ({detail}): expected {TENANT_DATA_SCHEMA_FINGERPRINT}"
+     ))
+ }
++
++#[cfg(test)]
++mod adapter_tests {
++    use super::*;
++
++    #[test]
++    fn restored_target_requires_order_projection_and_ledger_without_unknown_tables() {
++        let expected = expected_mysql_target_table_names(&TENANT_DATA_CATALOG);
++        for required in [
++            "biz_order",
++            "biz_data_scope_projection",
++            "biz_data_scope_owner",
++            "biz_data_scope_dept",
++            "ryframe_business_migration",
++        ] {
++            assert!(expected.iter().any(|table| table == required));
++            let missing = expected
++                .iter()
++                .filter(|table| table.as_str() != required)
++                .cloned()
++                .collect::<Vec<_>>();
++            assert!(verify_table_set(&missing, &expected).is_err());
++        }
++        assert!(verify_table_set(&expected, &expected).is_ok());
++        let mut unknown = expected.clone();
++        unknown.push("biz_unregistered".into());
++        unknown.sort_unstable();
++        assert!(verify_table_set(&unknown, &expected).is_err());
++        assert_eq!(
++            TENANT_DATA_CATALOG
++                .tables()
++                .iter()
++                .map(|table| table.table)
++                .collect::<Vec<_>>(),
++            ["biz_order"]
++        );
++        TENANT_DATA_CATALOG.validate().unwrap();
++    }
++}
+diff --git a/crates/ryframe-tenant-db/tests/tenant_mapping_contracts/migration_contracts.rs b/crates/ryframe-tenant-db/tests/tenant_mapping_contracts/migration_contracts.rs
+index 00d189b0af12e4f331d2f5503787bd25dba027c9..5d72fa0d552a65e620c80a3ae2287f58e42bf940 100644
+--- a/crates/ryframe-tenant-db/tests/tenant_mapping_contracts/migration_contracts.rs
++++ b/crates/ryframe-tenant-db/tests/tenant_mapping_contracts/migration_contracts.rs
+@@ -68,7 +68,7 @@ fn cross_schema_foreign_keys_are_rejected() {
+ }
+ 
+ #[test]
+-fn tenant_data_uses_one_fresh_baseline_and_its_own_ledger() {
++fn tenant_data_uses_the_registered_restore_migrations_and_its_own_ledger() {
+     let migrations = Migrator::migrations();
+     let actual_names = migrations
+         .iter()
+@@ -78,7 +78,7 @@ fn tenant_data_uses_one_fresh_baseline_and_its_own_ledger() {
+     assert_eq!(actual_names, expected_names);
+     assert_eq!(
+         migrations.len(),
+-        1 + ryframe_tenant_db::generated::migrations().len()
++        2 + ryframe_tenant_db::generated::migrations().len()
+     );
+     assert_eq!(TENANT_DATA_MIGRATION_LEDGER, "seaql_tenant_data_migrations");
+     assert_eq!(migrations[0].name(), "m20260820_000000_tenant_baseline");
+diff --git a/sql/ryframe_config.sql b/sql/ryframe_config.sql
+index 7093095229631e9aa64a9493cce434b618afb572..8b8868b13ce2a55242b0d58e7ec54ea9a28d54a1 100644
+--- a/sql/ryframe_config.sql
++++ b/sql/ryframe_config.sql
+@@ -1,5 +1,5 @@
+ -- 自动生成文件：RyFrame 控制库新基线快照。
+--- schema fingerprint: 595a420d869c5fdb
++-- schema fingerprint: 3f5f39d1b9783bb1
+ -- 唯一事实来源：ryframe-db::migration Migrator 与 Seeder。
+ -- 仅供审阅：部署和重置工具不得执行此文件。
+ -- 重新生成命令：cargo run --locked -p ryframe-db --features migration --bin export_mysql_snapshot -- sql/ryframe_config.sql
+@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS `sys_tenant` (
+     `max_requests_per_min`   INT          NOT NULL DEFAULT 1000 COMMENT '每分钟最大请求数',
+     `session_version`        INT          NOT NULL DEFAULT 1 COMMENT '租户会话版本',
+     `authorization_epoch`    INT          NOT NULL DEFAULT 1 COMMENT '租户授权规则版本',
++    `data_scope_version`     BIGINT       NOT NULL DEFAULT 1 COMMENT '租户数据范围投影权威版本',
+     `runtime_epoch`          BIGINT       NOT NULL DEFAULT 1 COMMENT '租户运行时产品上下文纪元',
+     `configuration_version`  BIGINT       NOT NULL DEFAULT 0 COMMENT '租户配置版本',
+     `created_at`             DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+@@ -68,6 +69,7 @@ CREATE TABLE IF NOT EXISTS `sys_user` (
+     `tenant_id`      VARCHAR(64)  NOT NULL DEFAULT 'system' COMMENT '租户ID',
+     `username`       VARCHAR(64)  NOT NULL                  COMMENT '用户名',
+     `password_hash`  VARCHAR(255) NOT NULL                  COMMENT '密码哈希(argon2)',
++    `password_change_required` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '首次登录必须修改密码',
+     `nickname`       VARCHAR(64)  NOT NULL                  COMMENT '昵称',
+     `email`          VARCHAR(128) NOT NULL DEFAULT ''       COMMENT '邮箱',
+     `phone`          VARCHAR(32)  NOT NULL DEFAULT ''       COMMENT '手机号',
+@@ -447,18 +449,19 @@ CREATE TABLE IF NOT EXISTS `sys_background_job` (
+     `payload`       JSON         NOT NULL COMMENT '任务载荷',
+     `status`        VARCHAR(16)  NOT NULL DEFAULT 'pending' COMMENT '状态: pending/running/succeeded/dead',
+     `priority`      INT          NOT NULL DEFAULT 0 COMMENT '优先级，数值越大越优先',
+-    `available_at`  DATETIME     NOT NULL COMMENT '最早可执行时间',
++    `available_at`  DATETIME(6)  NOT NULL COMMENT '最早可执行时间',
+     `attempts`      INT          NOT NULL DEFAULT 0 COMMENT '已领取次数',
++    `claim_sequence` BIGINT      NOT NULL DEFAULT 0 COMMENT '单调领取序号，不随重试预算重置',
+     `max_attempts`  INT          NOT NULL DEFAULT 5 COMMENT '最大领取次数',
+     `lease_owner`   VARCHAR(128)          DEFAULT NULL COMMENT '当前租约持有者',
+-    `lease_until`   DATETIME              DEFAULT NULL COMMENT '租约失效时间',
++    `lease_until`   DATETIME(6)           DEFAULT NULL COMMENT '租约失效时间',
+     `dedupe_key`    VARCHAR(191)          DEFAULT NULL COMMENT '同类型幂等键',
+     `traceparent`   VARCHAR(255)          DEFAULT NULL COMMENT 'W3C Trace Context',
+     `tracestate`    VARCHAR(512)          DEFAULT NULL COMMENT 'W3C Trace Context 状态',
+     `last_error`    TEXT                  DEFAULT NULL COMMENT '最后失败原因',
+-    `created_at`    DATETIME     NOT NULL COMMENT '创建时间',
+-    `updated_at`    DATETIME     NOT NULL COMMENT '更新时间',
+-    `completed_at`  DATETIME              DEFAULT NULL COMMENT '终态时间',
++    `created_at`    DATETIME(6)  NOT NULL COMMENT '创建时间',
++    `updated_at`    DATETIME(6)  NOT NULL COMMENT '更新时间',
++    `completed_at`  DATETIME(6)           DEFAULT NULL COMMENT '终态时间',
+     PRIMARY KEY (`id`),
+     UNIQUE KEY `uq_bg_job_dedupe` (`job_type`, `dedupe_key`),
+     KEY `idx_bg_job_claim` (`status`, `available_at`, `priority`, `id`),
+@@ -466,7 +469,10 @@ CREATE TABLE IF NOT EXISTS `sys_background_job` (
+     KEY `idx_bg_job_tenant` (`tenant_id`, `status`, `created_at`),
+     KEY `idx_bg_job_schedule_status` (`schedule_id`, `status`, `created_at`),
+     KEY `idx_bg_job_retention` (`status`, `completed_at`, `id`),
+-    KEY `idx_bg_job_tenant_created_status` (`tenant_id`, `created_at`, `status`)
++    KEY `idx_bg_job_tenant_created_status` (`tenant_id`, `created_at`, `status`),
++    CONSTRAINT `ck_bg_job_attempt_budget` CHECK (
++        `attempts` >= 0 AND `max_attempts` BETWEEN 1 AND 100
++        AND `claim_sequence` >= `attempts`)
+ ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='持久化后台任务';
+ 
+ CREATE TABLE IF NOT EXISTS `sys_job_schedule` (
+@@ -1040,188 +1046,76 @@ CREATE TABLE IF NOT EXISTS `sys_tenant_data_backup_point` (
+                 CHECK (`expires_at` IS NULL OR `expires_at` >= `retention_until`)
+         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户业务数据备份恢复点';
+ 
+-CREATE TABLE IF NOT EXISTS `sys_service_account` (
+-            `id` BIGINT NOT NULL,
+-            `tenant_id` VARCHAR(64) NOT NULL,
+-            `code` VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+-            `name` VARCHAR(128) NOT NULL,
+-            `description` VARCHAR(500) DEFAULT NULL,
+-            `dept_id` BIGINT DEFAULT NULL,
+-            `status` CHAR(1) NOT NULL DEFAULT '1',
+-            `authorization_version` INT NOT NULL DEFAULT 1,
+-            `max_requests_per_minute` INT NOT NULL DEFAULT 60,
+-            `created_by` BIGINT NOT NULL,
+-            `del_flag` CHAR(1) NOT NULL DEFAULT '0',
+-            `created_at` DATETIME(6) NOT NULL,
+-            `updated_at` DATETIME(6) NOT NULL,
+-            PRIMARY KEY (`id`),
+-            UNIQUE KEY `uq_service_account_tenant_id` (`tenant_id`, `id`),
+-            UNIQUE KEY `uq_service_account_code` (`tenant_id`, `code`),
+-            KEY `idx_service_account_list` (`tenant_id`, `del_flag`, `created_at`, `id`),
+-            KEY `idx_service_account_dept` (`tenant_id`, `dept_id`),
+-            KEY `fk_service_account_creator` (`tenant_id`, `created_by`),
+-            CONSTRAINT `fk_service_account_tenant`
+-                FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
+-                ON UPDATE CASCADE ON DELETE RESTRICT,
+-            CONSTRAINT `fk_service_account_dept`
+-                FOREIGN KEY (`tenant_id`, `dept_id`) REFERENCES `sys_dept` (`tenant_id`, `id`)
+-                ON UPDATE CASCADE ON DELETE RESTRICT,
+-            CONSTRAINT `fk_service_account_creator`
+-                FOREIGN KEY (`tenant_id`, `created_by`) REFERENCES `sys_user` (`tenant_id`, `id`)
+-                ON UPDATE CASCADE ON DELETE RESTRICT,
+-            CONSTRAINT `ck_service_account_status` CHECK (`status` IN ('0', '1')),
+-            CONSTRAINT `ck_service_account_del_flag` CHECK (`del_flag` IN ('0', '2')),
+-            CONSTRAINT `ck_service_account_rate` CHECK (`max_requests_per_minute` > 0)
+-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='服务账号';
+-
+-CREATE TABLE IF NOT EXISTS `sys_service_account_role` (
+-            `tenant_id` VARCHAR(64) NOT NULL,
+-            `account_id` BIGINT NOT NULL,
+-            `role_id` BIGINT NOT NULL,
+-            PRIMARY KEY (`tenant_id`, `account_id`, `role_id`),
+-            KEY `idx_service_account_role_role` (`tenant_id`, `role_id`, `account_id`),
+-            CONSTRAINT `fk_service_account_role_account`
+-                FOREIGN KEY (`tenant_id`, `account_id`)
+-                REFERENCES `sys_service_account` (`tenant_id`, `id`)
+-                ON UPDATE CASCADE ON DELETE CASCADE,
+-            CONSTRAINT `fk_service_account_role_role`
+-                FOREIGN KEY (`tenant_id`, `role_id`) REFERENCES `sys_role` (`tenant_id`, `id`)
+-                ON UPDATE CASCADE ON DELETE CASCADE
+-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='服务账号角色关系';
+-
+-CREATE TABLE IF NOT EXISTS `sys_service_credential` (
+-            `id` BIGINT NOT NULL,
+-            `tenant_id` VARCHAR(64) NOT NULL,
+-            `account_id` BIGINT NOT NULL,
+-            `key_id` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+-            `secret_mac` BINARY(32) NOT NULL,
+-            `pepper_version` INT NOT NULL,
+-            `label` VARCHAR(128) NOT NULL,
+-            `status` VARCHAR(16) NOT NULL DEFAULT 'active',
+-            `expires_at` DATETIME(6) NOT NULL,
+-            `last_used_at` DATETIME(6) DEFAULT NULL,
+-            `created_by` BIGINT NOT NULL,
+-            `revoked_at` DATETIME(6) DEFAULT NULL,
+-            `revoked_by` BIGINT DEFAULT NULL,
+-            `created_at` DATETIME(6) NOT NULL,
+-            `updated_at` DATETIME(6) NOT NULL,
+-            `idempotency_key_hash` BINARY(32) NOT NULL,
+-            `request_fingerprint` BINARY(32) NOT NULL,
+-            PRIMARY KEY (`id`),
+-            UNIQUE KEY `uq_service_credential_key_id` (`key_id`),
+-            UNIQUE KEY `uq_service_credential_idempotency` (`tenant_id`, `account_id`, `idempotency_key_hash`),
+-            KEY `idx_service_credential_active` (`tenant_id`, `account_id`, `status`, `expires_at`, `id`),
+-            KEY `idx_service_credential_expiry` (`status`, `expires_at`, `id`),
+-            KEY `fk_service_credential_creator` (`tenant_id`, `created_by`),
+-            KEY `fk_service_credential_revoker` (`tenant_id`, `revoked_by`),
+-            CONSTRAINT `fk_service_credential_account`
+-                FOREIGN KEY (`tenant_id`, `account_id`)
+-                REFERENCES `sys_service_account` (`tenant_id`, `id`)
+-                ON UPDATE CASCADE ON DELETE CASCADE,
+-            CONSTRAINT `fk_service_credential_creator`
+-                FOREIGN KEY (`tenant_id`, `created_by`) REFERENCES `sys_user` (`tenant_id`, `id`)
+-                ON UPDATE CASCADE ON DELETE RESTRICT,
+-            CONSTRAINT `fk_service_credential_revoker`
+-                FOREIGN KEY (`tenant_id`, `revoked_by`) REFERENCES `sys_user` (`tenant_id`, `id`)
+-                ON UPDATE CASCADE ON DELETE RESTRICT,
+-            CONSTRAINT `ck_service_credential_status` CHECK (`status` IN ('active', 'revoked'))
+-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='服务账号 API Key 凭据';
+-
+-CREATE TABLE IF NOT EXISTS `sys_service_delegation` (
+-            `id` BIGINT NOT NULL,
+-            `tenant_id` VARCHAR(64) NOT NULL,
+-            `account_id` BIGINT NOT NULL,
+-            `user_id` BIGINT NOT NULL,
+-            `token_mac` BINARY(32) NOT NULL,
+-            `pepper_version` INT NOT NULL,
+-            `status` VARCHAR(16) NOT NULL DEFAULT 'active',
+-            `version` INT NOT NULL DEFAULT 1,
+-            `not_before` DATETIME(6) NOT NULL,
+-            `expires_at` DATETIME(6) NOT NULL,
+-            `reason` VARCHAR(500) NOT NULL,
+-            `created_by_user_id` BIGINT NOT NULL,
+-            `revoked_at` DATETIME(6) DEFAULT NULL,
+-            `revoked_by` BIGINT DEFAULT NULL,
+-            `created_at` DATETIME(6) NOT NULL,
+-            `updated_at` DATETIME(6) NOT NULL,
+-            `idempotency_key_hash` BINARY(32) NOT NULL,
+-            `request_fingerprint` BINARY(32) NOT NULL,
+-            PRIMARY KEY (`id`),
+-            UNIQUE KEY `uq_service_delegation_tenant_id` (`tenant_id`, `id`),
+-            UNIQUE KEY `uq_service_delegation_token_mac` (`token_mac`),
+-            UNIQUE KEY `uq_service_delegation_idempotency` (`tenant_id`, `user_id`, `idempotency_key_hash`),
+-            KEY `idx_service_delegation_account` (`tenant_id`, `account_id`, `status`, `expires_at`, `id`),
+-            KEY `idx_service_delegation_user` (`tenant_id`, `user_id`, `status`, `expires_at`, `id`),
+-            KEY `idx_service_delegation_expiry` (`status`, `expires_at`, `id`),
+-            KEY `fk_service_delegation_creator` (`tenant_id`, `created_by_user_id`),
+-            KEY `fk_service_delegation_revoker` (`tenant_id`, `revoked_by`),
+-            CONSTRAINT `fk_service_delegation_account`
+-                FOREIGN KEY (`tenant_id`, `account_id`)
+-                REFERENCES `sys_service_account` (`tenant_id`, `id`)
+-                ON UPDATE CASCADE ON DELETE CASCADE,
+-            CONSTRAINT `fk_service_delegation_user`
+-                FOREIGN KEY (`tenant_id`, `user_id`) REFERENCES `sys_user` (`tenant_id`, `id`)
+-                ON UPDATE CASCADE ON DELETE RESTRICT,
+-            CONSTRAINT `fk_service_delegation_creator`
+-                FOREIGN KEY (`tenant_id`, `created_by_user_id`) REFERENCES `sys_user` (`tenant_id`, `id`)
+-                ON UPDATE CASCADE ON DELETE RESTRICT,
+-            CONSTRAINT `fk_service_delegation_revoker`
+-                FOREIGN KEY (`tenant_id`, `revoked_by`) REFERENCES `sys_user` (`tenant_id`, `id`)
+-                ON UPDATE CASCADE ON DELETE RESTRICT,
+-            CONSTRAINT `ck_service_delegation_status` CHECK (`status` IN ('active', 'revoked')),
+-            CONSTRAINT `ck_service_delegation_window` CHECK (`not_before` < `expires_at`)
+-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='用户显式查询委托';
+-
+-CREATE TABLE IF NOT EXISTS `sys_service_delegation_capability` (
+-            `tenant_id` VARCHAR(64) NOT NULL,
+-            `delegation_id` BIGINT NOT NULL,
+-            `capability_key` VARCHAR(96) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+-            PRIMARY KEY (`tenant_id`, `delegation_id`, `capability_key`),
+-            KEY `idx_service_delegation_capability` (`tenant_id`, `capability_key`, `delegation_id`),
+-            CONSTRAINT `fk_service_delegation_capability_delegation`
+-                FOREIGN KEY (`tenant_id`, `delegation_id`)
+-                REFERENCES `sys_service_delegation` (`tenant_id`, `id`)
+-                ON UPDATE CASCADE ON DELETE CASCADE
+-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='委托查询能力白名单';
+-
+-CREATE TABLE IF NOT EXISTS `sys_service_access_audit` (
+-            `id` BIGINT NOT NULL,
+-            `request_id` CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+-            `tenant_id` VARCHAR(64) DEFAULT NULL,
+-            `account_id` BIGINT DEFAULT NULL,
+-            `credential_id` BIGINT DEFAULT NULL,
+-            `delegation_id` BIGINT DEFAULT NULL,
+-            `represented_user_id` BIGINT DEFAULT NULL,
+-            `operation_id` VARCHAR(96) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+-            `capability_key` VARCHAR(96) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+-            `required_permission` VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+-            `access_mode` VARCHAR(16) NOT NULL,
+-            `result` VARCHAR(16) NOT NULL,
+-            `reason_code` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+-            `http_status` INT NOT NULL,
+-            `request_ip_digest` BINARY(32) DEFAULT NULL,
+-            `user_agent_digest` BINARY(32) DEFAULT NULL,
+-            `row_count` INT DEFAULT NULL,
+-            `response_bytes` BIGINT DEFAULT NULL,
+-            `tenant_epoch` INT DEFAULT NULL,
+-            `account_authorization_version` INT DEFAULT NULL,
+-            `user_authorization_version` INT DEFAULT NULL,
+-            `delegation_version` INT DEFAULT NULL,
+-            `started_at` DATETIME(6) NOT NULL,
+-            `completed_at` DATETIME(6) NOT NULL,
+-            PRIMARY KEY (`id`),
+-            UNIQUE KEY `uq_service_access_audit_request` (`request_id`),
+-            KEY `idx_service_access_audit_retention` (`completed_at`, `id`),
+-            KEY `idx_service_access_audit_tenant` (`tenant_id`, `completed_at`, `id`),
+-            KEY `idx_service_access_audit_account` (`tenant_id`, `account_id`, `completed_at`, `id`),
+-            KEY `idx_service_access_audit_user` (`tenant_id`, `represented_user_id`, `completed_at`, `id`),
+-            CONSTRAINT `ck_service_access_audit_mode` CHECK (`access_mode` IN ('direct', 'delegated', 'unknown')),
+-            CONSTRAINT `ck_service_access_audit_result` CHECK (`result` IN ('success', 'denied', 'error')),
+-            CONSTRAINT `ck_service_access_audit_counts` CHECK (
+-                (`row_count` IS NULL OR `row_count` >= 0)
+-                AND (`response_bytes` IS NULL OR `response_bytes` >= 0)
+-            )
+-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Agent API 访问审计';
++CREATE TABLE IF NOT EXISTS `sys_backup_set` (
++        `id` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
++        `scope_id` varchar(48) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
++        `manifest_hash` char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
++        `captured_at` datetime(6) NOT NULL,
++        `retention_until` datetime(6) NOT NULL,
++        `checked_at` datetime(6) NOT NULL,
++        `valid` tinyint(1) NOT NULL,
++        `payload` json NOT NULL,
++        PRIMARY KEY (`id`),
++        KEY `idx_backup_set_scope_capture` (`scope_id`, `captured_at`),
++        CONSTRAINT `ck_backup_set_time` CHECK (`retention_until` > `captured_at`),
++        CONSTRAINT `ck_backup_set_valid` CHECK (`valid` IN (0, 1))
++    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
++
++CREATE TABLE IF NOT EXISTS `sys_backup_resource` (
++        `backup_id` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
++        `resource_key` varchar(140) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
++        PRIMARY KEY (`backup_id`, `resource_key`),
++        KEY `idx_backup_resource_key` (`resource_key`, `backup_id`),
++        CONSTRAINT `fk_backup_resource_set` FOREIGN KEY (`backup_id`)
++            REFERENCES `sys_backup_set` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT
++    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
++
++CREATE TABLE IF NOT EXISTS `sys_restore_run` (
++        `id` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
++        `backup_id` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
++        `scope_id` varchar(48) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
++        `status` varchar(24) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
++        `started_at` datetime(6) NOT NULL,
++        `completed_at` datetime(6) DEFAULT NULL,
++        `recovered_at` datetime(6) NOT NULL,
++        `payload` json NOT NULL,
++        PRIMARY KEY (`id`),
++        KEY `idx_restore_run_backup` (`backup_id`, `started_at`),
++        KEY `idx_restore_run_completed` (`completed_at`),
++        CONSTRAINT `fk_restore_run_backup` FOREIGN KEY (`backup_id`)
++            REFERENCES `sys_backup_set` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
++        CONSTRAINT `ck_restore_run_status`
++            CHECK (`status` IN ('running', 'data_verified', 'succeeded', 'failed')),
++        CONSTRAINT `ck_restore_run_completed`
++            CHECK ((`status` IN ('running', 'data_verified') AND `completed_at` IS NULL)
++                OR (`status` IN ('succeeded', 'failed')
++                    AND `completed_at` IS NOT NULL
++                    AND `completed_at` >= `started_at`))
++    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
++
++CREATE TABLE IF NOT EXISTS `sys_background_job_attempt` (
++    `job_id` BIGINT NOT NULL COMMENT '后台任务ID',
++    `sequence` BIGINT NOT NULL COMMENT '该任务的单调领取序号',
++    `available_at` DATETIME(6) NOT NULL COMMENT '本次领取的最早可执行时间',
++    `started_at` DATETIME(6) NOT NULL COMMENT '领取事务记录的实际开始时间',
++    `finished_at` DATETIME(6) DEFAULT NULL COMMENT '处理器完成或失败时间，租约失效时未知',
++    `closed_at` DATETIME(6) DEFAULT NULL COMMENT '尝试闭合时间，包含租约回收时间',
++    `outcome` VARCHAR(32) NOT NULL COMMENT 'running/succeeded/failed/dead/deferred/lease_expired',
++    PRIMARY KEY (`job_id`, `sequence`),
++    CONSTRAINT `fk_bg_attempt_job` FOREIGN KEY (`job_id`)
++        REFERENCES `sys_background_job` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT,
++    CONSTRAINT `ck_bg_attempt_sequence` CHECK (`sequence` > 0),
++    CONSTRAINT `ck_bg_attempt_times` CHECK (
++        `started_at` >= `available_at`
++        AND (`finished_at` IS NULL OR `finished_at` >= `started_at`)
++        AND (`closed_at` IS NULL OR `closed_at` >= `started_at`)),
++    CONSTRAINT `ck_bg_attempt_outcome` CHECK (
++        (`outcome` = 'running' AND `finished_at` IS NULL AND `closed_at` IS NULL)
++        OR (`outcome` = 'lease_expired' AND `finished_at` IS NULL AND `closed_at` IS NOT NULL)
++        OR (`outcome` IN ('succeeded', 'failed', 'dead', 'deferred')
++            AND `finished_at` IS NOT NULL AND `closed_at` IS NOT NULL
++            AND `closed_at` = `finished_at`))
++) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='后台任务单次执行事实';
+ 
+ CREATE TABLE IF NOT EXISTS `sys_outbox_event` (
+     `id` BIGINT NOT NULL,
 diff --git a/xtask/src/cli.rs b/xtask/src/cli.rs
 index 4d2fcd597f19b69038bb8c60942751a236644c7e..f5b4333a44754e53f3861aa0e614f5b421be281b 100644
 --- a/xtask/src/cli.rs

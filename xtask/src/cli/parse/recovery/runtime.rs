@@ -3,10 +3,9 @@ use std::{collections::BTreeMap, path::Path};
 use crate::{local_test_path::LocalTestPathKind, workspace::root_dir};
 
 use super::super::super::model::{
-    CliError, LEGACY_B0_ADAPTER_CONTRACT, RUNTIME_USAGE, RuntimeBindOptions, RuntimeBuildOptions,
-    RuntimeCommand, RuntimeControlInputs, RuntimeGenerationOptions, RuntimeOperation,
-    RuntimeRecoverOptions, RuntimeRegistrationOptions, RuntimeSources, RuntimeStartOptions,
-    RuntimeVerifyOptions,
+    CliError, RUNTIME_USAGE, RuntimeBindOptions, RuntimeBuildOptions, RuntimeCommand,
+    RuntimeControlInputs, RuntimeGenerationOptions, RuntimeOperation, RuntimeRecoverOptions,
+    RuntimeRegistrationOptions, RuntimeSources, RuntimeStartOptions, RuntimeVerifyOptions,
 };
 use super::runtime_values::{
     commit_sha, coordinator_path, ensure_only, external_directory, parse_operation, parse_options,
@@ -285,7 +284,7 @@ fn sources(values: &BTreeMap<&str, &str>) -> Result<RuntimeSources, CliError> {
         .transpose()?;
     match (&adapter_contract, &product_backend) {
         (None, None) => {}
-        (Some(contract), Some(_)) if contract == LEGACY_B0_ADAPTER_CONTRACT => {}
+        (Some(contract), Some(_)) if contract == crate::recovery::b0::CONTRACT => {}
         (Some(_), Some(_)) => return Err(CliError::new("未知的后端适配合同")),
         _ => {
             return Err(CliError::new(

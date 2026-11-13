@@ -126,7 +126,7 @@ pub(in crate::recovery::runtime) fn generation_directory(
         "恢复运行代次目录不是普通目录",
     )?;
     let mut allowed = BTreeSet::from([LAUNCH.to_owned()]);
-    let legacy = if b0::matches(&request["authority"]) {
+    let legacy = if crate::recovery::b0::matches(&request["authority"]) {
         [b0::config_directory("api"), b0::config_directory("worker")]
     } else {
         [None, None]

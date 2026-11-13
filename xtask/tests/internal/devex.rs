@@ -543,7 +543,7 @@ fn stable_readiness_comparison_reports_and_enforces_adapter_provenance() {
     );
     assert_eq!(
         comparison["baselineProvenance"]["patch_sha256"],
-        BaselineContract::STABLE_READINESS_B0_PATCH_SHA256
+        format!("sha256:{}", crate::recovery::b0::PATCH_SHA256)
     );
 
     for run in [&baseline, &candidate] {
@@ -555,14 +555,14 @@ fn stable_readiness_comparison_reports_and_enforces_adapter_provenance() {
         fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
     }
     let error = compare(&baseline, &candidate).unwrap_err().to_string();
-    assert!(error.contains("实际 B0 源码身份不一致"), "{error}");
+    assert!(error.contains("来源或执行适配证据无效"), "{error}");
 
     for run in [&baseline, &candidate] {
         let metadata_path = run.join("metadata.json");
         let mut metadata: serde_json::Value =
             serde_json::from_slice(&fs::read(&metadata_path).unwrap()).unwrap();
         metadata["pairing"]["baseline_provenance"]["adapter_commit"] =
-            serde_json::json!("c05114bcdf5c369cd74087db6317ce3c8f89bee8");
+            serde_json::json!(crate::recovery::b0::COMMIT);
         fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
     }
 
@@ -573,7 +573,7 @@ fn stable_readiness_comparison_reports_and_enforces_adapter_provenance() {
     fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
     let error = compare(&baseline, &candidate).unwrap_err().to_string();
     assert!(error.contains("实际 B0 源码身份不一致"), "{error}");
-    metadata["backend"]["commit"] = serde_json::json!("c05114bcdf5c369cd74087db6317ce3c8f89bee8");
+    metadata["backend"]["commit"] = serde_json::json!(crate::recovery::b0::COMMIT);
     fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
 
     for run in [&baseline, &candidate] {
@@ -585,7 +585,7 @@ fn stable_readiness_comparison_reports_and_enforces_adapter_provenance() {
         fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
     }
     let error = compare(&baseline, &candidate).unwrap_err().to_string();
-    assert!(error.contains("来源或工具层适配证据无效"), "{error}");
+    assert!(error.contains("来源或执行适配证据无效"), "{error}");
 
     for path in [baseline, candidate] {
         fs::remove_dir_all(path).unwrap();
@@ -787,34 +787,34 @@ fn fake_stable_readiness_run(name: &str, arm: PairedArm) -> PathBuf {
     metadata["features"] = serde_json::json!(["resource"]);
     metadata["frontend"] = serde_json::json!({
         "commit": if arm == PairedArm::Baseline {
-            BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT
+            crate::recovery::b0::FRONTEND
         } else {
             "1111111111111111111111111111111111111111"
         },
         "dirty": false,
         "worktree_fingerprint": if arm == PairedArm::Baseline {
-            clean_source_fingerprint(BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT)
+            clean_source_fingerprint(crate::recovery::b0::FRONTEND)
         } else {
             format!("sha256:frontend-{}", arm.as_str())
         },
     });
     if arm == PairedArm::Baseline {
         metadata["backend"] = serde_json::json!({
-            "commit": "c05114bcdf5c369cd74087db6317ce3c8f89bee8",
+            "commit": crate::recovery::b0::COMMIT,
             "dirty": false,
             "worktree_fingerprint": clean_source_fingerprint(
-                "c05114bcdf5c369cd74087db6317ce3c8f89bee8"
+                crate::recovery::b0::COMMIT
             ),
         });
     }
     metadata["pairing"]["baseline_contract"] = serde_json::json!("legacy-stable-readiness-b0-v1");
     metadata["pairing"]["baseline_provenance"] = serde_json::json!({
-        "base_commit": BaselineContract::STABLE_READINESS_B0_BASE_COMMIT,
-        "adapter_commit": "c05114bcdf5c369cd74087db6317ce3c8f89bee8",
-        "patch_sha256": BaselineContract::STABLE_READINESS_B0_PATCH_SHA256,
-        "adapter_tree": BaselineContract::STABLE_READINESS_B0_ADAPTER_TREE,
-        "frontend_commit": BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT,
-        "adapter_paths": BaselineContract::STABLE_READINESS_B0_ADAPTER_PATHS,
+        "base_commit": crate::recovery::b0::BACKEND,
+        "adapter_commit": crate::recovery::b0::COMMIT,
+        "patch_sha256": format!("sha256:{}", crate::recovery::b0::PATCH_SHA256),
+        "adapter_tree": crate::recovery::b0::TREE,
+        "frontend_commit": crate::recovery::b0::FRONTEND,
+        "adapter_paths": crate::recovery::b0::PATHS,
     });
     fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
 
@@ -826,12 +826,10 @@ fn fake_stable_readiness_run(name: &str, arm: PairedArm) -> PathBuf {
             let mut sample: serde_json::Value = serde_json::from_str(line).unwrap();
             sample["cache_state"] = serde_json::json!("warm");
             if arm == PairedArm::Baseline {
-                sample["source_fingerprints"]["backend"] = serde_json::json!(
-                    clean_source_fingerprint("c05114bcdf5c369cd74087db6317ce3c8f89bee8")
-                );
-                sample["source_fingerprints"]["frontend"] = serde_json::json!(
-                    clean_source_fingerprint(BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT)
-                );
+                sample["source_fingerprints"]["backend"] =
+                    serde_json::json!(clean_source_fingerprint(crate::recovery::b0::COMMIT));
+                sample["source_fingerprints"]["frontend"] =
+                    serde_json::json!(clean_source_fingerprint(crate::recovery::b0::FRONTEND));
             } else {
                 sample["source_fingerprints"]["frontend"] =
                     serde_json::json!(format!("sha256:frontend-{}", arm.as_str()));

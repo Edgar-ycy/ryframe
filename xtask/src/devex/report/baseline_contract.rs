@@ -62,7 +62,7 @@ fn validate_stable_readiness_b0(
         .as_ref()
         .ok_or("legacy-stable-readiness-b0-v1 缺少 baseline 来源证据")?;
     if !valid_stable_readiness_provenance(provenance) {
-        return Err("legacy-stable-readiness-b0-v1 来源或工具层适配证据无效".into());
+        return Err("legacy-stable-readiness-b0-v1 来源或执行适配证据无效".into());
     }
     Ok(())
 }
@@ -83,7 +83,7 @@ pub(super) fn validate_source_binding(metadata: &RunMetadata) -> Result<()> {
         .as_ref()
         .ok_or("legacy-stable-readiness-b0-v1 缺少 baseline 来源证据")?;
     if !valid_stable_readiness_provenance(provenance) {
-        return Err("legacy-stable-readiness-b0-v1 来源或工具层适配证据无效".into());
+        return Err("legacy-stable-readiness-b0-v1 来源或执行适配证据无效".into());
     }
     if metadata.backend.commit.as_deref() != Some(provenance.adapter_commit.as_str())
         || metadata.backend.dirty != Some(false)
@@ -96,9 +96,7 @@ pub(super) fn validate_source_binding(metadata: &RunMetadata) -> Result<()> {
         && (frontend.commit.as_deref() != provenance.frontend_commit.as_deref()
             || frontend.dirty != Some(false)
             || frontend.worktree_fingerprint
-                != clean_worktree_fingerprint(
-                    BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT,
-                ))
+                != clean_worktree_fingerprint(crate::recovery::b0::FRONTEND))
     {
         return Err("legacy-stable-readiness-b0-v1 报告与实际前端 B0 身份不一致".into());
     }
@@ -132,15 +130,16 @@ fn validate_workload_binding(metadata: &RunMetadata, pairing: &PairingMetadata) 
 }
 
 fn valid_stable_readiness_provenance(provenance: &BaselineProvenance) -> bool {
-    provenance.base_commit == BaselineContract::STABLE_READINESS_B0_BASE_COMMIT
-        && valid_git_commit(&provenance.adapter_commit)
-        && provenance.adapter_commit != provenance.base_commit
-        && provenance.patch_sha256 == BaselineContract::STABLE_READINESS_B0_PATCH_SHA256
-        && provenance.adapter_tree.as_deref()
-            == Some(BaselineContract::STABLE_READINESS_B0_ADAPTER_TREE)
-        && provenance.frontend_commit.as_deref()
-            == Some(BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT)
-        && provenance.adapter_paths == BaselineContract::STABLE_READINESS_B0_ADAPTER_PATHS
+    provenance.base_commit == crate::recovery::b0::BACKEND
+        && provenance.adapter_commit == crate::recovery::b0::COMMIT
+        && provenance.patch_sha256 == format!("sha256:{}", crate::recovery::b0::PATCH_SHA256)
+        && provenance.adapter_tree.as_deref() == Some(crate::recovery::b0::TREE)
+        && provenance.frontend_commit.as_deref() == Some(crate::recovery::b0::FRONTEND)
+        && provenance
+            .adapter_paths
+            .iter()
+            .map(String::as_str)
+            .eq(crate::recovery::b0::PATHS.iter().copied())
 }
 
 fn clean_worktree_fingerprint(commit: &str) -> String {
@@ -237,11 +236,4 @@ fn valid_sha256(value: &str) -> bool {
     value
         .strip_prefix("sha256:")
         .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
-}
-
-fn valid_git_commit(value: &str) -> bool {
-    value.len() == 40
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }

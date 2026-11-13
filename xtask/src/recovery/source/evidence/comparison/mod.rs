@@ -146,7 +146,7 @@ fn validate_output(backend: &Path, output: &Path) -> Result<()> {
         .strip_prefix(backend)?
         .to_str()
         .ok_or("比较来源输出必须为 UTF-8")?;
-    adapter::git(backend, &["check-ignore", relative], None)?;
+    adapter::git(backend, &["check-ignore", relative], None, None)?;
     Ok(())
 }
 
@@ -248,8 +248,8 @@ pub(crate) fn capture(args: &Value) -> Result<Value> {
         })
         .collect::<BTreeSet<_>>();
     if roots.len() != 5
-        || b1["sources"]["backend"]["source"]["snapshot"]["head"] == adapter::BACKEND
-        || b1["sources"]["frontend"]["source"]["snapshot"]["head"] == adapter::FRONTEND
+        || b1["sources"]["backend"]["source"]["snapshot"]["head"] == crate::recovery::b0::BACKEND
+        || b1["sources"]["frontend"]["source"]["snapshot"]["head"] == crate::recovery::b0::FRONTEND
     {
         return Err("比较来源必须绑定五个独立根，B1 双端提交均须不同于 B0".into());
     }

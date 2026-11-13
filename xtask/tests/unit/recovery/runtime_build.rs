@@ -344,11 +344,17 @@ fn reader_keeps_original_target_receipts_and_rejects_unknown_fields_wrong_comman
     )
     .unwrap();
     assert_eq!(serde_json::to_vec(&receipt).unwrap(), bytes);
-    for mutation in ["extra", "command", "role"] {
+    for mutation in ["extra", "command", "role", "product", "tools", "full"] {
         let mut changed = receipt.clone();
         match mutation {
             "extra" => changed["artifacts"]["api"]["cargo_executable"] = json!("unexpected"),
             "command" => changed["artifacts"]["api"]["command"][0] = json!("other-cargo"),
+            "product" => changed["sources"]["product"]["api"]["sha256"] = json!("0".repeat(64)),
+            "tools" => changed["sources"]["tools"]["sha256"] = json!("0".repeat(64)),
+            "full" => {
+                changed["sources"]["full"]["source"]["snapshot"]["head"] =
+                    json!(crate::recovery::b0::BACKEND)
+            }
             _ => {
                 changed["artifacts"]
                     .as_object_mut()

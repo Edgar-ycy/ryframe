@@ -136,7 +136,7 @@ fn role(
     let (directory, files) = snapshot;
     let digest = digest::plan_hash(&json!({"APP_ENV":"test"}))?;
     let mut result = json!({"directory":directory,"files":files,"environment_sha256":digest});
-    if super::b0::matches(&request["authority"]) {
+    if crate::recovery::b0::matches(&request["authority"]) {
         result["legacy"] = legacy_runtime::recipe(&legacy::project(merged)?);
     }
     Ok((id, result))

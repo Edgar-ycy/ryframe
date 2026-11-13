@@ -19,7 +19,11 @@ pub(super) fn collect(
     if let Some(expected) = contract.required_adapter_commit() {
         require_commit(backend_root, "后端适配", expected, contract)?;
     }
-    require_parent(backend_root, base_commit, contract)?;
+    if contract == BaselineContract::LegacyStableReadinessB0V1 {
+        require_b0(backend_root)?;
+    } else {
+        require_parent(backend_root, base_commit, contract)?;
+    }
     require_clean(backend_root, "后端适配", contract)?;
 
     let patch = git_output(
@@ -46,11 +50,19 @@ pub(super) fn collect(
         require_commit(
             frontend_root,
             "前端 B0",
-            BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT,
+            crate::recovery::b0::FRONTEND,
             contract,
         )?;
         require_clean(frontend_root, "前端 B0", contract)?;
-        frontend_commit = Some(BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT.to_owned());
+        frontend_commit = Some(crate::recovery::b0::FRONTEND.to_owned());
+        require_b0(backend_root)?;
+        require_commit(
+            backend_root,
+            "后端适配",
+            crate::recovery::b0::COMMIT,
+            contract,
+        )?;
+        require_clean(backend_root, "后端适配", contract)?;
     }
 
     Ok(Some(BaselineProvenance {
@@ -69,27 +81,27 @@ fn validate_stable_readiness_adapter(
     paths: &[String],
     tree: &str,
 ) -> Result<()> {
-    if sha256(BaselineContract::STABLE_READINESS_B0_ADAPTER_PATCH)
-        != BaselineContract::STABLE_READINESS_B0_PATCH_SHA256
-    {
-        return Err("stable-readiness B0 内嵌适配资产摘要无效".into());
-    }
-    if patch_sha256 != BaselineContract::STABLE_READINESS_B0_PATCH_SHA256
-        || patch != BaselineContract::STABLE_READINESS_B0_ADAPTER_PATCH
+    crate::recovery::b0::validate_patch(crate::recovery::b0::PATCH_BYTES)?;
+    if patch_sha256 != format!("sha256:{}", crate::recovery::b0::PATCH_SHA256)
+        || patch != crate::recovery::b0::PATCH_BYTES
     {
         return Err("stable-readiness B0 适配补丁摘要不匹配".into());
     }
-    let expected = BaselineContract::STABLE_READINESS_B0_ADAPTER_PATHS;
-    if paths.iter().map(String::as_str).ne(expected) {
+    let expected = crate::recovery::b0::PATHS;
+    if paths
+        .iter()
+        .map(String::as_str)
+        .ne(expected.iter().copied())
+    {
         return Err(format!(
-            "stable-readiness B0 适配越过工具层：预期 {expected:?}，实际 {paths:?}"
+            "stable-readiness B0 适配超出登记路径：预期 {expected:?}，实际 {paths:?}"
         )
         .into());
     }
-    if tree != BaselineContract::STABLE_READINESS_B0_ADAPTER_TREE {
+    if tree != crate::recovery::b0::TREE {
         return Err(format!(
             "stable-readiness B0 适配树不匹配：预期 {}，实际 {tree}",
-            BaselineContract::STABLE_READINESS_B0_ADAPTER_TREE
+            crate::recovery::b0::TREE
         )
         .into());
     }
@@ -110,6 +122,30 @@ fn require_commit(
         )
         .into());
     }
+    Ok(())
+}
+
+fn require_b0(root: &Path) -> Result<()> {
+    use crate::recovery::b0;
+    for (commit, tree) in [(b0::BACKEND, b0::BASE_TREE), (b0::COMMIT, b0::TREE)] {
+        if !git_text(
+            root,
+            &[
+                "for-each-ref",
+                "--format=%(refname)",
+                &format!("refs/replace/{commit}"),
+            ],
+        )?
+        .is_empty()
+            || git_text(root, &["rev-parse", &format!("{commit}^{{tree}}")])? != tree
+        {
+            return Err("B0 产品或执行对象存在替换引用或树不匹配".into());
+        }
+    }
+    git_output(
+        root,
+        &["merge-base", "--is-ancestor", b0::BACKEND, b0::COMMIT],
+    )?;
     Ok(())
 }
 
@@ -164,7 +200,22 @@ fn git_text(root: &Path, args: &[&str]) -> Result<String> {
 }
 
 fn git_output(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
-    let output = Command::new("git").args(args).current_dir(root).output()?;
+    let mut command = Command::new("git");
+    for (name, _) in std::env::vars_os() {
+        if name
+            .to_string_lossy()
+            .to_ascii_uppercase()
+            .starts_with("GIT_")
+        {
+            command.env_remove(name);
+        }
+    }
+    let output = command
+        .args(args)
+        .current_dir(root)
+        .env("GIT_NO_REPLACE_OBJECTS", "1")
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .output()?;
     if output.status.success() {
         Ok(output.stdout)
     } else {

@@ -25,7 +25,9 @@ fn backend(
     let binding = common::binding(receipt_path)?;
     let value = common::read_bound(root, &binding, "比较后端构建收据")?;
     bridge::verify_build(root, receipt_path, &value)?;
-    if value["kind"] != "restore-backend-build" || value["sources"]["full"] != *inventory {
+    if value["kind"] != "restore-backend-build"
+        || value["sources"] != source::backend_domains(&source::validate_inventory(inventory)?)?
+    {
         return Err("比较后端构建与当前完整源码不同".into());
     }
     let environment =
@@ -83,9 +85,9 @@ pub(super) fn capture(
         product.clone()
     };
     let front = repository(&path(&args[format!("{prefix}_frontend")])?)?;
-    let product_inventory = inventory(&product, b0.then_some(adapter::BACKEND))?;
-    let execution_inventory = inventory(&execution, b0.then_some(adapter::COMMIT))?;
-    let frontend_inventory = inventory(&front, b0.then_some(adapter::FRONTEND))?;
+    let product_inventory = inventory(&product, b0.then_some(crate::recovery::b0::BACKEND))?;
+    let execution_inventory = inventory(&execution, b0.then_some(crate::recovery::b0::COMMIT))?;
+    let frontend_inventory = inventory(&front, b0.then_some(crate::recovery::b0::FRONTEND))?;
     let (build, backend_binding, environment_binding) = backend(
         &execution,
         &path(&args[format!("{prefix}_backend_build")])?,
@@ -98,11 +100,15 @@ pub(super) fn capture(
         &frontend_inventory,
         b0,
     )?;
-    if b0
-        && source::backend_domains(&source::validate_inventory(&product_inventory)?)?["product"]
-            != build["sources"]["product"]
-    {
-        return Err("B0 适配构建改变了 API 或 Worker 产品输入".into());
+    if b0 {
+        let registered = adapter::registered(backend_root, &execution, &product, reconstruct)?;
+        if registered["inventory"] != product_inventory
+            || registered["execution_inventory"] != execution_inventory
+            || build["sources"]
+                != source::backend_domains(&source::validate_inventory(&execution_inventory)?)?
+        {
+            return Err("B0 构建没有绑定原产品及完整适配执行来源".into());
+        }
     }
     Ok(
         json!({"roots":{"source_backend":product,"execution_backend":execution,"frontend":front},
@@ -110,7 +116,7 @@ pub(super) fn capture(
         "execution_sources":{"backend":execution_inventory,"frontend":frontend_inventory},
         "builds":{"backend":backend_binding,"frontend":frontend_binding},
         "backend_environment":environment_binding,
-        "adapter":if b0 { adapter::evidence(backend_root, reconstruct)? } else { Value::Null },
+        "adapter":if b0 { crate::recovery::b0::evidence()? } else { Value::Null },
         "source_export_result_sha256":export["result"]["sha256"],
         "source_export_identity_sha256":export["identity_sha256"]}),
     )

@@ -331,9 +331,8 @@ fn frozen_b0_receipt_binds_private_role_files_and_only_backend_child_gets_legacy
     let mut request = fixture.request();
     request["authority"]["frontend_sha"] = json!(crate::recovery::frontend_build::b0::HEAD);
     request["authority"]["backend_adapter_contract"] = json!("legacy-stable-readiness-b0-v1");
-    request["authority"]["backend_product_sha"] = json!("815c5eafb09d4b493319d255fb7ab88ddd02c8b6");
-    request["authority"]["backend_execution_sha"] =
-        json!("c05114bcdf5c369cd74087db6317ce3c8f89bee8");
+    request["authority"]["backend_product_sha"] = json!(crate::recovery::b0::BACKEND);
+    request["authority"]["backend_execution_sha"] = json!(crate::recovery::b0::COMMIT);
     let mut inputs = Inputs::new(&fixture.root);
     let example_password = "synthetic-b0-db-password";
     for directory in [&fixture.api, &fixture.worker] {
