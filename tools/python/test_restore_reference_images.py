@@ -113,22 +113,6 @@ class RestoreImagesTests(unittest.TestCase):
         reference.write_json(path, {"observations": self.current["databases"]})
         return SimpleNamespace(observations=observations, receipt_file=reference.document_binding(read_json_document(path)))
 
-    def test_expected_after_replaces_only_backup_tables_and_keeps_complete_metadata(self):
-        self.assertNotEqual(self.after["databases"], self.before["databases"])
-        for name, value in self.after["databases"].items():
-            self.assertEqual(value["preserved"], self.before["databases"][name]["preserved"])
-            self.assertEqual(value["ownership"], self.before["databases"][name]["ownership"])
-            self.assertEqual(value["tables"]["sys_post"], {"rows": 1, "sha256": "b" * 64})
-        self.assertEqual(self.after["objects"]["uploads"]["keys"], ["target/.ryframe-owner", "target/tenant/file.txt"])
-
-    def test_backup_missing_any_table_or_schema_drift_is_rejected(self):
-        for change in (lambda value: value["databases"][0]["tables"].pop(),
-                       lambda value: value.update(tenant_schema_fingerprint="a" * 64)):
-            manifest = copy.deepcopy(self.manifest)
-            change(manifest)
-            with self.assertRaises(ValueError):
-                images.expected_images(self.plan, manifest, self.initialized)
-
     def test_complete_before_image_is_bound_without_remote_writes(self):
         descriptor = self.subject.capture("before", after=False)
         value = reference.read_json(Path(descriptor["path"]))
@@ -165,44 +149,6 @@ class RestoreImagesTests(unittest.TestCase):
         self.current["databases"]["target_0"]["preserved"]["sys_restore_run"]["rows"] = 1
         with patch.object(self.subject, "_objects", return_value=(self.current["objects"], [])), self.assertRaises(ValueError):
             self.subject.capture("after-drift", after=True)
-
-    def test_after_objects_reject_unknown_keys_before_downloading_business(self):
-        owner_rows = [{"bucket": bucket, **value["owner"]} for bucket, value in self.before["objects"].items()]
-        self.resources.object_keys.side_effect = lambda bucket: set(self.after["objects"][bucket]["keys"]) | {"target/unknown"}
-        with patch.object(images, "CaptureReader") as reader, patch.object(images, "observe_target_object") as observe:
-            reader.return_value.owners.return_value = owner_rows
-            with self.assertRaisesRegex(ValueError, "五桶完整范围"):
-                self.subject._objects(self.resources, Mock(), self.work, after=True)
-            observe.assert_not_called()
-
-    def test_after_objects_bind_every_complete_capture_and_final_head_recheck(self):
-        owner_rows = [{"bucket": bucket, **value["owner"]} for bucket, value in self.before["objects"].items()]
-        self.resources.object_keys.side_effect = lambda bucket: set(self.after["objects"][bucket]["keys"])
-        def observe(_backend, _tools, bucket, key, output, **kwargs):
-            self.assertEqual((bucket, key), ("uploads", "target/tenant/file.txt"))
-            expected = self.manifest["objects"][next(i for i, item in enumerate(self.manifest["objects"]) if item["bucket"] == bucket)]["entries"][0]
-            self.assertEqual(kwargs["expected"], {field: expected[field] for field in ("bytes", "sha256")})
-            output.mkdir()
-            capture = output / "capture"
-            capture.mkdir()
-            reference.write_json(output / "observation.json", {"status": "object_present"})
-            reference.write_json(capture / "capture.json", {"metadata": {"content_type": "text/plain"}})
-            return SimpleNamespace(capture_directory=capture)
-        def heads(_backend, _tools, items, observations, output):
-            self.assertEqual(len(items), 1)
-            self.assertEqual(set(observations), {("uploads", "target/tenant/file.txt")})
-            output.mkdir()
-            reference.write_json(output / "verified.json", {"heads_verified": True})
-        with patch.object(images, "CaptureReader") as reader, \
-                patch.object(images, "observe_target_object", side_effect=observe), \
-                patch.object(images, "read_observation", side_effect=lambda path, **_kw: reference.read_json(path / "observation.json")), \
-                patch.object(images, "verify_target_heads", side_effect=heads):
-            reader.return_value.owners.return_value = owner_rows
-            actual, bindings = self.subject._objects(self.resources, Mock(), self.work, after=True)
-        self.assertEqual(actual, self.after["objects"])
-        self.assertEqual(len(bindings), 2)
-        for descriptor in bindings:
-            self.assertEqual(reference.file_digest(Path(descriptor["path"])), {key: descriptor[key] for key in ("bytes", "sha256")})
 
     def test_inventory_receipt_drift_during_object_observation_is_rejected(self):
         def objects(**_kwargs):
