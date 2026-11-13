@@ -9,6 +9,42 @@ pub(super) use transaction::{
     target_write_error,
 };
 
+impl TenantDataTargetHandle {
+    pub(crate) async fn lock_active_projection_fence(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        generation: i64,
+        switch_token: &str,
+    ) -> Result<(), TenantDataError> {
+        let provision = FenceProvision {
+            tenant_id: tenant_id.into(),
+            target_key: self.target_key.clone(),
+            placement_generation: generation,
+            switch_token: switch_token.into(),
+        };
+        let slot = if self.is_dedicated() {
+            Some(lock_target_slot(transaction, self.target_key()).await?)
+        } else {
+            None
+        };
+        require_exact_dedicated_slot(slot.as_ref(), &provision)?;
+        let fence = lock_fence(transaction, &provision).await?;
+        if fence.as_ref().is_none_or(|fence| {
+            !fence_matches(fence, &provision)
+                || fence.state != "active"
+                || fence.switch_token.trim().is_empty()
+        }) {
+            return Err(TenantDataError::FenceRejected {
+                tenant_id: tenant_id.into(),
+                target_key: self.target_key.clone(),
+                reason: "迁移投影要求精确匹配的 active fence".into(),
+            });
+        }
+        Ok(())
+    }
+}
+
 impl TenantDatabaseRouter {
     pub async fn freeze_fence(
         &self,

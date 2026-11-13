@@ -192,8 +192,7 @@ impl TenantDataMigrationService {
             // 目标批次提交后，再在控制库同一事务内续租并持久化检查点。
             let progress_now = self.persistence.database_now().await?;
             let progress_transaction = self.persistence.begin().await?;
-            self.renew_operation_lease(&*progress_transaction, migration, progress_now)
-                .await?;
+            Self::renew_operation_lease(&*progress_transaction, migration, progress_now).await?;
             let current = progress_transaction.lock_migration(migration.id).await?;
             ensure_not_cancel_requested(&current)?;
             if current.state != TenantDataMigrationRecord::STATE_COPYING {

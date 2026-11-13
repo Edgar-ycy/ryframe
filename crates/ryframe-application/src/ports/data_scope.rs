@@ -19,4 +19,9 @@ pub trait DataScopeMutationTransaction: Send + Sync {
 #[async_trait::async_trait]
 pub trait DataScopeProjectionPublisher: Send + Sync {
     async fn publish(&self, event: &DataScopeProjectionEvent) -> ryframe_kernel::AppResult<()>;
+
+    async fn publish_for_migration(
+        &self,
+        fence: super::tenant_data::TenantDataFence<'_>,
+    ) -> ryframe_kernel::AppResult<i64>;
 }

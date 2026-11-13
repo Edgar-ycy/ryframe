@@ -221,6 +221,7 @@ pub struct TenantOperationLeaseRecord {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TenantMigrationContextRecord {
     pub authorization_epoch: i32,
+    pub data_scope_version: i64,
 }
 
 /// 租户数据迁移状态机所拥有的控制库工作单元。

@@ -16,7 +16,7 @@ use ryframe_application::{
 };
 use ryframe_db::ControlDatabaseCluster;
 use ryframe_kernel::{AppError, AppResult};
-use ryframe_tenant_db::TenantDatabaseRouter;
+use ryframe_tenant_db::{TenantDatabaseRouter, application_ports::data_scope_projection};
 
 use super::application_policy::ApplicationPolicies;
 
@@ -248,6 +248,7 @@ fn build_extended_services(
         ),
         Arc::<TenantDatabaseRouter>::clone(&tenant_data),
         Arc::<TenantDatabaseRouter>::clone(&tenant_data),
+        data_scope_projection::publisher(database.clone(), tenant_data.as_ref().clone()),
         job_queue.clone(),
         authorization_cache.clone(),
     ));

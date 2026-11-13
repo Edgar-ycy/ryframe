@@ -13,7 +13,7 @@ use ryframe_kernel::{ActorContext, AppError, AppResult};
 use serde_json::json;
 
 use crate::{
-    AuthorizationCache, EnqueueJob, JobQueue,
+    AuthorizationCache, DataScopeProjectionPublisher, EnqueueJob, JobQueue,
     ports::tenant_data::{
         CreateTenantDataMigrationRecord, TenantDataMigrationPersistencePort,
         TenantDataMigrationPort, TenantDataMigrationRecord, TenantDataPlacementRecord,
@@ -46,6 +46,7 @@ pub struct TenantDataMigrationService {
     pub(super) persistence: Arc<dyn TenantDataMigrationPersistencePort>,
     targets: Arc<dyn TenantDataTargetPort>,
     pub(super) tenant_migration: Arc<dyn TenantDataMigrationPort>,
+    pub(super) scope_projection: Arc<dyn DataScopeProjectionPublisher>,
     pub(super) queue: Arc<JobQueue>,
     pub(super) authorization_cache: AuthorizationCache,
 }
@@ -55,6 +56,7 @@ impl TenantDataMigrationService {
         persistence: Arc<dyn TenantDataMigrationPersistencePort>,
         targets: Arc<dyn TenantDataTargetPort>,
         tenant_migration: Arc<dyn TenantDataMigrationPort>,
+        scope_projection: Arc<dyn DataScopeProjectionPublisher>,
         queue: Arc<JobQueue>,
         authorization_cache: AuthorizationCache,
     ) -> Self {
@@ -62,6 +64,7 @@ impl TenantDataMigrationService {
             persistence,
             targets,
             tenant_migration,
+            scope_projection,
             queue,
             authorization_cache,
         }

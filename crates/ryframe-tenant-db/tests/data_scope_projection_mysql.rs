@@ -16,6 +16,9 @@ mod mysql;
 #[path = "registry/pools_mysql.rs"]
 mod registry_pools;
 
+#[path = "data_scope_projection/migration.rs"]
+mod migration;
+
 const TARGET: &str = "projection-dedicated";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -26,7 +29,8 @@ async fn projection_publish_is_versioned_atomic_and_fails_closed() {
             .await
             .map_err(message)?;
         let router = router(&database, &TenantDataConfig::default())?;
-        exercise(&database, &database, &router).await
+        exercise(&database, &database, &router).await?;
+        migration::exercise(&database, &database, &router).await
     })
     .await;
     mysql::run_mysql_test("projection-control", |control| async move {
@@ -45,6 +49,7 @@ async fn projection_publish_is_versioned_atomic_and_fails_closed() {
                 mysql::execute(&control, "UPDATE sys_tenant_data_placement SET current_target_key='projection-dedicated', placement_generation=2, switch_token='projection-test', state='active' WHERE tenant_id='system'").await?;
                 router.provision_tenant_fence("system", TARGET, 2, "projection-test").await.map_err(message)?;
                 exercise(&control, &target, &router).await?;
+                migration::exercise(&control, &target, &router).await?;
                 assert_no_control_tables(&target).await
             }.await;
             // 注册表中的池不同于 owned 夹具业务池，成功清理前必须显式关闭。

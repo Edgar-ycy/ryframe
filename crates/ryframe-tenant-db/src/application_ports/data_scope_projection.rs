@@ -13,6 +13,10 @@ use crate::TenantDatabaseRouter;
 
 use super::map_error;
 
+mod migration;
+mod rows;
+mod verification;
+
 const PAGE_SIZE: u64 = 1000;
 
 #[derive(Debug, FromQueryResult)]
@@ -72,6 +76,13 @@ impl DataScopeProjectionPublisher for TenantDataScopeProjectionPublisher {
         let result = self.publish_with_control_snapshot(&control, event).await;
         let finish = control.commit().await.db();
         result.and(finish)
+    }
+
+    async fn publish_for_migration(
+        &self,
+        fence: ryframe_application::ports::tenant_data::TenantDataFence<'_>,
+    ) -> AppResult<i64> {
+        self.publish_migration_projection(fence).await
     }
 }
 
@@ -136,32 +147,48 @@ impl TenantDataScopeProjectionPublisher {
         {
             return Ok(());
         }
-        let token = build_token(
-            &event.tenant_id,
-            source_version,
-            &placement.target_key,
-            placement.generation,
-            &placement.switch_token,
-        );
-        clear_build(target, &event.tenant_id, &token).await?;
-        let (owner_count, dept_count, digest) =
-            copy_projection(control, target, &event.tenant_id, &token).await?;
-        save_metadata(
+        write_projection(
+            control,
             target,
             &event.tenant_id,
-            &ProjectionPublication {
-                source_version,
-                token: &token,
-                placement: &placement,
-                digest: &digest,
-                owner_count,
-                dept_count,
-            },
+            source_version,
+            &placement,
         )
-        .await?;
-        remove_old_builds(target, &event.tenant_id, &token).await?;
-        Ok(())
+        .await
     }
+}
+
+async fn write_projection(
+    control: &DatabaseTransaction,
+    target: &DatabaseTransaction,
+    tenant_id: &str,
+    source_version: i64,
+    placement: &ProjectionPlacement,
+) -> AppResult<()> {
+    let token = build_token(
+        tenant_id,
+        source_version,
+        &placement.target_key,
+        placement.generation,
+        &placement.switch_token,
+    );
+    clear_build(target, tenant_id, &token).await?;
+    let (owner_count, dept_count, digest) =
+        rows::scan_projection(control, tenant_id, None, Some((target, &token))).await?;
+    save_metadata(
+        target,
+        tenant_id,
+        &ProjectionPublication {
+            source_version,
+            token: &token,
+            placement,
+            digest: &digest,
+            owner_count,
+            dept_count,
+        },
+    )
+    .await?;
+    remove_old_builds(target, tenant_id, &token).await
 }
 
 fn valid_digest(value: &str) -> bool {
@@ -291,166 +318,6 @@ async fn clear_build(target: &DatabaseTransaction, tenant_id: &str, token: &str)
             .await
             .db()?;
     }
-    Ok(())
-}
-
-async fn copy_projection(
-    control: &DatabaseTransaction,
-    target: &DatabaseTransaction,
-    tenant_id: &str,
-    token: &str,
-) -> AppResult<(i64, i64, String)> {
-    let mut hasher = Sha256::new();
-    let owner_count = copy_owners(control, target, tenant_id, token, &mut hasher).await?;
-    let dept_count = copy_departments(control, target, tenant_id, token, &mut hasher).await?;
-    Ok((owner_count, dept_count, hex::encode(hasher.finalize())))
-}
-
-async fn copy_owners(
-    control: &DatabaseTransaction,
-    target: &DatabaseTransaction,
-    tenant_id: &str,
-    token: &str,
-    hasher: &mut Sha256,
-) -> AppResult<i64> {
-    let mut cursor = 0_i64;
-    let mut count = 0_i64;
-    loop {
-        let rows = OwnerRow::find_by_statement(Statement::from_sql_and_values(
-            DbBackend::MySql,
-            "SELECT `id`, `dept_id` FROM `sys_user` \
-             WHERE `tenant_id` = ? AND `del_flag` = '0' AND `id` > ? \
-             ORDER BY `id` LIMIT ?",
-            [
-                tenant_id.to_string().into(),
-                cursor.into(),
-                PAGE_SIZE.into(),
-            ],
-        ))
-        .all(control)
-        .await
-        .db()?;
-        if rows.is_empty() {
-            break;
-        }
-        for row in &rows {
-            hasher.update(format!("u:{}:{:?}\n", row.id, row.dept_id));
-        }
-        insert_owner_batch(target, tenant_id, token, &rows).await?;
-        count += i64::try_from(rows.len()).unwrap_or(i64::MAX);
-        cursor = rows.last().map(|row| row.id).unwrap_or(cursor);
-        if rows.len() < usize::try_from(PAGE_SIZE).unwrap_or(usize::MAX) {
-            break;
-        }
-    }
-    Ok(count)
-}
-
-async fn copy_departments(
-    control: &DatabaseTransaction,
-    target: &DatabaseTransaction,
-    tenant_id: &str,
-    token: &str,
-    hasher: &mut Sha256,
-) -> AppResult<i64> {
-    let mut cursor = 0_i64;
-    let mut count = 0_i64;
-    loop {
-        let rows = DeptRow::find_by_statement(Statement::from_sql_and_values(
-            DbBackend::MySql,
-            "SELECT `id`, `ancestors` FROM `sys_dept` \
-             WHERE `tenant_id` = ? AND `del_flag` = '0' AND `id` > ? \
-             ORDER BY `id` LIMIT ?",
-            [
-                tenant_id.to_string().into(),
-                cursor.into(),
-                PAGE_SIZE.into(),
-            ],
-        ))
-        .all(control)
-        .await
-        .db()?;
-        if rows.is_empty() {
-            break;
-        }
-        for row in &rows {
-            hasher.update(format!("d:{}:{}\n", row.id, row.ancestors));
-        }
-        insert_dept_batch(target, tenant_id, token, &rows).await?;
-        count += i64::try_from(rows.len()).unwrap_or(i64::MAX);
-        cursor = rows.last().map(|row| row.id).unwrap_or(cursor);
-        if rows.len() < usize::try_from(PAGE_SIZE).unwrap_or(usize::MAX) {
-            break;
-        }
-    }
-    Ok(count)
-}
-
-async fn insert_owner_batch(
-    target: &DatabaseTransaction,
-    tenant_id: &str,
-    token: &str,
-    rows: &[OwnerRow],
-) -> AppResult<()> {
-    let placeholders = std::iter::repeat_n("(?, ?, ?, ?)", rows.len())
-        .collect::<Vec<_>>()
-        .join(",");
-    let sql = format!(
-        "INSERT INTO `biz_data_scope_owner` \
-         (`tenant_id`, `build_token`, `user_id`, `dept_id`) VALUES {placeholders}"
-    );
-    let mut values = Vec::with_capacity(rows.len().saturating_mul(4));
-    for row in rows {
-        values.extend([
-            tenant_id.to_string().into(),
-            token.to_string().into(),
-            row.id.into(),
-            row.dept_id
-                .map(Value::from)
-                .unwrap_or_else(|| Value::from(None::<i64>)),
-        ]);
-    }
-    target
-        .execute_raw(Statement::from_sql_and_values(
-            DbBackend::MySql,
-            sql,
-            values,
-        ))
-        .await
-        .db()?;
-    Ok(())
-}
-
-async fn insert_dept_batch(
-    target: &DatabaseTransaction,
-    tenant_id: &str,
-    token: &str,
-    rows: &[DeptRow],
-) -> AppResult<()> {
-    let placeholders = std::iter::repeat_n("(?, ?, ?, ?)", rows.len())
-        .collect::<Vec<_>>()
-        .join(",");
-    let sql = format!(
-        "INSERT INTO `biz_data_scope_dept` \
-         (`tenant_id`, `build_token`, `dept_id`, `ancestors`) VALUES {placeholders}"
-    );
-    let mut values = Vec::with_capacity(rows.len().saturating_mul(4));
-    for row in rows {
-        values.extend([
-            tenant_id.to_string().into(),
-            token.to_string().into(),
-            row.id.into(),
-            row.ancestors.clone().into(),
-        ]);
-    }
-    target
-        .execute_raw(Statement::from_sql_and_values(
-            DbBackend::MySql,
-            sql,
-            values,
-        ))
-        .await
-        .db()?;
     Ok(())
 }
 

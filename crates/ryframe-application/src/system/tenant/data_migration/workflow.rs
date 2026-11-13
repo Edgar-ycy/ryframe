@@ -239,15 +239,14 @@ impl TenantDataMigrationService {
         if migration.state == TenantDataMigrationRecord::STATE_ACTIVATING {
             self.assert_worker_can_run(&migration, TenantDataMigrationRecord::STATE_ACTIVATING)
                 .await?;
-            self.tenant_migration
-                .activate_fence(TenantDataFence {
-                    tenant_id: &migration.tenant_id,
-                    target_key: &migration.target_key,
-                    generation: checked_generation(migration.target_generation, "目标")?,
-                    switch_token: &migration.switch_token,
-                })
-                .await?;
-            migration = self.activate_control(migration).await?;
+            migration = lifecycle::activate_control(
+                &*self.persistence,
+                &*self.tenant_migration,
+                &*self.scope_projection,
+                &self.authorization_cache,
+                migration,
+            )
+            .await?;
         }
         if migration.state == TenantDataMigrationRecord::STATE_SUCCEEDED {
             self.enter_retention(migration).await?;
@@ -381,7 +380,6 @@ impl TenantDataMigrationService {
     }
 
     pub(super) async fn renew_operation_lease(
-        &self,
         transaction: &dyn TenantDataMigrationTransaction,
         migration: &TenantDataMigrationRecord,
         now: chrono::DateTime<Utc>,

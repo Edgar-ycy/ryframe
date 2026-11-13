@@ -251,6 +251,7 @@ impl TenantDataMigrationTransaction for TenantDataMigrationWorkUnit {
             .await
             .map(|tenant| TenantMigrationContextRecord {
                 authorization_epoch: tenant.authorization_epoch,
+                data_scope_version: tenant.data_scope_version,
             })
     }
 

@@ -12,8 +12,11 @@ use crate::{
 use async_trait::async_trait;
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicI32, Ordering},
+    atomic::{AtomicBool, AtomicI32, Ordering},
 };
+
+#[path = "activation_stage.rs"]
+mod stage;
 
 #[derive(Clone, Debug, PartialEq)]
 struct State {
@@ -39,6 +42,7 @@ struct Shared {
     events: Mutex<Vec<String>>,
     mirrored: AtomicI32,
     failure: Failure,
+    commit_attempted: AtomicBool,
 }
 
 struct Work {
@@ -137,6 +141,7 @@ fn fixture(failure: Failure) -> (Arc<Shared>, AuthorizationCache) {
         events: Mutex::new(vec![]),
         mirrored: AtomicI32::new(7),
         failure,
+        commit_attempted: AtomicBool::new(false),
     });
     let cache = AuthorizationCache::new(
         Some(shared.clone()),
@@ -147,12 +152,13 @@ fn fixture(failure: Failure) -> (Arc<Shared>, AuthorizationCache) {
 }
 
 #[tokio::test]
-async fn activation_commits_scope_epoch_and_mirror_once_before_publishing_new_epoch() {
+async fn activation_preserves_published_scope_and_commits_epoch_once() {
     let (shared, cache) = fixture(Failure::None);
     let before = shared.persisted.lock().unwrap().clone();
     let result = activate(
         Work::new(&shared, &cache),
         &before.migration,
+        before.scope,
         before.migration.updated_at,
         &cache,
     )
@@ -162,7 +168,7 @@ async fn activation_commits_scope_epoch_and_mirror_once_before_publishing_new_ep
     let committed = shared.persisted.lock().unwrap().clone();
     assert_eq!(
         (committed.runtime, committed.scope, committed.epoch),
-        (4, 10, 8)
+        (4, 9, 8)
     );
     assert_eq!(
         committed.placement.state,
@@ -182,6 +188,7 @@ async fn activation_commits_scope_epoch_and_mirror_once_before_publishing_new_ep
     activate(
         Work::new(&shared, &cache),
         &result,
+        committed.scope,
         result.updated_at,
         &cache,
     )
@@ -192,26 +199,6 @@ async fn activation_commits_scope_epoch_and_mirror_once_before_publishing_new_ep
         *shared.events.lock().unwrap(),
         ["commit", "mirror:8", "publish:8", "commit"]
     );
-
-    let (shared, cache) = fixture(Failure::None);
-    shared.persisted.lock().unwrap().placement.state =
-        TenantDataPlacementRecord::STATE_ACTIVE.into();
-    let before = shared.persisted.lock().unwrap().clone();
-    activate(
-        Work::new(&shared, &cache),
-        &before.migration,
-        before.migration.updated_at,
-        &cache,
-    )
-    .await
-    .unwrap();
-    let after = shared.persisted.lock().unwrap().clone();
-    assert_eq!(
-        (after.runtime, after.scope, after.epoch),
-        (before.runtime, before.scope, before.epoch)
-    );
-    assert!(after.mirrors.is_empty());
-    assert_eq!(*shared.events.lock().unwrap(), ["commit"]);
 }
 
 #[tokio::test]
@@ -228,6 +215,7 @@ async fn activation_failure_rolls_back_versions_and_never_replays_committed_mirr
             activate(
                 Work::new(&shared, &cache),
                 &before.migration,
+                before.scope,
                 before.migration.updated_at,
                 &cache
             )
@@ -237,7 +225,7 @@ async fn activation_failure_rolls_back_versions_and_never_replays_committed_mirr
         let after = shared.persisted.lock().unwrap().clone();
         assert_eq!(shared.mirrored.load(Ordering::SeqCst), 7);
         if failure == Failure::Mirror {
-            assert_eq!((after.runtime, after.scope, after.epoch), (4, 10, 8));
+            assert_eq!((after.runtime, after.scope, after.epoch), (4, 9, 8));
             assert_eq!(
                 after.migration.state,
                 TenantDataMigrationRecord::STATE_SUCCEEDED
@@ -247,6 +235,7 @@ async fn activation_failure_rolls_back_versions_and_never_replays_committed_mirr
             activate(
                 Work::new(&shared, &cache),
                 &after.migration,
+                after.scope,
                 after.migration.updated_at,
                 &cache,
             )
@@ -268,7 +257,9 @@ async fn activation_failure_rolls_back_versions_and_never_replays_committed_mirr
 impl PersistenceTransaction for Work {
     async fn commit(mut self: Box<Self>, audit: TransactionAuditMode) -> AppResult<()> {
         assert_eq!(audit, TransactionAuditMode::Skip);
-        if self.shared.failure == Failure::CommitBeforeWrite {
+        if self.shared.failure == Failure::CommitBeforeWrite
+            && !self.shared.commit_attempted.swap(true, Ordering::SeqCst)
+        {
             return Err(AppError::Database("合成提交前失败".into()));
         }
         *self.shared.persisted.lock().unwrap() = self.pending.lock().unwrap().clone();
@@ -340,6 +331,7 @@ impl TenantDataMigrationTransaction for Work {
         assert_eq!(owner, Some(state.migration.switch_token.as_str()));
         Ok(TenantMigrationContextRecord {
             authorization_epoch: state.epoch,
+            data_scope_version: state.scope,
         })
     }
     async fn lock_placement<'a>(
@@ -388,11 +380,15 @@ impl TenantDataMigrationTransaction for Work {
     }
     async fn renew_lease<'a>(
         &'a self,
-        _: &'a str,
-        _: &'a str,
+        tenant_id: &'a str,
+        owner: &'a str,
         _: chrono::DateTime<Utc>,
     ) -> AppResult<bool> {
-        unreachable!()
+        let state = self.pending.lock().unwrap();
+        assert_eq!(tenant_id, state.migration.tenant_id);
+        assert_eq!(owner, state.migration.switch_token);
+        self.shared.events.lock().unwrap().push("renew".into());
+        Ok(true)
     }
     async fn release_lease<'a>(&'a self, _: &'a str, _: &'a str) -> AppResult<bool> {
         unreachable!()
