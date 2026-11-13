@@ -177,6 +177,16 @@ fn registration_state(base: &Base, request: &Value, selected: &Value) -> Registr
 fn fresh_verify(root: &Path, selected: &Value, registration: &RegistrationState) -> PathBuf {
     let target_workspace = root.join("target-workspace");
     let observations = observations(selected);
+    let logical = selected["databases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|database| {
+            let key = database["key"].as_str().unwrap();
+            let name = database["database"].as_str().unwrap();
+            (key.to_owned(), observations[name].clone())
+        })
+        .collect::<serde_json::Map<_, _>>();
     let inventory = write_value(
         &target_workspace,
         "inventory.json",
@@ -188,7 +198,7 @@ fn fresh_verify(root: &Path, selected: &Value, registration: &RegistrationState)
             "binding_sha256": "a".repeat(64),
             "keys": TARGET_NAMES,
             "inventories": {},
-            "observations": observations,
+            "observations": logical,
             "remote_writes": 0,
             "producer_stopped_proven": false,
             "fresh_target_proven": false,

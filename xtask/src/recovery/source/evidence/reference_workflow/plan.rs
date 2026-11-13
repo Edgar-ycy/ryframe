@@ -116,7 +116,6 @@ fn verify_arm(backend: &Path, chain: &Chain) -> Result<()> {
 
 fn verify_fresh_inventory(backend: &Path, chain: &Chain, verify: &Document) -> Result<()> {
     let initial = &verify.value["inventory"];
-    document::exact(initial, &["receipt", "observations"], "原目标库存绑定")?;
     let parent = verify.path.parent().ok_or("目标 verify 缺少父目录")?;
     native::target_verify::evidence_protocol::inventory_history::verify(
         backend,

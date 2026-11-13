@@ -239,6 +239,8 @@ mod rate_limit_tests;
 mod recovery_cli_tests;
 #[path = "internal/recovery_inputs_fixture.rs"]
 mod recovery_inputs_fixture;
+#[path = "internal/recovery_inputs_fresh.rs"]
+mod recovery_inputs_fresh_tests;
 #[path = "internal/recovery_inputs_support.rs"]
 mod recovery_inputs_support;
 #[path = "internal/recovery_inputs.rs"]

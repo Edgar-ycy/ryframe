@@ -120,36 +120,6 @@ class TargetPlanTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "ownership"):
             self.capture()
 
-    def test_fresh_verify_requires_same_initialized_complete_before_image_and_no_failure(self):
-        for change in (lambda value: value.update(status="failed"), lambda value: value.update(extra=True),
-                       lambda value: value.update(remote_writes=True),
-                       lambda value: value["initialized"].update(sha256="f" * 64),
-                       lambda value: value["inventory"]["observations"].pop(next(iter(value["inventory"]["observations"]))),
-                       lambda value: value["inventory"].update(extra=True)):
-            value = copy.deepcopy(self.fresh)
-            change(value)
-            self.write("observe/verify.json", value)
-            with self.subTest(change=change), self.assertRaises(ValueError):
-                self.capture()
-        self.write("observe/verify.json", self.fresh)
-        self.write("observe/inventory/failure.json", {"failed": True})
-        with self.assertRaises(ValueError):
-            self.capture()
-
-    def test_ownership_and_raw_inventory_changes_are_rejected(self):
-        original = copy.deepcopy(self.arm)
-        for change in (lambda value: value["initialized"]["objects"]["uploads"]["owner"].update(sha256="e" * 64),
-                       lambda value: value["initialized"]["objects"]["uploads"]["keys"].append("target/unknown"),
-                       lambda value: value["initialized"]["inventory"]["observations"]["target_0"]["ownership"][0].update(scope_id="other")):
-            self.arm = copy.deepcopy(original)
-            change(self.arm)
-            with self.assertRaises(ValueError):
-                self.capture()
-        self.arm = original
-        self.write("observe/inventory/before-target-shared.json", {"tampered": True})
-        with self.assertRaises(ValueError):
-            self.capture()
-
     def test_reference_plan_extra_fields_and_nested_unknowns_fail_closed(self):
         original = copy.deepcopy(self.plan)
         for change in (lambda value: value.update(extra=True), lambda value: value["target"].update(extra=True),

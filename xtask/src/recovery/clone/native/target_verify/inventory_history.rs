@@ -123,6 +123,22 @@ fn check_receipt(
     request: &Value,
     initial: &Value,
 ) -> Result<()> {
+    verify_target_observations(receipt, request, &initial["observations"])?;
+    raw_outputs(backend, directory, receipt)?;
+    for name in ["binding-before.json", "binding-after.json"] {
+        let path = common::common_file(backend, &directory.join(name), "库存来源绑定")?;
+        if receipt["binding_sha256"] != digest::plan_hash(&json_io::read(&path)?)? {
+            return Err(DIAGNOSTICS[6].into());
+        }
+    }
+    Ok(())
+}
+
+pub(in crate::recovery) fn verify_target_observations(
+    receipt: &Value,
+    request: &Value,
+    expected: &Value,
+) -> Result<()> {
     let target = &request["target"];
     let scope = json_io::text(&target["scope_id"], "库存目标 scope")?;
     let observations = json_io::exact(&receipt["observations"], &KEYS, "库存四目标观察")?;
@@ -133,13 +149,6 @@ fn check_receipt(
         || receipt["keys"] != json!(KEYS)
     {
         return Err(DIAGNOSTICS[3].into());
-    }
-    raw_outputs(backend, directory, receipt)?;
-    for name in ["binding-before.json", "binding-after.json"] {
-        let path = common::common_file(backend, &directory.join(name), "库存来源绑定")?;
-        if receipt["binding_sha256"] != digest::plan_hash(&json_io::read(&path)?)? {
-            return Err(DIAGNOSTICS[6].into());
-        }
     }
     let databases = json_io::array(&target["databases"], "库存请求数据库")?;
     let mut images = BTreeMap::new();
@@ -163,7 +172,7 @@ fn check_receipt(
     if keys.len() != KEYS.len() {
         return Err(DIAGNOSTICS[7].into());
     }
-    if initial["observations"] != serde_json::to_value(images)? {
+    if *expected != serde_json::to_value(images)? {
         return Err(DIAGNOSTICS[9].into());
     }
     Ok(())

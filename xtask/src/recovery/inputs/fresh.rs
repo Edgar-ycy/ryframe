@@ -7,7 +7,7 @@ use super::{
     document::{array, exact, integer, object, text},
     domain::BUCKETS,
 };
-use crate::Result;
+use crate::{Result, recovery::clone::native::target_verify::evidence_protocol::inventory_history};
 
 pub(crate) struct Fresh {
     pub(crate) binding: Value,
@@ -39,7 +39,11 @@ pub(crate) fn validate(
         ],
         "fresh target 核验",
     )?;
-    let inventory = object(fresh.get("inventory").unwrap(), "fresh target 库存绑定")?;
+    let inventory = exact(
+        &fresh["inventory"],
+        &["receipt", "observations"],
+        "fresh target 库存绑定",
+    )?;
     if fresh.get("status").and_then(Value::as_str) != Some("fresh_target_reverified")
         || fresh.get("initialized") != result.get("initialized")
         || integer(fresh.get("remote_writes").unwrap(), "fresh target 远端写入")? != 0
@@ -53,7 +57,7 @@ pub(crate) fn validate(
     {
         return Err("fresh-target verify 未绑定同一初始化目标及完整前像".into());
     }
-    let receipt_binding = inventory.get("receipt").ok_or("库存绑定缺少收据")?.clone();
+    let receipt_binding = inventory["receipt"].clone();
     let (_, receipt_document) =
         super::document::bound_file(backend, &receipt_binding, "fresh target 库存收据")?;
     let receipt = exact(
@@ -76,14 +80,11 @@ pub(crate) fn validate(
         ],
         "fresh target 库存收据",
     )?;
-    if receipt.get("format_version") != Some(&Value::from(1))
-        || receipt.get("status").and_then(Value::as_str).is_none()
-        || receipt.get("side").and_then(Value::as_str) != Some("target")
-        || super::document::digest(
-            receipt.get("binding_sha256").ok_or("库存绑定摘要缺失")?,
-            "fresh target 库存绑定摘要",
-        )
-        .is_err()
+    if super::document::digest(
+        receipt.get("binding_sha256").ok_or("库存绑定摘要缺失")?,
+        "fresh target 库存绑定摘要",
+    )
+    .is_err()
         || receipt.get("remote_writes") != Some(&Value::from(0))
         || [
             "producer_stopped_proven",
@@ -94,10 +95,14 @@ pub(crate) fn validate(
         ]
         .iter()
         .any(|field| receipt.get(*field) != Some(&Value::Bool(false)))
-        || receipt.get("observations") != inventory.get("observations")
     {
         return Err("fresh-target 库存收据必须保持只读且不能冒充恢复证明".into());
     }
+    inventory_history::verify_target_observations(
+        &receipt_document.value,
+        target_request,
+        &inventory["observations"],
+    )?;
     let ownership = ownership_sha256(initialized, target_request)?;
     document.assert_unchanged()?;
     receipt_document.assert_unchanged()?;
@@ -124,7 +129,7 @@ fn ownership_sha256(initialized: &Value, target_request: &Value) -> Result<Strin
     )?;
     let names = objects.keys().map(String::as_str).collect::<HashSet<_>>();
     if names != BUCKETS.into_iter().collect() {
-        return Err("fresh target ownership 未覆盖全部数据库".into());
+        return Err("fresh target ownership 未覆盖全部对象桶".into());
     }
     let target_databases = array(
         target_request

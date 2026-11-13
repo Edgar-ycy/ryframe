@@ -26,7 +26,15 @@ pub(crate) fn observations(selected: &Value) -> Value {
         };
         result.insert(
             database["database"].as_str().unwrap().into(),
-            json!({"resource": {"kind": "database"}, "ownership": ownership}),
+            json!({
+                "resource":{
+                    "kind":"database",
+                    "scope_id":scope,
+                    "server_uuid":database["expected_server_uuid"],
+                    "database":database["database"],
+                },
+                "ownership":ownership,
+            }),
         );
     }
     Value::Object(result)
