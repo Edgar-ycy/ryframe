@@ -140,3 +140,32 @@ pub(crate) fn object_configuration(directory: &Path, side: &str) -> String {
     let (directory, files) = configuration(&root, &environment, Some(&json!(directory))).unwrap();
     super::recovery::clone::native::target_verify::input::request_configuration::configuration_identity(&directory, &files).unwrap()
 }
+
+pub(super) fn write_backup_artifacts(plan: &Value, work_dir: &Path) -> Vec<Value> {
+    let mut artifacts = Vec::new();
+    for database in plan["source"]["databases"].as_array().unwrap() {
+        let key = database["key"].as_str().unwrap();
+        let relative = format!("databases/{key}.sql");
+        let path = work_dir.join("backup").join(&relative);
+        fs::write(&path, format!("dump {key}\n")).unwrap();
+        artifacts.push(json!({
+            "relative_path": relative,
+            "resource": format!("db:{key}"),
+            "bytes": fs::metadata(&path).unwrap().len(),
+            "sha256": file_sha(&path),
+        }));
+    }
+    for bucket in ["uploads", "avatar", "exports", "imports", "config-packages"] {
+        let relative = format!("objects/{bucket}/index.json");
+        let path = work_dir.join("backup").join(&relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, format!("{bucket}\n")).unwrap();
+        artifacts.push(json!({
+            "relative_path": relative,
+            "resource": format!("objects:{bucket}"),
+            "bytes": fs::metadata(&path).unwrap().len(),
+            "sha256": file_sha(&path),
+        }));
+    }
+    artifacts
+}

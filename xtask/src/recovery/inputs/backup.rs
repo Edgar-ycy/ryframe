@@ -258,6 +258,9 @@ pub(crate) fn validate_source_identity(
         ],
         "备份 source-export 身份",
     )?;
+    if export.get("source_generation") != Some(generation) {
+        return Err("备份收据与共享导出未绑定同一停止代次".into());
+    }
     for field in [
         "result",
         "source_registration",

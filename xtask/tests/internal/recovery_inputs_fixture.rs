@@ -1,3 +1,6 @@
+#[path = "recovery_inputs_candidate.rs"]
+mod candidate;
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -75,21 +78,22 @@ fn setup() -> Base {
     }
 }
 
-fn prepare_target(base: &Base) -> TargetState {
+fn prepare_target(base: &Base, side: RestoreInputSide) -> TargetState {
     let review = review(&base.backend, &base.root, &base.defaults, &base.tool);
     let review_path = write_value(&base.root, "review.json", &review);
     let review_binding = review_binding(&review_path, &review);
-    let selected = review["scopes"]["base"].clone();
+    let selected = &review["scopes"][side.as_str()];
     let target_request = target_request(
         &base.defaults,
         &base.tool,
         &review_binding,
-        &selected,
+        selected,
         &base.root,
+        side,
     );
     let target_request_path = write_value(&base.root, "target-request.json", &target_request);
-    let registration = registration_state(base, &binding(&target_request_path), &selected);
-    let fresh_verify = fresh_verify(&base.root, &selected, &registration);
+    let registration = registration_state(base, &binding(&target_request_path), selected);
+    let fresh_verify = fresh_verify(&base.root, selected, &registration);
     TargetState {
         review,
         environment: registration.environment,
@@ -311,7 +315,12 @@ fn source_input_bindings(root: &Path, runtime_dir: &Path) -> SourceInputBindings
     }
 }
 
-fn prepare_arm(base: &Base, target: &TargetState, source: &SourceState) -> ArmState {
+fn prepare_arm(
+    base: &Base,
+    target: &TargetState,
+    source: &SourceState,
+    side: RestoreInputSide,
+) -> ArmState {
     let request = write_value(
         &base.root,
         "arm-request.json",
@@ -319,7 +328,7 @@ fn prepare_arm(base: &Base, target: &TargetState, source: &SourceState) -> ArmSt
             "format_version": 1,
             "kind": "devex-clone-seed-successor-arm-input",
             "source_registration": source.export["source_registration"],
-            "id": "arm-base-run",
+            "id": format!("arm-{}-run", side.as_str()),
             "initialized": target.initialized_binding,
             "target_registration": target.registration_binding,
             "target_initialized_files": target.initialized_files_binding,
@@ -343,7 +352,7 @@ fn prepare_arm(base: &Base, target: &TargetState, source: &SourceState) -> ArmSt
         &json!({
             "format_version": 1,
             "kind": "devex-clone-run",
-            "id": "arm-base-run",
+            "id": format!("arm-{}-run", side.as_str()),
             "source_request": source.request,
             "source_export": source.export["export"],
             "initialized": target.initialized_binding,
@@ -377,7 +386,7 @@ fn prepare_arm(base: &Base, target: &TargetState, source: &SourceState) -> ArmSt
             "target_registration": target.registration_binding,
             "target_initialized_files": target.initialized_files_binding,
             "target_storage_run": target.storage_run,
-            "target_side": "base",
+            "target_side": side.as_str(),
             "remote_writes": 0,
             "outbox_drained": true,
             "restore_qualified": false,
@@ -414,7 +423,13 @@ fn prepare_outputs(
         &comparison_sources,
         &source.export,
     );
-    let options = reference_options(&arm.arm_input, &target.fresh_verify, &base.work_dir, None);
+    let options = reference_options(
+        &arm.arm_input,
+        &target.fresh_verify,
+        &base.work_dir,
+        RestoreInputSide::Base,
+        None,
+    );
     let reference_value = reference::build(&base.backend, &options).unwrap();
     let reference_plan = write_value(&base.root, "reference.json", &reference_value);
     let backup_receipt = write_backup(
@@ -430,7 +445,7 @@ fn prepare_outputs(
         &comparison_sources,
         &arm.arm_input,
         &target.fresh_verify,
-        &base.root,
+        RestoreInputSide::Base,
         None,
     );
     let product_value = product::build(&base.backend, &options).unwrap();
@@ -495,9 +510,9 @@ pub struct Fixture {
 impl Fixture {
     pub fn new() -> Self {
         let base = setup();
-        let target = prepare_target(&base);
+        let target = prepare_target(&base, RestoreInputSide::Base);
         let source = prepare_source(&base);
-        let arm = prepare_arm(&base, &target, &source);
+        let arm = prepare_arm(&base, &target, &source, RestoreInputSide::Base);
         let output = prepare_outputs(&base, &target, &source, &arm);
         Self {
             output: base.root.join("published-reference.json"),
@@ -525,6 +540,7 @@ impl Fixture {
             &self.arm_input,
             &self.fresh_verify,
             &self.work_dir,
+            RestoreInputSide::Base,
             publication.map(|output| RestoreInputPublication { output }),
         )
     }
@@ -536,7 +552,7 @@ impl Fixture {
             &self.comparison_sources,
             &self.arm_input,
             &self.fresh_verify,
-            &self.root,
+            RestoreInputSide::Base,
             publication.map(|output| RestoreInputPublication { output }),
         )
     }
@@ -594,8 +610,8 @@ fn review(backend: &Path, root: &Path, defaults: &Path, tool: &Path) -> Value {
                 "objects": {"endpoint": "http://127.0.0.1:19000", "region": "us-east-1"},
                 "redis": {
                     "url": "redis://127.0.0.1:6380/0",
-                    "namespace": format!("ryframe:{{{}}}:", "target-a"),
-                    "ownership_key": "ryframe:target-a:owner",
+                    "namespace": format!("ryframe:{{{scope}-a}}:"),
+                    "ownership_key": format!("ryframe:{scope}-a:owner"),
                     "ownership_value": "fixture",
                 },
                 "databases": databases,
@@ -638,6 +654,7 @@ fn target_request(
     review_binding: &Value,
     selected: &Value,
     root: &Path,
+    side: RestoreInputSide,
 ) -> Value {
     let databases = selected["databases"]
         .as_array()
@@ -670,9 +687,9 @@ fn target_request(
         "format_version": 1,
         "kind": "devex-clone-fresh-target",
         "config_dir": root.join("config"),
-        "id": "target-request-a",
+        "id": format!("target-{}-a", side.as_str()),
         "review": review_binding,
-        "side": "base",
+        "side": side.as_str(),
         "target": {
             "scope_id": selected["scope_id"],
             "s3": {
@@ -921,45 +938,17 @@ fn write_backup(
     )
 }
 
-fn write_backup_artifacts(plan: &Value, work_dir: &Path) -> Vec<Value> {
-    let mut artifacts = Vec::new();
-    for database in plan["source"]["databases"].as_array().unwrap() {
-        let key = database["key"].as_str().unwrap();
-        let relative = format!("databases/{key}.sql");
-        let path = work_dir.join("backup").join(&relative);
-        fs::write(&path, format!("dump {key}\n")).unwrap();
-        artifacts.push(json!({
-            "relative_path": relative,
-            "resource": format!("db:{key}"),
-            "bytes": fs::metadata(&path).unwrap().len(),
-            "sha256": file_sha(&path),
-        }));
-    }
-    for bucket in ["uploads", "avatar", "exports", "imports", "config-packages"] {
-        let relative = format!("objects/{bucket}/index.json");
-        let path = work_dir.join("backup").join(&relative);
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, format!("{bucket}\n")).unwrap();
-        artifacts.push(json!({
-            "relative_path": relative,
-            "resource": format!("objects:{bucket}"),
-            "bytes": fs::metadata(&path).unwrap().len(),
-            "sha256": file_sha(&path),
-        }));
-    }
-    artifacts
-}
-
 fn reference_options(
     arm_input: &Path,
     fresh_verify: &Path,
     work_dir: &Path,
+    side: RestoreInputSide,
     publication: Option<RestoreInputPublication>,
 ) -> ReferenceInputOptions {
     ReferenceInputOptions {
         arm_input: arm_input.to_path_buf(),
         fresh_target_verify: fresh_verify.to_path_buf(),
-        side: RestoreInputSide::Base,
+        side,
         id: "backup-case-a".into(),
         work_dir: work_dir.to_path_buf(),
         publication,
@@ -972,7 +961,7 @@ fn product_options(
     comparison_sources: &Path,
     arm_input: &Path,
     fresh_verify: &Path,
-    _root: &Path,
+    side: RestoreInputSide,
     publication: Option<RestoreInputPublication>,
 ) -> ProductInputOptions {
     ProductInputOptions {
@@ -981,7 +970,7 @@ fn product_options(
         comparison_sources: comparison_sources.to_path_buf(),
         arm_input: arm_input.to_path_buf(),
         fresh_target_verify: fresh_verify.to_path_buf(),
-        side: RestoreInputSide::Base,
+        side,
         id: "restore-case-a".into(),
         fault_at: now_seconds(),
         publication,
@@ -990,5 +979,5 @@ fn product_options(
 
 use super::recovery_inputs_support::{
     binding, capture_target_plan, file_sha, hash, now, now_seconds, object_ownership, observations,
-    review_binding, write_value,
+    review_binding, write_backup_artifacts, write_value,
 };

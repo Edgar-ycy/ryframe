@@ -31,42 +31,6 @@ class TargetPlanTests(unittest.TestCase):
     def capture(self):
         return target.capture_target_plan(self.backend, self.plan, **self.paths)
 
-    def test_both_sides_bind_one_backup_and_the_corresponding_comparison_arm(self):
-        base = self.capture()
-        self.assertEqual(base["comparison_arm"], "b0")
-        self.assertEqual(base["product_plan"], self.product)
-        self.assertEqual(base["maintenance_execution"], {"root": str(self.backend), "binding": self.maintenance_binding,
-                                                        "build": self.request["maintenance_build"]})
-        self.assertEqual(base["product_execution"], target._product_execution(self.comparison["arms"]["b0"]))
-        self.assertNotEqual(base["maintenance_execution"]["root"], base["product_execution"]["roots"]["execution_backend"])
-        self.assertEqual(base["fresh_target"]["ownership_sha256"], target._ownership(self.arm))
-        self.assertEqual(target.verify_target_plan(self.backend, self.plan, self.write("target-plan.json", base)), base)
-        self.plan["target_side"] = self.arm["target_side"] = self.request["side"] = "candidate"
-        self.product.update(frontend_sha="c" * 40, id="restore-run-candidate")
-        self.write("product.json", self.product)
-        candidate = self.capture()
-        self.assertEqual(candidate["comparison_arm"], "b1")
-        self.assertEqual(candidate["backup_receipt"], base["backup_receipt"])
-        self.assertEqual(candidate["maintenance_execution"], base["maintenance_execution"])
-        self.assertEqual(candidate["product_execution"], target._product_execution(self.comparison["arms"]["b1"]))
-        self.assertNotEqual(candidate["comparison_arm_sha256"], base["comparison_arm_sha256"])
-
-    def test_side_or_arm_swap_is_rejected(self):
-        original = self.capture()
-        for field, value in (("target_side", "candidate"), ("comparison_arm", "b1")):
-            changed = {**original, field: value}
-            with self.assertRaises(ValueError):
-                target.verify_target_plan(self.backend, self.plan, self.write("invalid.json", changed))
-        self.arm["target_side"] = "candidate"
-        with self.assertRaises(ValueError):
-            self.capture()
-
-    def test_different_export_is_rejected_even_when_backup_id_matches(self):
-        self.comparison["source_export"]["result"]["sha256"] = "f" * 64
-        self.write("comparison.json", self.comparison)
-        with self.assertRaisesRegex(ValueError, "共享导出"):
-            self.capture()
-
     def test_arm_cannot_substitute_another_export_or_maintenance_backend(self):
         original = copy.deepcopy(self.arm)
         for key in ("source_export", "source_export_result"):
