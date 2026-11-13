@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix B0 frontend adapter source fingerprint drift caused by a verifier visibility change, retaining strict reuse of the original build receipt and artifacts and pinning receipt tests to frozen digests.
+
 - Tenant data migration records the data-scope change during cutover. After activating the exact target fence, it publishes and verifies projection metadata plus digests and counts of actual Owner and department rows, then rechecks the control version and placement identity before becoming active. Failures retain maintenance state, and a published target can retry forward idempotently if the control commit did not complete. Ordinary outbox publication still requires active placement.
 
 - Bind B0 recovery adapters separately to the original product and exact execution tree, validating the full, product, and tool domains of the execution build. Use the compiled combined patch of the verifier, reconstruct only with explicit write authority in the original product repository, and reject Git replacement refs for both object identities.
