@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove the unused Python path requirement from real browser acceptance. Native fixture bindings and frontend configuration register only consumed tools while retaining login budgets, Worker provenance, and artifact verification.
+
 - Verify with two real Rust child processes that source cache cleanup records only one attempt per generation. After a pre-execution failure, recovery refuses replay even when all 33 keys are absent and preserves the original receipts. Remove the legacy Python cases covered by Rust process and policy tests.
 
 - Fix B0 frontend adapter source fingerprint drift caused by a verifier visibility change, retaining strict reuse of the original build receipt and artifacts and pinning receipt tests to frozen digests.

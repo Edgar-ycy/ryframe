@@ -5,22 +5,6 @@ use std::{fs, path::PathBuf};
 #[path = "build_resume_tests.rs"]
 mod resume_tests;
 
-fn bind_unlaunchable_python(root: &std::path::Path) -> PathBuf {
-    let python = root.join(".local-tests/not-an-interpreter.exe");
-    fs::write(&python, "synthetic executable; must never be launched").unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&python, fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    fs::write(
-        root.join(".local-tests/tools.toml"),
-        format!("[verification]\npython_program = {}\n", json!(python)),
-    )
-    .unwrap();
-    python
-}
-
 #[test]
 fn native_browser_dependencies_use_bound_configuration_and_reject_frozen_input_drift() {
     use crate::recovery::fixture_runtime::dependency::{Dependencies, Native};
@@ -28,7 +12,6 @@ fn native_browser_dependencies_use_bound_configuration_and_reject_frozen_input_d
     let root = &prepared.context.root;
     let coordinator = &prepared.fixture.backend;
     let bootstrap = prepared.environment.join("bootstrap.json");
-    let python = bind_unlaunchable_python(coordinator);
     let execution = root;
     let configuration = prepared.configuration.join("app.test.toml");
     let mut configured = fs::read_to_string(&configuration).unwrap();
@@ -48,7 +31,7 @@ fn native_browser_dependencies_use_bound_configuration_and_reject_frozen_input_d
     let mut api = Native::new(coordinator).unwrap();
     let boot = json!({"backend":coordinator,"environment":bootstrap});
     let observed = api.call("bootstrap", boot.clone()).unwrap();
-    assert_eq!(observed["python"], json!(python.canonicalize().unwrap()));
+    assert!(observed.get("python").is_none());
     assert_eq!(observed["config_dir"], json!(prepared.configuration));
     assert_ne!(prepared.configuration, prepared.environment.join("config"));
     let temporary = root.join(".local-tests/reference-fixture");

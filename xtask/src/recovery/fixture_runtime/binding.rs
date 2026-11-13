@@ -144,7 +144,7 @@ impl Base {
         let corepack = path(&selected_tools["corepack"])?;
         let cache = path(&selected_tools["corepack_home"])?;
         directory(&cache)?;
-        let mut tools = json!({"python":bound(&path(&boot["python"])?)?,"mysql":mysql,"corepack":bound(&corepack)?,"corepack_home":cache});
+        let mut tools = json!({"mysql":mysql,"corepack":bound(&corepack)?,"corepack_home":cache});
         tools["worker_origin"] = api.call("worker-origin", json!({}))?;
         if cfg!(windows) {
             tools["node"] = bound(&path(&selected_tools["node"])?)?;
