@@ -8,6 +8,8 @@
 
 - Bind B0 recovery adapters separately to the original product and exact execution tree, validating the full, product, and tool domains of the execution build. Use the compiled combined patch of the verifier, reconstruct only with explicit write authority in the original product repository, and reject Git replacement refs for both object identities.
 
+- Reference backup calls the Rust source-binding validator directly. Remove the legacy Python reference-backup adapter, recovery input JSON publication code, and their duplicate tests.
+
 - Bind coordinator evidence, verification tools, and test runner to separate source roots and exact commits during formal recovery. Final verification builds maintenance code from verifier sources while reading runtime ledgers from the original coordinator root.
 
 - Remove Python target-plan verification and its dedicated fixture after the Rust entry point has taken over, retaining coverage for source bindings, unknown fields, and file identity.

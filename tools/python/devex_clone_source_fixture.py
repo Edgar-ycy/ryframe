@@ -58,12 +58,11 @@ class SourceFixture:
             "artifacts": {},
         }
         identities = {}
-        for number, (role, (feature, executable)) in enumerate(ROLES.items(), 100):
+        for number, (role, (_, executable)) in enumerate(ROLES.items(), 100):
             path = self.local / (executable + ".exe")
             path.write_bytes(executable.encode())
             self.build["artifacts"][role] = {"executable": str(path), **file_digest(path),
-                "command": ["cargo", "build", "--locked", "-p", "ryframe", "--no-default-features", "--features", feature,
-                            "--bin", executable, "--message-format=json"]}
+                "command": build_command(role)}
             identities[role] = {"pid": number, "started": "12345", "executable": str(path)}
         with patch.dict(os.environ, {"APP_ENV": "test"}):
             api_configuration = configuration_digest(self.backend, self.backend / "config")

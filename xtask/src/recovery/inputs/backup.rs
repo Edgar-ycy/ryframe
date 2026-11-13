@@ -40,7 +40,7 @@ pub(crate) fn verify_source(
 ) -> Result<Value> {
     use crate::recovery::{
         clone::native::export,
-        source::evidence::{comparison::published, reference_workflow},
+        source::evidence::{comparison::published, reference_workflow::proof::backup_source},
     };
 
     let published = published::verified(backend, publication, None)?;
@@ -53,15 +53,12 @@ pub(crate) fn verify_source(
     let (_, stopped) = read(generation, "备份来源停止代次")?;
     let (_, runtime) = read(&stopped.value["source_runtime"], "原来源运行验收")?;
     let (_, quiescence) = read(&stopped.value["runtime_evidence"], "原来源停止观察")?;
-    let verified = reference_workflow::request(
-        "reference-backup-source",
-        &json!({
-            "plan":plan, "inventory":inventory, "identity":published.identity,
-            "source":published.source,
-            "exported":{"request":exported.request,"generation":exported.generation,"inventory":exported.inventory},
-            "build":build.value, "descriptor":generation, "runtime":runtime.value, "quiescence":quiescence.value,
-        }),
-    )?;
+    let verified = backup_source(&json!({
+        "plan":plan, "inventory":inventory, "identity":published.identity,
+        "source":published.source,
+        "exported":{"request":exported.request,"generation":exported.generation,"inventory":exported.inventory},
+        "build":build.value, "descriptor":generation, "runtime":runtime.value, "quiescence":quiescence.value,
+    }))?;
     if verified["source_export"] != published.identity
         || verified["source_generation"] != *generation
     {
