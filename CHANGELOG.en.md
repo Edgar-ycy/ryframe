@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove Python target-plan verification and its dedicated fixture after the Rust entry point has taken over, retaining coverage for source bindings, unknown fields, and file identity.
+
 - Recovery inputs require the backup receipt and shared export to bind the same stop-generation record.
 
 - Recovery inputs check completion order across the original backup manifest and receipt, microsecond precision in the manifest, and a retention deadline at least seven days after capture.

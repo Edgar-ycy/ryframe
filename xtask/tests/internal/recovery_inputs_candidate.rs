@@ -243,3 +243,119 @@ fn same_bytes_at(root: &Path, descriptor: &Value, name: &str) -> Value {
     fs::copy(descriptor["path"].as_str().unwrap(), &path).unwrap();
     binding(&path)
 }
+
+#[test]
+fn product_input_rejects_unknown_reference_fields_at_each_nested_boundary() {
+    let fixture = Fixture::new();
+    let options = fixture.product_options(None);
+    let expected = product::build(&fixture.backend, &options).unwrap();
+    let original = fs::read(&fixture.reference_plan).unwrap();
+    for (pointer, label) in [
+        ("", "参考计划"),
+        ("/target", "参考计划 target 侧"),
+        ("/tools/mysql", "参考工具"),
+        ("/target/s3", "对象存储定义"),
+        ("/target/databases/0", "参考数据库"),
+    ] {
+        let mut reference = fixture.reference_value.clone();
+        reference
+            .pointer_mut(pointer)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .insert("unexpected".into(), Value::Bool(true));
+        fs::write(
+            &fixture.reference_plan,
+            serde_json::to_vec(&reference).unwrap(),
+        )
+        .unwrap();
+        let error = product::build(&fixture.backend, &options)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(label) && error.contains("未知字段"),
+            "{pointer}: {error}"
+        );
+    }
+    fs::write(&fixture.reference_plan, original).unwrap();
+    assert_eq!(
+        product::build(&fixture.backend, &options).unwrap(),
+        expected
+    );
+}
+
+#[test]
+fn reference_input_rejects_substituted_arm_exports_and_maintenance_root() {
+    let base = super::setup();
+    let side = RestoreInputSide::Base;
+    let mut target = prepare_target(&base, side);
+    let source = super::prepare_source(&base);
+    let arm = prepare_arm(&base, &target, &source, side);
+    let options = reference_options(
+        &arm.arm_input,
+        &target.fresh_verify,
+        &base.work_dir,
+        side,
+        None,
+    );
+    let expected = reference::build(&base.backend, &options).unwrap();
+    let original = read_value(&arm.arm_input);
+    for field in ["source_export", "source_export_result"] {
+        let mut changed = original.clone();
+        changed[field] =
+            same_bytes_at(&base.root, &original[field], &format!("other-{field}.json"));
+        let alternate = &changed[field];
+        document::bound_file(&base.backend, alternate, "替代导出文件").unwrap();
+        write_value(&base.root, "arm-result.json", &changed);
+        let error = reference::build(&base.backend, &options)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            error, "successor arm-input 外层结果未完整绑定当前共享导出",
+            "{field}"
+        );
+    }
+    write_value(&base.root, "arm-result.json", &original);
+    assert_eq!(reference::build(&base.backend, &options).unwrap(), expected);
+
+    // 重绑所有引用，使维护根不一致由正式身份检查拒绝。
+    target.review["scopes"]["base"]["backend_dir"] =
+        Value::String(base.root.join("other-backend").to_string_lossy().into());
+    let review_path = write_value(&base.root, "review.json", &target.review);
+    let mut request = read_value(&base.root.join("target-request.json"));
+    request["review"] = super::review_binding(&review_path, &target.review);
+    let request_path = write_value(&base.root, "target-request.json", &request);
+    let mut registration = read_value(Path::new(
+        target.registration_binding["path"].as_str().unwrap(),
+    ));
+    registration["request"] = binding(&request_path);
+    let registration_path = write_value(
+        &base.root,
+        "target-workspace/registration.json",
+        &registration,
+    );
+    target.registration_binding = binding(&registration_path);
+    let mut prepared = read_value(&base.root.join("target-workspace/prepared-files.json"));
+    prepared["registration"] = target.registration_binding.clone();
+    let prepared_path = write_value(
+        &base.root,
+        "target-workspace/prepared-files.json",
+        &prepared,
+    );
+    let mut files = read_value(Path::new(
+        target.initialized_files_binding["path"].as_str().unwrap(),
+    ));
+    files["registration"] = target.registration_binding.clone();
+    files["predecessor"] = binding(&prepared_path);
+    let files_path = write_value(
+        &base.root,
+        "target-workspace/initialized-files.json",
+        &files,
+    );
+    target.initialized_files_binding = binding(&files_path);
+    prepare_arm(&base, &target, &source, side);
+    let error = reference::build(&base.backend, &options)
+        .unwrap_err()
+        .to_string();
+    assert_eq!(error, "正式恢复输入未绑定同一 arm、目标侧或维护源码");
+}
