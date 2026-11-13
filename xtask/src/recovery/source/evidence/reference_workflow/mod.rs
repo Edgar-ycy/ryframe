@@ -38,14 +38,9 @@ pub(crate) fn handles(operation: &str) -> bool {
             | "reference-damage"
             | "reference-receipt-start"
             | "reference-receipt-finish"
-            | "reference-restore-resources"
-            | "reference-bound-artifact"
             | "reference-summary"
-            | "reference-restore-result"
             | "reference-backup-source"
             | "reference-backup-result"
-            | "reference-restore-record"
-            | "reference-product-hash"
     )
 }
 
@@ -59,14 +54,9 @@ pub(crate) fn request(operation: &str, args: &Value) -> Result<Value> {
         "reference-damage" => files::damage(args),
         "reference-receipt-start" => receipts::start(args),
         "reference-receipt-finish" => receipts::finish(args),
-        "reference-restore-resources" => model::resources(args),
-        "reference-bound-artifact" => model::bound_artifact(args),
         "reference-summary" => model::summary(args),
-        "reference-restore-result" => model::restore_result(args),
         "reference-backup-source" => proof::backup_source(args),
         "reference-backup-result" => proof::backup_result(args),
-        "reference-restore-record" => proof::record(args),
-        "reference-product-hash" => proof::hash_request(args),
         _ => Err("参考协调操作无效".into()),
     }
 }

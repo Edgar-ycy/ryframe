@@ -107,7 +107,7 @@ struct OrderedDatabase<'a> {
     database: &'a Value,
 }
 
-fn product_hash(value: &Value) -> Result<String> {
+pub(super) fn product_hash(value: &Value) -> Result<String> {
     exact(value, &inputs::domain::product_fields())?;
     let databases = native::json::array(&value["databases"], "产品数据库")?
         .iter()
@@ -137,11 +137,6 @@ fn product_hash(value: &Value) -> Result<String> {
         frontend_sha: &value["frontend_sha"],
     };
     Ok(hex::encode(Sha256::digest(serde_json::to_vec(&ordered)?)))
-}
-
-pub(super) fn hash_request(args: &Value) -> Result<Value> {
-    exact(args, &["value"])?;
-    Ok(json!(product_hash(&args["value"])?))
 }
 
 pub(super) fn record(args: &Value) -> Result<Value> {

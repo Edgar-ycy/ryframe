@@ -1,43 +1,17 @@
 import copy
-import contextlib
-import io
 import json
-import subprocess
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import restore_reference as reference
-import restore_reference_execution as execution
-from restore_reference_plan import safe_file, validate_inventory, validate_plan, verify_artifacts
-from restore_reference_fixture import environment, inventory, restore_record, stored_backup
-from restore_reference_execution_fixture import guards
+from restore_reference_plan import safe_file, validate_inventory, validate_plan
+from restore_reference_fixture import environment, inventory
 
 
 class ReferenceTests(unittest.TestCase):
     def setUp(self):
         self.backend, self.plan = environment(self)
-        guards(self)
-
-    def restore(self, tools, root, manifest, record):
-        reference.write_json(root / "manifest.json", manifest, new=False)
-        def descriptor(path):
-            return {"path": str(path), **reference.file_digest(path)}
-        work = Path(self.plan["work_dir"])
-        receipt = work / "backup.json"
-        reference.write_json(receipt, {"result": {"backup_root": str(root), "manifest": descriptor(root / "manifest.json")}}, new=False)
-        target_path, record_path = work / "target-plan.json", work / "record.json"
-        target = {"target_side": self.plan["target_side"], "backup_receipt": descriptor(receipt), "product_plan": record["plan"],
-                  "fresh_target": {"initialized": {"path": str(work / "fresh/target/initialized.json")}}}
-        reference.write_json(target_path, target, new=False)
-        reference.write_json(record_path, record, new=False)
-        registration = work / "registration.json"
-        reference.write_json(registration, {"target_plan": descriptor(target_path)}, new=False)
-        with patch.object(execution, "verify_target_plan", return_value=target):
-            inputs = execution.restore_inputs(self.backend, self.plan, target_path, root, record_path, registration, read_only=True)
-            return reference.restore(self.plan, tools, self.backend, inputs)
 
     def test_plan_rejects_overlap_wrong_modes_remote_endpoints_and_changed_tools(self):
         validate_plan(self.plan, self.backend)
@@ -117,70 +91,6 @@ class ReferenceTests(unittest.TestCase):
             change(candidate)
             with self.assertRaises(ValueError):
                 validate_inventory(self.plan, candidate)
-
-
-    def test_invalid_artifact_stops_restore_before_any_external_call(self):
-        work = reference.work_directory(self.plan)
-        root, manifest = stored_backup(self.plan, work)
-        tools = Mock()
-        (root / "databases/control.sql").write_text("tampered")
-        with self.assertRaises(ValueError):
-            self.restore(tools, root, manifest, restore_record(self.plan, manifest["captured_at"]))
-        self.assertEqual(tools.mock_calls, [])
-
-    def test_restore_rejects_backup_swap_and_invalid_record_id_before_external_call(self):
-        work = reference.work_directory(self.plan)
-        root, manifest = stored_backup(self.plan, work)
-        changes = [
-            lambda changed_manifest, _record: changed_manifest.update(id="another-backup"),
-            lambda _manifest, record: record["plan"].update(id="_restore"),
-            lambda _manifest, record: record["plan"].update(backup_id="backup.one"),
-        ]
-        for change in changes:
-            changed_manifest = copy.deepcopy(manifest)
-            record = restore_record(self.plan, manifest["captured_at"])
-            change(changed_manifest, record)
-            tools = Mock()
-            with self.subTest(change=change), self.assertRaises(ValueError):
-                self.restore(tools, root, changed_manifest, record)
-            self.assertEqual(tools.mock_calls, [])
-
-    def test_valid_restore_preserves_target_owner_and_rewrites_only_physical_object_scope(self):
-        work = reference.work_directory(self.plan)
-        root, manifest = stored_backup(self.plan, work)
-        tools = Mock()
-        result = self.restore(tools, root, manifest, restore_record(self.plan, manifest["captured_at"]))
-        self.assertEqual(result["status"], "external_copy_completed")
-        self.assertEqual(set(result["resource_images"]), {"before", "after"})
-        self.assertEqual(self.events[0], "lock")
-        self.assertEqual(self.events[-1], "unlock")
-        self.assertEqual(tools.restore_database.call_count, 2)
-        self.assertEqual(tools.create_object_if_absent.call_args.args[:2],
-                         ("uploads", "target/tenant/file.txt"))
-        for call in tools.restore_database.call_args_list:
-            _, tables, path, expected = call.args
-            self.assertEqual(tables, ["sys_post"])
-            artifact = next(item for item in manifest["artifacts"]
-                            if item["relative_path"] == path.relative_to(root).as_posix())
-            self.assertEqual(expected, {key: artifact[key] for key in ("bytes", "sha256")})
-
-    def test_restore_requires_running_record_and_same_physical_targets(self):
-        manifest = inventory(self.plan)
-        for change in (lambda value: value.update(status="succeeded"),
-                       lambda value: value["plan"]["databases"][0].update(database="source_control"),
-                       lambda value: value.update(started_at="2000-01-01T00:00:00Z")):
-            record = restore_record(self.plan, manifest["captured_at"])
-            change(record)
-            with self.assertRaises(ValueError):
-                execution.validate_restore_record(self.plan, manifest, record, record["plan"])
-
-    def test_called_process_failure_records_redacted_output(self):
-        error = subprocess.CalledProcessError(1, ["node"], output="normal", stderr="password=private")
-        with patch.dict(reference.os.environ, {"APP_PASSWORD": "private"}, clear=True):
-            result = reference.failure_diagnostic(error)
-        self.assertEqual(result["error_type"], "CalledProcessError")
-        self.assertEqual(result["stdout"], "normal")
-        self.assertEqual(result["stderr"], "password=[REDACTED]")
 
 
 if __name__ == "__main__":

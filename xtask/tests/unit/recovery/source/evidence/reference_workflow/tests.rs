@@ -502,7 +502,7 @@ fn product_hash_has_native_field_order_and_record_rejects_changed_embedded_input
         "fault_at":captured,"databases":[{"source_key":"control","target_key":"control","server_uuid":"uuid-1","database":"target_control"}],
         "object_endpoint":"http://127.0.0.1:9000","object_prefix":"target/",
         "api_ready_url":"http://127.0.0.1:3000/readyz","worker_ready_url":"http://127.0.0.1:9200/readyz","frontend_sha":"f".repeat(40)});
-    let hash = proof::hash_request(&json!({"value":product})).unwrap();
+    let hash = proof::product_hash(&product).unwrap();
     let serialized = format!(
         "{{\"id\":\"restore-run\",\"backup_id\":\"restore-case\",\"scope_id\":\"target\",\"fault_at\":{},\"databases\":[{{\"source_key\":\"control\",\"target_key\":\"control\",\"server_uuid\":\"uuid-1\",\"database\":\"target_control\"}}],\"object_endpoint\":\"http://127.0.0.1:9000\",\"object_prefix\":\"target/\",\"api_ready_url\":\"http://127.0.0.1:3000/readyz\",\"worker_ready_url\":\"http://127.0.0.1:9200/readyz\",\"frontend_sha\":\"{}\"}}",
         serde_json::to_string(&captured).unwrap(),
@@ -531,6 +531,8 @@ fn product_hash_has_native_field_order_and_record_rejects_changed_embedded_input
     }
     for (field, value) in [
         ("id", json!("other")),
+        ("id", json!("_restore")),
+        ("backup_id", json!("backup.one")),
         ("frontend_sha", json!("e".repeat(40))),
         ("fault_at", json!("2026-01-01T00:00:00Z")),
         ("api_ready_url", json!("http://127.0.0.1:3100/readyz")),
@@ -539,9 +541,31 @@ fn product_hash_has_native_field_order_and_record_rejects_changed_embedded_input
         let mut invalid = args.clone();
         invalid["record"]["plan"][field] = value;
         invalid["record"]["plan_hash"] =
-            proof::hash_request(&json!({"value":invalid["record"]["plan"]})).unwrap();
+            json!(proof::product_hash(&invalid["record"]["plan"]).unwrap());
         assert!(proof::record(&invalid).is_err());
     }
+    let mut pair = args;
+    pair["plan"]["target"]["databases"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"key":"tenant","server_uuid":"uuid-2","database":"target_tenant"}));
+    pair["product_plan"]["databases"].as_array_mut().unwrap().push(
+        json!({"source_key":"tenant","target_key":"tenant","server_uuid":"uuid-2","database":"target_tenant"}),
+    );
+    pair["record"]["plan"] = pair["product_plan"].clone();
+    pair["record"]["plan_hash"] = json!(proof::product_hash(&pair["record"]["plan"]).unwrap());
+    proof::record(&pair).unwrap();
+    pair["record"]["plan"]["databases"]
+        .as_array_mut()
+        .unwrap()
+        .reverse();
+    pair["record"]["plan_hash"] = json!(proof::product_hash(&pair["record"]["plan"]).unwrap());
+    assert!(
+        proof::record(&pair)
+            .unwrap_err()
+            .to_string()
+            .contains("不完全一致")
+    );
 }
 
 #[test]

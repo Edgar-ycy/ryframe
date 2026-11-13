@@ -139,6 +139,55 @@ fn registered_file_and_checkpoint_reject_same_content_copies_and_wrong_bindings(
 }
 
 #[test]
+fn record_remains_protected_when_the_before_image_precedes_writes() {
+    let fixture = Fixture::new();
+    let reference = fixture.read("reference.json", &json!({"plan":"reference"}));
+    let target = fixture.read("target.json", &json!({"target_side":"base"}));
+    let record = fixture.read("record.json", &json!({"status":"running"}));
+    let registration = fixture.read(
+        "registration.json",
+        &json!({"reference_plan":document::binding(&reference),"target_plan":document::binding(&target)}),
+    );
+    let selected = Selected::read(
+        &fixture.backend,
+        &json!({"plan":reference.path,"target_plan":target.path,"record":record.path}),
+        &registration,
+    )
+    .unwrap();
+    let mut evidence = serde_json::Map::new();
+    let attempted = std::cell::Cell::new(false);
+    let result = super::super::capture_around_write(
+        |phase, _| {
+            if phase == super::super::Phase::Before {
+                let changed = fs::write(&record.path, br#"{"status":"stopped"}"#);
+                #[cfg(windows)]
+                assert_eq!(changed.unwrap_err().raw_os_error(), Some(32));
+                #[cfg(not(windows))]
+                changed?;
+            }
+            selected.guard.assert_unchanged()?;
+            selected.record.assert_unchanged()
+        },
+        || {
+            attempted.set(true);
+            Ok(())
+        },
+        &mut evidence,
+    );
+    #[cfg(windows)]
+    {
+        result.unwrap();
+        assert!(attempted.get());
+        assert_eq!(fs::read(&record.path).unwrap(), record.raw);
+    }
+    #[cfg(not(windows))]
+    {
+        assert!(result.is_err());
+        assert!(!attempted.get());
+    }
+}
+
+#[test]
 fn provenance_window_checks_original_bytes_and_protects_both_bound_files() {
     for changed in ["comparison.json", "product.json"] {
         let fixture = Fixture::new();

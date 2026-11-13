@@ -56,6 +56,29 @@ fn invalid_protocol_is_sanitized_and_cannot_authorize_writes_or_retries() {
 }
 
 #[test]
+fn retired_restore_operations_are_rejected_by_the_native_private_protocol() {
+    for operation in [
+        "reference-restore-resources",
+        "reference-bound-artifact",
+        "reference-restore-result",
+        "reference-restore-record",
+        "reference-product-hash",
+    ] {
+        let output = request(operation, false, &json!({}));
+        assert_eq!(output.status.code(), Some(1), "{operation}");
+        assert!(output.stderr.is_empty());
+        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["ok"], false);
+        assert_eq!(value["error"]["remote_write_may_have_occurred"], false);
+        assert_eq!(value["error"]["automatic_retry_permitted"], false);
+        assert!(
+            value["error"]["message"].as_str().unwrap().contains("操作"),
+            "{operation}"
+        );
+    }
+}
+
+#[test]
 fn read_only_owner_verification_has_no_filesystem_side_effects() {
     let directory = temporary();
     let work = directory.path().join("未创建 目录");

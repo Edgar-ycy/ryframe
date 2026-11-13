@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Reference restore uses the current Rust execution path. Remove the retired Python restore writes, runtime guard, resource-image implementation, and their private dispatch operations.
+
 - Reference backup protects the original plan, shared-export inventory, stopped generation, and publication receipt throughout execution, and revalidates the original inputs around publication.
 
 - Reference recovery protects the registered two-version provenance manifest and product recovery plan throughout execution and revalidates the original files before completion.
