@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Reference recovery protects the registered two-version provenance manifest and product recovery plan throughout execution and revalidates the original files before completion.
+
 - After a partial reference restore fails, the after-image records the planned objects actually present across the five buckets and their payload proofs, alongside the observed state of the four databases and Redis, the original failure, and replay protection.
 
 - Reference dataset preparation uses the Rust stage controller and shared timeout validation. The old Python execution branch and its private dispatch operations have been removed.

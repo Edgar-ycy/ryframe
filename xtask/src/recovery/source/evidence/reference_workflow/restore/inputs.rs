@@ -12,6 +12,7 @@ use crate::{
     Result,
     local_test_path::{LocalTestPathKind, same_local_test_file, validate_local_test_path},
     recovery::{
+        clone::native::target_verify::guard::Inputs,
         fixture_control::portable_path,
         inputs::{
             backup,
@@ -32,6 +33,7 @@ pub(super) struct Snapshot {
     pub(super) record: Document,
     pub(super) registration: Document,
     protected: [ProtectedInputs; 3],
+    provenance: Inputs,
 }
 
 impl Snapshot {
@@ -50,6 +52,7 @@ impl Snapshot {
         if verified != selected.target.value {
             return Err("恢复目标计划在读取与核验之间发生变化".into());
         }
+        let provenance = hold_provenance(&chain.comparison_document, &product)?;
         let manifest_binding = &chain.backup.result["manifest"];
         let manifest_path = document::binding_shape(manifest_binding, "正式备份清单")?.path;
         let backup_guard =
@@ -71,8 +74,7 @@ impl Snapshot {
         backup::verify_frozen_source(backend, &chain.backup)?;
         // 仅持原运行守卫的执行态调用允许比较入口重建 B0 适配证据。
         comparison::verify(backend, &chain.comparison_document.value, read_only)?;
-        chain.comparison_document.assert_unchanged()?;
-        product.assert_unchanged()?;
+        provenance.check()?;
         let snapshot = Self {
             root,
             chain,
@@ -81,12 +83,14 @@ impl Snapshot {
             record: selected.record,
             registration,
             protected: [registration_guard, selected.guard, backup_guard],
+            provenance,
         };
         snapshot.assert_unchanged()?;
         Ok(snapshot)
     }
 
     pub(super) fn assert_unchanged(&self) -> Result<()> {
+        check_provenance(&self.provenance)?;
         for guard in &self.protected {
             guard.assert_unchanged()?;
         }
@@ -114,6 +118,11 @@ impl Snapshot {
         self.assert_unchanged()
     }
 
+    pub(super) fn check_final(&self) -> Result<()> {
+        self.provenance.check()?;
+        self.assert_unchanged()
+    }
+
     pub(super) fn output(&self, backend: &Path) -> Result<PathBuf> {
         output(
             backend,
@@ -122,6 +131,23 @@ impl Snapshot {
             &self.root,
         )
     }
+}
+
+fn hold_provenance(comparison: &Document, product: &Document) -> Result<Inputs> {
+    let held = Inputs::open([comparison.path.clone(), product.path.clone()])?;
+    // 防止在正式计划验证和保护句柄打开之间接受新字节。
+    comparison.assert_unchanged()?;
+    product.assert_unchanged()?;
+    held.check()?;
+    Ok(held)
+}
+
+fn check_provenance(held: &Inputs) -> Result<()> {
+    // Windows 的句柄阻止写入和替换，写入检查点无需反复读取完整来源清单。
+    #[cfg(windows)]
+    return held.checkpoint();
+    #[cfg(not(windows))]
+    held.check()
 }
 
 struct Selected {

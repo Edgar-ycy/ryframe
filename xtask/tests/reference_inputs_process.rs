@@ -1,11 +1,16 @@
 //! 参考恢复公开入口在原生执行前核验参数。
 
 use std::{
+    collections::BTreeMap,
+    ffi::OsString,
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Output},
     sync::atomic::{AtomicUsize, Ordering},
 };
+
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
 
@@ -28,6 +33,17 @@ impl Fixture {
         let path = self.directory.join(name);
         fs::write(&path, b"{}\n").unwrap();
         path
+    }
+
+    fn image(&self) -> BTreeMap<OsString, Vec<u8>> {
+        fs::read_dir(&self.directory)
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                assert!(entry.file_type().unwrap().is_file(), "{:?}", entry.path());
+                (entry.file_name(), fs::read(entry.path()).unwrap())
+            })
+            .collect()
     }
 }
 
@@ -169,4 +185,67 @@ fn restore_inputs_run_in_process_without_private_python_arguments() {
     for path in [&reference, &target, &backup, &record] {
         assert!(!stdout.contains(path.to_str().unwrap()), "{stdout}");
     }
+}
+
+fn descriptor(path: &Path) -> Value {
+    let bytes = fs::read(path).unwrap();
+    json!({"path":path,"bytes":bytes.len(),"sha256":hex::encode(Sha256::digest(&bytes))})
+}
+
+#[test]
+fn reference_restore_rejects_copied_and_changed_registered_inputs_before_writes() {
+    let fixture = Fixture::new();
+    let plan = fixture.file("参考计划.json");
+    let target = fixture.file("目标计划.json");
+    let record = fixture.file("恢复记录.json");
+    let registration = fixture.file("运行登记.json");
+    let plan_copy = fixture.directory.join("参考计划副本.json");
+    let target_copy = fixture.directory.join("目标计划副本.json");
+    let registered_target = b"{\"revision\":1}\n";
+    fs::write(&target, registered_target).unwrap();
+    fs::copy(&plan, &plan_copy).unwrap();
+    fs::copy(&target, &target_copy).unwrap();
+    fs::write(
+        &registration,
+        serde_json::to_vec(&json!({
+            "reference_plan":descriptor(&plan),
+            "target_plan":descriptor(&target),
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let assert_rejected = |plan: &Path, target: &Path, diagnostic: &str| {
+        let before = fixture.image();
+        let result = invoke(&strings(&[
+            "check",
+            "recovery",
+            "restore",
+            "--plan",
+            plan.to_str().unwrap(),
+            "--target-plan",
+            target.to_str().unwrap(),
+            "--backup-root",
+            fixture.directory.to_str().unwrap(),
+            "--record",
+            record.to_str().unwrap(),
+            "--runtime-registration",
+            registration.to_str().unwrap(),
+            "--write",
+        ]));
+        let stderr = String::from_utf8(result.stderr).unwrap();
+        assert_eq!(result.status.code(), Some(1), "{stderr}");
+        assert!(result.stdout.is_empty());
+        assert!(stderr.contains(diagnostic), "{stderr}");
+        assert_eq!(fixture.image(), before);
+    };
+
+    let wrong_file = "恢复命令必须使用登记的同一计划文件";
+    assert_rejected(&plan_copy, &target, wrong_file);
+    assert_rejected(&plan, &target_copy, wrong_file);
+
+    let changed_target = b"{\"revision\":2}\n";
+    assert_eq!(changed_target.len(), registered_target.len());
+    fs::write(&target, changed_target).unwrap();
+    assert_rejected(&plan, &target, "登记目标计划与登记摘要不一致");
 }

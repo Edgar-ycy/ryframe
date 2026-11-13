@@ -224,6 +224,7 @@ impl Execution<'_> {
         if final_input.bindings() != self.snapshot.bindings() {
             return Err("恢复完成复核时来源或输入绑定发生变化".into());
         }
+        self.snapshot.check_final()?;
         self.check()
     }
 

@@ -137,3 +137,42 @@ fn registered_file_and_checkpoint_reject_same_content_copies_and_wrong_bindings(
     extra["running"] = json!(true);
     assert!(check_runtime(&registration, &target, &extra).is_err());
 }
+
+#[test]
+fn provenance_window_checks_original_bytes_and_protects_both_bound_files() {
+    for changed in ["comparison.json", "product.json"] {
+        let fixture = Fixture::new();
+        let comparison = fixture.read("comparison.json", &json!({"value":"original"}));
+        let product = fixture.read("product.json", &json!({"value":"original"}));
+        let path = fixture.local.join(changed);
+        let original = fs::read(&path).unwrap();
+        let changed_bytes = std::str::from_utf8(&original)
+            .unwrap()
+            .replace("original", "modified");
+        assert_eq!(changed_bytes.len(), original.len());
+        fs::write(&path, &changed_bytes).unwrap();
+        assert!(hold_provenance(&comparison, &product).is_err(), "{changed}");
+        fs::write(&path, &original).unwrap();
+
+        let held = hold_provenance(&comparison, &product).unwrap();
+        check_provenance(&held).unwrap();
+        let alternate = fixture.local.join("alternate.json");
+        fs::write(&alternate, &original).unwrap();
+        let written = fs::write(&path, &changed_bytes);
+        #[cfg(windows)]
+        {
+            assert_eq!(written.unwrap_err().raw_os_error(), Some(32), "{changed}");
+            assert_eq!(fs::remove_file(&path).unwrap_err().raw_os_error(), Some(32));
+            assert_eq!(fs::read(&path).unwrap(), original);
+            held.check().unwrap();
+        }
+        #[cfg(not(windows))]
+        {
+            written.unwrap();
+            assert!(check_provenance(&held).is_err(), "{changed}");
+            fs::write(&path, &original).unwrap();
+            fs::rename(&alternate, &path).unwrap();
+            assert!(check_provenance(&held).is_err(), "{changed}");
+        }
+    }
+}
