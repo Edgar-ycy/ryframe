@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Verify with two real Rust child processes that source cache cleanup records only one attempt per generation. After a pre-execution failure, recovery refuses replay even when all 33 keys are absent and preserves the original receipts. Remove the legacy Python cases covered by Rust process and policy tests.
+
 - Fix B0 frontend adapter source fingerprint drift caused by a verifier visibility change, retaining strict reuse of the original build receipt and artifacts and pinning receipt tests to frozen digests.
 
 - Tenant data migration records the data-scope change during cutover. After activating the exact target fence, it publishes and verifies projection metadata plus digests and counts of actual Owner and department rows, then rechecks the control version and placement identity before becoming active. Failures retain maintenance state, and a published target can retry forward idempotently if the control commit did not complete. Ordinary outbox publication still requires active placement.

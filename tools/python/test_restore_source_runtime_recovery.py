@@ -1,7 +1,6 @@
 """过期授权快照与同代失败续验；未知写入只按完整前后像处理。"""
 
 import contextlib
-from concurrent.futures import ThreadPoolExecutor
 import copy
 import subprocess
 from native_s3_client import _invoke as native_invoke, _read_response as native_response
@@ -141,49 +140,6 @@ class SourceRuntimeRecoveryTests(unittest.TestCase):
                 patch.object(runtime, "run_source_producer", side_effect=AssertionError("must not replay Node")):
             yield successor
 
-    def test_ttl_expired_snapshots_are_accounted_and_persistent_keys_remain_required(self):
-        self.resources.expired = {row["keys"]["snapshot"] for row in self.plan[:3]}
-        with self.context():
-            runtime.execute_source_verification(self.fixture.backend, Path(self.fixture.start["path"]),
-                                                self.output, popen=self.fixture.fake_popen)
-        cleanup = read_json(self.output.parent / "cache-cleanup.json")
-        self.assertEqual(cleanup["deleted"], 30)
-        self.assertEqual(len(cleanup["expired_snapshot_keys"]), 3)
-        runtime._verify_cache_receipt(self.fixture.backend, self.output.parent,
-                                     binding(self.output.parent / "cache-cleanup.json"), self.fixture.subjects)
-        self.assertEqual(len(self.resources.cleanup_calls), 1)
-        self.resources.deleted = False
-        self.resources.missing.add(self.plan[0]["keys"]["tenant_epoch"])
-        with self.assertRaisesRegex(ValueError, "持久键缺失"):
-            runtime._cache_observation(self.resources, self.namespace, self.fixture.subjects)
-        self.assertEqual(len(self.resources.cleanup_calls), 1)
-
-    def test_watch_conflict_cannot_reconcile_external_absence_or_retry(self):
-        self.resources.before_cleanup = lambda: self.resources.expired.add(self.plan[0]["keys"]["snapshot"])
-        with self.context(), self.assertRaisesRegex(ValueError, "EXEC 已中止"):
-            runtime.execute_source_verification(self.fixture.backend, Path(self.fixture.start["path"]),
-                                                self.output, popen=self.fixture.fake_popen)
-        self.assertFalse(self.resources.deleted)
-        self.resources.deleted = True
-        with self.recovery_context(), self.assertRaisesRegex(ValueError, "明确未执行"):
-            runtime.execute_source_verification_recovery(self.fixture.backend, Path(self.fixture.start["path"]), self.output)
-        self.assertEqual(len(self.resources.cleanup_calls), 1)
-        self.assertEqual(read_json(self.output.parent / "cache-cleanup-execution.json")["status"], "watch_conflict")
-
-    def test_unknown_exec_same_values_and_mixed_state_fail_without_replay(self):
-        self.failed_prefix()
-        self.resources.drop_result = True
-        with self.recovery_context():
-            with self.assertRaises(OSError):
-                runtime.execute_source_verification_recovery(self.fixture.backend, Path(self.fixture.start["path"]), self.output)
-            self.resources.deleted = False
-            with self.assertRaisesRegex(ValueError, "禁止重放"):
-                runtime.execute_source_verification_recovery(self.fixture.backend, Path(self.fixture.start["path"]), self.output)
-            self.resources.missing.add(self.plan[0]["keys"]["tenant_epoch"])
-            with self.assertRaisesRegex(ValueError, "禁止重放"):
-                runtime.execute_source_verification_recovery(self.fixture.backend, Path(self.fixture.start["path"]), self.output)
-        self.assertEqual(len(self.resources.cleanup_calls), 1)
-
     def test_failed_prefix_recovers_in_place_with_original_audit_and_no_node_replay(self):
         original = self.failed_prefix()
         self.resources.expired = {row["keys"]["snapshot"] for row in self.plan}
@@ -283,40 +239,6 @@ class SourceRuntimeRecoveryTests(unittest.TestCase):
         self.assertEqual(recovery["historical_cleanup"], "confirmed")
         self.assertEqual(recovery["confirmed_cleanup"], "republished_confirmed_watch_exec")
         self.assertEqual(len(self.resources.cleanup_calls), 1)
-
-    def test_native_attempt_race_is_unique_and_pre_exec_failure_never_retries(self):
-        self.failed_prefix()
-        with self.recovery_context(), patch.object(runtime, "_execute_cache_cleanup", side_effect=ValueError("before attempt")):
-            with self.assertRaisesRegex(ValueError, "before attempt"):
-                runtime.execute_source_verification_recovery(self.fixture.backend, Path(self.fixture.start["path"]), self.output)
-        observation, comparisons = runtime._cache_observation(self.resources, self.namespace, self.fixture.subjects)
-        # 此独占夹具无 storage.redis.port，实际原生 Client 在连接前拒绝；不访问 Redis。
-        request = read_json(self.fixture.copy_run / "target/request.json")
-        arguments = {"backend": str(self.fixture.backend), "directory": str(self.output.parent),
-                     "output": str(self.output.parent / "cache-cleanup.json"), "request": request,
-                     "environment": {"APP_ENV": "test"}, "observation": observation, "comparisons": comparisons}
-
-        def invoke():
-            try:
-                return native_response(*native_invoke("__source-evidence", {
-                    "operation": "runtime-cache-cleanup", "write": True, "arguments": arguments,
-                }, subprocess.run, may_write=True))[0]["value"]
-            except ValueError:
-                return None
-
-        with ThreadPoolExecutor(max_workers=2) as workers:
-            results = list(workers.map(lambda _: invoke(), range(2)))
-        completed = [value for value in results if value is not None]
-        self.assertEqual(len(completed), 1)
-        self.assertEqual(completed[0]["status"], "pre_exec_io_failed")
-        attempt = binding(self.output.parent / "cache-cleanup-attempt.json")
-        execution = binding(self.output.parent / "cache-cleanup-execution.json")
-        self.resources.deleted = True
-        with self.recovery_context(), self.assertRaisesRegex(ValueError, "明确未执行"):
-            runtime.execute_source_verification_recovery(self.fixture.backend, Path(self.fixture.start["path"]), self.output)
-        self.assertEqual(binding(self.output.parent / "cache-cleanup-attempt.json"), attempt)
-        self.assertEqual(binding(self.output.parent / "cache-cleanup-execution.json"), execution)
-        self.assertEqual(self.resources.cleanup_calls, [])
 
     def test_capture_does_not_hide_new_login_row_content_change(self):
         self.failed_prefix()
