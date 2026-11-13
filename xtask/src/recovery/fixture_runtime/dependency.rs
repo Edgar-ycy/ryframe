@@ -116,11 +116,10 @@ impl Dependencies for Native {
             return super::worker_origin::capture();
         }
         if operation == "bootstrap" {
-            let mut boot =
-                super::runtime::bootstrap(&path(&args["backend"])?, &path(&args["environment"])?)?;
-            // 当前前端仍消费该字段；这里只解析受配置约束的程序路径，不启动解释器。
-            boot["python"] = json!(self.program("python")?);
-            return Ok(boot);
+            return super::runtime::bootstrap(
+                &path(&args["backend"])?,
+                &path(&args["environment"])?,
+            );
         }
         if matches!(operation, "settings" | "limits") {
             let bootstrap = path(&args["bootstrap"])?;

@@ -218,7 +218,7 @@ impl Dependencies for Fixture {
         match op {
             "worker-origin" => Ok(self.worker_origin.clone()),
             "bootstrap" => Ok(
-                json!({"bootstrap":self.bootstrap,"execution":self.backend,"private":{"APP_ENV":"test","APP_PASSWORD":"PrivateIgnoredSecret"},"python":self.tool}),
+                json!({"bootstrap":self.bootstrap,"execution":self.backend,"private":{"APP_ENV":"test","APP_PASSWORD":"PrivateIgnoredSecret"}}),
             ),
             "verify" => Ok(
                 json!({"runtime":bound(&self.runtime.join("runtime.json"))?,"build_evidence":{"source":self.source}}),
@@ -318,6 +318,15 @@ fn preview_build_browser_verify_close_preserve_order_and_bound_origin() {
     let binding = f.execute("bind").unwrap();
     assert!(f.frontend_reservation.is_none());
     assert_eq!(binding["status"], "reference_fixture_browser_bound");
+    let published = document(&f.runtime.join("browser-binding-run-a.json"))
+        .unwrap()
+        .0;
+    assert!(
+        !published["tools"]
+            .as_object()
+            .unwrap()
+            .contains_key("python")
+    );
     assert!(f.execute("bind").is_err());
     let result = f.execute("browser").unwrap();
     assert_eq!(result["status"], "passed");
@@ -340,6 +349,7 @@ fn preview_build_browser_verify_close_preserve_order_and_bound_origin() {
         .0;
     assert_eq!(tools["real_browser"]["backendDir"], json!(f.backend));
     assert_eq!(tools["real_browser"]["runtimeDir"], json!(f.runtime));
+    assert!(tools["real_browser"].get("python").is_none());
     assert_eq!(
         tools["real_browser"]["workerTool"],
         json!({

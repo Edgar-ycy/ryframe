@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove the unused Python path requirement from real browser acceptance. Native fixture bindings and frontend configuration register only consumed tools while retaining login budgets, Worker provenance, and artifact verification.
+
 - Fix B0 frontend adapter source fingerprint drift caused by a verifier visibility change, retaining strict reuse of the original build receipt and artifacts and pinning receipt tests to frozen digests.
 
 - Tenant data migration records the data-scope change during cutover. After activating the exact target fence, it publishes and verifies projection metadata plus digests and counts of actual Owner and department rows, then rechecks the control version and placement identity before becoming active. Failures retain maintenance state, and a published target can retry forward idempotently if the control commit did not complete. Ordinary outbox publication still requires active placement.
