@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use chrono::{DateTime, Duration, FixedOffset};
 use serde_json::{Value, json};
 
 use super::{
@@ -101,8 +102,11 @@ pub(crate) fn validate(
     {
         return Err("目标计划未绑定同一已完成正式备份、来源或目录 ownership".into());
     }
-    timestamp(receipt_value.get("started_at").unwrap(), "备份收据时间")?;
-    timestamp(receipt_value.get("completed_at").unwrap(), "备份收据时间")?;
+    let started = timestamp(&receipt_value["started_at"], "备份收据开始时间")?;
+    let finished = timestamp(&receipt_value["completed_at"], "备份收据完成时间")?;
+    if finished < started {
+        return Err("备份收据完成时间早于开始时间".into());
+    }
     let result = exact(
         receipt_value.get("result").unwrap(),
         &[
@@ -183,6 +187,7 @@ pub(crate) fn validate(
         return Err("正式备份清单位置或产物数量不同".into());
     }
     inventory::validate(original, &manifest_document.value)?;
+    validate_manifest_times(&manifest_document.value, started, finished)?;
     inventory::verify_artifacts(&backup_root, &manifest_document.value)?;
     validate_source_identity(
         backend,
@@ -197,6 +202,36 @@ pub(crate) fn validate(
         result: receipt_value.get("result").unwrap().clone(),
         manifest: manifest_document.value,
     })
+}
+
+fn validate_manifest_times(
+    manifest: &Value,
+    started: DateTime<FixedOffset>,
+    finished: DateTime<FixedOffset>,
+) -> Result<()> {
+    let captured = timestamp(&manifest["captured_at"], "备份清单采集时间")?;
+    let completed = timestamp(&manifest["completed_at"], "备份清单完成时间")?;
+    let retention = timestamp(&manifest["retention_until"], "备份清单保留时间")?;
+    if [completed, retention]
+        .iter()
+        .any(|time| !time.timestamp_subsec_nanos().is_multiple_of(1_000))
+    {
+        return Err("备份清单时间必须符合微秒精度".into());
+    }
+    // 清单按微秒截断，开始收据保留原始纳秒。
+    if completed < captured
+        || completed.timestamp_micros() < started.timestamp_micros()
+        || completed > finished
+    {
+        return Err("备份清单采集、完成及收据时间顺序无效".into());
+    }
+    let minimum = captured
+        .checked_add_signed(Duration::days(7))
+        .ok_or("备份保留时间溢出")?;
+    if retention < minimum {
+        return Err("备份清单必须至少保留采集后的 7 天".into());
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_source_identity(

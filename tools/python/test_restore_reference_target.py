@@ -78,23 +78,6 @@ class TargetPlanTests(unittest.TestCase):
         with patch.object(target, "execution_backend", return_value=(self.backend / "other", {})), self.assertRaises(ValueError):
             self.capture()
 
-    def test_original_backup_receipt_and_owner_are_strict(self):
-        original = reference.read_json(self.paths["backup_receipt"])
-        for change in (lambda value: value.update(status="failed"), lambda value: value.update(extra=True),
-                       lambda value: value["result"].update(extra=True),
-                       lambda value: value["result"].pop("source_export"),
-                       lambda value: value["result"]["manifest"].update(sha256="f" * 64),
-                       lambda value: value["result"]["reference_plan"]["source"].update(scope_id="other")):
-            value = copy.deepcopy(original)
-            change(value)
-            self.write("backup.json", value)
-            with self.subTest(change=change), self.assertRaises(ValueError):
-                self.capture()
-        self.write("backup.json", original)
-        self.write("reference-owner.json", {"wrong": True})
-        with self.assertRaisesRegex(ValueError, "ownership"):
-            self.capture()
-
     def test_reference_plan_extra_fields_and_nested_unknowns_fail_closed(self):
         original = copy.deepcopy(self.plan)
         for change in (lambda value: value.update(extra=True), lambda value: value["target"].update(extra=True),

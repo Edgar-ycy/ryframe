@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Recovery inputs check completion order across the original backup manifest and receipt, microsecond precision in the manifest, and a retention deadline at least seven days after capture.
+
 - Product recovery plan generation and verification derive fields from the same registered target, backup, and comparison sources. Verification names mismatched fields and checks fault timestamps against Rust serialization.
 
 - Recovery inputs reconcile fresh-target inventory receipts with before-images using registered logical keys and physical database names. They strictly validate inventory binding fields and each target database identity.

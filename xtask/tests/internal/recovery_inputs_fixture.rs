@@ -12,7 +12,7 @@ use super::cli::{
 };
 use super::clone_lifecycle_tests::arm_storage_bindings;
 use super::recovery::inputs::{product, reference};
-use chrono::{SecondsFormat, Utc};
+use chrono::{DateTime, Duration, SecondsFormat, Utc};
 
 static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
 
@@ -849,10 +849,10 @@ fn write_backup(
 ) -> PathBuf {
     fs::create_dir_all(work_dir.join("backup").join("databases")).unwrap();
     let artifacts = write_backup_artifacts(plan, work_dir);
-    let captured = Utc::now()
-        .checked_sub_signed(chrono::Duration::seconds(30))
-        .unwrap()
-        .to_rfc3339_opts(SecondsFormat::Micros, true);
+    let completed = DateTime::from_timestamp_micros(Utc::now().timestamp_micros()).unwrap();
+    let captured = completed - Duration::seconds(30);
+    let started = captured + Duration::seconds(1);
+    let retention = captured + Duration::days(7);
     let databases = plan["source"]["databases"]
         .as_array()
         .unwrap()
@@ -877,14 +877,14 @@ fn write_backup(
         "id": plan["id"],
         "scope_id": plan["source"]["scope_id"],
         "source_sha": "a".repeat(40),
-        "captured_at": captured,
-        "quiesced_at": captured,
+        "captured_at": captured.to_rfc3339_opts(SecondsFormat::AutoSi, true),
+        "quiesced_at": captured.to_rfc3339_opts(SecondsFormat::AutoSi, true),
         "control_schema_fingerprint": "b".repeat(16),
         "tenant_schema_fingerprint": "c".repeat(64),
         "databases": databases,
         "objects": objects,
-        "completed_at": now(),
-        "retention_until": now(),
+        "completed_at": completed.to_rfc3339_opts(SecondsFormat::AutoSi, true),
+        "retention_until": retention.to_rfc3339_opts(SecondsFormat::AutoSi, true),
         "artifacts": artifacts,
     });
     let manifest_path = work_dir.join("backup").join("manifest.json");
@@ -904,9 +904,9 @@ fn write_backup(
         &json!({
             "command": "backup",
             "plan_sha256": hash(plan),
-            "started_at": now(),
+            "started_at": started.to_rfc3339_opts(SecondsFormat::AutoSi, true),
             "status": "completed",
-            "completed_at": now(),
+            "completed_at": completed.to_rfc3339_opts(SecondsFormat::AutoSi, true),
             "result": {
                 "format_version": 2,
                 "kind": "restore-reference-backup",
