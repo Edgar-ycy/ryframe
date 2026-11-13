@@ -1,4 +1,4 @@
-use super::{artifact_snapshot, configuration, files, model, source, validate};
+use super::{artifact_snapshot, b0, configuration, files, model, source, validate};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -388,4 +388,91 @@ fn receipt_numbers_enforce_safe_integer_boundaries() {
         );
         assert!(files::parse(invalid.as_bytes()).is_err(), "{value}");
     }
+}
+
+#[test]
+fn b0_receipt_accepts_frozen_adapter_sources_and_rejects_each_changed_digest() {
+    let temporary = fixture();
+    let receipt = frozen_b0_receipt(temporary.path());
+    b0::receipt(&receipt).unwrap();
+    for index in 0..3 {
+        let mut changed = receipt.clone();
+        changed["adapter"]["sources"][index]["sha256"] = json!("0".repeat(64));
+        let error = b0::receipt(&changed).unwrap_err().to_string();
+        assert_eq!(error, "必须使用精确 B0 前端适配收据");
+    }
+    b0::receipt(&receipt).unwrap();
+}
+
+// 固定历史来源独立于当前适配器；这是完整收据格式回归，不是真实构建产物证明。
+fn frozen_b0_receipt(root: &Path) -> Value {
+    let digest = "a".repeat(64);
+    let inventory = json!({
+        "source":{"snapshot":{"head":b0::HEAD,"patch_sha256":digest,"files":[],"clean":true},
+            "worktree_fingerprint":format!("sha256:{digest}")},
+        "files":[{"path":"src/main.ts","sha256":digest}],
+        "guard":{"head":b0::HEAD,"index_sha256":digest,"modes_sha256":digest},
+    });
+    let domains = source::protocol::request(&json!({
+        "action":"domains","repository":"frontend","inventory":inventory,
+    }))
+    .unwrap();
+    let program = json!({"path":root.join("dist/index.html"),"bytes":1,"sha256":digest});
+    let inputs = [
+        (
+            ".env",
+            "d24709d7deea3cc0012bb08780bba0a9f8190d47b0335c4dd8a4a32b8050ec64",
+        ),
+        (
+            ".node-version",
+            "b911698dc3cf3227d34d0ad6727f1c4408791203c9665de99ab959331a1fb07d",
+        ),
+        ("package.json", digest.as_str()),
+        ("pnpm-lock.yaml", digest.as_str()),
+        ("pnpm-workspace.yaml", digest.as_str()),
+        ("vite.config.ts", digest.as_str()),
+    ]
+    .map(|(path, sha256)| json!({"path":path,"sha256":sha256}));
+    let dependency_state = [
+        "node_modules/.modules.yaml",
+        "node_modules/.pnpm/lock.yaml",
+        "node_modules/.pnpm-workspace-state-v1.json",
+        if cfg!(windows) {
+            "node_modules/.bin/vite.CMD"
+        } else {
+            "node_modules/.bin/vite"
+        },
+    ]
+    .map(|path| json!({"path":path,"sha256":digest}));
+    let artifacts = [".vite/manifest.json", "build-identity.json", "index.html"]
+        .map(|path| json!({"path":path,"bytes":1,"sha256":digest}));
+    json!({
+        "format_version":1,"kind":b0::KIND,
+        "adapter":{"contract":b0::CONTRACT,"program":program,"sources":[
+            {"path":"xtask/src/recovery/frontend_build/b0.rs",
+                "sha256":"285ac9f7497f5ad2c79709c9523ffba70defd2ba6bb88085aec46413e48a7f04"},
+            {"path":"xtask/src/recovery/frontend_build/b0/inputs.rs",
+                "sha256":"93ceced5d02d1372cf3c5a6e64f99d254b08e4ac39ebce6bef4c404c0ca9754b"},
+            {"path":"xtask/src/recovery/frontend_build/b0/toolchain.rs",
+                "sha256":"c75d9e52645e8b893aea4e237f87ec95d4d2922fbfc960f5eced738389aca163"},
+        ]},
+        "sources":domains,
+        "build":{"command":["corepack","pnpm","build"],"mode":"production",
+            "identity":{"frontend_commit":b0::HEAD,"source_file":null},
+            "configuration":{"api_origin":"same-origin",
+                "frontend_tree":"52fed4e1321ab4b4c04839a3a165c6bd1645e4b6",
+                "inputs":inputs,"dependency_state":dependency_state},
+            "toolchain":b0_toolchain(&program, root)},
+        "files":artifacts,
+    })
+}
+
+fn b0_toolchain(program: &Value, root: &Path) -> Value {
+    json!({
+        "node":{"version":"v24.15.0","file":program},
+        "corepack":{"version":"0.34.6","package":program,"entry":program,"implementation":program},
+        "pnpm":{"version":"11.20.0","home":root,"package":program,"entry":program,
+            "implementation":program,"installation":program},
+        "vite":{"version":"8.1.5","package":program,"entry":program},
+    })
 }
