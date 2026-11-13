@@ -9,7 +9,7 @@ pub const USAGE: &str = "用法：
   ryframe-tenant-data backup-status
   ryframe-tenant-data restore-begin --plan <plan.json> --output <running.json> --restore-config-dir <目录>
   ryframe-tenant-data restore-verify-data --id <演练ID> --backup-root <目录> --output <data-verified.json> --restore-config-dir <目录>
-  ryframe-tenant-data restore-verify --id <演练ID> --proof <business-proof.json> --tests-receipt <tests.json> --runtime-receipt <runtime.json> --target-plan <target-plan.json> --runner-root <测试源码目录> --restore-config-dir <目录>
+  ryframe-tenant-data restore-verify --id <演练ID> --proof <business-proof.json> --tests-receipt <tests.json> --runtime-receipt <runtime.json> --target-plan <target-plan.json> --coordinator-root <协调源码目录> --coordinator-sha <SHA> --runner-root <测试源码目录> --restore-config-dir <目录>
 
 登记库使用 --config-dir <目录>，默认 config。恢复目标使用独立的 --restore-config-dir；APP_ENV 选择各目录内的环境配置，最终 scope、物理身份、JWT 与 Redis namespace 必须隔离。
 备份复制和数据库恢复由外部工具执行。inventory 与 verify 只读目标资源；begin、register 和 verify 的状态写入登记库。
@@ -61,6 +61,8 @@ pub enum Command {
         tests_receipt: PathBuf,
         runtime_receipt: PathBuf,
         target_plan: PathBuf,
+        coordinator_root: PathBuf,
+        coordinator_sha: String,
         runner_root: PathBuf,
         config: PathBuf,
     },
@@ -129,6 +131,8 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             tests_receipt: take("--tests-receipt")?.into(),
             runtime_receipt: take("--runtime-receipt")?.into(),
             target_plan: take("--target-plan")?.into(),
+            coordinator_root: take("--coordinator-root")?.into(),
+            coordinator_sha: take("--coordinator-sha")?,
             runner_root: take("--runner-root")?.into(),
             config: take("--restore-config-dir")?.into(),
         },

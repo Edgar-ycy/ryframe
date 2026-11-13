@@ -4,6 +4,7 @@ use super::*;
 
 const RUNNER_SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const VERIFIER_SHA: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const COORDINATOR_SHA: &str = "cccccccccccccccccccccccccccccccccccccccc";
 const STARTED: &str = "2026-11-08T10:00:01.000Z";
 const COMPLETED: &str = "2026-11-08T10:02:00.000Z";
 const FRONTEND: &str = "http://127.0.0.1:4174";
@@ -20,6 +21,7 @@ const SCENARIOS: [&str; 9] = [
 ];
 
 struct Fixture {
+    coordinator: PathBuf,
     runner: PathBuf,
     verifier: PathBuf,
     record: Value,
@@ -52,7 +54,8 @@ impl Fixture {
             PathBuf::from("/fixture")
         };
         let runner = root.join("runner");
-        let verifier = root.join("backend");
+        let coordinator = root.join("coordinator");
+        let verifier = root.join("verifier");
         let output = runner.join(".local-tests").join("playwright-real");
         let runtime = doc(
             output.join("restore-drill-runtime.json"),
@@ -88,6 +91,7 @@ impl Fixture {
                     "backend_execution_sha": "f".repeat(40),
                     "backend_adapter_contract": "legacy-stable-readiness-b0-v1",
                     "frontend_sha": "1".repeat(40),
+                    "coordinator": {"root": coordinator, "sha": COORDINATOR_SHA},
                     "runner": {"root": runner, "sha": RUNNER_SHA},
                     "verifier": {"root": verifier, "sha": VERIFIER_SHA},
                 },
@@ -103,6 +107,7 @@ impl Fixture {
             expected(&tests, &runtime, &target),
         );
         Self {
+            coordinator,
             runner,
             verifier,
             record,
@@ -117,16 +122,27 @@ impl Fixture {
     }
 
     fn check(&self) -> Result<&Value> {
-        self.check_sources(&self.runner, RUNNER_SHA, &self.verifier, VERIFIER_SHA)
+        self.check_sources(self.sources())
     }
 
-    fn check_sources(
-        &self,
-        runner: &Path,
-        runner_sha: &str,
-        verifier: &Path,
-        verifier_sha: &str,
-    ) -> Result<&Value> {
+    fn sources(&self) -> [Source<'_>; 3] {
+        [
+            Source {
+                root: &self.coordinator,
+                sha: COORDINATOR_SHA,
+            },
+            Source {
+                root: &self.runner,
+                sha: RUNNER_SHA,
+            },
+            Source {
+                root: &self.verifier,
+                sha: VERIFIER_SHA,
+            },
+        ]
+    }
+
+    fn check_sources(&self, [coordinator, runner, verifier]: [Source<'_>; 3]) -> Result<&Value> {
         verify(
             Evidence {
                 proof: &self.proof,
@@ -137,14 +153,9 @@ impl Fixture {
             Authority {
                 record: &self.record,
                 runtime: &self.runtime_authority,
-                runner: Source {
-                    root: runner,
-                    sha: runner_sha,
-                },
-                verifier: Source {
-                    root: verifier,
-                    sha: verifier_sha,
-                },
+                coordinator,
+                runner,
+                verifier,
                 source_generation: &self.source_generation,
                 dataset_lineage: &self.dataset_lineage,
             },
@@ -253,22 +264,21 @@ fn refuses_substituted_descriptors_and_raw_document_digests() {
 fn refuses_same_receipts_against_different_independent_source_and_path() {
     let mut fixture = Fixture::new();
     let another = "2".repeat(40);
-    assert!(
-        fixture
-            .check_sources(&fixture.runner, &another, &fixture.verifier, VERIFIER_SHA)
-            .is_err()
-    );
-    assert!(
-        fixture
-            .check_sources(&fixture.runner, RUNNER_SHA, &fixture.verifier, &another)
-            .is_err()
-    );
     let other = fixture.verifier.with_file_name("other-backend");
-    assert!(
-        fixture
-            .check_sources(&fixture.runner, RUNNER_SHA, &other, VERIFIER_SHA)
-            .is_err()
-    );
+    for role in 0..3 {
+        let mut sources = fixture.sources();
+        sources[role].sha = &another;
+        assert!(
+            fixture.check_sources(sources).is_err(),
+            "角色 {role} 的 SHA"
+        );
+        let mut sources = fixture.sources();
+        sources[role].root = &other;
+        assert!(fixture.check_sources(sources).is_err(), "角色 {role} 的根");
+        let mut sources = fixture.sources();
+        sources.swap(role, (role + 1) % 3);
+        assert!(fixture.check_sources(sources).is_err(), "角色 {role} 互换");
+    }
     fixture.runtime.path.set_file_name("other-runtime.json");
     fixture.tests.value["runtime"] = document::binding(&fixture.runtime);
     fixture.rebind_tests();

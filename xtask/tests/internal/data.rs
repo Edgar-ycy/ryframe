@@ -105,6 +105,8 @@ fn restore_commands_rebuild_every_required_path_without_forwarding_raw_argv() {
         tests_receipt: "tests.json".into(),
         runtime_receipt: "runtime.json".into(),
         target_plan: "target.json".into(),
+        coordinator_root: "coordinator".into(),
+        coordinator_sha: "a".repeat(40),
         runner_root: "runner".into(),
         config_dir: None,
         restore_config_dir: "config".into(),
@@ -121,20 +123,24 @@ fn restore_commands_rebuild_every_required_path_without_forwarding_raw_argv() {
         "runtime.json",
         "--target-plan",
         "target.json",
+        "--coordinator-root",
+        "coordinator",
+        "--coordinator-sha",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "--runner-root",
         "runner",
         "--restore-config-dir",
         "config",
     ]);
     assert_eq!(
-        restore_arguments(&RestoreCommand::Verify(options.clone())),
+        restore_arguments(&RestoreCommand::Verify(Box::new(options.clone()))),
         expected
     );
     options.config_dir = Some("D:/来源 config".into());
     let mut with_source = strings(&["--config-dir", "D:/来源 config"]);
     with_source.extend(expected);
     assert_eq!(
-        restore_arguments(&RestoreCommand::Verify(options)),
+        restore_arguments(&RestoreCommand::Verify(Box::new(options))),
         with_source
     );
 }

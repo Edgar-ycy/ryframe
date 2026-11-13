@@ -27,12 +27,20 @@ pub(super) struct ArtifactSource {
     pub(super) sha256: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct GitSource {
+    pub(super) root: String,
+    pub(super) sha: String,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Grant {
     format_version: u8,
     kind: String,
     source_sha: String,
+    coordinator: GitSource,
     verifier: ArtifactSource,
 }
 
@@ -47,11 +55,15 @@ pub(super) struct VerifierBinding {
 }
 
 impl VerifierBinding {
-    pub(super) fn read(backend: &Path, expected_source_sha: &str) -> AppResult<Self> {
-        if !lower_hex(expected_source_sha, 40) {
+    pub(super) fn read(
+        verifier_root: &Path,
+        expected_source_sha: &str,
+        coordinator: &GitSource,
+    ) -> AppResult<Self> {
+        if !lower_hex(expected_source_sha, 40) || !lower_hex(&coordinator.sha, 40) {
             return Err(validation("恢复证明缺少精确构建来源 SHA"));
         }
-        let directory = backend.join(".local-tests").join("build");
+        let directory = verifier_root.join(".local-tests").join("build");
         let lock = ProtectedFile::open(directory.join("source-commit.lock"), LOCK)?;
         lock.require_held()?;
         let source = ProtectedFile::open(directory.join("source-commit"), SOURCE)?;
@@ -59,8 +71,7 @@ impl VerifierBinding {
         source.require_bytes(&source_bytes, source_bytes.len() as u64, SOURCE)?;
         let grant = ProtectedFile::open(directory.join("restore-proof-verifier.json"), GRANT)?;
         let grant_bytes = grant.read_bytes(MAX_GRANT_BYTES, GRANT)?;
-        let value: Grant = serde_json::from_slice(&grant_bytes)
-            .map_err(|_| validation("恢复证明核验器绑定不是当前严格 JSON 格式"))?;
+        let value = parse_grant(&grant_bytes)?;
         if value.format_version != 1
             || value.kind != "ryframe-restore-proof-verifier"
             || value.source_sha != expected_source_sha
@@ -70,6 +81,9 @@ impl VerifierBinding {
             return Err(validation(
                 "恢复证明核验器绑定与当前构建来源或工具格式不一致",
             ));
+        }
+        if value.coordinator != *coordinator {
+            return Err(validation("恢复证明核验器绑定与指定协调来源不同"));
         }
         let tool = ProtectedFile::open(canonical_tool(&value.verifier.path)?, TOOL)?;
         let binding = Self {
@@ -100,6 +114,17 @@ impl VerifierBinding {
         drop(self.tool.same_handle(false, TOOL)?);
         self.lock.require_held()
     }
+}
+
+fn parse_grant(bytes: &[u8]) -> AppResult<Grant> {
+    let invalid = || validation("恢复证明核验器绑定不是当前严格 JSON 格式");
+    // 结构派生拒绝重复字段；对象检查同时排除 serde 允许的等价数组形式。
+    let grant: Grant = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+    let shape: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+    if !shape.is_object() || !shape["coordinator"].is_object() || !shape["verifier"].is_object() {
+        return Err(invalid());
+    }
+    Ok(grant)
 }
 
 struct ProtectedFile {

@@ -67,6 +67,8 @@ pub async fn execute(config: &AppConfig, context: &Context, command: Command) ->
             tests_receipt,
             runtime_receipt,
             target_plan,
+            coordinator_root,
+            coordinator_sha,
             runner_root,
             ..
         } => {
@@ -78,6 +80,8 @@ pub async fn execute(config: &AppConfig, context: &Context, command: Command) ->
                     tests: &tests_receipt,
                     runtime: &runtime_receipt,
                     target: &target_plan,
+                    coordinator: &coordinator_root,
+                    coordinator_sha: &coordinator_sha,
                     runner: &runner_root,
                 },
             )

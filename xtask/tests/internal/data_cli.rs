@@ -373,6 +373,10 @@ impl RestoreRunner {
             self.receipt(RESTORE_RUNTIME).to_string_lossy().into_owned(),
             "--target-plan".into(),
             backend.path("target.json"),
+            "--coordinator-root".into(),
+            super::workspace::root_dir().to_string_lossy().into_owned(),
+            "--coordinator-sha".into(),
+            "a".repeat(40),
             "--runner-root".into(),
             self.root().to_string_lossy().into_owned(),
             "--restore-config-dir".into(),
@@ -442,6 +446,8 @@ fn parses_every_restore_operation_into_typed_requests() {
         tests_receipt: runner.receipt(RESTORE_TESTS),
         runtime_receipt: runner.receipt(RESTORE_RUNTIME),
         target_plan: fixture.path("target.json").into(),
+        coordinator_root: super::workspace::root_dir(),
+        coordinator_sha: "a".repeat(40),
         runner_root: runner.root().to_path_buf(),
         config_dir: None,
         restore_config_dir: config.into(),
@@ -449,9 +455,9 @@ fn parses_every_restore_operation_into_typed_requests() {
     let mut verify = runner.verify_args(&fixture);
     assert_eq!(
         parse(verify.clone()).unwrap().command,
-        Command::Data(DataCommand::Restore(RestoreCommand::Verify(
+        Command::Data(DataCommand::Restore(RestoreCommand::Verify(Box::new(
             expected.clone()
-        )))
+        ))))
     );
     let source_config = runner.root().join("source registry");
     fs::create_dir(&source_config).unwrap();
@@ -462,7 +468,9 @@ fn parses_every_restore_operation_into_typed_requests() {
     expected.config_dir = Some(source_config);
     assert_eq!(
         parse(verify).unwrap().command,
-        Command::Data(DataCommand::Restore(RestoreCommand::Verify(expected)))
+        Command::Data(DataCommand::Restore(RestoreCommand::Verify(Box::new(
+            expected
+        ))))
     );
 }
 
@@ -496,6 +504,12 @@ fn restore_verify_requires_exact_runner_receipts_and_coordinator_plan() {
     reject("--proof", &wrong_directory);
 
     reject("--runner-root", Path::new("relative-runner"));
+    reject("--coordinator-root", Path::new("relative-coordinator"));
+    reject(
+        "--coordinator-root",
+        &runner.root().join("missing-coordinator"),
+    );
+    reject("--coordinator-root", other.root());
     reject("--runner-root", &runner.root().join("missing-runner"));
     reject("--proof", Path::new(RESTORE_PROOF));
     let runner_target = runner.root().join(".local-tests/target.json");
@@ -526,6 +540,56 @@ fn restore_verify_requires_exact_runner_receipts_and_coordinator_plan() {
 
     fs::remove_file(runner.receipt(RESTORE_RUNTIME)).unwrap();
     rejects_owned(valid);
+}
+
+#[test]
+fn restore_verify_binds_external_coordinator_plan_without_changing_invocation_root() {
+    let backend = DataFixture::new();
+    let runner = RestoreRunner::new();
+    let coordinator = RestoreRunner::new();
+    let plan = coordinator.root().join(".local-tests/target.json");
+    fs::write(&plan, b"{}\n").unwrap();
+    let mut arguments = runner.verify_args(&backend);
+    for (flag, value) in [
+        ("--coordinator-root", coordinator.root()),
+        ("--target-plan", plan.as_path()),
+    ] {
+        let index = arguments.iter().position(|value| value == flag).unwrap();
+        arguments[index + 1] = value.to_string_lossy().into_owned();
+    }
+    let parsed = parse(arguments.clone()).unwrap();
+    let Command::Data(DataCommand::Restore(RestoreCommand::Verify(options))) = parsed.command
+    else {
+        panic!("应解析为恢复核验命令");
+    };
+    assert_eq!(options.coordinator_root, coordinator.root());
+    assert_eq!(options.target_plan, plan);
+    assert!(options.config_dir.is_none());
+    assert!(
+        !options
+            .target_plan
+            .starts_with(super::workspace::root_dir())
+    );
+    for flag in ["--coordinator-root", "--coordinator-sha"] {
+        let mut missing = arguments.clone();
+        let index = missing.iter().position(|value| value == flag).unwrap();
+        missing.drain(index..index + 2);
+        assert!(parse(missing).unwrap_err().to_string().contains(flag));
+    }
+    for invalid in ["HEAD".into(), "A".repeat(40), "0".repeat(40)] {
+        let mut changed = arguments.clone();
+        let index = changed
+            .iter()
+            .position(|value| value == "--coordinator-sha")
+            .unwrap();
+        changed[index + 1] = invalid;
+        assert!(
+            parse(changed)
+                .unwrap_err()
+                .to_string()
+                .contains("--coordinator-sha")
+        );
+    }
 }
 
 #[test]

@@ -26,11 +26,12 @@ pub(crate) fn with_source_commit<T>(
 pub(crate) fn with_restore_verifier<T>(
     root: &Path,
     commit: &str,
+    coordinator: &serde_json::Value,
     verifier: &serde_json::Value,
     operation: impl FnOnce() -> Result<T>,
 ) -> Result<T> {
     with_binding(root, commit, |binding| {
-        binding.with_restore_verifier(root, commit, verifier, operation)
+        binding.with_restore_verifier(root, commit, coordinator, verifier, operation)
     })
 }
 
@@ -116,6 +117,7 @@ impl BuildSourceBinding {
         &self,
         root: &Path,
         commit: &str,
+        coordinator: &serde_json::Value,
         verifier: &serde_json::Value,
         operation: impl FnOnce() -> Result<T>,
     ) -> Result<T> {
@@ -129,7 +131,7 @@ impl BuildSourceBinding {
         self.check_lock(&lock, &identity)?;
         let grant = serde_json::json!({
             "format_version":1, "kind":"ryframe-restore-proof-verifier",
-            "source_sha":commit, "verifier":verifier,
+            "source_sha":commit, "coordinator":coordinator, "verifier":verifier,
         });
         let mut bytes = serde_json::to_vec(&grant)?;
         bytes.push(b'\n');
@@ -286,17 +288,18 @@ mod tests {
         let grant = directory.join(RESTORE_VERIFIER_NAME);
         let lock = directory.join("source-commit.lock");
         let tool = serde_json::json!({"path":root.path().join("xtask.exe"),"bytes":1,"sha256":"a".repeat(64)});
-        with_restore_verifier(root.path(), SHA, &tool, || {
+        let coordinator = serde_json::json!({"root":root.path().join("separate-coordinator"),"sha":"b".repeat(40)});
+        with_restore_verifier(root.path(), SHA, &coordinator, &tool, || {
             let contender = fs::OpenOptions::new().read(true).write(true).open(&lock)?;
             assert!(matches!(contender.try_lock(), Err(fs::TryLockError::WouldBlock)));
             let value: serde_json::Value = serde_json::from_slice(&fs::read(&grant)?)?;
-            assert_eq!(value, serde_json::json!({"format_version":1,"kind":"ryframe-restore-proof-verifier","source_sha":SHA,"verifier":tool}));
+            assert_eq!(value, serde_json::json!({"format_version":1,"kind":"ryframe-restore-proof-verifier","source_sha":SHA,"coordinator":coordinator,"verifier":tool}));
             Ok(())
         }).unwrap();
         assert!(!grant.exists());
         assert!(!lock.exists());
 
-        let changed = with_restore_verifier(root.path(), SHA, &tool, || {
+        let changed = with_restore_verifier(root.path(), SHA, &coordinator, &tool, || {
             fs::write(&grant, b"changed\n")?;
             Ok(())
         })

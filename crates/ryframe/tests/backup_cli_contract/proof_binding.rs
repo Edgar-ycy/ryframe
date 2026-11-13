@@ -8,13 +8,14 @@ use ryframe_kernel::AppResult;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use super::proof_binding::VerifierBinding;
+use super::proof_binding::{GitSource, VerifierBinding};
 
 const SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const EXECUTABLE: &[u8] = b"fixture-native-verifier";
 
 struct Fixture {
     backend: tempfile::TempDir,
+    coordinator: tempfile::TempDir,
     source: PathBuf,
     grant: PathBuf,
     tool: PathBuf,
@@ -41,6 +42,7 @@ impl Fixture {
         let grant = build.join("restore-proof-verifier.json");
         let fixture = Self {
             backend,
+            coordinator: tempfile::tempdir().unwrap(),
             source,
             grant,
             tool,
@@ -55,6 +57,7 @@ impl Fixture {
             "format_version": 1,
             "kind": "ryframe-restore-proof-verifier",
             "source_sha": SHA,
+            "coordinator": self.coordinator(),
             "verifier": {
                 "path": self.tool,
                 "bytes": EXECUTABLE.len(),
@@ -68,7 +71,14 @@ impl Fixture {
     }
 
     fn read(&self) -> AppResult<VerifierBinding> {
-        VerifierBinding::read(&canonical(self.backend.path()), SHA)
+        VerifierBinding::read(&canonical(self.backend.path()), SHA, &self.coordinator())
+    }
+
+    fn coordinator(&self) -> GitSource {
+        GitSource {
+            root: canonical(self.coordinator.path()).to_str().unwrap().into(),
+            sha: "b".repeat(40),
+        }
     }
 }
 
@@ -95,6 +105,57 @@ fn reads_the_grant_while_an_independent_file_handle_holds_the_lock() {
         fixture.expected()["verifier"]
     );
     binding.check().unwrap();
+    assert_ne!(fixture.coordinator().sha, SHA);
+    assert_ne!(
+        Path::new(&fixture.coordinator().root),
+        canonical(fixture.backend.path())
+    );
+}
+
+#[test]
+fn rejects_missing_or_changed_coordinator_binding_before_using_the_tool() {
+    let fixture = Fixture::new();
+    fixture.owner.try_lock().unwrap();
+    fixture.read().unwrap();
+    for field in ["root", "sha"] {
+        let mut grant = fixture.expected();
+        grant["coordinator"][field] = if field == "root" {
+            json!(canonical(fixture.backend.path()))
+        } else {
+            json!(SHA)
+        };
+        fixture.write_grant(&grant);
+        assert!(
+            fixture
+                .read()
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("与指定协调来源不同")
+        );
+    }
+    let mut absent = fixture.expected();
+    absent.as_object_mut().unwrap().remove("coordinator");
+    let mut unknown = fixture.expected();
+    unknown["coordinator"]["extra"] = json!("private-sentinel");
+    let mut array = fixture.expected();
+    array["coordinator"] = json!([fixture.coordinator().root, fixture.coordinator().sha]);
+    let serialized = serde_json::to_string(&fixture.expected()).unwrap();
+    let duplicate = serialized.replace(
+        "\"coordinator\":{",
+        "\"coordinator\":{\"sha\":\"duplicate\",",
+    );
+    for bytes in [
+        serde_json::to_string(&absent).unwrap(),
+        serde_json::to_string(&unknown).unwrap(),
+        serde_json::to_string(&array).unwrap(),
+        duplicate,
+    ] {
+        fs::write(&fixture.grant, bytes).unwrap();
+        let error = fixture.read().err().unwrap().to_string();
+        assert!(error.contains("严格 JSON"), "{error}");
+        assert!(!error.contains("private-sentinel"));
+    }
 }
 
 #[test]

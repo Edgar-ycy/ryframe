@@ -38,7 +38,7 @@ fn parse_backup(args: &[String]) -> Result<BackupCommand, CliError> {
             let mut options = NamedOptions::parse(rest)?;
             let output = options.take_output("--output")?;
             let source_sha = options.take_scalar("--source-sha")?;
-            validate_commit_sha(&source_sha)?;
+            validate_commit_sha(&source_sha, "--source-sha")?;
             let quiesced_at = options.take_optional_scalar("--quiesced-at")?;
             let observed_at = options.take_optional_scalar("--observed-at")?;
             let observation = match (quiesced_at, observed_at) {
@@ -111,39 +111,53 @@ fn parse_restore(args: &[String]) -> Result<RestoreCommand, CliError> {
             options.finish("data restore verify-data")?;
             Ok(command)
         }
-        "verify" => {
-            let id = options.take_scalar("--id")?;
-            let runner_root = options.take_directory("--runner-root")?;
-            let [proof, tests, runtime] =
-                crate::recovery::runtime::restore_evidence_paths(&runner_root, &id)
-                    .map_err(|error| CliError::new(format!("--id 无效：{error}")))?;
-            let command = RestoreCommand::Verify(RestoreVerifyOptions {
-                id,
-                proof: options.take_runner_file("--proof", &proof)?,
-                tests_receipt: options.take_runner_file("--tests-receipt", &tests)?,
-                runtime_receipt: options.take_runner_file("--runtime-receipt", &runtime)?,
-                target_plan: options.take_file("--target-plan")?,
-                runner_root,
-                config_dir: options
-                    .take_optional_scalar("--config-dir")?
-                    .map(|value| {
-                        validate_data_path(
-                            value.into(),
-                            "--config-dir",
-                            DataPathRole::ExternalDirectory,
-                        )
-                    })
-                    .transpose()?,
-                restore_config_dir: options.take_directory("--restore-config-dir")?,
-            });
-            options.require_write()?;
-            options.finish("data restore verify")?;
-            Ok(command)
-        }
+        "verify" => parse_restore_verify(options),
         _ => Err(CliError::new(format!(
             "未知 data restore 子操作：{operation}"
         ))),
     }
+}
+
+fn parse_restore_verify(mut options: NamedOptions) -> Result<RestoreCommand, CliError> {
+    let id = options.take_scalar("--id")?;
+    let coordinator_root = options.take_directory("--coordinator-root")?;
+    let coordinator_sha = options.take_scalar("--coordinator-sha")?;
+    validate_commit_sha(&coordinator_sha, "--coordinator-sha")?;
+    let target_plan = options.take_path("--target-plan", DataPathRole::ExternalInputFile)?;
+    let boundary = coordinator_root.join(".local-tests");
+    if target_plan == boundary || !target_plan.starts_with(&boundary) {
+        return Err(CliError::new(
+            "--target-plan 必须位于指定协调后端 .local-tests 的子目录",
+        ));
+    }
+    let runner_root = options.take_directory("--runner-root")?;
+    let [proof, tests, runtime] =
+        crate::recovery::runtime::restore_evidence_paths(&runner_root, &id)
+            .map_err(|error| CliError::new(format!("--id 无效：{error}")))?;
+    let command = RestoreCommand::Verify(Box::new(RestoreVerifyOptions {
+        id,
+        proof: options.take_runner_file("--proof", &proof)?,
+        tests_receipt: options.take_runner_file("--tests-receipt", &tests)?,
+        runtime_receipt: options.take_runner_file("--runtime-receipt", &runtime)?,
+        target_plan,
+        coordinator_root,
+        coordinator_sha,
+        runner_root,
+        config_dir: options
+            .take_optional_scalar("--config-dir")?
+            .map(|value| {
+                validate_data_path(
+                    value.into(),
+                    "--config-dir",
+                    DataPathRole::ExternalDirectory,
+                )
+            })
+            .transpose()?,
+        restore_config_dir: options.take_directory("--restore-config-dir")?,
+    }));
+    options.require_write()?;
+    options.finish("data restore verify")?;
+    Ok(command)
 }
 
 fn parse_target(args: &[String]) -> Result<TargetInventoryOptions, CliError> {
@@ -193,7 +207,7 @@ fn parse_reset(args: &[String]) -> Result<ResetCommand, CliError> {
     }
 }
 
-fn validate_commit_sha(value: &str) -> Result<(), CliError> {
+fn validate_commit_sha(value: &str, option: &str) -> Result<(), CliError> {
     if value.len() == 40
         && value.bytes().any(|byte| byte != b'0')
         && value
@@ -202,9 +216,9 @@ fn validate_commit_sha(value: &str) -> Result<(), CliError> {
     {
         Ok(())
     } else {
-        Err(CliError::new(
-            "--source-sha 必须是 40 位非零小写十六进制 Git SHA",
-        ))
+        Err(CliError::new(format!(
+            "{option} 必须是 40 位非零小写十六进制 Git SHA"
+        )))
     }
 }
 

@@ -42,6 +42,7 @@ pub(in crate::recovery) struct Source<'a> {
 pub(in crate::recovery) struct Authority<'a> {
     pub(in crate::recovery) record: &'a Value,
     pub(in crate::recovery) runtime: &'a Value,
+    pub(in crate::recovery) coordinator: Source<'a>,
     pub(in crate::recovery) runner: Source<'a>,
     pub(in crate::recovery) verifier: Source<'a>,
     pub(in crate::recovery) source_generation: &'a Value,
@@ -109,6 +110,7 @@ fn source_fields(authority: &Authority<'_>) -> Result<Value> {
         "backend_execution_sha": runtime["backend_execution_sha"],
         "backend_adapter_contract": runtime["backend_adapter_contract"],
         "frontend_sha": runtime["frontend_sha"],
+        "coordinator": source_binding(&authority.coordinator, "恢复证明协调后端")?,
         "runner": source_binding(&authority.runner, "恢复测试 runner")?,
         "verifier": source_binding(&authority.verifier, "恢复证明核验器")?,
     }))

@@ -65,12 +65,14 @@ fn verify(
     let tools = &authority["tools"];
     strict::exact(
         tools,
-        &["runner", "verifier", "native_verifier"],
+        &["coordinator", "runner", "verifier", "native_verifier"],
         "恢复业务权威工具",
     )?;
+    let coordinator_sha = clean_source(backend, &tools["coordinator"], "恢复证明协调后端")?;
     let runner_sha = clean_source(runner, &tools["runner"], "恢复测试 runner")?;
-    let verifier_sha = clean_source(backend, &tools["verifier"], "恢复证明协调后端")?;
-    verify_tool(backend, &tools["native_verifier"], inputs)?;
+    let verifier = path(&tools["verifier"]["root"])?;
+    let verifier_sha = clean_source(&verifier, &tools["verifier"], "恢复证明核验器")?;
+    verify_tool(&verifier, &tools["native_verifier"], inputs)?;
     let proof = inputs.read(&path(&arguments["proof"])?)?;
     let tests = inputs.read(&path(&arguments["tests_receipt"])?)?;
     let verified = VerifiedTarget::read(
@@ -94,12 +96,16 @@ fn verify(
         Authority {
             record,
             runtime: &verified.authority,
+            coordinator: Source {
+                root: backend,
+                sha: &coordinator_sha,
+            },
             runner: Source {
                 root: runner,
                 sha: &runner_sha,
             },
             verifier: Source {
-                root: backend,
+                root: &verifier,
                 sha: &verifier_sha,
             },
             source_generation: &verified.lineage["source_generation"],
@@ -160,7 +166,7 @@ fn clean_source(root: &Path, expected: &Value, label: &str) -> Result<String> {
     Ok(sha)
 }
 
-fn verify_tool(backend: &Path, expected: &Value, inputs: &mut Inputs) -> Result<()> {
+fn verify_tool(verifier: &Path, expected: &Value, inputs: &mut Inputs) -> Result<()> {
     let binding = document::binding_shape(expected, "恢复证明原生核验程序")?;
     let executable = portable_path(&std::env::current_exe()?.canonicalize()?);
     check(
@@ -174,7 +180,7 @@ fn verify_tool(backend: &Path, expected: &Value, inputs: &mut Inputs) -> Result<
         "恢复证明核验程序字节与绑定不同",
     )?;
     let compiled = frontend_origin::describe()?;
-    frontend_origin::verify_compiled_sources(backend, &compiled["sources"])?;
+    frontend_origin::verify_compiled_sources(verifier, &compiled["sources"])?;
     Ok(())
 }
 
@@ -224,5 +230,99 @@ mod tests {
             changed[field] = value;
             assert!(require_record(&changed).is_err(), "{field}");
         }
+    }
+
+    #[test]
+    fn independent_roles_remain_bound_to_clean_sources_through_the_read_window() {
+        let directory = source_fixture();
+        let roots = ["coordinator", "runner", "verifier"].map(|role| directory.path().join(role));
+        let bindings = roots.each_ref().map(|root| {
+            let sha = source::capture(root).unwrap().source.snapshot.head;
+            json!({"root":root,"sha":sha})
+        });
+        for (index, root) in roots.iter().enumerate() {
+            let window = Window::begin().unwrap();
+            for (bound_root, binding) in roots.iter().zip(&bindings) {
+                assert_eq!(
+                    clean_source(bound_root, binding, "独立来源测试").unwrap(),
+                    binding["sha"].as_str().unwrap()
+                );
+            }
+            let other = &bindings[(index + 1) % roots.len()];
+            assert!(clean_source(root, other, "互换来源").is_err());
+            let mut wrong_sha = bindings[index].clone();
+            wrong_sha["sha"] = other["sha"].clone();
+            assert!(clean_source(root, &wrong_sha, "单侧错误 SHA").is_err());
+            window.finish(Ok(())).unwrap();
+            let added = root.join("unexpected.txt");
+            std::fs::write(&added, b"changed").unwrap();
+            assert!(window.finish(Ok(())).is_err(), "角色 {index} 漂移");
+            drop(window);
+            std::fs::remove_file(added).unwrap();
+        }
+    }
+
+    #[test]
+    fn native_verifier_checks_its_compiled_root_separately_from_coordinator() {
+        let directory = source_fixture();
+        let coordinator = directory.path().join("coordinator");
+        let verifier = frontend_origin::compiled_root().unwrap();
+        let executable = portable_path(&std::env::current_exe().unwrap().canonicalize().unwrap());
+        let observed = digest::file(&executable).unwrap();
+        let tool = json!({"path":executable,"bytes":observed.bytes,"sha256":observed.sha256});
+        let mut inputs = Inputs::new(&coordinator);
+        verify_tool(&verifier, &tool, &mut inputs).unwrap();
+        assert!(verify_tool(&coordinator, &tool, &mut inputs).is_err());
+        inputs.finish(Ok(())).unwrap();
+    }
+
+    fn source_fixture() -> tempfile::TempDir {
+        let base = crate::workspace::root_dir().join(".local-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let directory = tempfile::Builder::new()
+            .prefix("business-authority-sources-")
+            .tempdir_in(base)
+            .unwrap();
+        for role in ["coordinator", "runner", "verifier"] {
+            let root = directory.path().join(role);
+            std::fs::create_dir(&root).unwrap();
+            std::fs::write(root.join("role.txt"), role).unwrap();
+            for arguments in [
+                vec!["init", "--quiet"],
+                vec!["add", "."],
+                vec![
+                    "-c",
+                    "user.name=source-unit",
+                    "-c",
+                    "user.email=source-unit@example.invalid",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "--quiet",
+                    "-m",
+                    role,
+                ],
+            ] {
+                let mut command = std::process::Command::new("git");
+                command.arg("-C").arg(&root).args(arguments);
+                for (name, _) in std::env::vars_os() {
+                    if name
+                        .to_string_lossy()
+                        .to_ascii_uppercase()
+                        .starts_with("GIT_")
+                    {
+                        command.env_remove(name);
+                    }
+                }
+                assert!(
+                    command
+                        .env("GIT_OPTIONAL_LOCKS", "0")
+                        .status()
+                        .unwrap()
+                        .success()
+                );
+            }
+        }
+        directory
     }
 }

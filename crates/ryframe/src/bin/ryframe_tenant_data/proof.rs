@@ -14,7 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use super::proof_binding::{ArtifactSource, VerifierBinding};
+use super::proof_binding::{ArtifactSource, GitSource, VerifierBinding};
 
 const MAX_EVIDENCE_BYTES: u64 = 16 * 1024 * 1024;
 const VERIFIER_TIMEOUT: Duration = Duration::from_secs(300);
@@ -27,6 +27,8 @@ pub struct EvidencePaths<'a> {
     pub tests: &'a Path,
     pub runtime: &'a Path,
     pub target: &'a Path,
+    pub coordinator: &'a Path,
+    pub coordinator_sha: &'a str,
     pub runner: &'a Path,
 }
 
@@ -41,15 +43,17 @@ struct VerificationAuthority<'a> {
 
 #[derive(Serialize)]
 struct VerificationTools<'a> {
+    coordinator: &'a GitSource,
     runner: &'a GitSource,
     verifier: &'a GitSource,
     native_verifier: &'a ArtifactSource,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-struct GitSource {
-    root: String,
-    sha: String,
+struct VerificationSources {
+    coordinator: GitSource,
+    runner: GitSource,
+    verifier: GitSource,
+    binding: VerifierBinding,
 }
 
 #[derive(Deserialize)]
@@ -90,23 +94,14 @@ pub async fn verify(
         .await?
         .filter(|item| item.valid)
         .ok_or_else(|| validation("恢复演练引用的有效备份不存在"))?;
-    let backend = backend_root()?;
-    let runner_root = verified_root(paths.runner, "恢复测试 runner")?;
-    let verifier = clean_git_source(&backend, "恢复证明协调后端")?;
-    if compiled_source_sha() != Some(verifier.sha.as_str()) {
-        return Err(validation(
-            "恢复证明维护程序必须由当前干净后端通过统一 data 入口构建",
-        ));
-    }
-    let runner = clean_git_source(&runner_root, "恢复测试 runner")?;
-    let binding = VerifierBinding::read(&backend, &verifier.sha)?;
-    let native_verifier = binding.verifier();
+    let sources = VerificationSources::read(&paths)?;
+    let native_verifier = sources.binding.verifier();
     let before = read_regular_file(paths.proof, "恢复业务证明")?;
     let proof: RestoreBusinessProof = serde_json::from_slice(&before)
         .map_err(|error| validation(format!("恢复业务证明格式无效：{error}")))?;
     if proof.restore_id != id
-        || proof.verifier_sha != verifier.sha
-        || proof.runner_sha != runner.sha
+        || proof.verifier_sha != sources.verifier.sha
+        || proof.runner_sha != sources.runner.sha
     {
         return Err(validation(
             "恢复业务证明与命令行演练或独立采集的核验源码不同",
@@ -118,24 +113,65 @@ pub async fn verify(
         record: &record,
         backup_manifest: &backup.manifest,
         tools: VerificationTools {
-            runner: &runner,
-            verifier: &verifier,
+            coordinator: &sources.coordinator,
+            runner: &sources.runner,
+            verifier: &sources.verifier,
             native_verifier,
         },
     };
-    let verified = run_verifier(&backend, &runner_root, native_verifier, &paths, &authority)?;
+    let verified = run_verifier(
+        Path::new(&sources.coordinator.root),
+        Path::new(&sources.runner.root),
+        native_verifier,
+        &paths,
+        &authority,
+    )?;
     if verified != proof || read_regular_file(paths.proof, "恢复业务证明")? != before {
         return Err(validation(
             "恢复业务证明与独立核验结果不同或核验期间发生变化",
         ));
     }
-    if clean_git_source(&backend, "恢复证明协调后端")? != verifier
-        || clean_git_source(&runner_root, "恢复测试 runner")? != runner
-    {
-        return Err(validation("恢复证明核验期间源码发生变化"));
-    }
-    binding.check()?;
+    sources.check()?;
     Ok(proof)
+}
+
+impl VerificationSources {
+    fn read(paths: &EvidencePaths<'_>) -> AppResult<Self> {
+        let verifier_root = backend_root()?;
+        let verifier = clean_git_source(&verifier_root, "恢复证明核验后端")?;
+        if compiled_source_sha() != Some(verifier.sha.as_str()) {
+            return Err(validation(
+                "恢复证明维护程序必须由当前干净核验源码通过统一 data 入口构建",
+            ));
+        }
+        let coordinator_root = verified_root(paths.coordinator, "恢复证明协调后端")?;
+        let coordinator = clean_git_source(&coordinator_root, "恢复证明协调后端")?;
+        if coordinator.sha != paths.coordinator_sha {
+            return Err(validation("恢复证明协调工作树与 coordinator-sha 不一致"));
+        }
+        let runner_root = verified_root(paths.runner, "恢复测试 runner")?;
+        let runner = clean_git_source(&runner_root, "恢复测试 runner")?;
+        let binding = VerifierBinding::read(&verifier_root, &verifier.sha, &coordinator)?;
+        Ok(Self {
+            coordinator,
+            runner,
+            verifier,
+            binding,
+        })
+    }
+
+    fn check(&self) -> AppResult<()> {
+        for (source, label) in [
+            (&self.coordinator, "恢复证明协调后端"),
+            (&self.verifier, "恢复证明核验后端"),
+            (&self.runner, "恢复测试 runner"),
+        ] {
+            if clean_git_source(Path::new(&source.root), label)? != *source {
+                return Err(validation("恢复证明核验期间源码发生变化"));
+            }
+        }
+        self.binding.check()
+    }
 }
 
 fn run_verifier(
@@ -200,8 +236,8 @@ fn backend_root() -> AppResult<PathBuf> {
     let root = manifest
         .parent()
         .and_then(Path::parent)
-        .ok_or_else(|| validation("无法确定恢复证明协调后端根目录"))?;
-    verified_root(root, "恢复证明协调后端")
+        .ok_or_else(|| validation("无法确定恢复证明核验后端根目录"))?;
+    verified_root(root, "恢复证明核验后端")
 }
 
 fn verified_root(path: &Path, label: &str) -> AppResult<PathBuf> {
