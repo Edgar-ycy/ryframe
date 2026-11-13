@@ -77,9 +77,9 @@ pub(super) fn run(raw: &str) -> Result<Value> {
             super::plan::run(backend, &request, reference)
         };
     }
-    let plan = reference.value;
+    let plan = &reference.value;
     if command == "dataset" {
-        return super::dataset::run(backend, &request, &plan);
+        return super::dataset::run(backend, &request, plan);
     }
     if !matches!(command, "backup" | "copy" | "damage") {
         return Err("参考文件操作无效".into());
@@ -92,7 +92,7 @@ pub(super) fn run(raw: &str) -> Result<Value> {
     )?;
     let result = (|| {
         if command == "backup" {
-            return super::backup::run(backend, &plan, path(&work)?, &request);
+            return super::backup::run(backend, &reference, path(&work)?, &request);
         }
         let root = path(&request["backup_root"])?;
         super::unlinked(root)?;

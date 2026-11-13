@@ -9,11 +9,18 @@ use inputs::document::{self, Document};
 use native::{
     export::transport::{SystemTransport, Transport},
     resources::common,
+    target_verify::guard::Inputs,
 };
 
 mod objects;
 
-pub(super) fn run(backend: &Path, plan: &Value, work: &Path, request: &Value) -> Result<Value> {
+pub(super) fn run(
+    backend: &Path,
+    reference: &Document,
+    work: &Path,
+    request: &Value,
+) -> Result<Value> {
+    let plan = &reference.value;
     let raw = document::read(path(&request["inventory"])?, backend, "共享导出原始库存")?;
     let inventory = model::backup_inventory(plan, &raw.value, || {
         native::source::protocol::request(&json!({"action":"source-snapshot","root":backend}))
@@ -29,6 +36,7 @@ pub(super) fn run(backend: &Path, plan: &Value, work: &Path, request: &Value) ->
         backend,
         "共享导出发布",
     )?;
+    let protected = hold_inputs([reference, &raw, &generation, &published])?;
     let verify_source =
         || verify_source(backend, plan, &inventory, [&raw, &generation, &published]);
     let source = verify_source()?;
@@ -46,11 +54,23 @@ pub(super) fn run(backend: &Path, plan: &Value, work: &Path, request: &Value) ->
     fs::create_dir(&root)?;
     let mut artifacts = dump_databases(&root, plan, &inventory, &databases, &SystemTransport)?;
     storage.store_buckets(&root, &inventory, &mut artifacts)?;
-    publish(backend, &root, plan, &inventory, artifacts, &source, || {
+    let result = publish(backend, &root, plan, &inventory, artifacts, &source, || {
         databases.check()?;
         stopped()?;
-        verify_source()
-    })
+        let verified = verify_source()?;
+        protected.check()?;
+        Ok(verified)
+    })?;
+    protected.check()?;
+    Ok(result)
+}
+
+fn hold_inputs<const N: usize>(documents: [&Document; N]) -> Result<Inputs> {
+    let protected = Inputs::open(documents.map(|document| document.path.clone()))?;
+    for document in documents {
+        document.assert_unchanged()?;
+    }
+    Ok(protected)
 }
 
 fn verify_source(

@@ -95,6 +95,62 @@ fn changed_source_leaves_payloads_and_cannot_publish_manifest() {
     document.assert_unchanged().unwrap();
 }
 
+#[test]
+fn source_input_window_protects_the_four_original_documents() {
+    let directory = super::super::tests::temporary();
+    let paths = ["plan", "inventory", "generation", "publication"]
+        .map(|name| directory.path().join(format!("{name}.json")));
+    let documents = paths.each_ref().map(|path| {
+        fs::write(path, br#"{"value":1}"#).unwrap();
+        document::read(path, backend(), "原备份输入").unwrap()
+    });
+    for path in &paths {
+        fs::write(path, br#"{"value":2}"#).unwrap();
+        assert!(hold_inputs(documents.each_ref()).is_err());
+        fs::write(path, br#"{"value":1}"#).unwrap();
+    }
+    let held = hold_inputs(documents.each_ref()).unwrap();
+    for path in &paths {
+        let change = fs::write(path, br#"{"value":2}"#);
+        #[cfg(windows)]
+        assert_eq!(change.unwrap_err().raw_os_error(), Some(32));
+        #[cfg(not(windows))]
+        {
+            change.unwrap();
+            assert!(held.check().is_err());
+            fs::write(path, br#"{"value":1}"#).unwrap();
+        }
+    }
+    held.check().unwrap();
+}
+
+#[test]
+fn payload_drift_during_source_postcheck_blocks_manifest_publication() {
+    let fixture = super::super::tests::Fixture::new();
+    let manifest = fixture.root.join("manifest.json");
+    fs::remove_file(&manifest).unwrap();
+    let source = json!({"source_export":{"original":1},"source_generation":{"same":true}});
+    let payload = fixture.root.join("objects/uploads/one.bin");
+    let changed = b"changed-bytes";
+    assert_eq!(fs::metadata(&payload).unwrap().len(), changed.len() as u64);
+    let error = publish(
+        backend(),
+        &fixture.root,
+        &fixture.plan,
+        &fixture.manifest,
+        fixture.manifest["artifacts"].as_array().unwrap().clone(),
+        &source,
+        || {
+            fs::write(&payload, changed)?;
+            Ok(source.clone())
+        },
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("摘要"), "{error}");
+    assert!(!manifest.exists());
+    assert_eq!(fs::read(payload).unwrap(), changed);
+}
+
 #[derive(Default)]
 struct Fake {
     commands: RefCell<Vec<Vec<String>>>,

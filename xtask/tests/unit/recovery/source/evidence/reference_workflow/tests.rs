@@ -561,14 +561,12 @@ fn backup_source_requires_same_inventory_build_configuration_generation_and_orde
         "identity":{"source_generation":descriptor},"source":{"source_generation":descriptor,"request":request,"generation":generation},
         "exported":{"inventory":inventory,"request":request,"generation":generation},
         "build":{"sources":{"full":{"source":{"snapshot":source}}}},"descriptor":descriptor,
-        "runtime":{"verified_at":(Utc::now()-Duration::seconds(2)).to_rfc3339()},
-        "quiescence":{"observed_stopped_at":(Utc::now()-Duration::seconds(1)).to_rfc3339()}});
-    // 固定采集时间必须晚于实际停止观察。
+        "runtime":{"verified_at":"2025-01-01T00:00:01Z"},
+        "quiescence":{"observed_stopped_at":"2025-01-01T00:00:02Z"}});
     let mut args = args;
-    let captured = Utc::now().to_rfc3339();
     for field in ["quiesced_at", "captured_at"] {
-        args["inventory"][field] = json!(captured);
-        args["exported"]["inventory"][field] = json!(captured);
+        args["inventory"][field] = json!("2025-01-01T00:00:03Z");
+        args["exported"]["inventory"][field] = args["inventory"][field].clone();
     }
     proof::backup_source(&args).unwrap();
     for pointer in [
@@ -588,10 +586,28 @@ fn backup_source_requires_same_inventory_build_configuration_generation_and_orde
         *invalid.pointer_mut(pointer).unwrap() = json!("changed");
         assert!(proof::backup_source(&invalid).is_err(), "{pointer}");
     }
+    // 两份库存保持一致，使每个反例都命中同代来源的实际时间顺序检查。
+    for (pointer, timestamp) in [
+        ("/runtime/verified_at", "2025-01-01T00:00:03Z"),
+        ("/quiescence/observed_stopped_at", "2025-01-01T00:00:04Z"),
+        ("/inventory/quiesced_at", "2025-01-01T00:00:04Z"),
+    ] {
+        let mut invalid = args.clone();
+        *invalid.pointer_mut(pointer).unwrap() = json!(timestamp);
+        if let Some(field) = pointer.strip_prefix("/inventory/") {
+            invalid["exported"]["inventory"][field] = json!(timestamp);
+        }
+        let error = proof::backup_source(&invalid).unwrap_err();
+        assert!(
+            error.to_string().contains("时间顺序不成立"),
+            "{pointer}: {error}"
+        );
+    }
     let mut future = args.clone();
     for field in ["quiesced_at", "captured_at"] {
         future["inventory"][field] = json!("2999-01-01T00:00:00Z");
         future["exported"]["inventory"][field] = json!("2999-01-01T00:00:00Z");
     }
-    assert!(proof::backup_source(&future).is_err());
+    let error = proof::backup_source(&future).unwrap_err();
+    assert!(error.to_string().contains("时间顺序不成立"), "{error}");
 }
