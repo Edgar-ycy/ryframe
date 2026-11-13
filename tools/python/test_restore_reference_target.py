@@ -51,38 +51,6 @@ class TargetPlanTests(unittest.TestCase):
         self.assertEqual(candidate["product_execution"], target._product_execution(self.comparison["arms"]["b1"]))
         self.assertNotEqual(candidate["comparison_arm_sha256"], base["comparison_arm_sha256"])
 
-    def test_unknown_fields_and_missing_bindings_are_rejected(self):
-        original = self.capture()
-        changes = [lambda value: value.update(extra=True), lambda value: value.pop("backup_receipt"),
-                   lambda value: value["fresh_target"].update(extra=True),
-                   lambda value: value["backup_receipt"].update(extra=True),
-                   lambda value: value.update(format_version=True),
-                   lambda value: value.update(product_plan_sha256="f" * 64),
-                   lambda value: value.update(comparison_arm_sha256="f" * 64),
-                   lambda value: value["fresh_target"].update(ownership_sha256="f" * 64)]
-        for change in changes:
-            value = copy.deepcopy(original)
-            change(value)
-            with self.subTest(change=change), self.assertRaises(ValueError):
-                target.verify_target_plan(self.backend, self.plan, self.write("invalid.json", value))
-
-    def test_all_bound_files_reject_byte_drift_before_reconstruction(self):
-        value = self.capture()
-        plan_path = self.write("target-plan.json", value)
-        descriptors = [value[key] for key in ("backup_receipt", "comparison_sources", "arm_input", "product_plan_file")]
-        descriptors += [value["fresh_target"][key] for key in target.FRESH_FIELDS - {"ownership_sha256"}]
-        descriptors += [value["maintenance_execution"]["build"], *value["product_execution"]["builds"].values()]
-        for descriptor in descriptors:
-            path = Path(descriptor["path"])
-            before = path.read_bytes()
-            path.write_bytes(before + b"\n")
-            try:
-                with self.subTest(path=path), patch.object(target, "capture_target_plan") as capture, self.assertRaises(ValueError):
-                    target.verify_target_plan(self.backend, self.plan, plan_path)
-                capture.assert_not_called()
-            finally:
-                path.write_bytes(before)
-
     def test_side_or_arm_swap_is_rejected(self):
         original = self.capture()
         for field, value in (("target_side", "candidate"), ("comparison_arm", "b1")):
@@ -109,23 +77,6 @@ class TargetPlanTests(unittest.TestCase):
         self.arm = original
         with patch.object(target, "execution_backend", return_value=(self.backend / "other", {})), self.assertRaises(ValueError):
             self.capture()
-
-    def test_execution_authorities_cannot_be_swapped_or_extended(self):
-        original = self.capture()
-        changes = [lambda value: value["maintenance_execution"].update(extra=True),
-                   lambda value: value["maintenance_execution"].update(root=str(self.backend / "other")),
-                   lambda value: value["maintenance_execution"]["binding"].update(kind="other"),
-                   lambda value: value["product_execution"].update(extra=True),
-                   lambda value: value["product_execution"].update(backend_execution_sha="f" * 40),
-                   lambda value: value["product_execution"].update(backend_product_sha="f" * 40),
-                   lambda value: value["product_execution"].update(adapter=None),
-                   lambda value: value["product_execution"]["roots"].update(execution_backend=str(self.backend)),
-                   lambda value: value.update(product_execution=target._product_execution(self.comparison["arms"]["b1"]))]
-        for change in changes:
-            value = copy.deepcopy(original)
-            change(value)
-            with self.subTest(change=change), self.assertRaises(ValueError):
-                target.verify_target_plan(self.backend, self.plan, self.write("invalid-execution.json", value))
 
     def test_product_plan_rejects_extra_fields_sha_target_and_endpoint_drift(self):
         changes = [lambda value: value.update(extra=True), lambda value: value.update(frontend_sha="e" * 40),

@@ -106,7 +106,7 @@ pub(crate) fn verify(
 ) -> Result<(Chain, Value, Document)> {
     let target = super::document::read(target_path, backend, "目标计划")?;
     validate_shape(backend, &target.value, &reference.value)?;
-    let paths = InputPaths::from(&target.value, backend)?;
+    let paths = InputPaths::from(&target.value)?;
     let product_document = super::document::read(&paths.product, backend, "产品恢复计划")?;
     let chain = chain::load_with_reference(
         backend,
@@ -151,13 +151,16 @@ fn validate_shape(backend: &Path, value: &Value, plan: &Value) -> Result<()> {
         &["source_backend", "execution_backend", "frontend"],
         "产品执行 roots",
     )?;
-    super::comparison::validate_builds(&value["product_execution"])?;
     let side = text(target.get("target_side").unwrap(), "目标计划侧别")?;
+    let arm = match side {
+        "base" => "b0",
+        "candidate" => "b1",
+        _ => return Err("参考计划目标侧无效".into()),
+    };
     if target.get("format_version") != Some(&Value::from(1))
         || target.get("kind").and_then(Value::as_str) != Some("restore-reference-target-plan")
         || plan.get("target_side").and_then(Value::as_str) != Some(side)
-        || target.get("comparison_arm").and_then(Value::as_str)
-            != Some(if side == "base" { "b0" } else { "b1" })
+        || target.get("comparison_arm").and_then(Value::as_str) != Some(arm)
         || target.get("reference_plan_sha256").and_then(Value::as_str) != Some(hash(plan)?.as_str())
         || target.get("product_plan_sha256").and_then(Value::as_str)
             != Some(hash(target.get("product_plan").unwrap())?.as_str())
@@ -172,21 +175,22 @@ fn validate_shape(backend: &Path, value: &Value, plan: &Value) -> Result<()> {
         fresh.get("ownership_sha256").unwrap(),
         "fresh ownership 摘要",
     )?;
-    for descriptor in [
-        target.get("backup_receipt").unwrap(),
-        target.get("comparison_sources").unwrap(),
-        target.get("arm_input").unwrap(),
-        target.get("product_plan_file").unwrap(),
-        fresh.get("verify").unwrap(),
-        fresh.get("initialized").unwrap(),
-        fresh.get("registration").unwrap(),
-        fresh.get("initialized_files").unwrap(),
-        fresh.get("environment").unwrap(),
-        fresh.get("inventory").unwrap(),
-        maintenance.get("build").unwrap(),
+    for (descriptor, label) in [
+        (&target["backup_receipt"], "目标计划备份收据"),
+        (&target["comparison_sources"], "目标计划双版本来源"),
+        (&target["arm_input"], "目标计划 arm 输入"),
+        (&target["product_plan_file"], "目标计划产品恢复文件"),
+        (&fresh["verify"], "目标计划目标复核"),
+        (&fresh["initialized"], "目标计划初始化结果"),
+        (&fresh["registration"], "目标计划初始化登记"),
+        (&fresh["initialized_files"], "目标计划初始化文件"),
+        (&fresh["environment"], "目标计划初始化环境"),
+        (&fresh["inventory"], "目标计划初始化库存"),
+        (&maintenance["build"], "目标计划维护构建"),
     ] {
-        super::document::bound_file(backend, descriptor, "目标计划绑定")?;
+        super::document::bound_file(backend, descriptor, label)?;
     }
+    super::comparison::validate_builds(&value["product_execution"])?;
     validate_plan(plan, backend)?;
     Ok(())
 }
@@ -200,7 +204,7 @@ struct InputPaths {
 }
 
 impl InputPaths {
-    fn from(value: &Value, _backend: &Path) -> Result<Self> {
+    fn from(value: &Value) -> Result<Self> {
         let path = |field: &str| -> Result<PathBuf> {
             let binding = value
                 .get(field)
@@ -212,14 +216,8 @@ impl InputPaths {
             comparison: path("comparison_sources")?,
             arm: path("arm_input")?,
             product: path("product_plan_file")?,
-            fresh: PathBuf::from(text(
-                value
-                    .get("fresh_target")
-                    .and_then(|value| value.get("verify"))
-                    .and_then(|value| value.get("path"))
-                    .ok_or("fresh target verify 缺少路径")?,
-                "fresh target verify",
-            )?),
+            fresh: super::document::binding_shape(&value["fresh_target"]["verify"], "目标复核")?
+                .path,
         })
     }
 }

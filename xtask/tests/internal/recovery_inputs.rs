@@ -6,7 +6,7 @@ use super::cli::{RecoveryInputsCommand, RestoreInputPublication};
 use super::clone_lifecycle_tests::arm_storage_bindings;
 use super::recovery::inputs::{
     backup, bindings, chain, document, product, publish, reference, reference_configuration, run,
-    target,
+    target, target_plan,
 };
 use super::recovery_inputs_fixture::Fixture;
 use super::recovery_inputs_support::{binding, file_sha, hash, read_value};
@@ -155,6 +155,179 @@ fn reference_plan_summary_process_leaves_the_fixture_and_cold_cache_untouched() 
     }
     assert!(!cache.exists());
     assert_eq!(snapshot(&fixture.root), before);
+}
+
+#[test]
+fn target_plan_checks_each_original_document_before_reconstructing_the_chain() {
+    let fixture = Fixture::new();
+    let reference = document::read(&fixture.reference_plan, &fixture.backend, "参考计划").unwrap();
+    let original = read_value(&fixture.target_plan);
+    let verify = || target_plan::verify(&fixture.backend, reference.clone(), &fixture.target_plan);
+    assert_eq!(verify().unwrap().1, original);
+
+    let owner = fixture.work_dir.join("reference-owner.json");
+    fs::write(&owner, b"{}").unwrap();
+    let reason = |result: crate::Result<_>| {
+        result
+            .err()
+            .expect("expected invalid target plan")
+            .to_string()
+    };
+    assert!(reason(verify()).contains("ownership"));
+    for (pointer, label) in [
+        ("/backup_receipt", "目标计划备份收据"),
+        ("/comparison_sources", "目标计划双版本来源"),
+        ("/arm_input", "目标计划 arm 输入"),
+        ("/product_plan_file", "目标计划产品恢复文件"),
+        ("/fresh_target/verify", "目标计划目标复核"),
+        ("/fresh_target/initialized", "目标计划初始化结果"),
+        ("/fresh_target/registration", "目标计划初始化登记"),
+        ("/fresh_target/initialized_files", "目标计划初始化文件"),
+        ("/fresh_target/environment", "目标计划初始化环境"),
+        ("/fresh_target/inventory", "目标计划初始化库存"),
+        ("/maintenance_execution/build", "目标计划维护构建"),
+        ("/product_execution/builds/backend", "后端构建收据"),
+        ("/product_execution/builds/frontend", "前端构建收据"),
+    ] {
+        let descriptor = original.pointer(pointer).unwrap();
+        let path = Path::new(descriptor["path"].as_str().unwrap());
+        let bytes = fs::read(path).unwrap();
+        let mut changed = bytes.clone();
+        let whitespace = changed.iter_mut().find(|byte| **byte == b'\n').unwrap();
+        *whitespace = b' ';
+        assert_eq!(
+            serde_json::from_slice::<Value>(&changed).unwrap(),
+            read_value(path)
+        );
+        fs::write(path, changed).unwrap();
+        let error = reason(verify());
+        fs::write(path, bytes).unwrap();
+        assert!(
+            error.contains(label) && !error.contains("ownership"),
+            "{pointer}: {error}"
+        );
+    }
+    assert!(reason(verify()).contains("ownership"));
+    assert_eq!(read_value(&fixture.target_plan), original);
+}
+
+#[test]
+fn target_plan_rejects_substituted_execution_authorities() {
+    let fixture = Fixture::new();
+    let reference = document::read(&fixture.reference_plan, &fixture.backend, "参考计划").unwrap();
+    let original = read_value(&fixture.target_plan);
+    let comparison = read_value(&fixture.comparison_sources);
+    let candidate = &comparison["arms"]["b1"];
+    let other_execution = json!({
+        "roots":candidate["roots"],
+        "backend_product_sha":candidate["sources"]["backend"]["source"]["snapshot"]["head"],
+        "backend_execution_sha":candidate["execution_sources"]["backend"]["source"]["snapshot"]["head"],
+        "frontend_sha":candidate["sources"]["frontend"]["source"]["snapshot"]["head"],
+        "builds":candidate["builds"],
+        "adapter":candidate["adapter"],
+    });
+    for (pointer, value, expected) in [
+        ("/format_version", json!(true), "类型、侧别或摘要"),
+        ("/target_side", json!("candidate"), "类型、侧别或摘要"),
+        ("/comparison_arm", json!("b1"), "类型、侧别或摘要"),
+        (
+            "/product_plan_sha256",
+            json!("f".repeat(64)),
+            "类型、侧别或摘要",
+        ),
+        (
+            "/comparison_arm_sha256",
+            json!("f".repeat(64)),
+            "当前完整来源",
+        ),
+        (
+            "/fresh_target/ownership_sha256",
+            json!("f".repeat(64)),
+            "当前完整来源",
+        ),
+        (
+            "/maintenance_execution/root",
+            json!(fixture.root),
+            "当前完整来源",
+        ),
+        (
+            "/maintenance_execution/binding/kind",
+            json!("other"),
+            "当前完整来源",
+        ),
+        (
+            "/product_execution/backend_execution_sha",
+            json!("f".repeat(40)),
+            "当前完整来源",
+        ),
+        (
+            "/product_execution/backend_product_sha",
+            json!("f".repeat(40)),
+            "当前完整来源",
+        ),
+        ("/product_execution/adapter", Value::Null, "当前完整来源"),
+        (
+            "/product_execution/roots/execution_backend",
+            json!(fixture.backend),
+            "当前完整来源",
+        ),
+        ("/product_execution", other_execution, "当前完整来源"),
+    ] {
+        let mut changed = original.clone();
+        *changed.pointer_mut(pointer).unwrap() = value;
+        fs::write(&fixture.target_plan, serde_json::to_vec(&changed).unwrap()).unwrap();
+        let error = target_plan::verify(&fixture.backend, reference.clone(), &fixture.target_plan)
+            .err()
+            .expect("substituted target plan accepted")
+            .to_string();
+        assert!(error.contains(expected), "{pointer}: {error}");
+    }
+}
+
+#[test]
+fn target_plan_rejects_unknown_fields_and_missing_bindings() {
+    let fixture = Fixture::new();
+    let reference = document::read(&fixture.reference_plan, &fixture.backend, "参考计划").unwrap();
+    let original = read_value(&fixture.target_plan);
+    for (pointer, label) in [
+        ("", "目标计划"),
+        ("/fresh_target", "目标计划 fresh_target"),
+        ("/backup_receipt", "目标计划备份收据"),
+        ("/maintenance_execution", "目标计划维护执行"),
+        ("/product_execution", "目标计划产品执行"),
+    ] {
+        let mut changed = original.clone();
+        changed
+            .pointer_mut(pointer)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .insert("unexpected".into(), json!(true));
+        fs::write(&fixture.target_plan, serde_json::to_vec(&changed).unwrap()).unwrap();
+        let error = target_plan::verify(&fixture.backend, reference.clone(), &fixture.target_plan)
+            .err()
+            .expect("unknown target field accepted")
+            .to_string();
+        assert!(
+            error.contains(label) && error.contains("未知字段"),
+            "{pointer}: {error}"
+        );
+    }
+    let mut missing = original.clone();
+    missing.as_object_mut().unwrap().remove("backup_receipt");
+    fs::write(&fixture.target_plan, serde_json::to_vec(&missing).unwrap()).unwrap();
+    let error = target_plan::verify(&fixture.backend, reference.clone(), &fixture.target_plan)
+        .err()
+        .expect("missing binding accepted")
+        .to_string();
+    assert!(error.contains("目标计划字段缺失"), "{error}");
+    fs::write(&fixture.target_plan, serde_json::to_vec(&original).unwrap()).unwrap();
+    assert_eq!(
+        target_plan::verify(&fixture.backend, reference, &fixture.target_plan)
+            .unwrap()
+            .1,
+        original
+    );
 }
 
 #[test]

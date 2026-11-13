@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Target plans identify the receipt type when an original file binding fails, and reject changed bytes, substituted sides, and mismatched build receipts before reconstructing the provenance chain.
+
 - Remove the legacy Python reference-plan command and its private protocol entry points. The current Rust command handles summaries, previews, publication, and verification of published plans.
 
 - Reference restore uses the current Rust execution path. Remove the retired Python restore writes, runtime guard, resource-image implementation, and their private dispatch operations.
