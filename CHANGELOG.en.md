@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Reference backup calls the Rust source-binding validator directly. Remove the legacy Python reference-backup adapter, recovery input JSON publication code, and their duplicate tests.
+
 - Bind coordinator evidence, verification tools, and test runner to separate source roots and exact commits during formal recovery. Final verification builds maintenance code from verifier sources while reading runtime ledgers from the original coordinator root.
 
 - Remove Python target-plan verification and its dedicated fixture after the Rust entry point has taken over, retaining coverage for source bindings, unknown fields, and file identity.

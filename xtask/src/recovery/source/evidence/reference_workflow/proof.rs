@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use super::{exact, inputs, native, text};
 use crate::Result;
 
-pub(super) fn backup_source(args: &Value) -> Result<Value> {
+pub(in crate::recovery) fn backup_source(args: &Value) -> Result<Value> {
     exact(
         args,
         &[

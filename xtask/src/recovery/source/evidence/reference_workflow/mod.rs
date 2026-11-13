@@ -14,7 +14,7 @@ mod files;
 mod local;
 mod model;
 mod plan;
-mod proof;
+pub(in crate::recovery) mod proof;
 mod protocol;
 pub(crate) mod readonly;
 mod receipts;
@@ -37,7 +37,6 @@ pub(crate) fn handles(operation: &str) -> bool {
             | "reference-damage"
             | "reference-receipt-start"
             | "reference-receipt-finish"
-            | "reference-backup-source"
             | "reference-backup-result"
     )
 }
@@ -51,7 +50,6 @@ pub(crate) fn request(operation: &str, args: &Value) -> Result<Value> {
         "reference-damage" => files::damage(args),
         "reference-receipt-start" => receipts::start(args),
         "reference-receipt-finish" => receipts::finish(args),
-        "reference-backup-source" => proof::backup_source(args),
         "reference-backup-result" => proof::backup_result(args),
         _ => Err("参考协调操作无效".into()),
     }

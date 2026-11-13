@@ -7,8 +7,6 @@ import json
 import os
 import re
 import stat
-import sys
-import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -39,57 +37,6 @@ AUTHORITY_FIELDS = {
     "worker_endpoint",
     "frontend_endpoint",
 }
-
-
-def _canonical_json_bytes(value: dict) -> bytes:
-    content = (
-        json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
-    ).encode("utf-8")
-    if len(content) > MAX_JSON_BYTES:
-        raise ValueError("正式恢复输入不能超过 16 MiB")
-    return content
-
-
-def _verify_published_bytes(path: Path, value: dict, content: bytes) -> None:
-    with path.open("rb") as stream:
-        observed = stream.read(MAX_JSON_BYTES + 1)
-    if observed != content:
-        raise ValueError("正式恢复输入写后字节与规范结果不同")
-    if json.loads(observed) != value:
-        raise ValueError("正式恢复输入写后内容与规范结果不同")
-
-
-def publish_json(target: Path, value: dict) -> None:
-    """同目录落盘后以 create-new 语义发布规范 JSON，绝不覆盖已有结果。"""
-    content = _canonical_json_bytes(value)
-    pending = target.with_name(f".{target.name}.{uuid.uuid4().hex}.pending")
-    published = False
-    try:
-        with pending.open("xb") as stream:
-            stream.write(content)
-            stream.flush()
-            os.fsync(stream.fileno())
-        _verify_published_bytes(pending, value, content)
-        try:
-            os.link(pending, target)
-        except FileExistsError as error:
-            raise ValueError("正式恢复输入已被并发创建，禁止覆盖") from error
-        published = True
-        try:
-            _verify_published_bytes(target, value, content)
-            if target.resolve(strict=True) != target:
-                raise ValueError("正式恢复输入写后规范路径发生变化")
-        except (OSError, ValueError) as error:
-            raise ValueError(
-                "正式恢复输入已经创建但写后复核失败；必须保留并核对"
-            ) from error
-    finally:
-        try:
-            pending.unlink(missing_ok=True)
-        except OSError as error:
-            if not published:
-                raise
-            print(f"正式恢复输入已发布，但临时文件清理失败：{error}", file=sys.stderr)
 
 
 def valid_identifier(value: object) -> bool:
