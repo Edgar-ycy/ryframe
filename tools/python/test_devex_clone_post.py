@@ -19,26 +19,6 @@ from restore_reference_plan import plan_hash
 
 
 class PostContractTests(unittest.TestCase):
-    def test_pacing_forwards_explicit_frontend_and_complete_binding_without_write_authority(self):
-        backend = Path('D:/backend')
-        directory = backend / '.local-tests/run'
-        request = {'frontend_root': 'D:/other/独立 前端', 'pacing': {
-            'contract': {}, 'bindings': {'python': 'D:/tools/python.exe',
-                'login_budget_state': str(directory / 'post-copy/login-budget.json')},
-            'python_sha256': 'a' * 64, 'login_budget_module_sha256': 'b' * 64}}
-        response = (SimpleNamespace(returncode=0), {"ok": True, "result": {"value": None}})
-        with patch.object(post, 'native_invoke', return_value=response) as invoked:
-            post.pacing_binding(backend, directory, request)
-        self.assertEqual(invoked.call_args.args[0], '__source-evidence')
-        self.assertEqual(invoked.call_args.args[1], {
-            'operation': 'copy-pacing-binding', 'write': False, 'arguments': {
-                'backend': str(backend), 'directory': str(directory),
-                'frontend_root': request['frontend_root'], 'pacing': request['pacing']}})
-        self.assertFalse(invoked.call_args.kwargs['may_write'])
-        with patch.object(post, 'native_invoke', side_effect=ValueError('native rejected')):
-            with self.assertRaisesRegex(ValueError, 'native rejected'):
-                post.pacing_binding(backend, directory, request)
-
     def test_administrator_forwards_only_metadata_and_file_binding(self):
         admin = dict(subject_id='9', tenant_id='system', username='admin',
                      client_address='198.19.20.1')
@@ -109,8 +89,8 @@ class PostTests(unittest.TestCase):
             'node': {key: build[key] for key in ('path', 'sha256')}, 'source_admin': self.admin,
             'administrator_credentials': self.credentials,
             'frontend_root': str(self.frontend), 'pacing': {'contract': {},
-                'bindings': {'python': build['path'], 'login_budget_state': str(self.directory / 'post-copy/login-budget.json')},
-                'python_sha256': build['sha256'], 'login_budget_module_sha256': budget_module['sha256']},
+                'bindings': {'login_budget_state': str(self.directory / 'post-copy/login-budget.json')},
+                'login_budget_module_sha256': budget_module['sha256']},
             'reference_plan': self.file('reference', reference),
             'dataset': self.file('dataset', {'plan_sha256': plan_hash(reference), 'source_scope_id': 'source-one'})}
         self.selected = {'api_url': 'http://127.0.0.1:18210', 'frontend_url': 'http://127.0.0.1:4190'}

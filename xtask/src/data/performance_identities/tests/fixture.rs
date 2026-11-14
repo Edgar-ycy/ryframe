@@ -35,7 +35,7 @@ impl Fixture {
             "environment_document":{"path":directory.join("environment.md"),"sha256":evidence::hash("独立测试")},"runtime":{"directory":directory.join("runtime"),"receipt_sha256":evidence::hash("{}"),"api_process_sha256":evidence::hash("{}")},
             "database":{"python":backend.join("python-fixture"),"mysql_client":backend.join("mysql-fixture"),"server_uuid":"11111111-1111-1111-1111-111111111111","control":connection("identity_control"),"targets":[{"key":"shared","mode":"shared","connection":connection("identity_shared")}]},
             "system_admin":admin("system",1),"tenants":(1..=10).map(|index|json!({"slot":format!("tenant-{index:02}"),"tenant_id":format!("fixture-{index}"),"target_key":"shared","admin":admin(&format!("fixture-{index}"), index+1)})).collect::<Vec<_>>(),"passwords":{"system":"Fixture-User!123","tenant":"Fixture-User!123"},"quota":{"system_max_users":1000,"tenant_max_users":1000,"import_headroom_per_tenant":100},
-            "pacing":{"contract":{"authority_sha256":"a".repeat(64),"request_interval_ms":1000,"operation_intervals_ms":{"post_auth_login":12250},"sample_prepare_wait_ms":60250},"bindings":{"python":backend.join("python-fixture"),"login_budget_state":directory.join("budget.json")}}});
+            "pacing":{"contract":{"authority_sha256":"a".repeat(64),"request_interval_ms":1000,"operation_intervals_ms":{"post_auth_login":12250},"sample_prepare_wait_ms":60250},"bindings":{"login_budget_state":directory.join("budget.json")}}});
         let source = directory.join("private.json");
         evidence::new(&source, &environment).unwrap();
         let plan = plan::create(&environment, &backend, &source).unwrap();

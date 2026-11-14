@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Pacing bindings for post-copy recovery, performance identity preparation, and runtime measurement accept only the absolute login budget state path. Post-copy registration still verifies the selected frontend's login budget module digest and drops the unused Python path and digest fields.
+
 - Verify with two real Rust child processes that source cache cleanup records only one attempt per generation. After a pre-execution failure, recovery refuses replay even when all 33 keys are absent and preserves the original receipts. Remove the legacy Python cases covered by Rust process and policy tests.
 
 - Fix B0 frontend adapter source fingerprint drift caused by a verifier visibility change, retaining strict reuse of the original build receipt and artifacts and pinning receipt tests to frozen digests.

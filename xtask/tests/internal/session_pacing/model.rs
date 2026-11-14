@@ -202,7 +202,7 @@ fn identity_is_immutable_and_only_explicit_benchmark_addresses_are_accepted() {
 }
 
 #[test]
-fn binding_is_exact_absolute_and_does_not_require_python_execution() {
+fn binding_requires_only_an_absolute_login_budget_state() {
     let fixture = Fixture::new();
     let good = &fixture.config["bindings"]["pacing"];
     assert_eq!(binding(good).unwrap(), fixture.budget());
@@ -210,12 +210,20 @@ fn binding_is_exact_absolute_and_does_not_require_python_execution() {
         Value::Null,
         json!([]),
         json!({}),
-        json!({"python": "relative", "login_budget_state": fixture.budget()}),
-        json!({"python": fixture.root(), "login_budget_state": "relative"}),
-        json!({"python": fixture.root(), "login_budget_state": fixture.budget(), "extra": null}),
-        json!({"python": [fixture.root()], "login_budget_state": fixture.budget()}),
+        json!({"extra": fixture.budget()}),
+        json!({"login_budget_state": "relative"}),
+        json!({"login_budget_state": [fixture.budget()]}),
+        json!({"login_budget_state": fixture.budget(), "extra": null}),
+        json!({"login_budget_state": fixture.budget(), "python": fixture.root()}),
     ] {
         assert_eq!(category(binding(&value)), "pacing-binding");
+    }
+    for control in ['\r', '\n', '\0'] {
+        let state = format!("{}{control}", fixture.budget().display());
+        assert_eq!(
+            category(binding(&json!({"login_budget_state": state}))),
+            "pacing-binding"
+        );
     }
 }
 

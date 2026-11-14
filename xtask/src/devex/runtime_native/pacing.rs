@@ -34,15 +34,11 @@ impl Pacing {
         let mut authority = None;
         let prepared = (|| {
             let binding = &config["bindings"]["pacing"];
-            if binding.as_object().is_none_or(|rows| {
-                rows.len() != 2
-                    || !rows.contains_key("python")
-                    || !rows.contains_key("login_budget_state")
-            }) || ["python", "login_budget_state"].iter().any(|key| {
-                binding[*key]
+            if binding.as_object().is_none_or(|rows| rows.len() != 1)
+                || binding["login_budget_state"]
                     .as_str()
                     .is_none_or(|path| !Path::new(path).is_absolute())
-            }) {
+            {
                 return Err(Failure::new("pacing_binding"));
             }
             let config_dir = config["bindings"]["app_config_dir"].as_str().map(Path::new);
