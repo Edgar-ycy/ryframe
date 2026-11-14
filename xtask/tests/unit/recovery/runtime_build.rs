@@ -286,6 +286,36 @@ fn existing_output_or_copy_directory_rejects_before_frontend_or_cargo_and_preser
 }
 
 #[test]
+fn output_must_be_ignored_inside_the_backend_before_frontend_or_cargo_runs() {
+    let mut fixture = Fixture::new();
+    let outside = fixture.frontend().join("outside.json");
+    // 显式取消目标的忽略规则，避免本机 Git 忽略配置影响用例。
+    fs::write(
+        fixture.root().join(".gitignore"),
+        "/target/\n!/.local-tests/\n/.local-tests/ignored.json\n!/.local-tests/unignored.json\n",
+    )
+    .unwrap();
+    let unignored = fixture.root().join(".local-tests/unignored.json");
+    for (output, reason) in [
+        (outside, "路径必须位于当前后端 .local-tests"),
+        (unignored, "必须位于已忽略的本地目录"),
+    ] {
+        fixture.options.output = output;
+        let mut port = Commands::default();
+        let result = run_with(
+            fixture.root(),
+            fixture.frontend(),
+            &fixture.options,
+            &mut port,
+        );
+        assert!(result.unwrap_err().to_string().contains(reason));
+        assert!(port.calls.is_empty());
+        assert!(!fixture.options.output.exists());
+        assert!(!fixture.directory().exists());
+    }
+}
+
+#[test]
 fn frontend_reuses_exact_existing_receipt_and_rejects_legacy_layout_or_wrong_head_without_command()
 {
     let fixture = Fixture::new();
