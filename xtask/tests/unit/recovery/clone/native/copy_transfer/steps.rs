@@ -17,6 +17,7 @@ struct FixtureIo {
     writes: Vec<String>,
     batch_sizes: Vec<usize>,
     stop_at: Option<String>,
+    resume_target_usable: bool,
     complete_checks: usize,
 }
 
@@ -43,6 +44,7 @@ impl FixtureIo {
             writes: Vec::new(),
             batch_sizes: Vec::new(),
             stop_at: None,
+            resume_target_usable: true,
             complete_checks: 0,
         }
     }
@@ -65,6 +67,13 @@ impl CopyIo for FixtureIo {
     type Evidence = Map<String, Value>;
 
     fn checkpoint(&mut self, _: Option<&Step<'_>>) -> Result<()> {
+        Ok(())
+    }
+
+    fn check_resume_target(&mut self) -> Result<()> {
+        if !self.resume_target_usable {
+            return Err("目标 Redis 缺少初始化标记".into());
+        }
         Ok(())
     }
 
@@ -184,6 +193,50 @@ fn rejects_unregistered_drift_before_appending_a_reconcile_batch_and_resumes_onl
     assert_eq!(io.writes, [ids[..2].to_vec(), ids[1..].to_vec()].concat());
     assert_eq!(io.complete_checks, 1);
     assert_eq!(io.batch_sizes[io.batch_sizes.len() - 2..], [4, 1]);
+}
+
+#[test]
+fn rejects_resume_without_target_redis_before_observing_or_writing_steps() {
+    let fixture = Fixture::new();
+    let declaration = declaration(3);
+    let plan = Plan::from_verified(&declaration).unwrap();
+    let mut io = FixtureIo::new(&plan);
+    let first = &plan.objects[0].id;
+    let interrupted = &plan.objects[1].id;
+    let pending = &plan.objects[2].id;
+    io.stop_at = Some(interrupted.clone());
+    assert!(
+        fixture
+            .run(Mode::New, |session, _| {
+                run(&plan, session, Mode::New, &mut io).map(|_| ())
+            })
+            .is_err()
+    );
+
+    io.stop_at = None;
+    io.resume_target_usable = false;
+    fixture
+        .run(Mode::Reconcile, |session, _| {
+            run(&plan, session, Mode::Reconcile, &mut io).map(|_| ())
+        })
+        .unwrap();
+    let previous_batches = io.batch_sizes.clone();
+
+    let failure = fixture
+        .run(Mode::Resume, |session, _| {
+            let before = session.steps()?;
+            assert_eq!(before[first]["phase"], "confirmed");
+            assert_eq!(before[interrupted]["phase"], "reconciled_before");
+            assert!(!before.contains_key(pending));
+            let result = run(&plan, session, Mode::Resume, &mut io);
+            assert_eq!(session.steps()?, before);
+            result.map(|_| ())
+        })
+        .unwrap_err();
+    assert_eq!(failure.to_string(), "目标 Redis 缺少初始化标记");
+    assert_eq!(io.batch_sizes, previous_batches);
+    assert_eq!(io.writes.as_slice(), [first.clone(), interrupted.clone()]);
+    assert_eq!(io.complete_checks, 0);
 }
 
 #[test]

@@ -137,6 +137,10 @@ impl CopyIo for Live<'_> {
         self.checks.complete()
     }
 
+    fn check_resume_target(&mut self) -> Result<()> {
+        self.checks.operation.target.check_redis(self.checks.owner)
+    }
+
     fn basis(&mut self, step: &Step<'_>) -> Result<Basis> {
         match step.kind {
             Kind::Database => self.database.basis(step),

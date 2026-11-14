@@ -105,6 +105,8 @@ pub(in crate::recovery::clone::native) trait CopyIo {
 
     /// 检查冻结计划、工具、双侧代次与停止证明。单对象步骤同时复查原对象。
     fn checkpoint(&mut self, selected: Option<&Step<'_>>) -> Result<()>;
+    /// 续跑前核对目标 Redis 已登记代次及原初始化后像。
+    fn check_resume_target(&mut self) -> Result<()>;
     /// 校验原始 artifact 及本步骤绑定的证据文件，再生成同代次前后像。
     fn basis(&mut self, step: &Step<'_>) -> Result<Basis>;
     /// 每次观察完整的源和目标数据库向量，按计划步骤编号返回目标完整像。
@@ -159,6 +161,7 @@ pub(in crate::recovery::clone::native) fn run(
         })));
     }
     if mode == Mode::Resume {
+        io.check_resume_target()?;
         check_batches(plan, session, io, Check::Confirmed, &noops)?;
     }
     for step in plan.all() {
