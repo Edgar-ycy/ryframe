@@ -282,6 +282,12 @@ pub(crate) fn registered(
         attempt.get("result").ok_or("存储成功阶段缺少结果")?,
         "存储阶段结果",
     )?;
+    if let Some(recorded) = result.get("fixture_handoff") {
+        let handoff = super::transferred(backend, run_dir, &manifest, side, &request, false)?;
+        if handoff.as_ref().map(|handoff| &handoff.binding) != Some(recorded) {
+            return Err("存储重启结果未绑定原 RustFS 移交收据".into());
+        }
+    }
     let expected = json!({
         "status": "storage_restarted",
         "side": side.as_str(),

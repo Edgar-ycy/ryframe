@@ -10,7 +10,7 @@ pub(super) mod evidence;
 #[path = "history/generation.rs"]
 mod generation;
 #[path = "history/handoff.rs"]
-mod handoff;
+pub(in crate::recovery) mod handoff;
 #[path = "history/prefix.rs"]
 pub(super) mod prefix;
 #[path = "history/protocol.rs"]

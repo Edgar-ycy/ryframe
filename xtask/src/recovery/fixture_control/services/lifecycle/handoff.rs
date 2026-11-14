@@ -83,11 +83,10 @@ pub(super) fn run(
 fn ready(context: &Context) -> Result<()> {
     let history = context.history(true)?;
     check(
-        history["active_generation"]["kind"] == "initial"
-            && history["closed"] == false
+        history["closed"] == false
             && history["external_recovery"].is_null()
             && history["rustfs_handoff"].is_null(),
-        "RustFS 移交只接受尚未关闭或移交的完整首代夹具",
+        "RustFS 移交只接受尚未关闭或移交的完整夹具服务代次",
     )?;
     context.no_unknown()
 }
