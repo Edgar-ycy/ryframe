@@ -67,16 +67,20 @@ pub(super) fn load(
     bridge::verify_build(backend, path, &receipt)?;
     let inventory_value = bridge::read_binding(backend, &value["inventory"])?;
     let inventory = source::validate_inventory(&inventory_value)?;
-    bridge::verify_inventory_source(&inventory, &receipt)?;
+    let original_fingerprints = bridge::verify_inventory_source(&inventory, &receipt)?;
     let kind = document::text(&receipt["kind"], "桥接构建类别")?;
     if kind == "restore-backend-build" && receipt["sources"]["full"] != inventory_value {
         return Err("构建收据与来源桥接绑定了不同的构建时 inventory".into());
     }
     let audited = source::validate_inventory(&value["audited_inventory"])?;
-    let products = json!({"build":bridge::product_inputs(kind,&inventory)?,
-        "audited":bridge::product_inputs(kind,&audited)?});
-    if value["original_fingerprints"] != source::fingerprints(&inventory.files)?
-        || value["audited_source"] != source::execution_source(&audited)?
+    let build_product = bridge::product_inputs(kind, &inventory, &original_fingerprints)?;
+    let audited_source = source::execution_source(&audited)?;
+    let products = json!({
+        "build": build_product,
+        "audited": bridge::product_inputs(kind, &audited, &audited_source["fingerprints"])?,
+    });
+    if value["original_fingerprints"] != original_fingerprints
+        || value["audited_source"] != audited_source
         || value["product_inputs"] != products
         || products["build"] != products["audited"]
     {
@@ -88,7 +92,7 @@ pub(super) fn load(
         } else {
             source::capture(&declared)?
         };
-        if audited != observed || value["audited_source"] != source::execution_source(&observed)? {
+        if audited != observed {
             return Err("构建审计未绑定本轮完整执行来源".into());
         }
     }

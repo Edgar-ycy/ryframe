@@ -243,10 +243,9 @@ impl Scope {
                 None => return Ok(None),
             },
         };
-        super::verify_inventory_source(&inventory, receipt)?;
+        let fingerprints = super::verify_inventory_source(&inventory, receipt)?;
         if !registered.is_some_and(|item| item.inherited)
-            && source::fingerprints(&inventory.files)?["product"]
-                != source::fingerprints(&self.current.files)?["product"]
+            && fingerprints["product"] != source::fingerprints(&self.current.files)?["product"]
         {
             return Err("维护构建的产品输入已经变化，必须重新编译".into());
         }
