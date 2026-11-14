@@ -56,6 +56,7 @@ file-id = { version = "=0.2.3", default-features = false }
 processkit = { version = "=3.3.4", default-features = false, features = ["stats", "process-control"] }
 winsafe = { version = "=0.0.19", default-features = false, features = ["kernel"] }
 wmi = { version = "=0.18.4", default-features = false }
+win-authorization-sys = "=0.1.0"
 
 [build-dependencies]
 serde = { workspace = true, features = ["derive"] }

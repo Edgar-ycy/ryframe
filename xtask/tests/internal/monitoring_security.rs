@@ -51,6 +51,12 @@ fn windows_acl_accepts_only_explicit_read_for_the_private_owner_and_system() {
         permissions::validate_windows_acl(&reordered).unwrap(),
         normalized
     );
+    let mut split = value.clone();
+    let mut synchronize = split["entries"][0].clone();
+    synchronize["rights"] = json!(0x0010_0000);
+    split["entries"][0]["rights"] = json!(0x0002_0001);
+    split["entries"].as_array_mut().unwrap().push(synchronize);
+    permissions::validate_windows_acl(&split).unwrap();
     for owner in ["S-1-5-18", "S-1-5-32-544"] {
         let mut value = value.clone();
         value["owner_sid"] = json!(owner);
@@ -72,6 +78,8 @@ fn windows_acl_rejects_unknown_owner_broad_subject_deny_inheritance_and_missing_
         ("/entries/0/type", json!(9)),
         ("/entries/0/inherited", json!(true)),
         ("/entries/0/rights", json!(0)),
+        ("/entries/0/rights", json!(0x0002_0001)),
+        ("/entries/0/rights", json!(0x0012_0000)),
         ("/entries/0/rights", json!(-1)),
         ("/entries/0/rights", json!(4294967296_u64)),
     ] {

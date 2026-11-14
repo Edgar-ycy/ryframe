@@ -53,6 +53,9 @@ mod workspace;
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
+#[path = "../src/windows_acl.rs"]
+mod windows_acl;
+
 #[path = "internal/copy_session.rs"]
 mod copy_session_tests;
 #[path = "internal/login_budget.rs"]

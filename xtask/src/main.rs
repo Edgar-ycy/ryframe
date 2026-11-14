@@ -29,6 +29,8 @@ mod session_pacing;
 mod source_edit;
 mod source_scan;
 mod watch;
+#[cfg(windows)]
+mod windows_acl;
 mod workspace;
 
 use std::{env, error::Error};
@@ -112,6 +114,10 @@ fn dispatch_data(command: DataCommand) -> Result<()> {
 }
 
 fn run_hidden_handlers() -> bool {
+    #[cfg(windows)]
+    if let Some(code) = windows_acl::protocol::run_hidden_if_requested() {
+        std::process::exit(code);
+    }
     run_recovery_hidden_handlers();
     #[cfg(target_os = "linux")]
     if let Some(result) = devex::memory::run_trampoline_if_requested() {
