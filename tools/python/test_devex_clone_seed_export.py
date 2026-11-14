@@ -1,7 +1,6 @@
 """用原格式冻结证据核对仍被 ARM 消费的共享导出读取。"""
 import copy
 from pathlib import Path
-from types import SimpleNamespace
 import unittest
 
 from workspace_directory import WorkspaceDirectory
@@ -138,15 +137,6 @@ class SeedExportTests(unittest.TestCase):
         seal.write_text('{"unexpected":"seal"}', encoding="utf-8")
         with self.assertRaises(ValueError):
             export.published_export(self.backend, descriptor, self.source)
-
-    def test_shared_export_modes_are_no_longer_accepted_by_python_dispatch(self):
-        import devex_clone_run_cli as cli
-
-        for mode in sorted(export.MODES):
-            args = SimpleNamespace(command="seed-runtime", run_dir=self.directory,
-                                   operation=mode, request=None, producer_binding=None, write=True)
-            with self.subTest(mode=mode), self.assertRaises(ValueError):
-                cli.dispatch(args, self.backend)
 
 
 if __name__ == "__main__":

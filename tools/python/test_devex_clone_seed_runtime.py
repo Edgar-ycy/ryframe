@@ -207,30 +207,6 @@ class RuntimeTests(unittest.TestCase):
         target.assert_not_called()
         control.assert_not_called()
 
-    def test_cli_requires_exact_inputs_and_rejects_native_runtime_operations(self):
-        import devex_clone_run_cli as cli
-
-        def args(mode, *, request=None, producer_binding=None, write=False):
-            return SimpleNamespace(command="seed-runtime", run_dir=self.directory,
-                                   operation=mode, request=request,
-                                   producer_binding=producer_binding, write=write)
-        for mode in ("register", "arm-input", "source-rebind", "recover-session", "start", "identities-apply", "quotas-plan", "quotas-apply",
-                     "quotas-reconcile", "departments-plan", "departments-apply", "departments-reconcile",
-                     "departments-verify"):
-            with self.subTest(mode=mode), self.assertRaises(ValueError):
-                cli.dispatch(args(mode), self.backend)
-        with self.assertRaises(ValueError):
-            cli.dispatch(args("start", request=self.directory / "unused", write=True), self.backend)
-        for mode in ("status", "start", "stop", "recover"):
-            with self.subTest(mode=mode), self.assertRaisesRegex(ValueError, "Rust 正式入口"):
-                cli.dispatch(args(mode, write=mode != "status"), self.backend)
-
-        request = self.directory / "arm-request.json"
-        write_json(request, {"kind": "fixture-arm-input"})
-        with patch.object(cli, "execute") as execute, self.assertRaisesRegex(ValueError, "Rust 正式入口"):
-            cli.dispatch(args("arm-input", request=request, write=True), self.backend)
-        execute.assert_not_called()
-
     def test_register_calls_bound_native_writer_with_current_controller_and_lock(self):
         from contextlib import nullcontext
         import subprocess

@@ -394,7 +394,6 @@ fn assert_native_seed_runtime_modes(fixture: &Fixture) {
         ),
         ("prepare", SeedRuntimeOperation::Prepare, None),
         ("start", SeedRuntimeOperation::Start, None),
-        ("close", SeedRuntimeOperation::Close, None),
         (
             "arm-input",
             SeedRuntimeOperation::ArmInput,
@@ -427,6 +426,29 @@ fn assert_native_seed_runtime_modes(fixture: &Fixture) {
             matches!(&parsed, CloneCommand::SeedRuntime(value) if value.operation == operation)
         );
     }
+}
+
+#[test]
+fn seed_close_requires_explicit_write_and_keeps_the_selected_run() {
+    let fixture = Fixture::new();
+    let mut args = vec![
+        "seed-runtime",
+        "--run-dir",
+        Fixture::value(&fixture.run),
+        "--operation",
+        "close",
+    ];
+    let error = fixture.parse(&args).err().expect("seed close 必须显式授权");
+    assert!(error.contains("必须显式传入 --write"), "{error}");
+
+    args.push("--write");
+    let CloneCommand::SeedRuntime(options) = fixture.parse(&args).unwrap() else {
+        panic!("未解析为 seed-runtime 请求");
+    };
+    assert_eq!(options.operation, SeedRuntimeOperation::Close);
+    assert_eq!(options.run_dir, fixture.run);
+    assert!(options.request.is_none());
+    assert!(options.producer_binding.is_none());
 }
 
 #[test]

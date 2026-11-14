@@ -8,7 +8,6 @@ import unittest
 from unittest.mock import patch
 import uuid
 
-import devex_clone_run_cli as cli
 import devex_clone_seed_close as close
 import devex_clone_seed_runtime as runtime
 from devex_clone_capture import write_json
@@ -560,23 +559,6 @@ class ProcessHistoryTests(unittest.TestCase):
 
 
 class CliTests(unittest.TestCase):
-    def test_close_requires_write_and_routes_exact_operation(self):
-        backend = Path.cwd().resolve()
-        run_directory = backend / ".local-tests/seed-close-cli"
-        args = SimpleNamespace(command="seed-runtime", run_dir=run_directory,
-                               operation="close", request=None,
-                               producer_binding=None, write=False)
-        with patch.object(cli, "execute") as execute, self.assertRaisesRegex(ValueError, "显式 --write"):
-            cli.dispatch(args, backend)
-        execute.assert_not_called()
-        args.write = True
-        outer = {"status": "stage_finished", "stage": "seed-runtime", "mode": "close", "attempt": 3,
-                 "restore_qualified": False}
-        with patch.object(cli, "execute", return_value=outer) as execute:
-            self.assertEqual(cli.dispatch(args, backend), outer)
-        execute.assert_called_once_with(backend, run_directory, "seed-runtime", "close",
-                                        seed_request=None, producer_binding=None)
-
     def test_seed_runtime_dispatches_close_inside_existing_target_lock(self):
         backend, directory, request, context = Path.cwd(), Path.cwd() / ".local-tests/run", {}, object()
         expected = {"status": "seed_runtime_closed"}

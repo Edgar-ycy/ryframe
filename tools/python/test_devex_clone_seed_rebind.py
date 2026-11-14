@@ -3,7 +3,6 @@ from contextlib import ExitStack
 import copy
 import hashlib
 from pathlib import Path
-from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -192,16 +191,6 @@ class SeedRebindTests(unittest.TestCase):
                 patch.object(rebind, "segmented_resume", return_value={"phase": "storage-ready"}), \
                 self.assertRaises(ValueError):
             rebind.published_restart_guard(self.backend, self.directory, None)
-
-    def test_retired_python_rebind_dispatch_rejects_before_stage_execution(self):
-        import devex_clone_run_cli as cli
-
-        args = SimpleNamespace(command="seed-runtime", run_dir=self.directory,
-                               operation="source-rebind", request=Path(self.successor["path"]),
-                               producer_binding=None, write=True)
-        with patch.object(cli, "execute") as execute, self.assertRaises(ValueError):
-            cli.dispatch(args, self.backend)
-        execute.assert_not_called()
 
     def test_failed_export_only_opens_exact_explicit_owned_reconcile(self):
         _, state = self.published_rebind()

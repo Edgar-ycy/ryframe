@@ -10,7 +10,6 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from workspace_directory import WorkspaceDirectory
 import devex_clone_run as run
-import devex_clone_run_cli as cli
 import devex_clone_run_state as state
 from devex_clone_capture import read_json, write_json
 
@@ -197,18 +196,12 @@ class RunTests(unittest.TestCase):
 
     def test_retired_runtime_is_rejected_before_paths_or_locks(self):
         original = {path: path.read_bytes() for path in self.directory.iterdir() if path.is_file()}
-        with patch.object(cli, "evidence_path") as evidence, patch.object(run, "process_guard") as guard:
+        with patch.object(run, "process_guard") as guard:
             for side in ("source", "target"):
                 for operation in ("start", "stop", "status", "recover"):
                     with self.subTest(side=side, operation=operation):
-                        args = SimpleNamespace(command="runtime", operation=operation, side=side,
-                                               run_dir=self.directory, roles=("api", "worker"),
-                                               write=operation != "status")
-                        with self.assertRaisesRegex(ValueError, "Rust 正式入口"):
-                            cli.dispatch(args, self.backend)
                         with self.assertRaisesRegex(ValueError, "Rust 正式入口"):
                             run.execute(self.backend, self.directory, "runtime-" + side, operation)
-        evidence.assert_not_called()
         guard.assert_not_called()
         self.assertEqual({path: path.read_bytes() for path in self.directory.iterdir() if path.is_file()}, original)
 

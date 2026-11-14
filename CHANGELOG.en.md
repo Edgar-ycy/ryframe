@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove the Python development clone command adapter used only by legacy tests. The formal Rust CLI test checks seed close write authorization, the specified run directory, and absent input bindings directly.
+
 - Exercise the Rust ARM input model and a real local stage ledger to verify ordinary and successor request fields, source and rebind receipts, historical copy directory rules, and preservation of original files. Remove the Python ARM input implementation used only by the retired tests.
 
 - Remove the Python private stdin entry point for development cloning and its protocol tests. The formal Rust entry point retains coverage for write authorization, read-only plan verification, source operations, and prevention of replay after failure.
