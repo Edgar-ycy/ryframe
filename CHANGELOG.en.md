@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Post-copy registration tests exercise the Rust validator with a real stage ledger, covering valid registration, mismatched copy or build evidence, and refusal to fall back after a later failure. The tests verify that validation does not publish or modify files. Remove Python tests for registration, administrator credentials, and environment selection that Rust already covers.
+
 - Check Windows MySQL temporary-credential and monitoring-credential permissions in a bounded Rust child that reads complete owner/DACL bytes through a safe handle. System tools restrict new empty private directories before verification of ownership, access masks, and exact object and container inheritance flags. Permission failures prevent password writes. Monitoring credentials retain subject and inheritance restrictions, and the current user's explicit read permissions must include `SYNCHRONIZE`, as granted by standard Read.
 
 - Pacing bindings for post-copy recovery, performance identity preparation, and runtime measurement accept only the absolute login budget state path. Post-copy registration still verifies the selected frontend's login budget module digest and drops the unused Python path and digest fields.

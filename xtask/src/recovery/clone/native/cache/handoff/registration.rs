@@ -254,3 +254,7 @@ fn recorded_runtime(
     }
     Ok(runtime)
 }
+
+#[cfg(test)]
+#[path = "../../../../../../tests/unit/recovery/clone/native/cache/post_registration.rs"]
+mod tests;

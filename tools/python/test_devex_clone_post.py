@@ -1,6 +1,5 @@
 """固定 post-copy 登记、来源绑定和 runtime 准备；只使用隔离文件与 mock。"""
 from contextlib import contextmanager, nullcontext
-import json
 from pathlib import Path
 import sys
 import tempfile
@@ -13,37 +12,8 @@ import devex_clone_post as post
 from devex_clone_capture import write_json
 from process_environment import Environments
 from devex_clone_post_context import Context
-from devex_clone_post_model import administrator, environment_delta
 from devex_clone_run_state import binding, initialize_state, begin, finish, load_state
 from restore_reference_plan import plan_hash
-
-
-class PostContractTests(unittest.TestCase):
-    def test_administrator_forwards_only_metadata_and_file_binding(self):
-        admin = dict(subject_id='9', tenant_id='system', username='admin',
-                     client_address='198.19.20.1')
-        descriptor = dict(path='D:/backend/.local-tests/administrator.toml',
-                          bytes=100, sha256='a' * 64)
-        response = (SimpleNamespace(returncode=0), {"ok": True, "result": {"value": None}})
-        with patch('devex_clone_post_model.native_invoke', return_value=response) as invoked:
-            administrator(admin, Path('D:/backend'), descriptor)
-        payload = invoked.call_args.args[1]
-        self.assertEqual(payload['arguments'], {
-            'backend': str(Path('D:/backend')), 'identity': admin,
-            'administrator_credentials': descriptor})
-        self.assertFalse(payload['write'])
-        self.assertFalse(invoked.call_args.kwargs['may_write'])
-        self.assertNotIn('password', json.dumps(payload))
-
-    def test_environment_selector_rejects_overrides_on_both_sides(self):
-        for valid in ({'APP_ENV': 'test'}, {'APP_ENV': 'test', 'TEMP': 'D:/frozen-temp', 'TMP': 'D:/frozen-temp'}):
-            environment_delta(valid, valid, 'http://127.0.0.1:4190')
-        for field in ('APP_REDIS_PASSWORD', 'APP_APP_PORT', 'APP_JOBS_MODE',
-                      'SNOWFLAKE_WORKER_ID', 'RYFRAME_ADMIN'):
-            invalid = {**valid, field: 'private-sentinel'}
-            for old, new in ((invalid, valid), (valid, invalid)):
-                with self.subTest(field=field), self.assertRaises(ValueError):
-                    environment_delta(old, new, 'http://127.0.0.1:4190')
 
 
 class PostTests(unittest.TestCase):
@@ -146,13 +116,6 @@ class PostTests(unittest.TestCase):
         self.register()
         return self.prepared_runtime()
 
-
-    def test_wrong_latest_copy_receipt_ledger_or_build_rejected(self):
-        for field in ('copy_stage_receipt', 'copy_result', 'ledger_head', 'backend_build'):
-            with self.subTest(field=field):
-                value = {**self.request, field: self.file('wrong-' + field, {'other': True})}
-                with self.assertRaises(ValueError): post.validate_registration(self.backend, self.directory, self.value, value)
-
     def test_seed_to_arm_inherits_original_business_bindings(self):
         source_request = self.file('seed-source-request', {'source': True})
         source_environment = self.file('seed-source-environment', {'environment': {}})
@@ -199,20 +162,6 @@ class PostTests(unittest.TestCase):
         with patch('devex_clone_seed_source.published_source', return_value=inherited), self.assertRaises(ValueError):
             post._validate_business_lineage(self.backend, {**value, 'source_request': self.request['dataset']},
                                             self.request, {'copy_stage': 'seed_to_arm', 'source_scope': 'seed-one'})
-
-    def test_environment_only_selects_test_and_rejects_project_overrides(self):
-        environment_delta(self.original, self.api, self.selected['frontend_url'])
-        for field, value in (('APP_DATABASE_URL', 'other'), ('APP_JOBS_MODE', 'embedded'),
-                             ('APP_JOBS_SCHEDULER_ENABLED', 'false'), ('APP_SCOPE_ID', 'other'), ('SNOWFLAKE_WORKER_ID', '2')):
-            with self.subTest(field=field), self.assertRaises(ValueError):
-                environment_delta(self.original, {**self.api, field: value}, self.selected['frontend_url'])
-
-    def test_admin_requires_bound_current_credentials_and_metadata_only(self):
-        administrator(self.admin, self.backend, self.credentials)
-        for admin in ({**self.admin, 'subject_id': '0'}, {**self.admin, 'password_env': 'RYFRAME_MISSING_PASSWORD'},
-                      {**self.admin, 'tenant_id': 'other'}, {**self.admin, 'password': 'unit-only'}):
-            with self.assertRaises(ValueError): administrator(admin, self.backend, self.credentials)
-
 
     def test_cleanup_uses_minimal_registration_when_dataset_or_original_target_missing(self):
         self.register()
