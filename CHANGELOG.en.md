@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove the Python build source lock used only by legacy tests. The Rust tests verify that the lock exists during the build operation and continue to check cleanup, preservation of drifted evidence, and rejection of an occupied binding.
+
 - During formal reference recovery on Windows, hold the four registered maintenance worktrees and Git metadata under the existing runtime lock. Check source identities, directory membership, and live configuration for every write. Verify full source at both stage boundaries.
 
 - Remove the Python development clone command adapter used only by legacy tests. The formal Rust CLI test checks seed close write authorization, the specified run directory, and absent input bindings directly.

@@ -227,6 +227,7 @@ mod tests {
         let source = root.path().join(".local-tests/build/source-commit");
         let value = with_source_commit(root.path(), SHA, || {
             assert_eq!(fs::read_to_string(&source).unwrap(), format!("{SHA}\n"));
+            assert!(source.with_extension("lock").is_file());
             Ok(42)
         })
         .unwrap();
