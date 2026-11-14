@@ -352,6 +352,7 @@ fn files(actor: &actor::Actor) -> Result<()> {
         "actor-binding.json",
         "actor-cancel.json",
         "actor-failed.json",
+        "actor-failure-diagnostic.json",
     ]
     .into_iter()
     .map(str::to_owned)

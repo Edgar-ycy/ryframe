@@ -1,6 +1,72 @@
 use super::*;
 use crate::recovery::clone::native::lifecycle::{lock::RunLock, state};
 
+fn diagnostic_output() -> tempfile::TempDir {
+    let root = crate::workspace::root_dir().join(".local-tests");
+    std::fs::create_dir_all(&root).unwrap();
+    tempfile::tempdir_in(root).unwrap()
+}
+
+#[test]
+fn monitor_diagnostic_keeps_fixed_rejections_and_omits_private_io_messages() {
+    let output = diagnostic_output();
+    let rejection = check(false, "本次 RustFS 启动已取消").unwrap_err();
+    let io = std::io::Error::other("D:/private/fixture key=synthetic");
+    monitor::publish_failure_diagnostic(
+        output.path(),
+        "operation",
+        Some(rejection.as_ref()),
+        Some(&io),
+    );
+    assert_eq!(
+        document::read(&output.path().join("actor-failure-diagnostic.json")).unwrap(),
+        json!({
+            "format_version": 1,
+            "operation_id": "operation",
+            "observation": {"category":"rejected","reason":"本次 RustFS 启动已取消"},
+            "cleanup": {"category":"io","os_code":null},
+        }),
+    );
+}
+
+#[test]
+fn monitor_diagnostic_preserves_first_record_without_exposing_unknown_error_text() {
+    let output = diagnostic_output();
+    let arbitrary: Box<dyn std::error::Error> = "D:/private/fixture key=synthetic".into();
+    monitor::publish_failure_diagnostic(output.path(), "original", Some(arbitrary.as_ref()), None);
+    let path = output.path().join("actor-failure-diagnostic.json");
+    let original = std::fs::read(&path).unwrap();
+    assert_eq!(
+        document::read(&path).unwrap(),
+        json!({
+            "format_version": 1,
+            "operation_id": "original",
+            "observation": {"category":"unknown"},
+            "cleanup": null,
+        }),
+    );
+    let os = std::io::Error::from_raw_os_error(5);
+    monitor::publish_failure_diagnostic(output.path(), "other", None, Some(&os));
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    let output = diagnostic_output();
+    monitor::publish_failure_diagnostic(output.path(), "other", None, Some(&os));
+    let diagnostic = document::read(&output.path().join("actor-failure-diagnostic.json")).unwrap();
+    assert_eq!(diagnostic["cleanup"], json!({"category":"io","os_code":5}));
+}
+
+#[cfg(windows)]
+#[test]
+fn monitor_diagnostic_retains_windows_system_code() {
+    let output = diagnostic_output();
+    let error = winsafe::co::ERROR::ACCESS_DENIED;
+    monitor::publish_failure_diagnostic(output.path(), "operation", Some(&error), None);
+    let diagnostic = document::read(&output.path().join("actor-failure-diagnostic.json")).unwrap();
+    assert_eq!(
+        diagnostic["observation"],
+        json!({"category":"win32","os_code":5})
+    );
+}
+
 #[test]
 fn frozen_inputs_reject_changed_bytes_and_replaced_kernel_file_identity() {
     let root = crate::workspace::root_dir().join(".local-tests");
