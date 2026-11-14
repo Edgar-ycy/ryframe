@@ -123,7 +123,11 @@ pub(super) fn damage(args: &Value) -> Result<Value> {
     )
 }
 
-pub(super) fn bound_path(root: &Path, manifest: &Value, relative: &str) -> Result<PathBuf> {
+pub(super) fn verify_artifact(
+    root: &Path,
+    manifest: &Value,
+    relative: &str,
+) -> Result<(PathBuf, native::digest::FileDigest)> {
     let file = native::digest::safe_file(root, relative)?;
     let artifact = native::json::array(&manifest["artifacts"], "备份产物")?
         .iter()
@@ -133,5 +137,5 @@ pub(super) fn bound_path(root: &Path, manifest: &Value, relative: &str) -> Resul
     if artifact["bytes"] != digest.bytes || artifact["sha256"] != digest.sha256 {
         return Err("恢复写入前当前产物字节与备份清单不同".into());
     }
-    Ok(file)
+    Ok((file, digest))
 }

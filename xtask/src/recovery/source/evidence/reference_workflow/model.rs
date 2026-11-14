@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use serde_json::{Value, json};
 
@@ -48,7 +50,7 @@ pub(super) fn resources(args: &Value) -> Result<Value> {
     for database in native::json::array(&manifest["databases"], "备份数据库")? {
         let key = text(&database["key"])?;
         let relative = format!("databases/{key}.sql");
-        let file = super::files::bound_path(root, manifest, &relative)?;
+        let (file, _) = super::files::verify_artifact(root, manifest, &relative)?;
         let tables = native::json::array(&database["tables"], "备份表")?
             .iter()
             .map(|table| table["table"].clone())
@@ -82,20 +84,11 @@ pub(super) fn resources(args: &Value) -> Result<Value> {
     Ok(json!(tasks))
 }
 
-pub(super) fn bound_artifact(args: &Value) -> Result<Value> {
-    exact(args, &["root", "manifest", "relative"])?;
-    let root = path(&args["root"])?;
+pub(super) fn bound_artifact(root: &Path, manifest: &Value, relative: &Value) -> Result<Value> {
+    let root_value = serde_json::to_value(root)?;
+    let root = path(&root_value)?;
     unlinked(root)?;
-    let file = super::files::bound_path(root, &args["manifest"], text(&args["relative"])?)?;
-    let digest = native::digest::file(&file)?;
-    let manifest = &args["manifest"];
-    let artifact = native::json::array(&manifest["artifacts"], "备份产物")?
-        .iter()
-        .find(|entry| entry["relative_path"] == args["relative"])
-        .ok_or("恢复产物未登记")?;
-    if artifact["bytes"] != digest.bytes || artifact["sha256"] != digest.sha256 {
-        return Err("恢复产物在绑定读取期间变化".into());
-    }
+    let (file, digest) = super::files::verify_artifact(root, manifest, text(relative)?)?;
     Ok(json!({"path":file,"bytes":digest.bytes,"sha256":digest.sha256}))
 }
 
