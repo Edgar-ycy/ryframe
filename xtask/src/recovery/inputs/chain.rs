@@ -8,6 +8,7 @@ use super::{
     comparison,
     document::{Document, exact, text},
     domain::validate_plan,
+    inventory::HeldArtifacts,
 };
 use crate::Result;
 
@@ -51,12 +52,28 @@ pub(crate) fn load_with_reference(
     fresh_path: &Path,
     side: &str,
 ) -> Result<Chain> {
+    load_verified(
+        backend,
+        reference,
+        [backup_path, comparison_path, arm_path, fresh_path],
+        side,
+        None,
+    )
+}
+
+pub(super) fn load_verified(
+    backend: &Path,
+    reference: Document,
+    [backup_path, comparison_path, arm_path, fresh_path]: [&Path; 4],
+    side: &str,
+    held: Option<&HeldArtifacts>,
+) -> Result<Chain> {
     validate_plan(&reference.value, backend)?;
     if reference.value.get("target_side").and_then(Value::as_str) != Some(side) {
         return Err("产品计划侧别与参考计划不同".into());
     }
     let backup_document = super::document::read(backup_path, backend, "备份收据")?;
-    let backup = backup::validate(backend, &reference.value, &backup_document)?;
+    let backup = backup::validate(backend, &reference.value, &backup_document, held)?;
     let comparison_document = super::document::read(comparison_path, backend, "双版本来源清单")?;
     let comparison = comparison::validate(backend, &comparison_document)?;
     let (arm, fresh) = arm::load(backend, arm_path, fresh_path, side)?;

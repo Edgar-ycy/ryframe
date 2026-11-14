@@ -12,6 +12,9 @@ use super::{
 };
 use crate::Result;
 
+mod held;
+pub(in crate::recovery) use held::HeldArtifacts;
+
 pub(crate) fn validate(plan: &Value, inventory: &Value) -> Result<()> {
     let inventory = object(inventory, "备份清单")?;
     if inventory.contains_key("observed_at") || !inventory.contains_key("quiesced_at") {
@@ -203,6 +206,19 @@ fn validate_placements(placements: &[Value], shared: bool) -> Result<()> {
 }
 
 pub(crate) fn verify_artifacts(root: &Path, manifest: &Value) -> Result<()> {
+    visit_artifacts(root, manifest, |path, bytes, sha| {
+        if file_sha256(&path)? != sha || file_size(&path)? != bytes || bytes == 0 {
+            return Err("备份文件大小或摘要被篡改".into());
+        }
+        Ok(())
+    })
+}
+
+fn visit_artifacts(
+    root: &Path,
+    manifest: &Value,
+    mut visit: impl FnMut(PathBuf, u64, &str) -> Result<()>,
+) -> Result<()> {
     let manifest = object(manifest, "备份清单")?;
     let databases = array(
         manifest.get("databases").ok_or("备份清单缺少数据库")?,
@@ -241,9 +257,7 @@ pub(crate) fn verify_artifacts(root: &Path, manifest: &Value) -> Result<()> {
         let path = safe_file(root, relative)?;
         let bytes = integer(artifact.get("bytes").unwrap(), "产物大小")?;
         let sha = digest(artifact.get("sha256").unwrap(), "产物摘要")?;
-        if file_sha256(&path)? != sha || file_size(&path)? != bytes || bytes == 0 {
-            return Err("备份文件大小或摘要被篡改".into());
-        }
+        visit(path, bytes, &sha)?;
         resources.insert(resource.to_owned());
     }
     if resources != required {

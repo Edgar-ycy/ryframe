@@ -6,7 +6,8 @@ use serde_json::{Value, json};
 use super::{
     document::{Document, digest, exact, integer, object, text},
     domain::{timestamp, validate_local_optional, validate_plan},
-    inventory, source,
+    inventory::{self, HeldArtifacts},
+    source,
 };
 use crate::Result;
 
@@ -77,10 +78,11 @@ pub(crate) struct Backup {
     pub(crate) manifest: Value,
 }
 
-pub(crate) fn validate(
+pub(super) fn validate(
     backend: &Path,
     reference_plan: &Value,
     receipt: &Document,
+    held: Option<&HeldArtifacts>,
 ) -> Result<Backup> {
     let receipt_value = exact(
         &receipt.value,
@@ -185,7 +187,10 @@ pub(crate) fn validate(
     }
     inventory::validate(original, &manifest_document.value)?;
     validate_manifest_times(&manifest_document.value, started, finished)?;
-    inventory::verify_artifacts(&backup_root, &manifest_document.value)?;
+    match held {
+        Some(held) => held.verify(&backup_root, &manifest_document.value)?,
+        None => inventory::verify_artifacts(&backup_root, &manifest_document.value)?,
+    }
     validate_source_identity(
         backend,
         original,

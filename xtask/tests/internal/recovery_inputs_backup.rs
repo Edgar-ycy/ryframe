@@ -3,9 +3,9 @@ use std::{fs, path::PathBuf};
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use serde_json::{Value, json};
 
-use super::recovery::inputs::{backup, document};
-use super::recovery_inputs_fixture::Fixture;
-use super::recovery_inputs_support::{binding, hash, read_value};
+use super::{backup, document};
+use crate::recovery_inputs_fixture::Fixture;
+use crate::recovery_inputs_support::{binding, hash, read_value};
 
 #[test]
 fn backup_receipt_requires_the_original_completed_result_and_manifest() {
@@ -145,7 +145,7 @@ fn backup_receipt_checks_manifest_completion_and_retention_times() {
 
 fn verify(fixture: &Fixture) -> crate::Result<backup::Backup> {
     let receipt = document::read(&fixture.backup_receipt, &fixture.backend, "备份收据")?;
-    backup::validate(&fixture.backend, &fixture.reference_value, &receipt)
+    backup::validate(&fixture.backend, &fixture.reference_value, &receipt, None)
 }
 
 fn write(path: &std::path::Path, value: &Value) {

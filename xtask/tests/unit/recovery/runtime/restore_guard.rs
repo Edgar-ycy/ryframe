@@ -89,7 +89,8 @@ fn checkpoints_hold_the_exact_restore_owner_and_repeat_on_exit() {
     let reply = with_checked_owner(
         &fixture.control,
         &fixture.binding,
-        |owner| {
+        |owner, held_backup| {
+            assert!(held_backup.is_none());
             owner.check()?;
             let receipt: Value = serde_json::from_slice(&fs::read(&owner_path)?)?;
             let registration = fixture.binding["registration"]["sha256"].as_str().unwrap();
@@ -107,7 +108,7 @@ fn checkpoints_hold_the_exact_restore_owner_and_repeat_on_exit() {
                     panic!("恢复期间不能接管 owner")
                 });
             assert!(foreign.is_err());
-            checkpoint()
+            checkpoint(None)
         },
     )
     .unwrap();
@@ -122,7 +123,7 @@ fn precheck_and_exit_failure_preserve_original_failure_without_replay() {
     let first = with_checked_owner(
         &fixture.control,
         &fixture.binding,
-        |_| Err("原登记漂移".into()),
+        |_, _| Err("原登记漂移".into()),
         |_| -> Result<()> { panic!("首次核验失败不能进入正文") },
     )
     .unwrap_err();
@@ -131,7 +132,7 @@ fn precheck_and_exit_failure_preserve_original_failure_without_replay() {
     let failure = with_checked_owner(
         &fixture.control,
         &fixture.binding,
-        |_| {
+        |_, _| {
             let call = calls.replace(calls.get() + 1);
             if call == 0 {
                 Ok(())
@@ -164,7 +165,7 @@ fn successful_restore_body_cannot_leave_an_unregistered_runtime_file() {
     let error = with_checked_owner(
         &fixture.control,
         &fixture.binding,
-        |owner| {
+        |owner, _| {
             owner.check()?;
             checks.set(checks.get() + 1);
             let (_, observed) = registration::runtime_observation(&fixture.backend, &runtime)?;

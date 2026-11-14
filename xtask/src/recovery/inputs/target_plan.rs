@@ -6,6 +6,7 @@ use super::{
     chain::{self, Chain},
     document::{Document, digest, exact, hash, object, text},
     domain::validate_plan,
+    inventory::HeldArtifacts,
     product,
 };
 use crate::Result;
@@ -104,21 +105,37 @@ pub(crate) fn verify(
     reference: Document,
     target_path: &Path,
 ) -> Result<(Chain, Value, Document)> {
+    verify_target(backend, reference, target_path, None)
+}
+
+pub(in crate::recovery) fn verify_with_held_backup(
+    backend: &Path,
+    reference: Document,
+    target_path: &Path,
+    held: &HeldArtifacts,
+) -> Result<(Chain, Value, Document)> {
+    verify_target(backend, reference, target_path, Some(held))
+}
+
+fn verify_target(
+    backend: &Path,
+    reference: Document,
+    target_path: &Path,
+    held: Option<&HeldArtifacts>,
+) -> Result<(Chain, Value, Document)> {
     let target = super::document::read(target_path, backend, "目标计划")?;
     validate_shape(backend, &target.value, &reference.value)?;
     let paths = InputPaths::from(&target.value)?;
     let product_document = super::document::read(&paths.product, backend, "产品恢复计划")?;
-    let chain = chain::load_with_reference(
+    let chain = chain::load_verified(
         backend,
         reference,
-        &paths.backup,
-        &paths.comparison,
-        &paths.arm,
-        &paths.fresh,
+        [&paths.backup, &paths.comparison, &paths.arm, &paths.fresh],
         text(
             target.value.get("target_side").ok_or("目标计划缺少侧别")?,
             "目标计划侧别",
         )?,
+        held,
     )?;
     let expected = capture(backend, &chain, &product_document)?;
     if expected != target.value {
@@ -219,5 +236,47 @@ impl InputPaths {
             fresh: super::document::binding_shape(&value["fresh_target"]["verify"], "目标复核")?
                 .path,
         })
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use crate::recovery::inputs::document;
+
+    #[test]
+    fn held_backup_still_validates_the_original_target_plan_and_source_chain() {
+        let fixture = crate::recovery_inputs_fixture::Fixture::new();
+        let receipt =
+            document::read(&fixture.backup_receipt, &fixture.backend, "备份收据").unwrap();
+        let accepted = super::super::backup::validate(
+            &fixture.backend,
+            &fixture.reference_value,
+            &receipt,
+            None,
+        )
+        .unwrap();
+        let root = Path::new(accepted.result["backup_root"].as_str().unwrap());
+        let held = HeldArtifacts::open(root, &accepted.manifest).unwrap();
+        let reference =
+            || document::read(&fixture.reference_plan, &fixture.backend, "参考计划").unwrap();
+        let full = verify(&fixture.backend, reference(), &fixture.target_plan)
+            .unwrap()
+            .1;
+        let verify_held =
+            || verify_with_held_backup(&fixture.backend, reference(), &fixture.target_plan, &held);
+        assert_eq!(verify_held().unwrap().1, full);
+        held.check_end().unwrap();
+
+        let mut comparison =
+            crate::recovery_inputs_support::read_value(&fixture.comparison_sources);
+        comparison["source_export"]["origin_attempt"] = json!(0);
+        std::fs::write(
+            &fixture.comparison_sources,
+            serde_json::to_vec(&comparison).unwrap(),
+        )
+        .unwrap();
+        assert!(verify_held().is_err());
+        held.check_end().unwrap();
     }
 }

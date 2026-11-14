@@ -38,6 +38,15 @@ struct FrozenEntry {
 
 impl FrozenEntry {
     fn open(path: &Path, directory: bool, allow_write: bool) -> Result<Self> {
+        let mut entry = Self::open_identity(path, directory, allow_write)?;
+        if !directory && !allow_write {
+            entry.sha256 = Some(digest::file(path)?.sha256);
+        }
+        entry.check()?;
+        Ok(entry)
+    }
+
+    fn open_identity(path: &Path, directory: bool, allow_write: bool) -> Result<Self> {
         let before = path_identity(path, directory)?;
         let handle = open_handle(path, directory, allow_write, false)?;
         if handle_identity(&handle, directory)? != before
@@ -45,20 +54,13 @@ impl FrozenEntry {
         {
             return Err("目标输入在打开保护句柄期间被替换".into());
         }
-        let sha256 = if directory || allow_write {
-            None
-        } else {
-            Some(digest::file(path)?.sha256)
-        };
-        let entry = Self {
+        Ok(Self {
             path: path.to_path_buf(),
             directory,
             identity: before,
-            sha256,
+            sha256: None,
             handle: Mutex::new(handle),
-        };
-        entry.check()?;
-        Ok(entry)
+        })
     }
 
     fn check(&self) -> Result<()> {
@@ -72,9 +74,16 @@ impl FrozenEntry {
     }
 
     fn check_identity(&self) -> Result<()> {
+        self.check_identity_with(path_identity)
+    }
+
+    fn check_identity_with(
+        &self,
+        resolve: impl FnOnce(&Path, bool) -> Result<Identity>,
+    ) -> Result<()> {
         let handle = self.handle.lock().map_err(|_| "目标保护句柄检查被中断")?;
         if handle_identity(&handle, self.directory)? != self.identity
-            || path_identity(&self.path, self.directory)? != self.identity
+            || resolve(&self.path, self.directory)? != self.identity
         {
             return Err("目标输入的内核身份、链接数量或文件内容发生变化".into());
         }
@@ -84,6 +93,57 @@ impl FrozenEntry {
 
 pub(crate) struct Inputs {
     entries: Vec<FrozenEntry>,
+}
+
+#[cfg(windows)]
+pub(in crate::recovery) struct BackupInputs {
+    root: FrozenEntry,
+    directories: Vec<FrozenEntry>,
+    files: Vec<FrozenEntry>,
+}
+
+#[cfg(windows)]
+impl BackupInputs {
+    pub(in crate::recovery) fn open(
+        root: &Path,
+        directories: impl IntoIterator<Item = PathBuf>,
+        files: impl IntoIterator<Item = PathBuf>,
+    ) -> Result<Self> {
+        let root = FrozenEntry::open_identity(root, true, false)?;
+        let directories = directories
+            .into_iter()
+            .map(|path| FrozenEntry::open_identity(&path, true, false))
+            .collect::<Result<_>>()?;
+        let files = files
+            .into_iter()
+            .map(|path| FrozenEntry::open_identity(&path, false, false))
+            .collect::<Result<_>>()?;
+        Ok(Self {
+            root,
+            directories,
+            files,
+        })
+    }
+
+    pub(in crate::recovery) fn check_identities(&self) -> Result<()> {
+        self.check(path_identity)
+    }
+
+    pub(in crate::recovery) fn checkpoint(&self) -> Result<()> {
+        self.check(path_handle_identity)
+    }
+
+    fn check(&self, resolve_file: fn(&Path, bool) -> Result<Identity>) -> Result<()> {
+        self.root.check_identity()?;
+        for directory in &self.directories {
+            directory.check_identity()?;
+        }
+        // 父目录依原路径完整复核后，文件仍需重开实际路径并核对持有句柄及链接数量。
+        for file in &self.files {
+            file.check_identity_with(resolve_file)?;
+        }
+        self.root.check_identity()
+    }
 }
 
 impl Inputs {
@@ -328,6 +388,11 @@ fn path_identity(path: &Path, directory: bool) -> Result<Identity> {
         LocalTestPathKind::ExistingFile
     };
     validate_absolute_path(path, kind)?;
+    path_handle_identity(path, directory)
+}
+
+#[cfg(windows)]
+fn path_handle_identity(path: &Path, directory: bool) -> Result<Identity> {
     // 私有 guard 身份只比较各自真实句柄的原生表示，不与公共资源的完整卷号混用。
     let candidate = open_handle(path, directory, true, true)?;
     handle_identity(&candidate, directory)

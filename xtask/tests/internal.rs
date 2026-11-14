@@ -238,8 +238,6 @@ mod rate_limit_protocol_tests;
 mod rate_limit_tests;
 #[path = "internal/recovery_cli.rs"]
 mod recovery_cli_tests;
-#[path = "internal/recovery_inputs_backup.rs"]
-mod recovery_inputs_backup_tests;
 #[path = "internal/recovery_inputs_fixture.rs"]
 mod recovery_inputs_fixture;
 #[path = "internal/recovery_inputs_fresh.rs"]
