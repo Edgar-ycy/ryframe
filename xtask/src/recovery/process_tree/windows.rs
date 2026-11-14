@@ -3,7 +3,7 @@ use super::check;
 use crate::{
     Result,
     process::{ChildGroup, ManagedChild, stop_child},
-    recovery::clone::native::{lifecycle::identity, resources::common},
+    recovery::clone::native::lifecycle::identity,
 };
 use serde_json::Value;
 #[cfg(test)]
@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use winsafe::{HPROCESS, co, guard::CloseHandleGuard, prelude::kernel_Hprocess};
 
 struct Member {
+    pid: u32,
     identity: Value,
     handle: CloseHandleGuard<HPROCESS>,
 }
@@ -30,23 +31,19 @@ impl Group {
         command: std::process::Command,
         _session_timeout: Duration,
     ) -> Result<Self> {
-        let child = ChildGroup::new()?.spawn(command)?;
-        let supervisor = match common::process_identity(child.id()) {
-            Ok(Some(identity)) => identity,
-            Ok(None) => return reject_child(child, "RustFS supervisor 创建身份缺失".into()),
+        let mut child = ChildGroup::new()?.spawn(command)?;
+        let supervisor = match capture_supervisor(&mut child) {
+            Ok(member) => member,
             Err(error) => return reject_child(child, error),
         };
         let mut group = Self {
             child: Some(child),
-            supervisor,
-            members: Vec::new(),
+            supervisor: supervisor.identity.clone(),
+            members: vec![supervisor],
         };
-        let captured = group.capture().and_then(|_| {
-            check(
-                group.members().contains(&group.supervisor),
-                "Job 未包含原 supervisor",
-            )
-        });
+        let captured = group
+            .capture()
+            .and_then(|()| check(!group.supervisor_exited()?, "原 supervisor 采集期间退出"));
         if let Err(error) = captured {
             // 观察失败也显式执行自有 Job 的停止，不提前依赖隐式析构作成功证明。
             let closed = group.close();
@@ -63,18 +60,20 @@ impl Group {
     }
     pub(in crate::recovery) fn capture(&mut self) -> Result<()> {
         let child = self.child.as_ref().ok_or("原 Job 句柄已经释放")?;
-        for pid in child.member_pids()? {
-            let Some(identity) = common::process_identity(pid)? else {
-                continue;
-            };
-            if self
-                .members
-                .iter()
-                .any(|member| member.identity == identity)
+        let pids = child.job_member_pids()?;
+        for member in &self.members {
+            if !pids.contains(&member.pid) {
+                check(exited(&member.handle, 0)?, "存活的原成员不在 Job 中")?;
+            }
+        }
+        for pid in pids {
+            if let Some(member) = self.members.iter().rev().find(|member| member.pid == pid)
+                && (observe_member(child, &member.handle, pid, Some(&member.identity))?.is_some()
+                    || !child.job_member_pids()?.contains(&pid))
             {
                 continue;
             }
-            if let Some(member) = capture_member(child, pid, &identity)? {
+            if let Some(member) = capture_member(child, pid)? {
                 self.members.push(member);
             }
         }
@@ -86,7 +85,7 @@ impl Group {
             .iter()
             .find(|m| m.identity == self.supervisor)
             .ok_or("缺少 supervisor 句柄")?;
-        Ok(member.handle.WaitForSingleObject(Some(0))? == co::WAIT::OBJECT_0)
+        exited(&member.handle, 0)
     }
     pub(in crate::recovery) fn close(&mut self) -> Result<()> {
         let capture = self.capture();
@@ -98,17 +97,17 @@ impl Group {
         // 即使采集失败，也必须执行已持有 Job 的整树停止和原成员句柄等待。
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            let mut exited = true;
+            let mut all_exited = true;
             for member in &self.members {
-                if member.handle.WaitForSingleObject(Some(0))? != co::WAIT::OBJECT_0 {
-                    exited = false;
+                if !exited(&member.handle, 0)? {
+                    all_exited = false;
                 }
             }
             let empty = match self.child.as_ref() {
                 Some(child) => child.active_process_count()? == Some(0),
                 None => true,
             };
-            if exited && empty {
+            if all_exited && empty {
                 stopped?;
                 return capture;
             }
@@ -121,34 +120,66 @@ impl Group {
     }
 }
 
-fn capture_member(child: &ManagedChild, pid: u32, observed: &Value) -> Result<Option<Member>> {
-    let handle = match HPROCESS::OpenProcess(
+fn capture_supervisor(child: &mut ManagedChild) -> Result<Member> {
+    let pid = child.id();
+    check(child.try_wait()?.is_none(), "原 supervisor 已退出")?;
+    let member = capture_member(child, pid)?.ok_or("RustFS supervisor 创建身份缺失")?;
+    // 用实际直接子进程的持有句柄排除采集期间 PID 被另一个 Job 成员复用。
+    check(child.try_wait()?.is_none(), "原 supervisor 采集期间退出")?;
+    Ok(member)
+}
+
+fn capture_member(child: &ManagedChild, pid: u32) -> Result<Option<Member>> {
+    let handle = HPROCESS::OpenProcess(
         co::PROCESS::QUERY_LIMITED_INFORMATION | co::PROCESS::SYNCHRONIZE,
         false,
         pid,
-    ) {
-        Ok(handle) => handle,
-        Err(co::ERROR::INVALID_PARAMETER) => return Ok(None),
-        Err(error) => return Err(error.into()),
-    };
-    let snapshot = identity::windows_snapshot(&handle, pid);
-    let Some(identity) = identity::confirm_live_observation(snapshot, exited(&handle))? else {
+    )?;
+    Ok(
+        observe_member(child, &handle, pid, None)?.map(|identity| Member {
+            pid,
+            identity,
+            handle,
+        }),
+    )
+}
+
+fn observe_member(
+    child: &ManagedChild,
+    handle: &HPROCESS,
+    pid: u32,
+    expected: Option<&Value>,
+) -> Result<Option<Value>> {
+    if exited(handle, 0)? {
+        return Ok(None);
+    }
+    let Some(identity) = confirm_snapshot(handle, identity::windows_snapshot(handle, pid))? else {
         return Ok(None);
     };
-    let in_job = child.member_pids()?.contains(&pid);
+    let in_job = child.job_member_pids()?.contains(&pid);
     // 成员可在重读 Job 时退出；仍活跃的句柄必须和原创建身份及 Job 成员表一致。
-    if exited(&handle)? {
+    if exited(handle, 0)? {
         return Ok(None);
     }
     check(
-        identity == *observed && in_job,
+        in_job && expected.is_none_or(|expected| *expected == identity),
         "Job 成员句柄创建身份或归属变化",
     )?;
-    Ok(Some(Member { identity, handle }))
+    Ok(Some(identity))
 }
 
-fn exited(handle: &HPROCESS) -> Result<bool> {
-    Ok(handle.WaitForSingleObject(Some(0))? == co::WAIT::OBJECT_0)
+fn confirm_snapshot(handle: &HPROCESS, snapshot: Result<Value>) -> Result<Option<Value>> {
+    // 身份读取失败只能由同一句柄的退出状态消解；正常观察不延长等待。
+    let timeout = if snapshot.is_err() { 1000 } else { 0 };
+    identity::confirm_live_observation(snapshot, exited(handle, timeout))
+}
+
+fn exited(handle: &HPROCESS, timeout_ms: u32) -> Result<bool> {
+    match handle.WaitForSingleObject(Some(timeout_ms))? {
+        co::WAIT::OBJECT_0 => Ok(true),
+        co::WAIT::TIMEOUT => Ok(false),
+        _ => Err("Windows Job 成员句柄返回未知等待状态".into()),
+    }
 }
 
 fn reject_child(mut child: ManagedChild, error: Box<dyn std::error::Error>) -> Result<Group> {
@@ -187,15 +218,25 @@ fn rustfs_windows_job_capture_skips_exited_member_and_rejects_live_drift() {
         .stdout(Stdio::null());
     let mut child = ChildGroup::new().unwrap().spawn(command).unwrap();
     let pid = child.id();
-    let observed = common::process_identity(pid).unwrap().unwrap();
-    let captured = capture_member(&child, pid, &observed).unwrap().unwrap();
+    let observed = identity::process(pid).unwrap().unwrap();
+    let captured = capture_member(&child, pid).unwrap().unwrap();
     assert_eq!(captured.identity, observed);
 
     let mut replaced = observed.clone();
     replaced["started"] = json!("1");
-    assert!(capture_member(&child, pid, &replaced).is_err());
-    let foreign = identity::current().unwrap();
-    assert!(capture_member(&child, std::process::id(), &foreign).is_err());
+    assert!(observe_member(&child, &captured.handle, pid, Some(&replaced)).is_err());
+    assert!(capture_member(&child, std::process::id()).is_err());
+    let unopened = capture_member(&child, 0).err().unwrap();
+    assert_eq!(
+        unopened.downcast_ref::<co::ERROR>(),
+        Some(&co::ERROR::INVALID_PARAMETER)
+    );
+    let denied = || Err(co::ERROR::ACCESS_DENIED.into());
+    let error = confirm_snapshot(&captured.handle, denied()).unwrap_err();
+    assert_eq!(
+        error.downcast_ref::<co::ERROR>(),
+        Some(&co::ERROR::ACCESS_DENIED)
+    );
 
     child
         .take_stdin_writer()
@@ -212,6 +253,15 @@ fn rustfs_windows_job_capture_skips_exited_member_and_rejects_live_drift() {
         assert!(Instant::now() < deadline, "测试 Job 子进程未退出");
         std::thread::sleep(Duration::from_millis(10));
     }
-    assert!(exited(&captured.handle).unwrap());
-    assert!(capture_member(&child, pid, &observed).unwrap().is_none());
+    assert!(exited(&captured.handle, 0).unwrap());
+    assert!(
+        confirm_snapshot(&captured.handle, denied())
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        observe_member(&child, &captured.handle, pid, Some(&observed))
+            .unwrap()
+            .is_none()
+    );
 }

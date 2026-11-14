@@ -41,6 +41,12 @@ impl ChildGroup {
 }
 
 impl ManagedChild {
+    /// 直接查询原 Job 的 PID 列表，成员身份由持有进程句柄的调用方核验。
+    #[cfg(windows)]
+    pub(crate) fn job_member_pids(&self) -> Result<Vec<u32>> {
+        Ok(self.group().members()?)
+    }
+
     /// 仅查询本句柄所拥有的整树成员，为持久监督器保存真实创建身份。
     pub(crate) fn member_pids(&self) -> Result<Vec<u32>> {
         #[cfg(windows)]
