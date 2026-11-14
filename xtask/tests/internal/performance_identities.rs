@@ -218,7 +218,7 @@ fn environment_fixture(fixture: &Fixture) -> Value {
         "system_admin":admin("system",0),"tenants":(1..=10).map(|index| { let tenant=format!("fixture-{index}"); json!({"slot":format!("tenant-{index:02}"),"tenant_id":tenant,"target_key":"shared","admin":admin(&tenant,index)}) }).collect::<Vec<_>>(),
         "passwords":{"system":"Fixture-User-Password!123","tenant":"Fixture-User-Password!123"},
         "quota":{"system_max_users":1000,"tenant_max_users":1000,"import_headroom_per_tenant":100},
-        "pacing":{"contract":{"authority_sha256":"a".repeat(64),"request_interval_ms":1000,"operation_intervals_ms":{"post_auth_login":12250},"sample_prepare_wait_ms":60250},"bindings":{"python":root.join("python-fixture"),"login_budget_state":fixture.directory.join("login-budget.json")}}})
+        "pacing":{"contract":{"authority_sha256":"a".repeat(64),"request_interval_ms":1000,"operation_intervals_ms":{"post_auth_login":12250},"sample_prepare_wait_ms":60250},"bindings":{"login_budget_state":fixture.directory.join("login-budget.json")}}})
 }
 
 fn create_plan(environment: &Value, fixture: &Fixture) -> super::Result<Value> {
@@ -284,6 +284,12 @@ fn native_plan_rejects_invalid_tenant_targets_permissions_and_source_drift() {
         (
             "/pacing/contract/operation_intervals_ms/post_auth_login",
             json!(0),
+        ),
+        ("/pacing/bindings/login_budget_state", json!("relative")),
+        (
+            "/pacing/bindings",
+            json!({"login_budget_state":environment["pacing"]["bindings"]["login_budget_state"],
+                "python":fixture.directory.join("unused-python.exe")}),
         ),
         ("/system_admin/client_address", json!("198.18.40.1")),
     ] {

@@ -26,7 +26,6 @@ fn authority_and_summary_receipts_keep_phases_and_exclude_secrets() {
     let text = format!("{authority}{summary}");
     for secret in [
         "fixture-secret-not-for-receipts",
-        "unused-python",
         "login-budget.json",
         "reader",
         "198.18.10.1",
@@ -50,7 +49,7 @@ fn digest_mismatch_records_failure_before_any_request_or_budget_mutation() {
 }
 
 #[test]
-fn binding_failure_records_only_fixed_category_and_does_not_invoke_python() {
+fn binding_failure_records_only_fixed_category_without_mutating_budget() {
     let mut fixture = Fixture::new();
     fixture.config["bindings"]["pacing"]["extra"] = json!("fixture-secret-not-for-receipts");
     fixture.config["contract"]["pacing"]["authority_sha256"] =

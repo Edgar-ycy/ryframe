@@ -24,29 +24,20 @@ pub(crate) fn request(args: &Value) -> Result<Value> {
     let pacing = &args["pacing"];
     document::exact(
         pacing,
-        &[
-            "contract",
-            "bindings",
-            "python_sha256",
-            "login_budget_module_sha256",
-        ],
+        &["contract", "bindings", "login_budget_module_sha256"],
         "复制后 pacing",
     )?;
     // 这里只核验容器类型；业务间隔、authority 和 catalog 仍由原 session 阶段校验。
     document::object(&pacing["contract"], "复制后 pacing contract")?;
     document::exact(
         &pacing["bindings"],
-        &["python", "login_budget_state"],
+        &["login_budget_state"],
         "复制后 pacing 文件绑定",
     )?;
     let state = path(&pacing["bindings"]["login_budget_state"])?;
-    let python = path(&pacing["bindings"]["python"])?;
     let module = frontend.join("scripts/browser-login-budget.mjs");
     for _ in 0..2 {
         verify_paths(&backend, &directory, &frontend, &state)?;
-        external_file(&json!({"path":python,"sha256":pacing["python_sha256"]})).map_err(
-            |_| "复制后 pacing Python 文件绑定无效或已漂移；核对显式路径与 SHA-256，不执行或重放",
-        )?;
         external_file(&json!({"path":module,"sha256":pacing["login_budget_module_sha256"]}))
             .map_err(|_| "复制后 pacing 前端模块绑定无效或已漂移；核对显式 frontend_root 与 SHA-256，不执行或重放")?;
     }
@@ -100,7 +91,6 @@ mod tests {
         backend: PathBuf,
         directory: PathBuf,
         frontend: PathBuf,
-        python: PathBuf,
         module: PathBuf,
         args: Value,
     }
@@ -117,16 +107,12 @@ mod tests {
             let backend = root.join("backend");
             let directory = backend.join(".local-tests/run one");
             let frontend = root.join("frontends/独立 前端");
-            let python = root.join("python.exe");
             let module = frontend.join("scripts/browser-login-budget.mjs");
             fs::create_dir_all(&directory).unwrap();
             fs::create_dir_all(module.parent().unwrap()).unwrap();
-            fs::write(&python, b"python-fixture").unwrap();
             fs::write(&module, b"module-original").unwrap();
             let args = json!({"backend":backend,"directory":directory,"frontend_root":frontend,
-                "pacing":{"contract":{},"bindings":{"python":python,
-                    "login_budget_state":directory.join("post-copy/login-budget.json")},
-                    "python_sha256":digest::file(&python).unwrap().sha256,
+                "pacing":{"contract":{},"bindings":{"login_budget_state":directory.join("post-copy/login-budget.json")},
                     "login_budget_module_sha256":digest::file(&module).unwrap().sha256}});
             Self {
                 _temporary: temporary,
@@ -134,7 +120,6 @@ mod tests {
                 backend,
                 directory,
                 frontend,
-                python,
                 module,
                 args,
             }
@@ -163,23 +148,15 @@ mod tests {
         assert_eq!(fs::read(&state).unwrap(), b"existing-budget");
         assert_eq!(fs::read_dir(state.parent().unwrap()).unwrap().count(), 1);
         assert_eq!(fs::read(&fixture.module).unwrap(), b"module-original");
-        assert_eq!(fs::read(&fixture.python).unwrap(), b"python-fixture");
     }
 
     #[test]
-    fn same_length_module_or_python_drift_rejects_without_creating_state() {
-        for module in [true, false] {
-            let fixture = Fixture::new();
-            let path = if module {
-                &fixture.module
-            } else {
-                &fixture.python
-            };
-            let changed = vec![b'x'; fs::metadata(path).unwrap().len() as usize];
-            fs::write(path, &changed).unwrap();
-            fixture.rejected(&fixture.args);
-            assert_eq!(fs::read(path).unwrap(), changed);
-        }
+    fn same_length_module_drift_rejects_without_creating_state() {
+        let fixture = Fixture::new();
+        let changed = vec![b'x'; fs::metadata(&fixture.module).unwrap().len() as usize];
+        fs::write(&fixture.module, &changed).unwrap();
+        fixture.rejected(&fixture.args);
+        assert_eq!(fs::read(&fixture.module).unwrap(), changed);
     }
 
     #[test]
@@ -216,15 +193,13 @@ mod tests {
             ("/frontend_root", json!("private-password-token\n")),
             ("/frontend_root", json!("private-password-token")),
             ("/frontend_root", json!(fixture.root.join("missing"))),
-            ("/frontend_root", json!(fixture.python)),
+            ("/frontend_root", json!(fixture.module)),
             ("/pacing", json!([])),
             ("/pacing/contract", json!(1)),
             ("/pacing/bindings", json!(null)),
-            ("/pacing/bindings/python", json!(1)),
-            ("/pacing/bindings/python", json!("relative-python")),
             ("/pacing/bindings/login_budget_state", json!(false)),
-            ("/pacing/python_sha256", json!(1)),
-            ("/pacing/python_sha256", json!("A".repeat(64))),
+            ("/pacing/login_budget_module_sha256", json!(1)),
+            ("/pacing/login_budget_module_sha256", json!("A".repeat(64))),
             (
                 "/pacing/login_budget_module_sha256",
                 json!("private-password-token"),
@@ -234,38 +209,40 @@ mod tests {
             *args.pointer_mut(pointer).unwrap() = value;
             fixture.rejected(&args);
         }
-        for pointer in ["", "/pacing", "/pacing/bindings"] {
+        for (pointer, key, value) in [
+            ("", "private-password-token", json!(true)),
+            ("/pacing", "private-password-token", json!(true)),
+            ("/pacing/bindings", "private-password-token", json!(true)),
+            ("/pacing", "python_sha256", json!("a".repeat(64))),
+            ("/pacing/bindings", "python", json!(fixture.module)),
+        ] {
             let mut args = fixture.args.clone();
-            args.pointer_mut(pointer).unwrap()["private-password-token"] = json!(true);
+            args.pointer_mut(pointer).unwrap()[key] = value;
             fixture.rejected(&args);
         }
     }
 
     #[cfg(any(unix, windows))]
     #[test]
-    fn linked_roots_tools_module_and_budget_parent_are_rejected() {
+    fn linked_roots_module_and_budget_parent_are_rejected() {
         let fixture = Fixture::new();
         let frontend = fixture.root.join("linked frontend");
-        let python = fixture.root.join("linked-python.exe");
         let backend = fixture.root.join("linked backend");
         let directory = fixture.backend.join(".local-tests/linked run");
         #[cfg(windows)]
         {
             std::os::windows::fs::symlink_dir(&fixture.frontend, &frontend).unwrap();
-            std::os::windows::fs::symlink_file(&fixture.python, &python).unwrap();
             std::os::windows::fs::symlink_dir(&fixture.backend, &backend).unwrap();
             std::os::windows::fs::symlink_dir(&fixture.directory, &directory).unwrap();
         }
         #[cfg(unix)]
         {
             std::os::unix::fs::symlink(&fixture.frontend, &frontend).unwrap();
-            std::os::unix::fs::symlink(&fixture.python, &python).unwrap();
             std::os::unix::fs::symlink(&fixture.backend, &backend).unwrap();
             std::os::unix::fs::symlink(&fixture.directory, &directory).unwrap();
         }
         for (pointer, value) in [
             ("/frontend_root", json!(frontend)),
-            ("/pacing/bindings/python", json!(python)),
             ("/backend", json!(backend)),
             ("/directory", json!(directory)),
         ] {

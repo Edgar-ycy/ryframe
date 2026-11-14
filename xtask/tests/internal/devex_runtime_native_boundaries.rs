@@ -1,6 +1,83 @@
 use super::*;
 
 #[test]
+fn pacing_initializes_authority_with_only_absolute_login_budget_state() {
+    let base = crate::workspace::root_dir().join(".local-tests");
+    fs::create_dir_all(&base).unwrap();
+    let fixture = tempfile::Builder::new()
+        .prefix("runtime-pacing-")
+        .tempdir_in(base)
+        .unwrap();
+    let root = fixture.path();
+    fs::create_dir(root.join("config")).unwrap();
+    fs::write(
+        root.join("config/app.toml"),
+        "[rate_limit]\ncapacity = 100\nwindow_secs = 60\napi_window_secs = 60\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("config/app.test.toml"),
+        "[rate_limit.api_limits]\n\"POST /api/v1/auth/login\" = 5\n",
+    )
+    .unwrap();
+    fs::create_dir(root.join("openapi")).unwrap();
+    fs::write(
+        root.join("openapi/openapi.json"),
+        json!({"x-ryframe-api-prefix":{"value":"/api/v1"},
+            "paths":{"/api/v1/auth/login":{"post":{"operationId":"post_auth_login"}}}})
+        .to_string(),
+    )
+    .unwrap();
+    let input = input(root);
+    let authority =
+        serde_json::to_value(crate::rate_limit::authority(root, None, &input.app_env).unwrap())
+            .unwrap();
+    let digest = configuration::hash(&authority).unwrap();
+    let budget = root.join("budget/login-budget.json");
+    let config = json!({
+        "contract":{"pacing":{"authority_sha256":digest,
+            "request_interval_ms":601,"sample_prepare_wait_ms":60250,
+            "operation_intervals_ms":{"post_auth_login":12001}}},
+        "bindings":{"pacing":{"login_budget_state":budget}}
+    });
+    let output = root.join("valid");
+    pacing::Pacing::new(&config, &input, &output).unwrap();
+    let receipt = |directory: &Path| -> Value {
+        serde_json::from_slice(&fs::read(directory.join("pacing-authority.json")).unwrap()).unwrap()
+    };
+    let successful = receipt(&output);
+    assert_eq!(successful["success"], true);
+    assert_eq!(successful["failure"], Value::Null);
+    assert_eq!(successful["authority"], authority);
+    assert_eq!(successful["actual_sha256"], digest);
+    assert_eq!(successful["expected_sha256"], digest);
+
+    for (name, binding) in [
+        (
+            "legacy-python",
+            json!({"login_budget_state":budget,"python":root.join("unused-python.exe")}),
+        ),
+        ("relative", json!({"login_budget_state":"relative.json"})),
+        ("wrong-type", json!({"login_budget_state":42})),
+    ] {
+        let mut invalid = config.clone();
+        invalid["bindings"]["pacing"] = binding;
+        let output = root.join(name);
+        let Err(error) = pacing::Pacing::new(&invalid, &input, &output) else {
+            panic!("错误 pacing 绑定必须拒绝 {name}");
+        };
+        assert_eq!(error.category, "pacing_binding");
+        let failed = receipt(&output);
+        assert_eq!(failed["success"], false);
+        assert_eq!(failed["failure"], "pacing_binding");
+        assert_eq!(failed["authority"], Value::Null);
+        assert_eq!(failed["actual_sha256"], Value::Null);
+        assert!(!output.join("pacing-summary.json").exists());
+    }
+    assert!(!budget.parent().unwrap().exists());
+}
+
+#[test]
 fn response_streams_keep_downloads_bounded_and_binary_media_strict() {
     asynchronous(async {
         crate::http_session::install_crypto_provider().unwrap();

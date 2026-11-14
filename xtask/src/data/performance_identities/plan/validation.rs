@@ -246,11 +246,7 @@ fn pacing(value: &Value) -> Result<()> {
         ],
         "节奏契约",
     )?;
-    json::exact(
-        &value["bindings"],
-        &["python", "login_budget_state"],
-        "节奏绑定",
-    )?;
+    json::exact(&value["bindings"], &["login_budget_state"], "节奏绑定")?;
     let interval = |value: &Value, minimum| {
         value
             .as_u64()
@@ -274,7 +270,6 @@ fn pacing(value: &Value) -> Result<()> {
             return Err("操作节奏参数无效".into());
         }
     }
-    absolute(text(&value["bindings"], "python")?)?;
     absolute(text(&value["bindings"], "login_budget_state")?)
 }
 

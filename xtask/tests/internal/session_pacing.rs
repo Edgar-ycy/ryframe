@@ -134,8 +134,7 @@ impl Fixture {
         )
         .unwrap();
         let config = json!({"contract": {"pacing": pacing()}, "bindings": {
-            "scope_id": "pacing-test", "pacing": {"python": root.join("unused-python.exe"),
-                "login_budget_state": root.join("login-budget.json")}}});
+            "scope_id": "pacing-test", "pacing": {"login_budget_state": root.join("login-budget.json")}}});
         let artifacts = root.join("artifacts");
         Self {
             directory,

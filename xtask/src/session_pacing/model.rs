@@ -157,25 +157,17 @@ impl Pacer {
 
 pub(crate) fn binding(value: &Value) -> Result<PathBuf, SessionError> {
     let fields = value.as_object().ok_or_else(|| error("pacing-binding"))?;
-    if fields.len() != 2
-        || !fields.contains_key("python")
-        || !fields.contains_key("login_budget_state")
-    {
+    if fields.len() != 1 {
         return Err(error("pacing-binding"));
     }
-    for name in ["python", "login_budget_state"] {
-        let value = fields[name]
-            .as_str()
-            .ok_or_else(|| error("pacing-binding"))?;
-        if !Path::new(value).is_absolute() || value.contains(['\r', '\n', '\0']) {
-            return Err(error("pacing-binding"));
-        }
+    let state = fields
+        .get("login_budget_state")
+        .and_then(Value::as_str)
+        .ok_or_else(|| error("pacing-binding"))?;
+    if !Path::new(state).is_absolute() || state.contains(['\r', '\n', '\0']) {
+        return Err(error("pacing-binding"));
     }
-    Ok(PathBuf::from(
-        fields["login_budget_state"]
-            .as_str()
-            .ok_or_else(|| error("pacing-binding"))?,
-    ))
+    Ok(PathBuf::from(state))
 }
 
 fn benchmark_address(value: &str) -> bool {

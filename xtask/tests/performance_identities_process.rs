@@ -211,7 +211,7 @@ fn private_environment(fixture: &Fixture) -> PathBuf {
         "tenants":(1..=10).map(|index|json!({"slot":format!("tenant-{index:02}"),"tenant_id":format!("fixture-{index}"),"target_key":"shared","admin":admin(&format!("fixture-{index}"),index+1)})).collect::<Vec<_>>(),
         "passwords":{"system":"Process-User-Secret!123","tenant":"Process-User-Secret!123"},
         "quota":{"system_max_users":1000,"tenant_max_users":1000,"import_headroom_per_tenant":100},
-        "pacing":{"contract":{"authority_sha256":"a".repeat(64),"request_interval_ms":1000,"operation_intervals_ms":{"post_auth_login":12250},"sample_prepare_wait_ms":60250},"bindings":{"python":backend.join("python-fixture"),"login_budget_state":fixture.directory.join("budget.json")}}
+        "pacing":{"contract":{"authority_sha256":"a".repeat(64),"request_interval_ms":1000,"operation_intervals_ms":{"post_auth_login":12250},"sample_prepare_wait_ms":60250},"bindings":{"login_budget_state":fixture.directory.join("budget.json")}}
     });
     let path = fixture.directory.join("private.json");
     fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();

@@ -36,7 +36,8 @@ class QuotaProducerContractTests(unittest.TestCase):
     def test_bridge_post_request_is_only_initialization_and_seed_registration_stays_exact(self):
         root = Path.cwd()
         seed = {'identity_plan': {'path': 'fixed'}}
-        post = {'pacing': {'contract': {'delay': 1}, 'bindings': {'python': 'fixed'}},
+        post = {'pacing': {'contract': {'delay': 1},
+                           'bindings': {'login_budget_state': str(root / 'run/post-copy/login-budget.json')}},
                 'frontend_root': str(root / 'frontend'), 'source_admin': {
                     'subject_id': '1', 'tenant_id': 'system', 'username': 'admin',
                     'client_address': '198.19.20.1'}}

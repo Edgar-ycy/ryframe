@@ -117,8 +117,10 @@ fn passwords_references_and_unknown_identity_fields_are_rejected_without_values(
 
 #[test]
 fn bindings_allow_optional_literal_configuration_directory_and_reject_old_or_unknown_fields() {
+    let root = crate::workspace::root_dir();
     let base = json!({"scope_id":"sample", "api_url":"http://127.0.0.1:1",
-        "frontend_url":"http://127.0.0.1:2", "pacing":{}});
+        "frontend_url":"http://127.0.0.1:2",
+        "pacing":{"login_budget_state":root.join(".local-tests/copy-session/login-budget.json")}});
     assert!(model::bindings(&base).is_ok());
     for directory in ["config", "角色 配置/中文 目录", "D:/角色 配置/目录"] {
         let mut bindings = base.clone();
@@ -216,10 +218,12 @@ impl ActiveSessionFixture {
         let environment = run.join("environment.json");
         document::write_new(&environment, &json!({"environment":{"APP_ENV":"test"}})).unwrap();
         let fact = common::binding(&environment).unwrap();
+        let pacing = json!({"contract":{},"bindings":{"login_budget_state":run.join("post-copy/login-budget.json")},
+            "login_budget_module_sha256":"a".repeat(64)});
         let post = json!({"format_version":1,"kind":"devex-clone-post-copy",
             "run_manifest":state::manifest_binding(&run).unwrap(),"copy_stage_receipt":fact,
             "copy_result":fact,"ledger_head":fact,"api_environment":fact,"backend_build":fact,
-            "node":fact,"source_admin":identity(),"frontend_root":root,"pacing":{},
+            "node":fact,"source_admin":identity(),"frontend_root":root,"pacing":pacing,
             "reference_plan":fact,"dataset":fact,"administrator_credentials":common::binding(&credentials).unwrap()});
         document::write_new(&run.join("post-copy.json"), &post).unwrap();
         let base = common::binding(&run.join("post-copy.json")).unwrap();
@@ -357,7 +361,8 @@ impl ActiveSessionFixture {
             "run_dir":self.run,"attempt":number,"producer_owner":owner,"launch":launch,
             "process":common::binding(&output.join("session-process.json")).unwrap(),"artifacts":output.join("pacing"),
             "identity":identity(),"config":{"contract":{"timeout_ms":1000,"pacing":{}},
-                "bindings":{"scope_id":"sample","api_url":"http://127.0.0.1:1","frontend_url":"http://127.0.0.1:2","pacing":{}}}});
+                "bindings":{"scope_id":"sample","api_url":"http://127.0.0.1:1","frontend_url":"http://127.0.0.1:2",
+                    "pacing":self.post["pacing"]["bindings"]}}});
         self.lock = Some(lock);
         (
             model::Registration::parse(&self.root, &arguments).unwrap(),
