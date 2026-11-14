@@ -486,14 +486,8 @@ fn parses_review_and_fixture_request_operations() {
         "--output".to_owned(),
         text(&fixture.path("successor review.json")),
     ];
-    assert!(
-        parse_control(command(
-            "review",
-            Some("after-reconcile"),
-            reconciled.clone()
-        ))
-        .is_err()
-    );
+    let preview = command("review", Some("after-reconcile"), reconciled.clone());
+    assert!(parse_control(preview).is_err());
     let mut write = reconciled;
     write.push("--write".to_owned());
     assert!(matches!(
