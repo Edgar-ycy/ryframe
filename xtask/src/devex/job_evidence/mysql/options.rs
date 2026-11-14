@@ -139,6 +139,14 @@ mod tests {
             path: path.clone(),
             file_created: false,
         };
+        #[cfg(windows)]
+        {
+            assert_eq!(
+                options.write("private-password-must-not-be-written"),
+                Err("mysql-option-permissions")
+            );
+            assert_eq!(fs::read(&path).unwrap(), b"unrelated");
+        }
         assert_eq!(options.close(), Err("mysql-option-cleanup"));
         assert_eq!(fs::read(&path).unwrap(), b"unrelated");
         fs::remove_file(path).unwrap();

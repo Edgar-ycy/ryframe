@@ -1796,6 +1796,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "io-buffers"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea876d0acdb5e4846b69a92433dc39eec0eb6fd1f041189effc51c98facd5fd8"
+
+[[package]]
 name = "ipnet"
 version = "2.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4812,6 +4818,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 
 [[package]]
+name = "win-authorization-sys"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f6d9568bdf6bc1498c53704b3345e912402455e43ce96523e0b6595ea5321da"
+dependencies = [
+ "io-buffers",
+ "win-error-codes",
+ "windows-sys 0.61.2",
+ "wtf-string",
+]
+
+[[package]]
+name = "win-error-codes"
+version = "0.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c07f1170435fb85c67f974ef6cb2df831a025a366ffb407c70a044e3d366439"
+
+[[package]]
 name = "winapi"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5159,6 +5183,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
+name = "wtf-string"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "395437ce07c297d776d3ca78e4d2a5cba9f41d74791947746b01737eca5e03d2"
+dependencies = [
+ "windows-core",
+]
+
+[[package]]
 name = "xtask"
 version = "0.13.1"
 dependencies = [
@@ -5197,6 +5230,7 @@ dependencies = [
  "tree-sitter-rust",
  "url",
  "uuid",
+ "win-authorization-sys",
  "winsafe",
  "wmi",
  "zip",

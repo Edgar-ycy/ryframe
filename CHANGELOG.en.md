@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Check Windows MySQL temporary-credential and monitoring-credential permissions in a bounded Rust child that reads complete owner/DACL bytes through a safe handle. System tools restrict new empty private directories before verification of ownership, access masks, and exact object and container inheritance flags. Permission failures prevent password writes. Monitoring credentials retain subject and inheritance restrictions, and the current user's explicit read permissions must include `SYNCHRONIZE`, as granted by standard Read.
+
 - Pacing bindings for post-copy recovery, performance identity preparation, and runtime measurement accept only the absolute login budget state path. Post-copy registration still verifies the selected frontend's login budget module digest and drops the unused Python path and digest fields.
 
 - Remove the unused Python path requirement from real browser acceptance. Native fixture bindings and frontend configuration register only consumed tools while retaining login budgets, Worker provenance, and artifact verification.
