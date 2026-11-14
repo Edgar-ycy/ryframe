@@ -1,57 +1,28 @@
-use std::collections::{BTreeMap, BTreeSet};
+use serde::Deserialize;
 
-use serde::{Deserialize, Serialize};
-
-use super::requirements::Requirement;
 use crate::{Result, process::PreservedFailure};
 
 pub(crate) const ENVIRONMENT_PROBE: &str = r#"
-import importlib.metadata as metadata
 import json
 import os
 import platform
 import sys
 
 try:
-    request = json.loads(sys.stdin.buffer.read().decode("utf-8"))
-    names = request["distributions"]
-    if not isinstance(names, list) or not all(isinstance(name, str) for name in names):
-        raise ValueError("distributions")
-    versions = {}
-    errors = []
-    for name in names:
-        try:
-            versions[name] = metadata.version(name)
-        except metadata.PackageNotFoundError:
-            versions[name] = None
-        except Exception as error:
-            versions[name] = None
-            errors.append(f"{name}: {type(error).__name__}")
-    try:
-        import yaml
-        yaml.safe_load("probe: true")
-    except Exception as error:
-        errors.append(f"PyYAML import: {type(error).__name__}")
     response = {
         "executable": os.path.realpath(sys.executable),
         "implementation": platform.python_implementation(),
         "version": [sys.version_info.major, sys.version_info.minor, sys.version_info.micro],
-        "distribution_versions": versions,
-        "errors": errors,
     }
     sys.stdout.buffer.write(
         json.dumps(response, ensure_ascii=False, sort_keys=True).encode("utf-8")
     )
 except Exception as error:
-    sys.stderr.write(f"Python environment protocol failed: {type(error).__name__}\n")
+    sys.stderr.buffer.write(
+        f"Python environment protocol failed: {type(error).__name__}\n".encode("utf-8")
+    )
     raise SystemExit(2)
 "#;
-
-#[derive(Debug, Serialize)]
-pub(crate) struct EnvironmentRequest<'a> {
-    minimum_python: [u64; 3],
-    distributions: Vec<&'a str>,
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -59,24 +30,11 @@ pub(crate) struct EnvironmentReport {
     pub(crate) executable: String,
     pub(crate) implementation: String,
     pub(crate) version: Vec<u64>,
-    pub(crate) distribution_versions: BTreeMap<String, Option<String>>,
-    pub(crate) errors: Vec<String>,
 }
 
-pub(crate) fn encode_request(
-    requirements: &[Requirement],
-    minimum_python: [u64; 3],
-) -> Result<Vec<u8>> {
-    Ok(serde_json::to_vec(&EnvironmentRequest {
-        minimum_python,
-        distributions: requirements
-            .iter()
-            .map(|requirement| requirement.name.as_str())
-            .collect(),
-    })?)
-}
-
-pub(crate) fn decode_report(stdout: &[u8]) -> Result<EnvironmentReport> {
+pub(crate) fn decode_report(stdout: &[u8], stderr: &[u8]) -> Result<EnvironmentReport> {
+    std::str::from_utf8(stderr)
+        .map_err(|error| format!("Python 环境协议标准错误不是 UTF-8：{error}"))?;
     let text = std::str::from_utf8(stdout)
         .map_err(|error| format!("Python 环境协议输出不是 UTF-8：{error}"))?;
     if text.trim().is_empty() {
@@ -87,11 +45,10 @@ pub(crate) fn decode_report(stdout: &[u8]) -> Result<EnvironmentReport> {
 }
 
 pub(crate) fn validate_environment(
-    requirements: &[Requirement],
     minimum_python: [u64; 3],
     report: &EnvironmentReport,
 ) -> Result<()> {
-    let mut errors = report.errors.clone();
+    let mut errors = Vec::new();
     if report.executable.trim().is_empty() {
         errors.push("Python 协议未报告实际解释器路径".into());
     }
@@ -109,37 +66,6 @@ pub(crate) fn validate_environment(
         ));
     }
 
-    let expected_names = requirements
-        .iter()
-        .map(|requirement| requirement.name.as_str())
-        .collect::<BTreeSet<_>>();
-    let actual_names = report
-        .distribution_versions
-        .keys()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    if expected_names != actual_names {
-        errors.push(format!(
-            "Python 协议返回的发行版集合不一致：期望 {expected_names:?}，实际 {actual_names:?}"
-        ));
-    }
-    for requirement in requirements {
-        match report.distribution_versions.get(&requirement.name) {
-            None => errors.push(format!(
-                "Python 协议未返回固定依赖：{}=={}",
-                requirement.name, requirement.version
-            )),
-            Some(None) => errors.push(format!(
-                "缺少固定 Python 依赖：{}=={}",
-                requirement.name, requirement.version
-            )),
-            Some(Some(actual)) if actual != &requirement.version => errors.push(format!(
-                "Python 依赖版本不匹配：{} 必须为 {}，实际为 {actual}",
-                requirement.name, requirement.version
-            )),
-            Some(Some(_)) => {}
-        }
-    }
     failure(errors)
 }
 

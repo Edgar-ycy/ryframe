@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove the unused PyYAML check dependency, its requirements manifest, and CI installation steps. Extended CI full-stack jobs run the Rust and frontend build entry points directly. The remaining Python checks still verify interpreter identity and require Python 3.11 or newer.
+
 - Check the Extended CI full-stack workflow in Rust during CI preflight and the full backend gate. Validate paired-source receipts, business fixture order, matrix build directories, and diagnostic artifacts scoped by run and attempt. Remove the corresponding Python tests and retain the independent check that diagnostic uploads exclude private files.
 
 - Post-copy registration tests exercise the Rust validator with a real stage ledger, covering valid registration, mismatched copy or build evidence, and refusal to fall back after a later failure. The tests verify that validation does not publish or modify files. Remove Python tests for registration, administrator credentials, and environment selection that Rust already covers.

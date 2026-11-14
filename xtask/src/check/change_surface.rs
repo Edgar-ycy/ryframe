@@ -328,7 +328,6 @@ fn classify_backend(path: &str) -> ChangeCategory {
         ChangeCategory::HandwrittenProduct
     } else if path.starts_with("xtask/")
         || path.starts_with("tools/")
-        || path == "scripts/requirements-ci.txt"
         || path.starts_with("architecture/")
         || path.starts_with("crates/ryframe-generator/")
         || path.starts_with("crates/ryframe-macro/")

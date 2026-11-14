@@ -521,7 +521,6 @@ fn full_invalidation_path(path: &str) -> Option<&'static str> {
         ("architecture/", "架构策略发生变化"),
         ("crates/ryframe-generator/", "生成器或模板发生变化"),
         ("tools/", "策略或构建检查器发生变化"),
-        ("scripts/requirements-ci.txt", "Python 检查依赖清单发生变化"),
         ("xtask/", "CI 编排实现发生变化"),
     ] {
         if path.starts_with(prefix) {

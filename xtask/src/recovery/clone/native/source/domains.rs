@@ -119,6 +119,7 @@ pub(super) fn backend_product_roles(relative: &str) -> Result<&'static [&'static
 }
 
 pub(super) fn tool_source(relative: &str) -> bool {
+    // 旧清单仍包含已退役的依赖文件，复核其工具分组须保持原口径。
     let parts = relative.split('/').collect::<Vec<_>>();
     matches!(
         parts.first(),

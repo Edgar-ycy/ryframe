@@ -77,6 +77,7 @@ fn backend_roles_and_tools_preserve_independent_api_worker_inputs() {
         "crates/ryframe/src/boot.rs",
         "crates/db/tests/check.rs",
         "openapi/openapi.json",
+        "scripts/requirements-ci.txt",
         "tools/python/source_inventory.py",
         "xtask/src/main.rs",
         "unknown/input.dat",
@@ -84,6 +85,12 @@ fn backend_roles_and_tools_preserve_independent_api_worker_inputs() {
     let before = request("domains", &value, "backend").unwrap();
     let api = before["product"]["api"]["files"].as_array().unwrap();
     let worker = before["product"]["worker"]["files"].as_array().unwrap();
+    assert!(
+        before["tools"]["files"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("scripts/requirements-ci.txt"))
+    );
     assert!(api.contains(&json!("crates/ryframe-api/src/lib.rs")));
     assert!(api.contains(&json!("crates/ryframe/src/main.rs")));
     assert!(api.contains(&json!("openapi/openapi.json")));
