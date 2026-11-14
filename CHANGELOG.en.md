@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Exercise the Rust ARM input model and a real local stage ledger to verify ordinary and successor request fields, source and rebind receipts, historical copy directory rules, and preservation of original files. Remove the Python ARM input implementation used only by the retired tests.
+
 - Remove the Python private stdin entry point for development cloning and its protocol tests. The formal Rust entry point retains coverage for write authorization, read-only plan verification, source operations, and prevention of replay after failure.
 
 - Hold all original manifest-listed backup artifacts and their directories under the existing runtime control lock during formal reference recovery on Windows. Each write rechecks the same manifest, artifact and directory identities, file sizes, hard-link counts, all three ports, and configuration. Full verification still runs at stage boundaries and around resource image capture. Linux retains per-artifact byte verification at each write checkpoint.

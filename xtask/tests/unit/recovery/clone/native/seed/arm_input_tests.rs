@@ -111,6 +111,168 @@ fn file(path: &Path, value: &Value) -> Value {
     common::binding(path).unwrap()
 }
 
+fn expected_arm_manifest(fixture: &Fixture, request: &Value, source: &Value) -> Value {
+    json!({
+        "format_version":1,"kind":"devex-clone-run","id":"arm-base","source_request":source["source_request"],
+        "source_export":null,"initialized":fixture.raw,"source_environment":source["source_environment"],
+        "target_environment":fixture.raw,"copy_directory":request["copy_directory"],"copy_stage":"seed_to_arm",
+        "build_bridges":[],"source_registration":fixture.source,
+        "target_registration":request["target_registration"],"target_initialized_files":fixture.raw,
+        "target_storage_run":fixture.storage
+    })
+}
+
+#[test]
+fn arm_model_derives_exact_ordinary_and_successor_documents() {
+    let fixture = Fixture::new();
+    let mut request = fixture.request("base");
+    let input = fixture._root.path();
+    let descriptor = |name: &str| file(&input.join(format!("{name}.json")), &json!({"kind":name}));
+    let source_request = descriptor("source-request");
+    let source_environment = descriptor("source-environment");
+    let source_storage = descriptor("source-storage");
+    let generation_verified = descriptor("generation-verified");
+    let source = json!({
+        "source_request":source_request,"source_environment":source_environment,
+        "generation_verified":generation_verified,"registration":{"source_storage":source_storage}
+    });
+    let request_binding = descriptor("arm-request");
+    let manifest_binding = descriptor("arm-manifest");
+    let copy = request["copy_directory"].as_str().unwrap().to_owned();
+    let mut expected_manifest = expected_arm_manifest(&fixture, &request, &source);
+    let mut expected_result = json!({
+        "status":"seed_arm_input_published","request":request_binding,"manifest":manifest_binding,
+        "source_registration":fixture.source,"source_request":source_request,"source_storage":source_storage,
+        "generation_verified":generation_verified,"initialized":fixture.raw,"target_environment":fixture.raw,
+        "target_registration":request["target_registration"],"target_initialized_files":fixture.raw,
+        "target_storage_run":fixture.storage,"target_side":"base","remote_writes":0,
+        "outbox_drained":true,"restore_qualified":false
+    });
+    let project_manifest = |value: &Value| model::manifest(value, &source, &fixture.storage, &copy);
+    let project_result = |value: &Value| {
+        model::result(
+            value,
+            &source,
+            &fixture.storage,
+            "base",
+            &request_binding,
+            &manifest_binding,
+        )
+    };
+    assert!(!model::request(&request).unwrap());
+    assert_eq!(project_manifest(&request), expected_manifest);
+    assert_eq!(project_result(&request), expected_result);
+    model::check_result(&expected_result, &request).unwrap();
+    for field in [
+        "source_request",
+        "source_environment",
+        "source_storage",
+        "review_successor",
+    ] {
+        let mut wrong = request.clone();
+        wrong[field] = source_request.clone();
+        let error = model::request(&wrong).unwrap_err().to_string();
+        assert!(error.contains("字段缺失或包含未知字段"), "{field}: {error}");
+    }
+
+    request["kind"] = json!("devex-clone-seed-successor-arm-input");
+    assert!(model::request(&request).is_err());
+    for (field, name) in [
+        ("review_successor", "successor"),
+        ("source_export", "shared-export"),
+        ("source_export_result", "export-result"),
+        ("source_generation", "stopped-generation"),
+        ("source_rebind", "storage-rebind"),
+    ] {
+        let binding = descriptor(name);
+        request[field] = binding.clone();
+        expected_manifest[field] = binding.clone();
+        expected_result[field] = binding;
+    }
+    assert!(model::request(&request).unwrap());
+    for field in [
+        "review_successor",
+        "source_export",
+        "source_export_result",
+        "source_generation",
+    ] {
+        let mut missing = request.clone();
+        missing.as_object_mut().unwrap().remove(field);
+        let error = model::request(&missing).unwrap_err().to_string();
+        assert!(error.contains("字段缺失或包含未知字段"), "{field}: {error}");
+    }
+    assert_eq!(project_manifest(&request), expected_manifest);
+    assert_eq!(project_result(&request), expected_result);
+    model::check_fields(&expected_manifest, &request).unwrap();
+    model::check_result(&expected_result, &request).unwrap();
+    for replacement in [None, Some(source_storage)] {
+        let mut manifest = expected_manifest.clone();
+        let mut result = expected_result.clone();
+        for value in [&mut manifest, &mut result] {
+            if let Some(binding) = &replacement {
+                value["source_rebind"] = binding.clone();
+            } else {
+                value.as_object_mut().unwrap().remove("source_rebind");
+            }
+        }
+        assert!(model::check_fields(&manifest, &request).is_err());
+        assert!(model::check_result(&result, &request).is_err());
+    }
+}
+
+#[test]
+fn published_arm_accepts_an_absent_or_existing_copy_directory_but_rejects_a_file() {
+    let fixture = Fixture::new();
+    let request = fixture.request("base");
+    let copy = Path::new(request["copy_directory"].as_str().unwrap());
+    assert_eq!(
+        PathBuf::from(super::super::copy_directory(&fixture.backend, &request).unwrap()),
+        copy
+    );
+    let output = write_prefix(
+        &fixture.backend,
+        &fixture.run,
+        2,
+        None,
+        &request,
+        &fixture.manifest(&request),
+    )
+    .unwrap();
+    let result = fixture.result(&request, "base", &output);
+    Fixture::finish(&fixture.run, MODE, Some(&result), None);
+    let paths = [
+        output.join("request.json"),
+        output.join("manifest.json"),
+        fixture.run.join("state.json"),
+        state::result_path(&fixture.run, 2),
+    ];
+    let before = paths.each_ref().map(|path| fs::read(path).unwrap());
+    let read_published = || {
+        let saved = fixture.state();
+        published(
+            &fixture.backend,
+            &fixture.run,
+            state::attempts(&saved).unwrap(),
+            &request,
+        )
+    };
+    assert!(!copy.exists());
+    assert_eq!(read_published().unwrap()[0].side, "base");
+    assert!(!copy.exists());
+    fs::create_dir(copy).unwrap();
+    assert_eq!(read_published().unwrap()[0].side, "base");
+    assert!(super::super::copy_directory(&fixture.backend, &request).is_err());
+    fs::remove_dir(copy).unwrap();
+    fs::write(copy, b"original copy marker").unwrap();
+    let error = read_published().err().unwrap().to_string();
+    assert!(
+        error.contains("复制目录无效") && error.contains("必须是目录"),
+        "{error}"
+    );
+    assert_eq!(fs::read(copy).unwrap(), b"original copy marker");
+    assert_eq!(paths.each_ref().map(|path| fs::read(path).unwrap()), before);
+}
+
 fn adopt_base(fixture: &Fixture, base: &Value) -> (PathBuf, Vec<u8>) {
     Fixture::finish(&fixture.run, MODE, None, Some("Interrupted"));
     let original = output_path(&fixture.run, 2);

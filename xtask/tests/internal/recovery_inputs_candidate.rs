@@ -300,20 +300,34 @@ fn reference_input_rejects_substituted_arm_exports_and_maintenance_root() {
     );
     let expected = reference::build(&base.backend, &options).unwrap();
     let original = read_value(&arm.arm_input);
-    for field in ["source_export", "source_export_result"] {
+    for (field, expected_error) in [
+        (
+            "source_registration",
+            "successor arm-input 外层结果未完整绑定当前来源与 fresh 目标",
+        ),
+        (
+            "review_successor",
+            "successor arm-input 外层结果未完整绑定当前共享导出",
+        ),
+        (
+            "source_export",
+            "successor arm-input 外层结果未完整绑定当前共享导出",
+        ),
+        (
+            "source_export_result",
+            "successor arm-input 外层结果未完整绑定当前共享导出",
+        ),
+    ] {
         let mut changed = original.clone();
         changed[field] =
             same_bytes_at(&base.root, &original[field], &format!("other-{field}.json"));
         let alternate = &changed[field];
-        document::bound_file(&base.backend, alternate, "替代导出文件").unwrap();
+        document::bound_file(&base.backend, alternate, "替代 ARM 来源文件").unwrap();
         write_value(&base.root, "arm-result.json", &changed);
         let error = reference::build(&base.backend, &options)
             .unwrap_err()
             .to_string();
-        assert_eq!(
-            error, "successor arm-input 外层结果未完整绑定当前共享导出",
-            "{field}"
-        );
+        assert_eq!(error, expected_error, "{field}");
     }
     write_value(&base.root, "arm-result.json", &original);
     assert_eq!(reference::build(&base.backend, &options).unwrap(), expected);
