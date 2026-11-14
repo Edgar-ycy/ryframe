@@ -11,6 +11,7 @@ pub(crate) const STRICT_MIGRATION_HISTORY_ARGS: &[&str] = &["--require-frozen"];
 pub(crate) enum PolicyTaskInvocation {
     SupplyChain,
     MigrationHistory,
+    FullStackWorkflow,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +47,13 @@ pub(crate) const POLICY_TASKS: &[PolicyTask] = &[
         full_order: Some(6),
         smart_order: None,
         ci_preflight_order: None,
+    },
+    PolicyTask {
+        id: "full-stack-workflow",
+        invocation: PolicyTaskInvocation::FullStackWorkflow,
+        full_order: Some(7),
+        smart_order: None,
+        ci_preflight_order: Some(1),
     },
 ];
 

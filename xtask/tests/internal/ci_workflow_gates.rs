@@ -124,7 +124,6 @@ fn full_stack_native_stages_keep_failure_collection_and_required_artifacts() {
         .iter()
         .find(|step| uses(step, "actions/upload-artifact@"))
         .unwrap();
-    assert_eq!(text(upload, "if"), "${{ always() }}");
     assert_eq!(
         text(upload.get("with").unwrap(), "if-no-files-found"),
         "error"

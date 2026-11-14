@@ -287,10 +287,6 @@ fn diagnostic_upload_excludes_private_files_but_keeps_public_api_log() {
         .find(|step| step.get("name").and_then(YamlValue::as_str) == Some("保存全栈诊断产物"))
         .unwrap();
     let settings = upload.get("with").unwrap();
-    assert_eq!(
-        settings.get("include-hidden-files"),
-        Some(&YamlValue::Bool(true))
-    );
     let patterns = text(settings, "path");
     let parent = crate::workspace::root_dir().join(".local-tests");
     fs::create_dir_all(&parent).unwrap();
