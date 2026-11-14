@@ -45,14 +45,7 @@ fn invoke(value: &Value) -> (ExitStatus, Value) {
     parse(&finish(start(), value))
 }
 
-#[test]
-fn source_cache_attempt_is_unique_across_processes_and_pre_exec_failure_never_replays() {
-    let fixture = cache_attempt::Fixture::new();
-    let attempt = fixture.directory.join("cache-cleanup-attempt.json");
-    let execution = fixture.directory.join("cache-cleanup-execution.json");
-    let cleanup = fixture.directory.join("cache-cleanup.json");
-    assert!(!attempt.exists() && !execution.exists() && !cleanup.exists());
-
+fn race_cache_cleanup(fixture: &cache_attempt::Fixture) {
     let request = &fixture.cleanup;
     let first = start();
     let second = start();
@@ -85,6 +78,17 @@ fn source_cache_attempt_is_unique_across_processes_and_pre_exec_failure_never_re
     assert_eq!(outcome["status"], "pre_exec_io_failed", "{outcome}");
     assert_eq!(outcome["remote_write_may_have_occurred"], false);
     assert_eq!(outcome["automatic_retry_permitted"], false);
+}
+
+#[test]
+fn source_cache_attempt_is_unique_across_processes_and_pre_exec_failure_never_replays() {
+    let fixture = cache_attempt::Fixture::new();
+    let attempt = fixture.directory.join("cache-cleanup-attempt.json");
+    let execution = fixture.directory.join("cache-cleanup-execution.json");
+    let cleanup = fixture.directory.join("cache-cleanup.json");
+    assert!(!attempt.exists() && !execution.exists() && !cleanup.exists());
+
+    race_cache_cleanup(&fixture);
 
     let attempt_before = cache_attempt::binding(&attempt);
     let execution_before = cache_attempt::binding(&execution);
