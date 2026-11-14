@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove the unused Python runtime controller lock module. Formal recovery uses Rust to acquire controller locks, verify ownership, and recover locks after interruption.
+
 - Remove the unused PyYAML check dependency, its requirements manifest, and CI installation steps. Extended CI full-stack jobs run the Rust and frontend build entry points directly. The remaining Python checks still verify interpreter identity and require Python 3.11 or newer.
 
 - Check the Extended CI full-stack workflow in Rust during CI preflight and the full backend gate. Validate paired-source receipts, business fixture order, matrix build directories, and diagnostic artifacts scoped by run and attempt. Remove the corresponding Python tests and retain the independent check that diagnostic uploads exclude private files.
