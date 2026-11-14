@@ -23,7 +23,7 @@ use crate::{
     recovery::{
         clone::native::{resources::common, target_verify::authority::require_closed},
         fixture_control::{git_root, portable_path},
-        inputs::{document, inventory::HeldArtifacts, publish::publish_verified, target_plan},
+        inputs::{RestoreChecks, document, publish::publish_verified, target_plan},
     },
 };
 
@@ -39,7 +39,12 @@ struct Snapshot {
 pub(super) fn run(root: &Path, options: &RuntimeRegistrationOptions) -> Result<Value> {
     let backend = backend_root(root)?;
     register(&backend, &options.output, || {
-        Snapshot::observe(&backend, &options.plan, &options.target_plan, None)
+        Snapshot::observe(
+            &backend,
+            &options.plan,
+            &options.target_plan,
+            RestoreChecks::default(),
+        )
     })
 }
 
@@ -58,25 +63,25 @@ pub(super) fn verify_not_started(
     registration_path: &Path,
     registration: &Value,
 ) -> Result<()> {
-    verify_not_started_with_backup(
+    verify_not_started_with_checks(
         backend,
         reference,
         target,
         registration_path,
         registration,
-        None,
+        RestoreChecks::default(),
     )
 }
 
-pub(super) fn verify_not_started_with_backup(
+pub(super) fn verify_not_started_with_checks(
     backend: &Path,
     reference: &Path,
     target: &Path,
     registration_path: &Path,
     registration: &Value,
-    held_backup: Option<&HeldArtifacts>,
+    checks: RestoreChecks<'_>,
 ) -> Result<()> {
-    let mut observed = Snapshot::observe(backend, reference, target, held_backup)?;
+    let mut observed = Snapshot::observe(backend, reference, target, checks)?;
     let environment = &registration["runtime_environment"];
     observed.receipt["runtime_environment"] = environment.clone();
     if observed.receipt != *registration {
@@ -164,18 +169,14 @@ impl Snapshot {
         backend: &Path,
         reference: &Path,
         target: &Path,
-        held_backup: Option<&HeldArtifacts>,
+        checks: RestoreChecks<'_>,
     ) -> Result<Self> {
         let reference_path = protocol_path(reference)?;
         let target_path = protocol_path(target)?;
         let reference = document::read(&reference_path, backend, "参考恢复计划")?;
         let target = document::read(&target_path, backend, "正式恢复目标计划")?;
-        let (chain, verified, _) = match held_backup {
-            Some(held) => {
-                target_plan::verify_with_held_backup(backend, reference, &target.path, held)?
-            }
-            None => target_plan::verify(backend, reference, &target.path)?,
-        };
+        let (chain, verified, _) =
+            target_plan::verify_with_checks(backend, reference, &target.path, checks)?;
         if verified != target.value {
             return Err("正式恢复目标计划核验结果与登记文件不同".into());
         }

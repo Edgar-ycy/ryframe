@@ -3,12 +3,12 @@ use std::path::Path;
 use serde_json::Value;
 
 use super::{
+    RestoreChecks,
     arm::{self, Arm, Fresh},
     backup::{self, Backup},
     comparison,
     document::{Document, exact, text},
     domain::validate_plan,
-    inventory::HeldArtifacts,
 };
 use crate::Result;
 
@@ -57,7 +57,7 @@ pub(crate) fn load_with_reference(
         reference,
         [backup_path, comparison_path, arm_path, fresh_path],
         side,
-        None,
+        RestoreChecks::default(),
     )
 }
 
@@ -66,17 +66,17 @@ pub(super) fn load_verified(
     reference: Document,
     [backup_path, comparison_path, arm_path, fresh_path]: [&Path; 4],
     side: &str,
-    held: Option<&HeldArtifacts>,
+    checks: RestoreChecks<'_>,
 ) -> Result<Chain> {
     validate_plan(&reference.value, backend)?;
     if reference.value.get("target_side").and_then(Value::as_str) != Some(side) {
         return Err("产品计划侧别与参考计划不同".into());
     }
     let backup_document = super::document::read(backup_path, backend, "备份收据")?;
-    let backup = backup::validate(backend, &reference.value, &backup_document, held)?;
+    let backup = backup::validate(backend, &reference.value, &backup_document, checks.backup)?;
     let comparison_document = super::document::read(comparison_path, backend, "双版本来源清单")?;
     let comparison = comparison::validate(backend, &comparison_document)?;
-    let (arm, fresh) = arm::load(backend, arm_path, fresh_path, side)?;
+    let (arm, fresh) = arm::load_with_source(backend, arm_path, fresh_path, side, checks.source)?;
     validate_links(&reference.value, &backup, &comparison, &arm, &fresh)?;
     Ok(Chain {
         reference,

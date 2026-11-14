@@ -15,27 +15,27 @@ use crate::{
     Result,
     local_test_path::{LocalTestPathKind, validate_local_test_path},
     recovery::inputs::{
+        RestoreChecks,
         document::{self, Document},
-        inventory::HeldArtifacts,
     },
 };
 
-/// 检查点只在持有同一恢复控制 owner 的正文中可用。写入期间可传入已持有的备份产物保护。
+/// 检查点只在持有同一恢复控制 owner 的正文中可用。写入期间可传入已持有的备份产物和维护来源。
 pub(in crate::recovery) fn registered_stopped_runtime<T>(
     backend: &Path,
     registration_path: &Path,
     target_binding: &Value,
-    body: impl FnOnce(&dyn Fn(Option<&HeldArtifacts>) -> Result<Value>) -> Result<T>,
+    body: impl FnOnce(&dyn Fn(RestoreChecks<'_>) -> Result<Value>) -> Result<T>,
 ) -> Result<T> {
     let backend = registration::backend_root(backend)?;
     let mut inputs = Inputs::new(&backend);
     let bound = Bound::read(&backend, registration_path, target_binding, &mut inputs)?;
-    bound.check(&backend, &inputs, None, None)?;
+    bound.check(&backend, &inputs, None, RestoreChecks::default())?;
     let control = control_root(&backend)?;
     with_checked_owner(
         &control,
         &bound.binding,
-        |owner, held_backup| bound.check(&backend, &inputs, Some(owner), held_backup),
+        |owner, checks| bound.check(&backend, &inputs, Some(owner), checks),
         body,
     )
 }
@@ -76,7 +76,7 @@ impl Bound {
         backend: &Path,
         inputs: &Inputs,
         owner: Option<&Owner>,
-        held_backup: Option<&HeldArtifacts>,
+        checks: RestoreChecks<'_>,
     ) -> Result<()> {
         // 每次只保护本次观测的文件，恢复正文可独占发布自己的阶段证据。
         let window = Window::direct()?;
@@ -85,13 +85,13 @@ impl Bound {
                 owner.check()?;
             }
             inputs.finish(Ok(()))?;
-            registration::verify_not_started_with_backup(
+            registration::verify_not_started_with_checks(
                 backend,
                 &self.reference.path,
                 &self.target.path,
                 &self.registration.path,
                 &self.registration.value,
-                held_backup,
+                checks,
             )?;
             let (runtime, _) = runtime_target(&self.reference.value, &self.target.value)?;
             let (_, observed) = registration::runtime_observation(backend, &runtime)?;
@@ -110,8 +110,8 @@ impl Bound {
 fn with_checked_owner<T>(
     control: &Path,
     binding: &Value,
-    verify: impl Fn(&Owner, Option<&HeldArtifacts>) -> Result<()>,
-    body: impl FnOnce(&dyn Fn(Option<&HeldArtifacts>) -> Result<Value>) -> Result<T>,
+    verify: impl Fn(&Owner, RestoreChecks<'_>) -> Result<()>,
+    body: impl FnOnce(&dyn Fn(RestoreChecks<'_>) -> Result<Value>) -> Result<T>,
 ) -> Result<T> {
     let registration = document::digest(&binding["registration"]["sha256"], "运行登记摘要")?;
     let target = document::digest(&binding["target_plan"]["sha256"], "目标计划摘要")?;
@@ -119,13 +119,13 @@ fn with_checked_owner<T>(
         control,
         &format!("restore:{registration}:{target}"),
         |owner| {
-            let checkpoint = |held_backup: Option<&HeldArtifacts>| {
-                verify(owner, held_backup)?;
+            let checkpoint = |checks: RestoreChecks<'_>| {
+                verify(owner, checks)?;
                 Ok(binding.clone())
             };
-            checkpoint(None)?;
+            checkpoint(RestoreChecks::default())?;
             let result = body(&checkpoint);
-            let checked = checkpoint(None);
+            let checked = checkpoint(RestoreChecks::default());
             match (result, checked) {
                 (Ok(value), Ok(_)) => Ok(value),
                 (Err(error), Ok(_)) | (Ok(_), Err(error)) => Err(error),
@@ -149,7 +149,7 @@ pub(crate) fn with_fixture_owner<T>(
             owner.check()?;
             verify()
         },
-        |checkpoint| body(&|| checkpoint(None)),
+        |checkpoint| body(&|| checkpoint(RestoreChecks::default())),
     )
 }
 

@@ -7,8 +7,9 @@ use super::{files, local::Lock, model, native, path, receipts, text};
 use crate::{
     Result,
     recovery::{
+        fixture_control::source_pair::execution::HeldTargetSource,
         inputs::{
-            document,
+            RestoreChecks, document,
             inventory::{self, HeldArtifacts},
         },
         runtime::restore_guard::registered_stopped_runtime,
@@ -131,10 +132,10 @@ impl Stage<'_> {
         &self,
         request: &Value,
         before: &Snapshot,
-        checkpoint: &dyn Fn(Option<&HeldArtifacts>) -> Result<Value>,
+        checkpoint: &dyn Fn(RestoreChecks<'_>) -> Result<Value>,
         evidence: &mut Map<String, Value>,
     ) -> Result<Value> {
-        let runtime = checkpoint(None)?;
+        let runtime = checkpoint(RestoreChecks::default())?;
         before.check_runtime(&runtime)?;
         self.check()?;
         let snapshot = Snapshot::read(self.backend, request, false)?;
@@ -161,16 +162,30 @@ impl Stage<'_> {
                 scope: &scope,
             };
             #[cfg(windows)]
-            let held = Some(HeldArtifacts::open(
+            let backup = Some(HeldArtifacts::open(
                 &snapshot.root,
                 &snapshot.manifest.value,
             )?);
             #[cfg(not(windows))]
-            let held: Option<HeldArtifacts> = None;
-            let result = window.run(&tasks, request, checkpoint, held.as_ref(), evidence);
+            let backup: Option<HeldArtifacts> = None;
+            #[cfg(windows)]
+            let source = hold_source(self.backend, &snapshot);
+            #[cfg(not(windows))]
+            let source: Result<Option<HeldTargetSource>> = Ok(None);
+            let result = source.and_then(|source| {
+                let checks = RestoreChecks {
+                    backup: backup.as_ref(),
+                    source: source.as_ref(),
+                };
+                let result = window.run(&tasks, request, checkpoint, checks, evidence);
+                combine(
+                    result,
+                    source.as_ref().map_or(Ok(()), HeldTargetSource::check_end),
+                )
+            });
             combine(
                 result,
-                held.as_ref().map_or(Ok(()), HeldArtifacts::check_end),
+                backup.as_ref().map_or(Ok(()), HeldArtifacts::check_end),
             )?;
             model::restore_result(&json!({
                 "record":snapshot.record.value,"bindings":snapshot.bindings(),
@@ -179,6 +194,22 @@ impl Stage<'_> {
         })();
         storage.finish(combine(result, scope.assert_unchanged()))
     }
+}
+
+#[cfg(windows)]
+fn hold_source(backend: &Path, snapshot: &Snapshot) -> Result<Option<HeldTargetSource>> {
+    let target = &snapshot.chain.arm.target;
+    target
+        .document
+        .value
+        .get("execution_backend")
+        .filter(|value| value.get("execution_source").is_some())
+        .map(|declared| {
+            let coordinator =
+                crate::recovery::fixture_control::portable_path(&backend.canonicalize()?);
+            HeldTargetSource::open(&coordinator, declared, &target.execution_binding)
+        })
+        .transpose()
 }
 
 struct Execution<'a> {
@@ -199,8 +230,8 @@ impl Execution<'_> {
         &self,
         tasks: &Value,
         request: &Value,
-        checkpoint: &dyn Fn(Option<&HeldArtifacts>) -> Result<Value>,
-        held: Option<&HeldArtifacts>,
+        checkpoint: &dyn Fn(RestoreChecks<'_>) -> Result<Value>,
+        checks: RestoreChecks<'_>,
         evidence: &mut Map<String, Value>,
     ) -> Result<()> {
         let (before, after) = expected_images::expected_images(
@@ -208,7 +239,10 @@ impl Execution<'_> {
             &self.snapshot.manifest.value,
             self.target.initialized(),
         )?;
-        let runtime = || self.snapshot.check_runtime(&checkpoint(None)?);
+        let runtime = || {
+            self.snapshot
+                .check_runtime(&checkpoint(RestoreChecks::default())?)
+        };
         capture_around_write(
             |phase, evidence| {
                 let expected = if phase == Phase::Before {
@@ -227,7 +261,7 @@ impl Execution<'_> {
                     manifest: &self.snapshot.manifest.value,
                 }
                 .run(tasks, &SystemTransport, s3::put_if_absent, &|| {
-                    self.snapshot.check_runtime(&checkpoint(held)?)?;
+                    self.snapshot.check_runtime(&checkpoint(checks)?)?;
                     self.check()
                 })?;
                 inventory::verify_artifacts(&self.snapshot.root, &self.snapshot.manifest.value)

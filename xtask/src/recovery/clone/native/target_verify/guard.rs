@@ -16,6 +16,11 @@ use crate::{
 };
 
 #[cfg(windows)]
+mod source;
+#[cfg(windows)]
+pub(in crate::recovery) use source::HeldSourceTree;
+
+#[cfg(windows)]
 type Handle = winsafe::guard::CloseHandleGuard<winsafe::HFILE>;
 #[cfg(not(windows))]
 type Handle = fs::File;
@@ -47,11 +52,18 @@ impl FrozenEntry {
     }
 
     fn open_identity(path: &Path, directory: bool, allow_write: bool) -> Result<Self> {
-        let before = path_identity(path, directory)?;
+        Self::open_identity_with(path, directory, allow_write, path_identity)
+    }
+
+    fn open_identity_with(
+        path: &Path,
+        directory: bool,
+        allow_write: bool,
+        resolve: impl Fn(&Path, bool) -> Result<Identity>,
+    ) -> Result<Self> {
+        let before = resolve(path, directory)?;
         let handle = open_handle(path, directory, allow_write, false)?;
-        if handle_identity(&handle, directory)? != before
-            || path_identity(path, directory)? != before
-        {
+        if handle_identity(&handle, directory)? != before || resolve(path, directory)? != before {
             return Err("目标输入在打开保护句柄期间被替换".into());
         }
         Ok(Self {
@@ -85,6 +97,15 @@ impl FrozenEntry {
         if handle_identity(&handle, self.directory)? != self.identity
             || resolve(&self.path, self.directory)? != self.identity
         {
+            return Err("目标输入的内核身份、链接数量或文件内容发生变化".into());
+        }
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    fn check_held_identity(&self) -> Result<()> {
+        let handle = self.handle.lock().map_err(|_| "目标保护句柄检查被中断")?;
+        if handle_identity(&handle, self.directory)? != self.identity {
             return Err("目标输入的内核身份、链接数量或文件内容发生变化".into());
         }
         Ok(())

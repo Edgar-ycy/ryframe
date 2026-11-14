@@ -22,10 +22,16 @@ use super::super::{file_binding, read_json, write_new};
 mod assets;
 #[path = "execution/git.rs"]
 mod git;
+#[cfg(windows)]
+#[path = "execution/held_git.rs"]
+mod held_git;
+#[path = "execution/held_target.rs"]
+mod held_target;
 #[path = "execution/input.rs"]
 mod input;
 #[path = "execution/window.rs"]
 mod window;
+pub(in crate::recovery) use held_target::HeldTargetSource;
 pub(in crate::recovery::fixture_control) use window::Window;
 
 #[cfg(test)]
@@ -243,6 +249,17 @@ pub(in crate::recovery) fn target_binding_with(
     declared: &Value,
     observe: impl FnOnce(&Path, &Value) -> Result<()>,
 ) -> Result<(std::path::PathBuf, Value)> {
+    let root = target_root(coordinator, declared)?;
+    let window = root_window(&root, &declared["execution_source"])?;
+    let result = target_source_binding(&root, declared, window.publication(), observe);
+    match (result, window.verify()) {
+        (Ok(binding), Ok(())) => Ok((root, binding)),
+        (Ok(_), Err(error)) => Err(error),
+        (Err(error), after) => Err(window::failure(error, after)),
+    }
+}
+
+fn target_root(coordinator: &Path, declared: &Value) -> Result<PathBuf> {
     exact(declared, &["path", "execution_source"], "发布执行工作树")?;
     let requested = Path::new(declared["path"].as_str().ok_or("发布执行根缺失")?);
     validate_absolute_path(coordinator, LocalTestPathKind::ExistingDirectory)?;
@@ -252,33 +269,30 @@ pub(in crate::recovery) fn target_binding_with(
     if root != coordinator {
         validate_local_test_path(&root, &coordinator, LocalTestPathKind::ExistingDirectory)?;
     }
-    let window = root_window(&root, &declared["execution_source"])?;
-    let result = (|| {
-        let publication = window.publication();
-        require_root(&root, publication)?;
-        let mut snapshot =
-            publication["published"]["backend"]["inventory"]["source"]["snapshot"].clone();
-        snapshot
-            .as_object_mut()
-            .ok_or("发布源码快照无效")?
-            .remove("clean");
-        exact(
-            &snapshot,
-            &["files", "head", "patch_sha256"],
-            "发布源码快照",
-        )?;
-        observe(&root, &snapshot)?;
-        Ok(json!({"kind":"published-business-fixture","path":root,
-            "execution_source":declared["execution_source"],"fixture":publication["original"]["fixture_receipt"],"source":snapshot}))
-    })();
-    let after = window.verify();
-    match result {
-        Ok(binding) => {
-            after?;
-            Ok((root, binding))
-        }
-        Err(error) => Err(window::failure(error, after)),
-    }
+    Ok(root)
+}
+
+fn target_source_binding(
+    root: &Path,
+    declared: &Value,
+    publication: &Value,
+    observe: impl FnOnce(&Path, &Value) -> Result<()>,
+) -> Result<Value> {
+    require_root(root, publication)?;
+    let mut snapshot =
+        publication["published"]["backend"]["inventory"]["source"]["snapshot"].clone();
+    snapshot
+        .as_object_mut()
+        .ok_or("发布源码快照无效")?
+        .remove("clean");
+    exact(
+        &snapshot,
+        &["files", "head", "patch_sha256"],
+        "发布源码快照",
+    )?;
+    observe(root, &snapshot)?;
+    Ok(json!({"kind":"published-business-fixture","path":root,
+        "execution_source":declared["execution_source"],"fixture":publication["original"]["fixture_receipt"],"source":snapshot}))
 }
 
 /// 发布输入只从完整来源证明派生；不扩大普通收据的本地路径边界。

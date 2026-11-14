@@ -145,6 +145,11 @@ impl Fixture {
         super::window::finish([self.protection.check(), binding, document])
     }
 
+    #[cfg(windows)]
+    pub(super) fn check_identity(&self) -> Result<()> {
+        self.protection.checkpoint()
+    }
+
     fn assets(&self) -> Result<Value> {
         let frontend = Path::new(
             self.value["paths"]["frontend"]

@@ -135,6 +135,14 @@ impl Window {
         finish([roots, fixture, publication])
     }
 
+    #[cfg(windows)]
+    pub(super) fn check_documents(&self) -> Result<()> {
+        finish([
+            self.publication.protection.checkpoint(),
+            self.fixture.check_identity(),
+        ])
+    }
+
     fn observe(&self) -> Result<()> {
         if !reads::is_active() {
             return self.observe_parallel();

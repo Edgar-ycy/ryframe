@@ -8,7 +8,13 @@ use super::{
     fresh, source,
     target::{self, TargetRequest, clone_name},
 };
-use crate::{Result, recovery::clone::native::lifecycle::manifest};
+use crate::{
+    Result,
+    recovery::{
+        clone::native::lifecycle::manifest,
+        fixture_control::source_pair::execution::HeldTargetSource,
+    },
+};
 
 pub(crate) use fresh::Fresh;
 
@@ -65,6 +71,16 @@ pub(crate) fn load(
     arm_path: &Path,
     fresh_path: &Path,
     side: &str,
+) -> Result<(Arm, Fresh)> {
+    load_with_source(backend, arm_path, fresh_path, side, None)
+}
+
+pub(super) fn load_with_source(
+    backend: &Path,
+    arm_path: &Path,
+    fresh_path: &Path,
+    side: &str,
+    held: Option<&HeldTargetSource>,
 ) -> Result<(Arm, Fresh)> {
     let result = super::document::read(arm_path, backend, "arm 输入")?;
     validate_result_status(&result, side)?;
@@ -167,7 +183,12 @@ pub(crate) fn load(
             .ok_or("fresh registration 缺少请求")?,
         "fresh target 请求",
     )?;
-    let target = target::validate(backend, target_request_document, side)?;
+    let target = match held {
+        Some(held) => {
+            target::validate_with_source(backend, target_request_document, side, Some(held))?
+        }
+        None => target::validate(backend, target_request_document, side)?,
+    };
     if target.selected.get("backend_dir").and_then(Value::as_str)
         != Some(target.execution.to_string_lossy().as_ref())
     {

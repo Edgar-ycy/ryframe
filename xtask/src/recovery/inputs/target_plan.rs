@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use super::{
+    RestoreChecks,
     chain::{self, Chain},
     document::{Document, digest, exact, hash, object, text},
     domain::validate_plan,
-    inventory::HeldArtifacts,
     product,
 };
 use crate::Result;
@@ -105,23 +105,14 @@ pub(crate) fn verify(
     reference: Document,
     target_path: &Path,
 ) -> Result<(Chain, Value, Document)> {
-    verify_target(backend, reference, target_path, None)
+    verify_with_checks(backend, reference, target_path, RestoreChecks::default())
 }
 
-pub(in crate::recovery) fn verify_with_held_backup(
+pub(in crate::recovery) fn verify_with_checks(
     backend: &Path,
     reference: Document,
     target_path: &Path,
-    held: &HeldArtifacts,
-) -> Result<(Chain, Value, Document)> {
-    verify_target(backend, reference, target_path, Some(held))
-}
-
-fn verify_target(
-    backend: &Path,
-    reference: Document,
-    target_path: &Path,
-    held: Option<&HeldArtifacts>,
+    checks: RestoreChecks<'_>,
 ) -> Result<(Chain, Value, Document)> {
     let target = super::document::read(target_path, backend, "目标计划")?;
     validate_shape(backend, &target.value, &reference.value)?;
@@ -135,7 +126,7 @@ fn verify_target(
             target.value.get("target_side").ok_or("目标计划缺少侧别")?,
             "目标计划侧别",
         )?,
-        held,
+        checks,
     )?;
     let expected = capture(backend, &chain, &product_document)?;
     if expected != target.value {
@@ -242,7 +233,7 @@ impl InputPaths {
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
-    use crate::recovery::inputs::document;
+    use crate::recovery::inputs::{document, inventory::HeldArtifacts};
 
     #[test]
     fn held_backup_still_validates_the_original_target_plan_and_source_chain() {
@@ -263,8 +254,17 @@ mod tests {
         let full = verify(&fixture.backend, reference(), &fixture.target_plan)
             .unwrap()
             .1;
-        let verify_held =
-            || verify_with_held_backup(&fixture.backend, reference(), &fixture.target_plan, &held);
+        let verify_held = || {
+            verify_with_checks(
+                &fixture.backend,
+                reference(),
+                &fixture.target_plan,
+                RestoreChecks {
+                    backup: Some(&held),
+                    source: None,
+                },
+            )
+        };
         assert_eq!(verify_held().unwrap().1, full);
         held.check_end().unwrap();
 

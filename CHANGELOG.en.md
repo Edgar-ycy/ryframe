@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- During formal reference recovery on Windows, hold the four registered maintenance worktrees and Git metadata under the existing runtime lock. Check source identities, directory membership, and live configuration for every write. Verify full source at both stage boundaries.
+
 - Remove the Python development clone command adapter used only by legacy tests. The formal Rust CLI test checks seed close write authorization, the specified run directory, and absent input bindings directly.
 
 - Exercise the Rust ARM input model and a real local stage ledger to verify ordinary and successor request fields, source and rebind receipts, historical copy directory rules, and preservation of original files. Remove the Python ARM input implementation used only by the retired tests.

@@ -17,7 +17,7 @@ fn published_target_consumers_bind_the_actual_clean_commit_and_reject_drift() {
     let root = fixture.output.join("backend");
     let declared = selected(&fixture);
     for coordinator in [&fixture.backend, &root] {
-        let expected = execution_backend(coordinator, Some(&declared)).unwrap();
+        let expected = execution_backend(coordinator, Some(&declared), None).unwrap();
         let actual =
             request::execution_backend(coordinator, Some(&declared), &SystemSourceObserver)
                 .unwrap();
@@ -40,7 +40,7 @@ fn published_target_consumers_bind_the_actual_clean_commit_and_reject_drift() {
     let source = root.join("src/lib.rs");
     let bytes = fs::read(&source).unwrap();
     fs::write(&source, b"dirty published source").unwrap();
-    assert!(execution_backend(&root, Some(&declared)).is_err());
+    assert!(execution_backend(&root, Some(&declared), None).is_err());
     assert!(
         std::process::Command::new("git")
             .args(["add", "src/lib.rs"])
@@ -50,7 +50,7 @@ fn published_target_consumers_bind_the_actual_clean_commit_and_reject_drift() {
             .success()
     );
     fs::write(&source, bytes).unwrap();
-    assert!(execution_backend(&root, Some(&declared)).is_err());
+    assert!(execution_backend(&root, Some(&declared), None).is_err());
     assert!(
         std::process::Command::new("git")
             .args(["reset", "--quiet", "HEAD", "--", "src/lib.rs"])
@@ -59,7 +59,7 @@ fn published_target_consumers_bind_the_actual_clean_commit_and_reject_drift() {
             .unwrap()
             .success()
     );
-    execution_backend(&root, Some(&declared)).unwrap();
+    execution_backend(&root, Some(&declared), None).unwrap();
     let original = fixture.backend.join("src/lib.rs");
     let bytes = fs::read(&original).unwrap();
     fs::write(&original, b"original drift").unwrap();
@@ -74,7 +74,7 @@ fn published_selection_rejects_mixed_roots_manifest_changes_and_observer_mismatc
     fixture.publication();
     let declared = selected(&fixture);
     let root = fixture.output.join("backend");
-    assert!(execution_backend(&fixture.frontend, Some(&declared)).is_err());
+    assert!(execution_backend(&fixture.frontend, Some(&declared), None).is_err());
     let mut mixed = declared.clone();
     mixed["fixture"] = json!({});
     let mut missing = declared.clone();
@@ -84,7 +84,7 @@ fn published_selection_rejects_mixed_roots_manifest_changes_and_observer_mismatc
     let mut other = declared.clone();
     other["path"] = json!(fixture.frontend);
     for invalid in [mixed, missing, wrong, other] {
-        assert!(execution_backend(&root, Some(&invalid)).is_err());
+        assert!(execution_backend(&root, Some(&invalid), None).is_err());
         assert!(request::execution_backend(&root, Some(&invalid), &SystemSourceObserver).is_err());
     }
     struct Wrong;
@@ -97,11 +97,11 @@ fn published_selection_rejects_mixed_roots_manifest_changes_and_observer_mismatc
     let manifest = fixture.output.join("execution-source.json");
     let bytes = fs::read(&manifest).unwrap();
     fs::write(&manifest, b"{}").unwrap();
-    assert!(execution_backend(&root, Some(&declared)).is_err());
+    assert!(execution_backend(&root, Some(&declared), None).is_err());
     let mut changed: Value = serde_json::from_slice(&bytes).unwrap();
     changed["original"]["source_pair"]["sources"]["backend"]["head"] = json!("0".repeat(40));
     fs::write(&manifest, serde_json::to_vec(&changed).unwrap()).unwrap();
-    assert!(execution_backend(&root, Some(&selected(&fixture))).is_err());
+    assert!(execution_backend(&root, Some(&selected(&fixture)), None).is_err());
     fs::write(manifest, bytes).unwrap();
-    execution_backend(&root, Some(&declared)).unwrap();
+    execution_backend(&root, Some(&declared), None).unwrap();
 }

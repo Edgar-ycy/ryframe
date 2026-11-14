@@ -89,8 +89,9 @@ fn checkpoints_hold_the_exact_restore_owner_and_repeat_on_exit() {
     let reply = with_checked_owner(
         &fixture.control,
         &fixture.binding,
-        |owner, held_backup| {
-            assert!(held_backup.is_none());
+        |owner, checks| {
+            assert!(checks.backup.is_none());
+            assert!(checks.source.is_none());
             owner.check()?;
             let receipt: Value = serde_json::from_slice(&fs::read(&owner_path)?)?;
             let registration = fixture.binding["registration"]["sha256"].as_str().unwrap();
@@ -108,7 +109,7 @@ fn checkpoints_hold_the_exact_restore_owner_and_repeat_on_exit() {
                     panic!("恢复期间不能接管 owner")
                 });
             assert!(foreign.is_err());
-            checkpoint(None)
+            checkpoint(RestoreChecks::default())
         },
     )
     .unwrap();

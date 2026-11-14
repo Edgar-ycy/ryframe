@@ -2,7 +2,10 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use crate::{Result, cli::RecoveryInputsCommand};
+use crate::{
+    Result, cli::RecoveryInputsCommand,
+    recovery::fixture_control::source_pair::execution::HeldTargetSource,
+};
 
 mod arm;
 pub(crate) mod backup;
@@ -21,6 +24,12 @@ pub(crate) mod reference_configuration;
 mod source;
 pub(crate) mod target;
 pub(crate) mod target_plan;
+
+#[derive(Clone, Copy, Default)]
+pub(in crate::recovery) struct RestoreChecks<'a> {
+    pub(in crate::recovery) backup: Option<&'a inventory::HeldArtifacts>,
+    pub(in crate::recovery) source: Option<&'a HeldTargetSource>,
+}
 
 #[cfg(test)]
 #[path = "../../../tests/internal/recovery_inputs_backup.rs"]

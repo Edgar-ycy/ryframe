@@ -15,7 +15,10 @@ use super::{
 use crate::{
     Result,
     local_test_path::{LocalTestPathKind, validate_local_test_path},
-    recovery::clone::native::cache::windows_tool,
+    recovery::{
+        clone::native::cache::windows_tool,
+        fixture_control::source_pair::execution::{self, HeldTargetSource},
+    },
 };
 
 pub(crate) struct TargetRequest {
@@ -26,6 +29,15 @@ pub(crate) struct TargetRequest {
 }
 
 pub(crate) fn validate(backend: &Path, request: Document, side: &str) -> Result<TargetRequest> {
+    validate_with_source(backend, request, side, None)
+}
+
+pub(super) fn validate_with_source(
+    backend: &Path,
+    request: Document,
+    side: &str,
+    held: Option<&HeldTargetSource>,
+) -> Result<TargetRequest> {
     let fields = super::super::clone::native::target_verify::input::request::fields(&request.value);
     let object = exact(&request.value, &fields, "新目标请求")?;
     super::super::clone::native::target_verify::input::request::config_directory(
@@ -69,7 +81,7 @@ pub(crate) fn validate(backend: &Path, request: Document, side: &str) -> Result<
         "维护构建",
     )?;
     let (execution, execution_binding) =
-        execution_backend(backend, object.get("execution_backend"))?;
+        execution_backend(backend, object.get("execution_backend"), held)?;
     request.assert_unchanged()?;
     review.assert_unchanged()?;
     Ok(TargetRequest {
@@ -416,11 +428,18 @@ fn validate_tools(value: &Value, review: &Value) -> Result<()> {
     Ok(())
 }
 
-fn execution_backend(backend: &Path, value: Option<&Value>) -> Result<(PathBuf, Value)> {
-    if let Some(declared) = value.filter(|v| v.get("execution_source").is_some()) {
-        return crate::recovery::fixture_control::source_pair::execution::target_binding(
-            backend, declared,
-        );
+fn execution_backend(
+    backend: &Path,
+    value: Option<&Value>,
+    held: Option<&HeldTargetSource>,
+) -> Result<(PathBuf, Value)> {
+    let published = value.filter(|value| value.get("execution_source").is_some());
+    if let Some(held) = held {
+        let declared = published.ok_or("已保护的维护来源必须绑定发布执行源码")?;
+        return held.verify(backend, declared);
+    }
+    if let Some(declared) = published {
+        return execution::target_binding(backend, declared);
     }
     let Some(value) = value else {
         let root = backend.to_path_buf();

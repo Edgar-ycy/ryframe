@@ -241,6 +241,42 @@ fn snapshot(root: &Path) -> Value {
         "files":value.files.iter().map(|v| json!({"path":v.path,"sha256":v.sha256})).collect::<Vec<_>>()})
 }
 
+#[cfg(windows)]
+#[test]
+fn held_target_source_reuses_only_the_bound_four_roots() {
+    use super::{HeldTargetSource, target_binding};
+
+    let fixture = Fixture::new();
+    for root in [&fixture.backend, &fixture.frontend] {
+        git::run(root, &["checkout", "--quiet", "--detach", "HEAD"]).unwrap();
+    }
+    fixture.candidate();
+    let publication = fixture.publication();
+    let path = fixture.output.join("backend");
+    let declared = json!({"path":path,"execution_source":fixture.binding()});
+    let (root, binding) = target_binding(&fixture.backend, &declared).unwrap();
+    let held = HeldTargetSource::open(&fixture.backend, &declared, &binding).unwrap();
+    assert_eq!(
+        held.verify(&fixture.backend, &declared).unwrap(),
+        (root, binding)
+    );
+    held.check_end().unwrap();
+
+    let mut substituted = declared.clone();
+    substituted["execution_source"]["sha256"] = json!("0".repeat(64));
+    assert!(held.verify(&fixture.backend, &substituted).is_err());
+    assert!(held.verify(&fixture.frontend, &declared).is_err());
+    assert!(fs::write(&fixture.receipt, b"invalid").is_err());
+    assert!(fs::write(fixture.frontend.join(MARKER), b"invalid").is_err());
+    let unexpected = path.join("src/unregistered.txt");
+    fs::write(&unexpected, b"unexpected").unwrap();
+    assert!(held.verify(&fixture.backend, &declared).is_err());
+    assert!(held.check_end().is_err());
+    fs::remove_file(unexpected).unwrap();
+    held.check_end().unwrap();
+    assert_eq!(fixture.verify().unwrap(), publication);
+}
+
 #[test]
 fn execution_publication_preserves_original_and_rejects_changed_published_source() {
     let fixture = Fixture::new();

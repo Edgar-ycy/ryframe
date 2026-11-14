@@ -33,6 +33,11 @@ pub(super) fn patch(root: &Path) -> Result<Vec<u8>> {
     )
 }
 
+#[cfg(windows)]
+pub(super) fn observation(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
+    output(command(root), args)
+}
+
 pub(super) fn require_ignored(root: &Path, directory: &str) -> Result<()> {
     // 与完整来源观察使用同一 Git 配置，不能仅凭受管目录名跳过源码检查。
     output(command(root), &["check-ignore", "--quiet", "--", directory])
