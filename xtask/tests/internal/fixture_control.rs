@@ -514,11 +514,36 @@ fn parses_review_and_fixture_request_operations() {
         text(&fixture.path("request.json")),
         "--write".to_owned(),
     ];
-    let parsed = parse_control(command("request", None, request)).unwrap();
+    let parsed = parse_control(command("request", None, request.clone())).unwrap();
     assert!(matches!(
         parsed,
         FixtureControlCommand::Request(FixtureRequestCommand::Publish(_))
     ));
+    for (label, arguments) in [
+        ("缺少写授权", request[..request.len() - 1].to_vec()),
+        ("缺少侧", [&request[..6], &request[8..]].concat()),
+        (
+            "重复侧",
+            [request.clone(), words(&["--side", "candidate"])].concat(),
+        ),
+        (
+            "重复写授权",
+            [request.clone(), words(&["--write"])].concat(),
+        ),
+        (
+            "陌生参数",
+            [request.clone(), words(&["--native-tool", "retired"])].concat(),
+        ),
+    ] {
+        assert!(
+            parse_control(command("request", None, arguments)).is_err(),
+            "{label}"
+        );
+    }
+    let mut relative = request;
+    relative[1] = "relative.json".into();
+    assert!(parse_control(command("request", None, relative)).is_err());
+    assert!(!fixture.path("request.json").exists());
 }
 
 #[test]

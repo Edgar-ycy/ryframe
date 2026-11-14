@@ -1,6 +1,5 @@
 """原生历史调用桥只传协议，不继承服务凭据或解释生命周期。"""
 from contextlib import nullcontext
-import io
 import json
 import os
 from pathlib import Path
@@ -85,19 +84,6 @@ class FixtureServiceClientTests(unittest.TestCase):
                   self.assertRaises(RuntimeError) as raised):
                 client._invoke("manifest", {"value": {}})
             self.assertNotIn("credential marker", str(raised.exception))
-
-    def test_request_entry_installs_explicit_coordinator_binding_before_dispatch(self):
-        import reference_fixture_request as request
-        arguments = ["--backend-dir", str(client.ROOT), "--environment", "bootstrap.json",
-                     "--service-run", "run", "--id", "fixture-request", "--side", "seed",
-                     "--output", "request.json", "--write", "--native-tool", "bound-tool"]
-        with (patch("rate_limit_tool.install_verified_binding") as install,
-              patch.object(request, "publish", return_value={}) as publish,
-              patch("sys.stdout", io.StringIO())):
-            request.main(arguments)
-        install.assert_called_once_with("bound-tool")
-        publish.assert_called_once()
-
 
 if __name__ == "__main__":
     unittest.main()

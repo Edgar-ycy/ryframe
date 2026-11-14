@@ -1,6 +1,415 @@
 use std::fs;
 
 use super::*;
+use crate::{
+    cli::{FixtureFileOutput, FixtureSide},
+    recovery::{
+        clone::native::{lifecycle::state, resources::storage},
+        fixture_control::{
+            environment::protocol::tests as environment_fixture,
+            source_pair::execution::tests::Fixture as Sources,
+        },
+    },
+};
+
+const SIDES: [FixtureSide; 3] = [FixtureSide::Seed, FixtureSide::Base, FixtureSide::Candidate];
+const ACCESS: &str = "fixture-access";
+const SECRET: &str = "fixture-secret";
+
+struct RequestFixture {
+    sources: Sources,
+    execution: PathBuf,
+    review: PathBuf,
+    run: PathBuf,
+    rustfs: Value,
+}
+
+impl RequestFixture {
+    fn new() -> Self {
+        let sources = Sources::new();
+        let publication = sources.publication();
+        let execution = PathBuf::from(
+            publication["published"]["backend"]["path"]
+                .as_str()
+                .unwrap(),
+        );
+        let local = sources.backend.join(".local-tests");
+        fs::create_dir(local.join("requests")).unwrap();
+        let defaults = local.join("mysql.cnf");
+        fs::write(&defaults, "[client]\nuser=fixture\n").unwrap();
+        let tools = local.join("fixture-tool.exe");
+        fs::write(&tools, "仅用于校验文件绑定").unwrap();
+        let binding = json!({"path":tools,"sha256":digest::file(&tools).unwrap().sha256});
+        let mut review = environment_fixture::review(&execution);
+        for role in ["mysql", "mysqldump", "rustfs"] {
+            review["tools"][role] = binding.clone();
+        }
+        for role in ["wsl", "redis_python"] {
+            review["tools"].as_object_mut().unwrap().remove(role);
+        }
+        review["tools"]["redis_server"] = json!({
+            "platform":"windows","path":"D:/fixture/redis-server.exe","sha256":"a".repeat(64),
+            "version":"Redis server v=7.0.0 bits=64","dlls":{"fixture.dll":"b".repeat(64)}
+        });
+        review["services"]["rustfs"]["scope_id"] = json!("services-fixture-seed");
+        for side in SIDES {
+            for database in review["scopes"][side.as_str()]["databases"]
+                .as_array_mut()
+                .unwrap()
+            {
+                database["connection_file"] = json!(defaults);
+            }
+        }
+        let review_path = local.join("review.json");
+        document::write_new(&review_path, &review).unwrap();
+        let run = Path::new(review["future_root"].as_str().unwrap()).join("service-run");
+        fs::create_dir_all(&run).unwrap();
+        let fixture = Self {
+            sources,
+            execution,
+            review: review_path,
+            run,
+            rustfs: binding,
+        };
+        for side in SIDES {
+            let name = side.as_str();
+            fixture.prepare(
+                side,
+                &format!("access_key='{ACCESS}-{name}'\nsecret_key='{SECRET}-{name}'\n"),
+            );
+        }
+        let seed = fixture.options(FixtureSide::Seed);
+        document::write_new(&fixture.run.join("manifest.json"), &json!({
+            "format_version":1,"kind":"reference-fixture-service-run",
+            "review":file_binding(&fixture.review,"审阅").unwrap(),
+            "bootstrap":file_binding(&seed.environment,"seed 环境").unwrap(),
+            "execution_backend":fixture.execution,"scope_id":"services-fixture-seed","data_directory_was_empty":true
+        })).unwrap();
+        state::initialize(&fixture.run).unwrap();
+        fixture
+    }
+
+    fn options(&self, side: FixtureSide) -> FixtureRequestOptions {
+        let name = side.as_str();
+        FixtureRequestOptions {
+            environment: self
+                .execution
+                .join(format!(".local-tests/request-{name}/bootstrap.json")),
+            service_run: self.run.clone(),
+            id: format!("fresh-{name}"),
+            side,
+            output: FixtureFileOutput {
+                output: self
+                    .sources
+                    .backend
+                    .join(format!(".local-tests/requests/{name}.json")),
+            },
+        }
+    }
+
+    fn prepare(&self, side: FixtureSide, credentials: &str) {
+        let options = self.options(side);
+        let directory = options.environment.parent().unwrap();
+        let config = directory.join("config");
+        fs::create_dir_all(&config).unwrap();
+        let name = side.as_str();
+        fs::write(
+            config.join("app.test.toml"),
+            format!("scope_id='fixture-{name}'\n[reset]\ncredential_version='fixture-v1'\n[object_storage]\n{credentials}"),
+        ).unwrap();
+        let mut review = file_binding(&self.review, "审阅").unwrap();
+        review["canonical_sha256"] =
+            json!(digest::plan_hash(&document::read(&self.review).unwrap()).unwrap());
+        let mut plan = json!({
+            "kind":"reference-fixture-environment-plan","side":name,"scope_id":format!("fixture-{name}"),
+            "review":review,"execution_source":self.sources.binding(),"maintenance_build":{"fixture":"build"}
+        });
+        plan["sha256"] = json!(digest::plan_hash(&plan).unwrap());
+        document::write_replace(&directory.join("environment.json"), &json!({
+            "environment":{"APP_ENV":"test","AWS_ACCESS_KEY_ID":"ambient-access","AWS_SECRET_ACCESS_KEY":"ambient-secret"}
+        })).unwrap();
+        document::write_replace(&options.environment, &json!({
+            "kind":"reference-fixture-environment","status":"prepared","services_started":false,
+            "remote_writes":0,"plan":plan,"execution_backend":self.execution,"config_dir":config,
+            "configuration_sha256":configuration_digest(&config).unwrap()
+        })).unwrap();
+    }
+
+    fn register_rustfs(&self) -> (Value, Value) {
+        let rustfs = self.run.join("rustfs");
+        let data = self.run.join("data");
+        for path in [&rustfs, &data] {
+            fs::create_dir(path).unwrap();
+        }
+        let (device, inode) =
+            common::device_inode_for(&data, &fs::metadata(&data).unwrap()).unwrap();
+        let scope = "services-fixture-seed";
+        let executable = &self.rustfs["path"];
+        let process = json!({"pid":10001,"started":"1","executable":executable});
+        let supervisor = json!({"pid":10002,"started":"1","executable":executable});
+        let monitor = json!({"pid":10003,"started":"1","executable":executable});
+        let api = "http://127.0.0.1:29200";
+        let console = "http://127.0.0.1:29201";
+        let request = json!({
+            "scope_id":scope,"executable":self.rustfs,"data_directory":{"path":data,"device":device,"inode":inode},
+            "api_url":api,"console_url":console,"credential_files":{
+                "access_key":{"path":data.join("access-key.txt")},"secret_key":{"path":data.join("secret-key.txt")}
+            }
+        });
+        let arguments = storage::model::arguments(&request).unwrap();
+        let request_binding = write_binding(&rustfs.join("request.json"), &request);
+        let controller = write_binding(
+            &self.run.join("controller-0001.json"),
+            &json!({"fixture":true}),
+        );
+        let manifest = file_binding(&self.run.join("manifest.json"), "服务清单").unwrap();
+        let intent = write_binding(
+            &rustfs.join("intent.json"),
+            &json!({
+                "format_version":1,"kind":"devex-clone-storage-intent","request":manifest,
+                "controller":controller,"attempt":1,"arguments":arguments
+            }),
+        );
+        let process_receipt = write_binding(
+            &rustfs.join("process.json"),
+            &json!({
+                "format_version":1,"role":"rustfs","scope_id":scope,"lifecycle":"running","identity":process,
+                "api_url":api,"console_url":console,"data_dir":data,"intent":intent
+            }),
+        );
+        let launch_receipt = write_binding(
+            &rustfs.join("launch.json"),
+            &json!({
+                "format_version":1,"scope_id":scope,"identity":process,"arguments":arguments,"credential_files":request["credential_files"]
+            }),
+        );
+        let tree = write_binding(
+            &rustfs.join("rustfs-tree.json"),
+            &json!({
+                "format_version":2,"kind":"full-stack-process-tree","runtime_directory":rustfs,"role":"rustfs",
+                "scope_id":scope,"operation_id":"b".repeat(32),"supervisor":supervisor,"process":process,
+                "monitor":monitor,"group_id":supervisor["pid"]
+            }),
+        );
+        let result = json!({
+            "identity":process,"sha256":self.rustfs["sha256"],"process_receipt":process_receipt,
+            "launch_receipt":launch_receipt,"tree":tree
+        });
+        (request_binding, result)
+    }
+
+    fn register_services(&self) {
+        let (rustfs_request, rustfs_result) = self.register_rustfs();
+        fs::create_dir(self.run.join("redis")).unwrap();
+        let redis_request = write_binding(
+            &self.run.join("redis/request.json"),
+            &json!({"fixture":true}),
+        );
+        let runtime = json!({"redis":{"generation":"fixture-first-generation","port":26379}});
+        write_binding(&self.run.join("redis/runtime.json"), &runtime);
+        for (stage, mode, sources, result) in [
+            (
+                "storage-target",
+                "initial",
+                json!({"request":rustfs_request}),
+                rustfs_result,
+            ),
+            (
+                "cache-target",
+                "initial",
+                json!({"request":redis_request}),
+                json!({"service":"redis","runtime":runtime}),
+            ),
+            (
+                "fixture-buckets",
+                "prepare",
+                json!({}),
+                json!({"status":"buckets_ready"}),
+            ),
+        ] {
+            let (number, _) = state::begin(&self.run, stage, mode, &sources).unwrap();
+            state::finish(&self.run, number, Some(&result), None).unwrap();
+        }
+    }
+
+    fn reject(&self, options: FixtureRequestOptions, expected: &str) {
+        let output = options.output.output.clone();
+        let error = run(
+            &self.sources.backend,
+            &FixtureRequestCommand::Publish(options),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains(expected), "{error}");
+        assert!(!error.contains(ACCESS) && !error.contains(SECRET));
+        assert!(!output.exists());
+    }
+}
+
+fn write_binding(path: &Path, value: &Value) -> Value {
+    document::write_new(path, value).unwrap();
+    file_binding(path, "夹具文件").unwrap()
+}
+
+#[test]
+fn each_side_loads_its_real_configuration_and_the_same_registered_seed_services() {
+    let fixture = RequestFixture::new();
+    fixture.register_services();
+    let backend = &fixture.sources.backend;
+    let seed = fixture.options(FixtureSide::Seed);
+    let original = Service::load(backend, &fixture.run, &fixture.review).unwrap();
+    for side in SIDES {
+        let options = fixture.options(side);
+        let name = side.as_str();
+        let product = Product::load(backend, &options.environment, name).unwrap();
+        let service = load_service(backend, &fixture.run, &product.prepared, name).unwrap();
+        assert_eq!(service.storage, original.storage);
+        assert_eq!(
+            service.context["sources"]["bootstrap"],
+            file_binding(&seed.environment, "seed 环境").unwrap()
+        );
+        let value = product
+            .request(&options.id, name, &service.storage)
+            .unwrap();
+        binding_request::validate(backend, &value, &Value::Null).unwrap();
+        assert_eq!(value["side"], name);
+        assert_eq!(value["target"]["scope_id"], format!("fixture-{name}"));
+        assert_eq!(
+            value["target"]["s3"]["access_key"],
+            format!("{ACCESS}-{name}")
+        );
+        assert_eq!(
+            value["target"]["s3"]["secret_key"],
+            format!("{SECRET}-{name}")
+        );
+        assert_eq!(
+            value["execution_backend"],
+            json!({"path":fixture.execution,"execution_source":fixture.sources.binding()})
+        );
+        assert_eq!(
+            value["storage"]["redis"]["generation"],
+            "fixture-first-generation"
+        );
+        for (database, (key, _, _)) in value["target"]["databases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .zip(request::KEYS)
+        {
+            assert_eq!(database["key"], key);
+            assert_eq!(
+                database["database"],
+                format!("fixture_{name}_{}", key.replace('-', "_"))
+            );
+        }
+    }
+
+    let redis = &original.registered["evidence"]["redis_runtime"];
+    let path = common::bound_file(backend, redis, "当前服务运行收据").unwrap();
+    fs::write(path, b"{\"runtime\":\"changed after registration\"}").unwrap();
+    query::dispatch(
+        backend,
+        "service-guard",
+        &json!({"value":original.context,"running":null}),
+    )
+    .unwrap();
+    for role in ["process_receipt", "launch_receipt"] {
+        common::bound_file(
+            backend,
+            &original.storage["rustfs"][role],
+            "当前服务运行收据",
+        )
+        .unwrap();
+    }
+    let error = common::bound_file(backend, redis, "当前服务运行收据")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("当前服务运行收据与登记摘要不一致"),
+        "{error}"
+    );
+}
+
+#[test]
+fn request_refuses_wrong_scope_and_credentials_before_creating_output() {
+    let fixture = RequestFixture::new();
+    fixture.register_services();
+    let base = fixture.options(FixtureSide::Base);
+    let candidate = fixture.options(FixtureSide::Candidate);
+    let mut crossed = candidate.clone();
+    crossed.environment = base.environment.clone();
+    fixture.reject(crossed, "私有环境侧或计划摘要不同");
+    let mut receipt = document::read(&candidate.environment).unwrap();
+    let mut plan = receipt["plan"].as_object().unwrap().clone();
+    plan.remove("sha256");
+    plan.insert("scope_id".into(), json!("fixture-base"));
+    let mut plan = Value::Object(plan);
+    plan["sha256"] = json!(digest::plan_hash(&plan).unwrap());
+    receipt["plan"] = plan;
+    document::write_replace(&candidate.environment, &receipt).unwrap();
+    fixture.reject(candidate, "私有环境执行工作树与指定审阅侧不符");
+
+    for (credentials, expected) in [
+        ("secret_key='fixture-secret'\n", "对象存储须显式配置认证"),
+        ("access_key='fixture-access'\n", "对象存储须显式配置认证"),
+        (
+            "access_key=123\nsecret_key='fixture-secret'\n",
+            "对象存储须显式配置认证",
+        ),
+        (
+            "access_key='fixture-access'\nsecret_key=123\n",
+            "对象存储须显式配置认证",
+        ),
+        (
+            "access_key=''\nsecret_key='fixture-secret'\n",
+            "配置缺少明确文本值",
+        ),
+        (
+            "access_key='fixture-access'\nsecret_key=''\n",
+            "配置缺少明确文本值",
+        ),
+        (
+            "access_key_env='AWS_ACCESS_KEY_ID'\nsecret_key_env='AWS_SECRET_ACCESS_KEY'\n",
+            "对象存储须显式配置认证",
+        ),
+    ] {
+        fixture.prepare(FixtureSide::Base, credentials);
+        fixture.reject(base.clone(), expected);
+    }
+}
+
+#[test]
+fn requests_preserve_the_closed_seed_ledger_and_refuse_a_misbound_seed_bootstrap() {
+    let closed = RequestFixture::new();
+    closed.register_services();
+    crate::target_initialize_restart_fixture::close(&closed.run);
+    let before = fs::read(closed.run.join("state.json")).unwrap();
+    let manifest_before = fs::read(closed.run.join("manifest.json")).unwrap();
+    closed.reject(closed.options(FixtureSide::Base), "已关闭或外部终止");
+    assert_eq!(fs::read(closed.run.join("state.json")).unwrap(), before);
+    assert_eq!(
+        fs::read(closed.run.join("manifest.json")).unwrap(),
+        manifest_before
+    );
+    assert!(!closed.run.join("run.lock").exists());
+
+    let foreign = RequestFixture::new();
+    let path = foreign.run.join("manifest.json");
+    let mut manifest = document::read(&path).unwrap();
+    let environment = foreign.options(FixtureSide::Base).environment;
+    manifest["bootstrap"] = file_binding(&environment, "另侧环境").unwrap();
+    document::write_replace(&path, &manifest).unwrap();
+    fs::remove_file(foreign.run.join("state.json")).unwrap();
+    fs::remove_dir(foreign.run.join("results")).unwrap();
+    state::initialize(&foreign.run).unwrap();
+    let before = fs::read(foreign.run.join("state.json")).unwrap();
+    foreign.reject(
+        foreign.options(FixtureSide::Candidate),
+        "私有环境侧或计划摘要不同",
+    );
+    assert_eq!(fs::read(foreign.run.join("state.json")).unwrap(), before);
+    assert_eq!(document::read(&path).unwrap(), manifest);
+}
 
 #[test]
 fn seed_bootstrap_requires_the_same_file_and_registered_bytes() {

@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Test fresh-target request issuance against per-side configuration files, the shared seed service generation, rejected credentials and ledger bindings, and exclusive publication. Remove the Python request and private protocol used only by the retired tests and keep the independent service lifecycle tests.
+
 - Remove the unused Python runtime controller lock module. Formal recovery uses Rust to acquire controller locks, verify ownership, and recover locks after interruption.
 
 - Remove the unused PyYAML check dependency, its requirements manifest, and CI installation steps. Extended CI full-stack jobs run the Rust and frontend build entry points directly. The remaining Python checks still verify interpreter identity and require Python 3.11 or newer.
