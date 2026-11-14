@@ -198,6 +198,19 @@ fn execute_claimed(
             == Some("needs_reconciliation")
     {
         failure = Some("NeedsReconciliation".into());
+        if stage == "target-cache-markers"
+            && let Some(result) = result.as_ref()
+            && let Some(
+                classification @ ("before"
+                | "mismatch"
+                | "unknown"
+                | "blocked_before_write"
+                | "after"),
+            ) = result["classification"].as_str()
+            && let Some(path) = result["observation"]["path"].as_str()
+        {
+            diagnostic = Some(format!("Redis 标记观察为 {classification}，收据 {path}"));
+        }
     }
     match stage_manifest(backend, run_dir, stage, mode) {
         Ok(value) if value.value == *initial_manifest => {}

@@ -2,6 +2,7 @@ mod authority;
 mod database_port;
 pub(super) mod declaration;
 pub(crate) mod images;
+mod marker_recovery;
 pub(crate) mod mysql;
 mod object_port;
 pub(crate) mod object_write;
@@ -16,5 +17,6 @@ pub(super) mod steps;
 mod target_port;
 pub(crate) mod verify_target_objects;
 
+pub(crate) use marker_recovery::MarkerRecovery;
 pub(crate) use runner::Runner;
 pub(crate) use target_port::ReferenceTarget;

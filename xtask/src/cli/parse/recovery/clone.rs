@@ -129,6 +129,14 @@ fn parse_stage(args: &[String]) -> Result<CloneCommand, CliError> {
             ));
         }
         "copy" => CloneStage::Copy(mode),
+        "target-cache-markers" if mode != CloneStageMode::Resume => {
+            CloneStage::TargetCacheMarkers(mode)
+        }
+        "target-cache-markers" => {
+            return Err(CliError::new(
+                "target-cache-markers 只支持 run 或 reconcile",
+            ));
+        }
         value => return Err(CliError::new(format!("--stage 无效：{value}"))),
     };
     require_write("stage", &options, stage.effect().requires_write())?;

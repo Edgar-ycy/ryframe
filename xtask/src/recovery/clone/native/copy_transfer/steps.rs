@@ -56,11 +56,11 @@ impl<'a> Plan<'a> {
         })
     }
 
-    fn all(&self) -> impl Iterator<Item = &Step<'a>> {
+    pub(super) fn all(&self) -> impl Iterator<Item = &Step<'a>> {
         self.databases.iter().chain(&self.objects)
     }
 
-    fn validate_states(&self, states: &Map<String, Value>, mode: Mode) -> Result<()> {
+    pub(super) fn validate_states(&self, states: &Map<String, Value>, mode: Mode) -> Result<()> {
         let planned: BTreeSet<_> = self.all().map(|step| step.id.as_str()).collect();
         if states.keys().any(|id| !planned.contains(id.as_str()))
             || (mode == Mode::New && !states.is_empty())

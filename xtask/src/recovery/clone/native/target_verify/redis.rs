@@ -54,7 +54,10 @@ pub(crate) fn verify_with_observer(
     })
 }
 
-fn info_matches(redis: &Value, response: &Value) -> Result<bool> {
+pub(in crate::recovery::clone::native) fn info_matches(
+    redis: &Value,
+    response: &Value,
+) -> Result<bool> {
     let raw = response.as_str().ok_or("目标 Redis INFO 响应不是字符串")?;
     let info = super::storage::redis_layout::info(raw)?;
     let expected_run = redis["run_id"].as_str().unwrap_or_default();
@@ -103,19 +106,12 @@ pub(super) fn state(
     sentinel: bool,
     command: &mut (impl FnMut(&[&str]) -> Result<Value> + ?Sized),
 ) -> Result<Value> {
-    let scope = super::super::json::text(&inputs.request["target"]["scope_id"], "Redis scope")?;
-    let namespace = format!("ryframe:{{{scope}}}:");
-    let owner_key = format!("{namespace}.ryframe-owner");
-    let keys = scan(command, &namespace)?;
-    let owner = get(command, &owner_key)?;
-    let marker = get(
-        command,
-        super::super::json::text(&inputs.request["reset"]["sentinel_key"], "Redis sentinel")?,
-    )?;
+    let scope = inputs.target_scope()?;
+    let observed = marker_image(inputs, command)?;
     let expected_keys = if initialized {
-        BTreeSet::from([owner_key])
+        vec![format!("ryframe:{{{scope}}}:.ryframe-owner")]
     } else {
-        BTreeSet::new()
+        Vec::new()
     };
     let expected_owner = initialized.then(|| format!("ryframe-owner:v1:{scope}:redis"));
     let expected_marker = if sentinel {
@@ -129,9 +125,24 @@ pub(super) fn state(
     } else {
         None
     };
-    if keys != expected_keys || owner != expected_owner || marker != expected_marker {
+    if observed != json!({"keys":expected_keys,"owner":expected_owner,"sentinel":expected_marker}) {
         return Err("目标Redis namespace、owner或sentinel不同于精确前后像".into());
     }
+    Ok(observed)
+}
+
+pub(in crate::recovery::clone::native) fn marker_image(
+    inputs: &super::storage::StorageInputs<'_>,
+    command: &mut (impl FnMut(&[&str]) -> Result<Value> + ?Sized),
+) -> Result<Value> {
+    let scope = inputs.target_scope()?;
+    let namespace = format!("ryframe:{{{scope}}}:");
+    let keys = scan(command, &namespace)?;
+    let owner = get(command, &format!("{namespace}.ryframe-owner"))?;
+    let marker = get(
+        command,
+        super::super::json::text(&inputs.request["reset"]["sentinel_key"], "Redis sentinel")?,
+    )?;
     Ok(json!({"keys":keys,"owner":owner,"sentinel":marker}))
 }
 

@@ -48,6 +48,15 @@ pub(crate) fn run(command: &CloneCommand, backend: &Path) -> Result<Value> {
             run_dir,
             stage: stage @ crate::cli::CloneStage::Copy(_),
         } => stage::run(backend, run_dir, *stage, &super::copy_transfer::Runner),
+        CloneCommand::Stage {
+            run_dir,
+            stage: stage @ crate::cli::CloneStage::TargetCacheMarkers(_),
+        } => stage::run(
+            backend,
+            run_dir,
+            *stage,
+            &super::copy_transfer::MarkerRecovery,
+        ),
         CloneCommand::Recover {
             run_dir,
             owner_binding,

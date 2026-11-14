@@ -28,6 +28,30 @@ redis.call('SET', KEYS[1], ARGV[2])
 redis.call('SET', KEYS[2], ARGV[3])
 return 2"###;
 
+/// 按已验证的原目标请求执行同一原子脚本。
+pub(in crate::recovery::clone::native) fn rebind(
+    request: &Value,
+    command: &mut (impl FnMut(&[&str]) -> Result<Value> + ?Sized),
+) -> Result<Value> {
+    let scope = document::text(&request["target"]["scope_id"], "Redis scope")?;
+    let namespace = format!("ryframe:{{{scope}}}:");
+    let owner = format!("{namespace}.ryframe-owner");
+    let owner_value = format!("ryframe-owner:v1:{scope}:redis");
+    let sentinel = document::text(&request["reset"]["sentinel_key"], "sentinel")?;
+    let sentinel_value = document::text(&request["reset"]["sentinel_value"], "sentinel值")?;
+
+    command(&[
+        "EVAL",
+        SCRIPT,
+        "2",
+        &owner,
+        sentinel,
+        &format!("{namespace}*"),
+        &owner_value,
+        sentinel_value,
+    ])
+}
+
 pub(super) struct Input<'a> {
     pub(super) attempt: &'a str,
     pub(super) resume: &'a Path,
@@ -64,24 +88,10 @@ pub(super) fn execute<T: Transport>(
     *trusted = claims::one(w, trusted, &intent_path, Some(&intent))?;
     *active = json!({"id":"redis-marker-rebind","intent":common::binding(&intent_path)?,"restart_generation":generation,
         "confirmation":null,"failure":null,"write_started":true,"unknown_result":true});
-    let scope = document::text(&w.inputs.request["target"]["scope_id"], "Redis scope")?;
-    let namespace = format!("ryframe:{{{scope}}}:");
-    let owner = format!("{namespace}.ryframe-owner");
-    let owner_value = format!("ryframe-owner:v1:{scope}:redis");
     let result: Result<(Value, Value)> = (|| {
-        let result = w.redis(
-            current_generation,
-            &[
-                "EVAL",
-                SCRIPT,
-                "2",
-                &owner,
-                document::text(&w.inputs.request["reset"]["sentinel_key"], "sentinel")?,
-                &format!("{namespace}*"),
-                &owner_value,
-                document::text(&w.inputs.request["reset"]["sentinel_value"], "sentinel值")?,
-            ],
-        )?;
+        let result = rebind(w.inputs.request, &mut |parts| {
+            w.redis(current_generation, parts)
+        })?;
         if result.as_str() != Some("2") {
             return Err("Redis原子marker重绑结果未确认，禁止重试".into());
         }

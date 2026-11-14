@@ -176,6 +176,91 @@ fn inspect_state(
     Ok((evidence, session.outcome.clone()))
 }
 
+/// 在现有复制账本互斥下核对未完成前缀。旧会话可已中断，但不能含未知写入或完成尝试。
+pub(super) fn marker_prefix(
+    backend: &Path,
+    root: &Path,
+    plan: &str,
+    generation: &str,
+    expected_prefix: Option<&Value>,
+) -> Result<(Value, serde_json::Map<String, Value>)> {
+    let root = common::local_directory(backend, root, "原复制账本")?;
+    if lock_identity(&root)?.is_some() {
+        return Err("Redis 标记恢复要求原复制账本没有写入持有人".into());
+    }
+    let mut reads = Reads {
+        backend,
+        files: Vec::new(),
+    };
+    let raw = reads.bytes(&root.join("events.ndjson"), document::MAX_JSON_BYTES)?;
+    let head_raw = reads.bytes(&root.join("head.json"), HEAD_LIMIT)?;
+    let verified = verify_journal(&raw, &head_raw, plan, generation)?;
+    let steps = verified.projection.steps;
+    if verified
+        .projection
+        .session
+        .as_ref()
+        .is_none_or(|session| !matches!(session.outcome.as_str(), "open" | "partial"))
+        || verified
+            .events
+            .iter()
+            .any(|event| event["type"] == "closed" && event["outcome"] == "publishing")
+        || steps.is_empty()
+        || steps.values().any(|step| step["phase"] != "confirmed")
+    {
+        return Err("Redis 标记恢复只接受有完整确认且无未知写入的未完成复制前缀".into());
+    }
+    if let Some(prefix) = expected_prefix {
+        let sequence = prefix["sequence"]
+            .as_u64()
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or("原标记意图缺少复制前缀序号")?;
+        let prior = verified
+            .frames
+            .get(sequence)
+            .ok_or("复制账本缺少标记意图所绑定的原前缀")?;
+        let prefix_state = model::project(&verified.events[..=sequence])?;
+        let appended = &verified.events[(sequence + 1)..];
+        if *prefix != head(plan, generation, sequence, &prior["sha256"])
+            || !confirmed_prefix(&prefix_state.steps, &steps, appended)
+        {
+            return Err("复制账本已偏离标记意图所绑定的原前缀".into());
+        }
+    }
+    reads.unchanged()?;
+    if lock_identity(&root)?.is_some() {
+        return Err("Redis 标记核验期间出现新的复制账本持有人".into());
+    }
+    Ok((checked(&head_raw)?, steps))
+}
+
+fn confirmed_prefix(
+    before: &serde_json::Map<String, Value>,
+    current: &serde_json::Map<String, Value>,
+    appended: &[Value],
+) -> bool {
+    if before.len() != current.len()
+        || appended.iter().any(|event| match event["type"].as_str() {
+            Some("opened") => event["mode"] != "reconcile",
+            Some("reconciled") => before
+                .get(event["step_id"].as_str().unwrap_or_default())
+                .is_none_or(|step| event["observed"] != step["after"]),
+            Some("closed") => event["outcome"] != "partial",
+            _ => true,
+        })
+    {
+        return false;
+    }
+    before.iter().all(|(id, previous)| {
+        previous["phase"] == "confirmed"
+            && current.get(id).is_some_and(|now| {
+                ["before", "after", "artifact_sha256", "attempt", "phase"]
+                    .iter()
+                    .all(|field| now[*field] == previous[*field])
+            })
+    })
+}
+
 const HEAD_LIMIT: u64 = 4096;
 
 struct VerifiedJournal {

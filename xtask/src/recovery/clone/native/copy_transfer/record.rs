@@ -171,7 +171,7 @@ impl<'a> Files<'a> {
         Ok(prepared)
     }
 
-    fn read_plan(&self, declaration: &Value) -> Result<(Value, Inputs)> {
+    pub(super) fn read_plan(&self, declaration: &Value) -> Result<(Value, Inputs)> {
         let plan_path =
             common::common_file(self.backend, &self.root.join("plan.json"), "原完整计划")?;
         let input_path =
@@ -194,7 +194,7 @@ impl<'a> Files<'a> {
         Ok((wrapper, guard))
     }
 
-    fn value(&self, facts: &Facts<'_>, plan: &Value) -> Result<Value> {
+    pub(super) fn value(&self, facts: &Facts<'_>, plan: &Value) -> Result<Value> {
         let plan = digest_shape(&plan["plan_sha256"])?;
         let environment = json!({
             "source": digest::plan_hash(&serde_json::to_value(&self.source_environment)?)?,

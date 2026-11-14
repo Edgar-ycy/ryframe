@@ -19,6 +19,7 @@ pub(crate) mod prefix;
 pub(crate) const STAGES: &[&str] = &[
     "export",
     "target-verify",
+    "target-cache-markers",
     "copy",
     "runtime-source",
     "runtime-target",

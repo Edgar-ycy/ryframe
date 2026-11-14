@@ -87,6 +87,11 @@ pub(crate) struct Inputs {
 }
 
 impl Inputs {
+    pub(in crate::recovery::clone::native) fn directory(path: &Path) -> Result<Self> {
+        Ok(Self {
+            entries: vec![FrozenEntry::open(path, true, false)?],
+        })
+    }
     pub(crate) fn open(paths: impl IntoIterator<Item = PathBuf>) -> Result<Self> {
         let entries = paths
             .into_iter()

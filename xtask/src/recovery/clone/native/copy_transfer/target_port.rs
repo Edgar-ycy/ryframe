@@ -47,7 +47,7 @@ pub(in crate::recovery::clone::native) struct Target<S = Scope> {
     observation_directory: PathBuf,
     temporary_identity: Value,
     observed_generation: Value,
-    cache: Option<Value>,
+    pub(super) cache: Option<Value>,
     scope: S,
     protected: Inputs,
     registered: Inputs,
@@ -60,6 +60,9 @@ impl Target {
         storage_run: &Path,
         owner: Option<&Generation>,
     ) -> Result<Self> {
+        if let Some(owner) = owner {
+            owner.copy_session()?;
+        }
         Self::bind(
             backend,
             manifest,
@@ -112,7 +115,7 @@ impl Target {
 }
 
 impl<S: Borrow<Scope>> Target<S> {
-    fn bind(
+    pub(super) fn bind(
         backend: &Path,
         manifest: &Value,
         storage_run: &Path,
@@ -383,7 +386,6 @@ impl History {
             return Err("复制目标初始化不属于固定 fresh 工作区".into());
         }
         let (initialized, request) = if let Some(owner) = owner {
-            owner.copy_session()?;
             published::owned_history(backend, &filename, owner)?
         } else {
             published::unlocked_history(backend, &filename)?

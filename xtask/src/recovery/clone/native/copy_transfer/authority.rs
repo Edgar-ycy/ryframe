@@ -58,7 +58,7 @@ impl<'a> Stage<'a> {
         let saved = state::load(run, true)?;
         let controller = request
             .attempt
-            .map(|number| current_controller(run, &saved, number, request.mode))
+            .map(|number| current_controller(run, &saved, number, "copy", request.mode))
             .transpose()?;
         let mut paths = vec![manifest_path.clone(), state_path.clone()];
         if let Some(number) = request.attempt {
@@ -119,6 +119,7 @@ impl<'a> Stage<'a> {
                 self.run,
                 &self.saved,
                 number,
+                "copy",
                 document::text(&row["mode"], "当前复制模式")?,
             )?;
             if Some(&actual) != self.controller.as_ref() {
@@ -144,14 +145,15 @@ impl<'a> Stage<'a> {
     }
 }
 
-fn current_controller(
+pub(super) fn current_controller(
     run: &Path,
     saved: &Value,
     number: u64,
+    stage: &str,
     mode: &str,
 ) -> Result<(Value, Value)> {
     let row = state::running_attempt(saved)?.ok_or("复制阶段尚未取得原生控制权")?;
-    if row["number"].as_u64() != Some(number) || row["stage"] != "copy" || row["mode"] != mode {
+    if row["number"].as_u64() != Some(number) || row["stage"] != stage || row["mode"] != mode {
         return Err("复制请求不属于同一运行中的阶段和模式".into());
     }
     let (binding, owner) = state::controller_record(run, number, row)?;
@@ -162,7 +164,12 @@ fn current_controller(
     Ok((binding, owner))
 }
 
-fn export_descriptor(backend: &Path, run: &Path, manifest: &Value, saved: &Value) -> Result<Value> {
+pub(super) fn export_descriptor(
+    backend: &Path,
+    run: &Path,
+    manifest: &Value,
+    saved: &Value,
+) -> Result<Value> {
     let descriptor = if manifest["source_export"].is_null() {
         let row = state::attempts(saved)?
             .iter()
