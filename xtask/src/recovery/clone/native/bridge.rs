@@ -48,16 +48,15 @@ pub(crate) fn write(
         return Err("来源桥接只接受 API/Worker 或维护 CLI 构建收据".into());
     }
     verify_build(root, build_path, &receipt)?;
-    verify_inventory_source(&inventory, &receipt)?;
+    let original_fingerprints = verify_inventory_source(&inventory, &receipt)?;
     if kind == "restore-backend-build" && receipt["sources"]["full"] != inventory_value {
         return Err("API/Worker 构建收据与构建时 inventory 不一致".into());
     }
     let current_inventory = source::capture(root)?;
     let audited_source = source::execution_source(&current_inventory)?;
-    let original = source::fingerprints(&inventory.files)?;
     let product_inputs = json!({
-        "build": product_inputs(kind, &inventory)?,
-        "audited": product_inputs(kind, &current_inventory)?,
+        "build": product_inputs(kind, &inventory, &original_fingerprints)?,
+        "audited": product_inputs(kind, &current_inventory, &audited_source["fingerprints"])?,
     });
     if product_inputs["build"] != product_inputs["audited"] {
         return Err("产品构建输入已经变化，必须重新编译".into());
@@ -68,7 +67,7 @@ pub(crate) fn write(
         "backend_root": path_text(root, "后端根目录")?,
         "build": build_binding,
         "inventory": inventory_binding,
-        "original_fingerprints": original,
+        "original_fingerprints": original_fingerprints,
         "audited_source": audited_source,
         "audited_inventory": source::inventory_value(&current_inventory),
         "product_inputs": product_inputs,
@@ -263,15 +262,14 @@ fn validate_environment(value: &Value) -> Result<()> {
     Ok(())
 }
 
-fn verify_inventory_source(inventory: &source::Inventory, receipt: &Value) -> Result<()> {
+fn verify_inventory_source(inventory: &source::Inventory, receipt: &Value) -> Result<Value> {
     let expected = build_source(receipt)?;
     if source::binding_value(&inventory.source) != expected
         || !Regex::new(r"^sha256:[a-f0-9]{64}$")?.is_match(&inventory.source.worktree_fingerprint)
     {
         return Err("原始文件清单没有绑定构建时的完整源码".into());
     }
-    source::fingerprints(&inventory.files)?;
-    Ok(())
+    source::fingerprints(&inventory.files)
 }
 
 fn build_source(receipt: &Value) -> Result<Value> {
@@ -290,10 +288,14 @@ fn build_source(receipt: &Value) -> Result<Value> {
     }
 }
 
-fn product_inputs(kind: &str, inventory: &source::Inventory) -> Result<Value> {
+fn product_inputs(
+    kind: &str,
+    inventory: &source::Inventory,
+    fingerprints: &Value,
+) -> Result<Value> {
     match kind {
         "restore-backend-build" => Ok(source::backend_domains(inventory)?["product"].clone()),
-        "devex-clone-tool-build" => Ok(source::fingerprints(&inventory.files)?["product"].clone()),
+        "devex-clone-tool-build" => Ok(fingerprints["product"].clone()),
         _ => Err("构建来源类型无效".into()),
     }
 }
