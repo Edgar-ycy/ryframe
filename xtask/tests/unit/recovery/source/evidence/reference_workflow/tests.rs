@@ -385,7 +385,14 @@ fn resource_preflight_checks_all_artifacts_before_returning_ordered_tasks() {
     assert_eq!(tasks[1]["key"], "target/tenant/file.txt");
     fs::write(fixture.root.join("objects/uploads/one.bin"), b"tampered").unwrap();
     assert!(model::resources(&args).is_err());
-    assert!(model::bound_artifact(&json!({"root":fixture.root,"manifest":fixture.manifest,"relative":"objects/uploads/one.bin"})).is_err());
+    assert!(
+        model::bound_artifact(
+            &fixture.root,
+            &fixture.manifest,
+            &json!("objects/uploads/one.bin"),
+        )
+        .is_err()
+    );
 }
 
 #[test]

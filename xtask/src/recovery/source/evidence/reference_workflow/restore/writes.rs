@@ -1,7 +1,7 @@
 //! 按清单顺序提交参考恢复任务，每次发送前后复核原绑定。
 use std::path::Path;
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use super::{model, native, object_write, text};
 use crate::Result;
@@ -28,9 +28,8 @@ impl Writes<'_> {
     ) -> Result<()> {
         for task in native::json::array(tasks, "参考恢复授权任务")? {
             checkpoint()?;
-            let artifact = model::bound_artifact(&json!({
-                "root":self.backup_root,"manifest":self.manifest,"relative":task["relative"],
-            }))?;
+            let artifact =
+                model::bound_artifact(self.backup_root, self.manifest, &task["relative"])?;
             match task["kind"].as_str() {
                 Some("database") => mysql::reference::write(
                     &self.storage,
