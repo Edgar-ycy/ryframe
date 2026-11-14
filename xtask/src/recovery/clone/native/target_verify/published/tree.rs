@@ -28,11 +28,25 @@ pub(in super::super) fn registered(
     Ok((recorded, inputs))
 }
 
+#[derive(PartialEq, Eq)]
+pub(super) struct InitializedSnapshot {
+    binding: Value,
+    pub(super) files: Value,
+}
+
 pub(in super::super) fn initialized(
     backend: &Path,
     target: &Path,
     owner: Option<&super::guard::Generation>,
 ) -> Result<Value> {
+    Ok(initialized_snapshot(backend, target, owner)?.binding)
+}
+
+pub(super) fn initialized_snapshot(
+    backend: &Path,
+    target: &Path,
+    owner: Option<&super::guard::Generation>,
+) -> Result<InitializedSnapshot> {
     let workspace = target.parent().ok_or("初始化目标缺少登记目录")?;
     let initialized_path = workspace.join("initialized-files.json");
     let prepared_path = workspace.join("prepared-files.json");
@@ -71,12 +85,16 @@ pub(in super::super) fn initialized(
         &registration_value["request"],
     )?;
     super::super::resume_observations::file_map(&value["files"])?;
+    let files = super::super::tree::protected_snapshot(backend, target, owner)?;
     check(
-        value["files"] == super::super::tree::protected_snapshot(backend, target, owner)?
+        value["files"] == files
             && binding(backend, &initialized_path)? == initialized
             && binding(backend, &prepared_path)? == prepared
             && binding(backend, &registration_path)? == registration,
         "初始化目标文件树或双树登记绑定变化",
     )?;
-    Ok(initialized)
+    Ok(InitializedSnapshot {
+        binding: initialized,
+        files,
+    })
 }

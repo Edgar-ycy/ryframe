@@ -118,9 +118,8 @@ fn history<T>(
     let (filename, registration) = tree::registered(backend, filename)?;
     let target = filename.parent().ok_or("登记初始化历史缺少目标目录")?;
     protection(target, owner)?;
-    let before = tree::initialized(backend, target, owner)?;
-    let files = super::tree::protected_snapshot(backend, target, owner)?;
-    let inputs = guard::Inputs::open(super::tree::files(target, &files)?)?;
+    let before = tree::initialized_snapshot(backend, target, owner)?;
+    let inputs = guard::Inputs::open(super::tree::files(target, &before.files)?)?;
     let resumed = failure::resolved(backend, target, owner)?;
     let initialized = read(backend, &filename)?;
     let prepared = read(backend, &target.join("prepare.json"))?;
@@ -141,8 +140,7 @@ fn history<T>(
         registration.check()?;
         protection(target, owner)?;
         check(
-            tree::initialized(backend, target, owner)? == before
-                && super::tree::protected_snapshot(backend, target, owner)? == files,
+            tree::initialized_snapshot(backend, target, owner)? == before,
             "初始化历史读取期间文件树或绑定变化",
         )?;
         protection(target, owner)?;
@@ -193,4 +191,24 @@ fn initialization(
             == initialized["reset"],
         "初始化历史 reset 完成证据变化",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn published_history_rejects_directory_added_during_observation() {
+        let fixture = crate::target_verify_published_tests::complete();
+        let filename = fixture.target.join("initialized.json");
+        let added = fixture.target.join("late-directory");
+        let error = observe_unlocked_history(&fixture.backend, &filename, |_, _| {
+            fs::create_dir(&added)?;
+            Ok(())
+        })
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("文件树"), "{error}");
+        assert!(added.is_dir());
+    }
 }
