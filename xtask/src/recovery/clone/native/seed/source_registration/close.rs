@@ -5,12 +5,15 @@ use serde_json::{Value, json};
 
 use crate::{
     Result,
-    recovery::clone::native::{
-        json as document,
-        lifecycle::{manifest, state},
-        resources::{common, origin},
-        seed::{protocol::guards, runtime_model},
-        target_verify::{authority, input::request_configuration::canonical_path, published},
+    recovery::{
+        clone::native::{
+            json as document,
+            lifecycle::{manifest, state},
+            resources::{common, origin},
+            seed::{protocol::guards, runtime_model},
+            target_verify::{authority, input::request_configuration::canonical_path, published},
+        },
+        fixture_control::services::history as fixture_history,
     },
 };
 
@@ -255,13 +258,45 @@ fn fixture_origin(
         || initial["generation"]["storage"] != *original
         || services["origin"]["storage"] != *rustfs
         || services["origin"]["redis"] != *redis
-        || services["runtime"]["redis"] != *redis
-        || services["tree"]["process"] != rustfs["identity"]
-        || ["identity", "sha256", "process_receipt", "launch_receipt"]
-            .iter()
-            .any(|field| services["storage"][*field] != rustfs[*field])
     {
-        return Err("RustFS 交接要求原初始化和当前夹具使用同一 RustFS 及 Redis 代次".into());
+        return Err("RustFS 交接未绑定原始初始化的 RustFS 及 Redis 首代收据".into());
+    }
+    let service_history = fixture_history::validate(&registered, &history["state"], true, true)?;
+    active_services(
+        &registered,
+        &service_history["active_generation"],
+        services,
+        rustfs,
+        redis,
+    )?;
+    Ok(())
+}
+
+fn active_services(
+    run: &Path,
+    generation: &Value,
+    services: &Value,
+    rustfs: &Value,
+    redis: &Value,
+) -> Result<()> {
+    if generation["kind"] == "initial" {
+        if services["runtime"]["redis"] != *redis
+            || services["tree"]["process"] != rustfs["identity"]
+            || ["identity", "sha256", "process_receipt", "launch_receipt"]
+                .iter()
+                .any(|field| services["storage"][*field] != rustfs[*field])
+        {
+            return Err("RustFS 交接未绑定首代夹具的原运行收据".into());
+        }
+    } else {
+        let selected = fixture_history::handoff::selected(run, generation)?;
+        if services["tree"] != selected.tree
+            || services["requests"]["rustfs"] != selected.rustfs_request
+            || services["runtime"] != selected.redis_runtime
+            || !selected.matches_redis(&services["evidence"]["redis_runtime"])?
+        {
+            return Err("RustFS 交接未绑定当前已发布的夹具服务后继".into());
+        }
     }
     Ok(())
 }

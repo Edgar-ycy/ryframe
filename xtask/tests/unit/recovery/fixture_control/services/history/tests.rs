@@ -57,13 +57,7 @@ impl Fixture {
         fs::create_dir(self.run.join("rustfs")).unwrap();
         let tree = json!({"format_version":2,"runtime_directory":self.run.join("rustfs"),"role":"rustfs",
             "scope_id":"fixture-test","operation_id":"b".repeat(32),"supervisor":{"pid":100},"monitor":{"pid":101},"process":{"pid":102}});
-        let completion = self.run.join(format!(
-            "rustfs/rustfs-members-{}-stopped.json",
-            "b".repeat(32)
-        ));
-        json_io::write_new(&completion,&json!({"status":"stopped","error_type":null,"operation_id":tree["operation_id"],
-            "role":"rustfs","scope_id":"fixture-test","supervisor":tree["supervisor"],"monitor":tree["monitor"],
-            "directory":tree["runtime_directory"],"members":[tree["supervisor"],tree["monitor"],tree["process"]]})).unwrap();
+        let completion = handoff_completion(&tree);
         json_io::write_new(
             &root.join("stopped.json"),
             &json!({"status":"redis_process_stopped","alive":false,"resources_deleted":false}),
@@ -71,13 +65,23 @@ impl Fixture {
         .unwrap();
         json_io::write_new(
             &root.join("rustfs-stopped.json"),
-            &json!({"state":"stopped","tree":tree,"completion":binding(&completion).unwrap()}),
+            &json!({"state":"stopped","tree":tree,"completion":completion}),
         )
         .unwrap();
         json!({"kind":"reference-fixture-service-lifecycle","operation":"close","run":self.run,
             "remote_writes":0,"resources_deleted":false,"status":"services_closed","services":{"redis":"stopped","rustfs":"stopped"},
             "evidence":{"redis":binding(&root.join("stopped.json")).unwrap(),"rustfs":binding(&root.join("rustfs-stopped.json")).unwrap()}})
     }
+}
+
+fn handoff_completion(tree: &Value) -> Value {
+    let directory = Path::new(tree["runtime_directory"].as_str().unwrap());
+    let operation = tree["operation_id"].as_str().unwrap();
+    let path = directory.join(format!("rustfs-members-{operation}-stopped.json"));
+    json_io::write_new(&path, &json!({"status":"stopped","error_type":null,"operation_id":operation,
+        "directory":directory,"role":"rustfs","scope_id":tree["scope_id"],"supervisor":tree["supervisor"],
+        "monitor":tree["monitor"],"members":[tree["supervisor"],tree["monitor"],tree["process"]]})).unwrap();
+    binding(&path).unwrap()
 }
 
 #[test]
@@ -184,6 +188,296 @@ fn rustfs_handoff_history_keeps_original_redis_and_binds_immutable_close() {
     assert_eq!(fixture.history()["rustfs_handoff"], descriptor);
     json_io::write_replace(&seed_path, &json!({"status":"changed"})).unwrap();
     assert!(validate(&fixture.run, &fixture.load(), true, true).is_err());
+}
+
+#[cfg(windows)]
+mod successor_handoff {
+    use super::*;
+
+    #[test]
+    fn rustfs_handoff_history_requires_the_validated_successor_tree_and_redis() {
+        let fixture = Fixture::new();
+        let copy = Fixture::new();
+        let original_redis = windows_redis_origin(&fixture);
+        let (copy_manifest, previous) = fresh_storage_origin(&fixture, &copy);
+        let (seed, _) = state::begin(&copy.run, "seed-runtime", "close", &json!({})).unwrap();
+        state::finish(
+            &copy.run,
+            seed,
+            Some(&json!({"status":"seed_runtime_closed"})),
+            None,
+        )
+        .unwrap();
+        let seed_close = binding(&state::result_path(&copy.run, seed)).unwrap();
+        let copy_state = binding(&copy.run.join("state.json")).unwrap();
+        let original = fixture.close();
+        let original_tree = read(Path::new(
+            original["evidence"]["rustfs"]["path"].as_str().unwrap(),
+        ))
+        .unwrap()["tree"]
+            .clone();
+        let rustfs = json!({"data_directory":{"path":fixture.run.join("data"),"device":1,"inode":2},
+        "scope_id":"fixture-test","api_url":"http://127.0.0.1:21951","console_url":"http://127.0.0.1:21952",
+        "credential_files":{},"executable":{"path":"D:/tools/rustfs.exe","sha256":"a".repeat(64)}});
+        let original_path = fixture.run.join("rustfs").join("rustfs-tree.json");
+        json_io::write_new(&original_path, &original_tree).unwrap();
+        json_io::write_new(&previous, &json!({"identity":original_tree["process"]})).unwrap();
+        json_io::write_new(&fixture.run.join("rustfs/request.json"), &rustfs).unwrap();
+        let predecessor = external_generation(&fixture, &original_path, &original_redis);
+        let (tree, redis) = successor_generation(&fixture, &rustfs, &original_redis, &predecessor);
+        let evidence = |tree: &Value, redis_binding: &Value, completion: &Value| {
+            let cache = read(Path::new(redis_binding["path"].as_str().unwrap())).unwrap();
+            json!({"tree":tree,"state":"stopped","terminated":true,"completion":completion,
+            "data_directory":rustfs["data_directory"],"redis":{"process":cache["process"],
+            "run_id":cache["redis"]["run_id"],"markers_sha256":"c".repeat(64)}})
+        };
+        let completion = handoff_completion(&tree);
+        let stopped = evidence(&tree, &redis, &completion);
+        let sources = json!({"manifest":binding(&fixture.run.join("manifest.json")).unwrap(),
+        "state_before":binding(&fixture.run.join("state.json")).unwrap(),"seed_close":seed_close,"copy_state":copy_state});
+        let owner =
+            crate::recovery::clone::native::lifecycle::lock::RunLock::claim(&fixture.run).unwrap();
+        let (number, attempt) =
+            state::begin(&fixture.run, STAGE, "handoff-rustfs", &sources).unwrap();
+        state::bind_controller(&fixture.run, number, &owner.owner, &attempt).unwrap();
+        let output = fixture.run.join(format!("lifecycle-{number:04}"));
+        fs::create_dir(&output).unwrap();
+        let proof = output.join("rustfs-stopped.json");
+        json_io::write_new(&proof, &stopped).unwrap();
+        let mut result = json!({"kind":"reference-fixture-service-lifecycle","operation":"handoff-rustfs",
+        "run":fixture.run,"remote_writes":0,"resources_deleted":false,"status":"rustfs_handed_off",
+        "services":{"redis":"running","rustfs":"handed-off"},"seed_close":seed_close,"copy_state":copy_state,
+        "controller":binding(&state::controller_path(&fixture.run,number)).unwrap(),
+        "evidence":{"rustfs":binding(&proof).unwrap(),"redis":redis}});
+        state::finish(&fixture.run, number, Some(&result), None).unwrap();
+        owner.release().unwrap();
+        let result_path = state::result_path(&fixture.run, number);
+        let descriptor = binding(&result_path).unwrap();
+        assert_eq!(fixture.history()["rustfs_handoff"], descriptor);
+        assert_storage_reader(
+            &copy,
+            &copy_manifest,
+            &previous,
+            &descriptor,
+            &rustfs,
+            &original_tree["process"],
+        );
+
+        let mut historic = fixture.load();
+        let original_completion = read(Path::new(
+            original["evidence"]["rustfs"]["path"].as_str().unwrap(),
+        ))
+        .unwrap()["completion"]
+            .clone();
+        for (tree, cache, completed) in [
+            (&tree, &original_redis, &completion),
+            (&original_tree, &redis, &original_completion),
+        ] {
+            json_io::write_replace(&proof, &evidence(tree, cache, completed)).unwrap();
+            result["evidence"] = json!({"rustfs":binding(&proof).unwrap(),"redis":cache});
+            json_io::write_replace(&result_path, &result).unwrap();
+            historic["attempts"][(number - 1) as usize]["result"] = binding(&result_path).unwrap();
+            assert!(validate(&fixture.run, &historic, true, true).is_err());
+        }
+    }
+
+    fn fresh_storage_origin(fixture: &Fixture, copy: &Fixture) -> (Value, PathBuf) {
+        let review = fixture.run.join("review.json");
+        let value = json!({"scopes":{"seed":{}}});
+        json_io::write_new(&review, &value).unwrap();
+        let review = binding(&review).unwrap();
+        let manifest_path = fixture.run.join("manifest.json");
+        let manifest = json!({"format_version":1,"kind":"reference-fixture-service-run",
+        "review":review,"bootstrap":{},"execution_backend":fixture.run,"scope_id":"fixture-test",
+        "data_directory_was_empty":true});
+        json_io::write_replace(&manifest_path, &manifest).unwrap();
+        let ledger = fixture.run.join("state.json");
+        let mut saved = read(&ledger).unwrap();
+        saved["manifest"] = binding(&manifest_path).unwrap();
+        json_io::write_replace(&ledger, &saved).unwrap();
+        let workspace = copy.run.join("fresh");
+        let target = workspace.join("target");
+        fs::create_dir_all(&target).unwrap();
+        let original_process = fixture.run.join("rustfs/process.json");
+        let mut source_review = review;
+        source_review["canonical_sha256"] = json!(digest::plan_hash(&value).unwrap());
+        let request = json!({"side":"seed","review":source_review});
+        let path = target.join("request.json");
+        json_io::write_new(&path, &request).unwrap();
+        let prepare = target.join("prepare.json");
+        json_io::write_new(
+            &prepare,
+            &json!({"request":binding(&path).unwrap(),
+        "request_sha256":digest::plan_hash(&request).unwrap()}),
+        )
+        .unwrap();
+        let initialized = target.join("initialized.json");
+        json_io::write_new(
+            &initialized,
+            &json!({"status":"fresh_target_initialized",
+        "prepare_sha256":binding(&prepare).unwrap()["sha256"]}),
+        )
+        .unwrap();
+        json_io::write_new(&workspace.join("registration.json"), &json!({
+        "format_version":1,"kind":"devex-clone-fresh-target-registration","target_directory":target,
+        "environment":{"fixture":true},"storage_run":{"path":fixture.run,
+        "manifest":binding(&manifest_path).unwrap(),"state":binding(&ledger).unwrap()}
+    })).unwrap();
+        (
+            json!({"initialized":binding(&initialized).unwrap(),"target_environment":{"fixture":true}}),
+            original_process,
+        )
+    }
+
+    fn assert_storage_reader(
+        copy: &Fixture,
+        manifest: &Value,
+        previous: &Path,
+        receipt: &Value,
+        rustfs: &Value,
+        identity: &Value,
+    ) {
+        use crate::recovery::clone::native::lifecycle::manifest::fixture_storage::rustfs_handoff;
+        let backend = crate::workspace::root_dir();
+        let mut request = rustfs.clone();
+        request["previous"] =
+            json!({"identity":identity,"process_receipt":binding(previous).unwrap()});
+        let (restart, _) =
+            state::begin(&copy.run, "storage-target", "restart", &json!({})).unwrap();
+        state::finish(
+            &copy.run,
+            restart,
+            Some(&json!({"status":"storage_restarted","fixture_handoff":receipt})),
+            None,
+        )
+        .unwrap();
+        let observed = rustfs_handoff(&backend, &copy.run, manifest, &request, false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(&observed.binding, receipt);
+        request["data_directory"]["inode"] = json!(3);
+        assert!(rustfs_handoff(&backend, &copy.run, manifest, &request, false).is_err());
+    }
+
+    fn windows_redis_origin(fixture: &Fixture) -> Value {
+        let directory = fixture.run.join("redis");
+        fs::create_dir(&directory).unwrap();
+        let tool = json!({"platform":"windows","path":"D:/tools/redis-server.exe","sha256":"a".repeat(64),
+        "version":"Redis server v=7.4.11 bits=64","dlls":{"cygwin1.dll":"b".repeat(64)}});
+        let request = json!({"format_version":3,"tool":tool,"configuration":{"path":directory.join("redis.conf")},
+        "previous_identity":null,"previous_run_id":null,"port":16390});
+        json_io::write_new(&directory.join("request.json"), &request).unwrap();
+        let runtime = windows_redis_runtime(&directory, &request, 200, 'a');
+        let result = state::result_path(&fixture.run, 2);
+        json_io::write_replace(
+        &result,
+        &json!({"service":"redis","request_sha256":runtime["request_sha256"],"runtime":runtime}),
+    )
+    .unwrap();
+        let state_path = fixture.run.join("state.json");
+        let mut state = read(&state_path).unwrap();
+        state["attempts"][1]["result"] = binding(&result).unwrap();
+        json_io::write_replace(&state_path, &state).unwrap();
+        binding(&directory.join("runtime.json")).unwrap()
+    }
+
+    fn windows_redis_runtime(directory: &Path, request: &Value, pid: u32, digit: char) -> Value {
+        let process =
+            json!({"pid":pid,"started":pid.to_string(),"executable":request["tool"]["path"]});
+        let runtime = json!({"format_version":3,"output":directory,"request_sha256":digest::plan_hash(request).unwrap(),
+        "supervisor":{"pid":pid+20,"started":(pid+20).to_string(),"executable":request["tool"]["path"]},
+        "process":process,"redis":{"platform":"windows","tool":request["tool"],"pid":pid,"port":request["port"],
+        "started":process["started"],"run_id":digit.to_string().repeat(40)}});
+        json_io::write_new(&directory.join("runtime.json"), &runtime).unwrap();
+        runtime
+    }
+
+    fn external_generation(fixture: &Fixture, tree: &Path, redis: &Value) -> Value {
+        let number = 4;
+        let output = fixture.run.join(format!("lifecycle-{number:04}"));
+        let evidence = output.join("external-termination.json");
+        let ready = tree.with_file_name("rustfs-test-ready.json");
+        json_io::write_new(&ready, &json!({"ready":true})).unwrap();
+        let owner = binding(&fixture.run.join("state.json")).unwrap();
+        let cache = read(Path::new(redis["path"].as_str().unwrap())).unwrap();
+        json_io::write_new(&evidence, &json!({"format_version":2,"kind":"reference-fixture-external-termination",
+        "run":fixture.run,"owner":owner,"normal_shutdown_proof":null,"remote_writes":0,"resources_deleted":false,
+        "observation":{"status":"external-termination-unreconciled","normal_shutdown_proof":null,
+        "identities":{"supervisor":"missing","monitor":"missing","process":"missing"},
+        "evidence":{"rustfs_tree":binding(tree).unwrap(),"redis_runtime":redis,"rustfs_monitor_ready":binding(&ready).unwrap(),
+        "redis_external":{"kind":"windows-redis-external-termination","runtime":redis,"supervisor":cache["supervisor"],
+            "process":cache["process"],"port":cache["redis"]["port"],"normal_job_exit_proof":null}}}})).unwrap();
+        assert_eq!(
+        fixture.stage("recover", Some(&json!({"kind":"reference-fixture-service-lifecycle","operation":"recover",
+            "run":fixture.run,"remote_writes":0,"resources_deleted":false,"status":"external_termination_reconciled",
+            "owner":owner,"evidence":binding(&evidence).unwrap()}))),
+        number,
+    );
+        binding(&state::result_path(&fixture.run, number)).unwrap()
+    }
+
+    fn successor_generation(
+        fixture: &Fixture,
+        rustfs: &Value,
+        redis: &Value,
+        predecessor: &Value,
+    ) -> (Value, Value) {
+        let previous = fixture.history()["active_generation"].clone();
+        let sources = json!({"manifest":binding(&fixture.run.join("manifest.json")).unwrap(),
+        "state_before":binding(&fixture.run.join("state.json")).unwrap(),"restart_predecessor":predecessor});
+        let owner =
+            crate::recovery::clone::native::lifecycle::lock::RunLock::claim(&fixture.run).unwrap();
+        let (number, attempt) = state::begin(&fixture.run, STAGE, "restart", &sources).unwrap();
+        state::bind_controller(&fixture.run, number, &owner.owner, &attempt).unwrap();
+        let controller = binding(&state::controller_path(&fixture.run, number)).unwrap();
+        let root = fixture.run.join(format!("lifecycle-{number:04}"));
+        let storage = root.join("rustfs");
+        let cache = root.join("redis");
+        fs::create_dir_all(&storage).unwrap();
+        fs::create_dir(&cache).unwrap();
+        let tree = json!({"format_version":2,"runtime_directory":storage,"role":"rustfs",
+        "scope_id":"fixture-test","operation_id":"d".repeat(32),"supervisor":{"pid":210},"monitor":{"pid":211},"process":{"pid":212}});
+        for (name, value) in [
+            ("request.json", rustfs.clone()),
+            ("rustfs-tree.json", tree.clone()),
+            ("process.json", json!({"identity":tree["process"]})),
+            ("launch.json", json!({"fixture":true})),
+        ] {
+            json_io::write_new(&storage.join(name), &value).unwrap();
+        }
+        let original = read(Path::new(redis["path"].as_str().unwrap())).unwrap();
+        let mut request = read(&fixture.run.join("redis/request.json")).unwrap();
+        request["previous_identity"] = original["process"].clone();
+        request["previous_run_id"] = original["redis"]["run_id"].clone();
+        json_io::write_new(&cache.join("request.json"), &request).unwrap();
+        let runtime = windows_redis_runtime(&cache, &request, 201, 'b');
+        let generation = root.join("restart.json");
+        json_io::write_new(&generation, &json!({"format_version":1,"kind":"reference-fixture-service-generation",
+        "run":fixture.run,"attempt":number,"owner":sources["state_before"],"predecessor":predecessor,
+        "previous_generation":previous,"controller":controller,"services":{"redis":"running","rustfs":"running"},
+        "remote_writes":0,"resources_deleted":false,
+        "rustfs":{"request":binding(&storage.join("request.json")).unwrap(),"storage":{
+            "identity":tree["process"],"sha256":rustfs["executable"]["sha256"],
+            "process_receipt":binding(&storage.join("process.json")).unwrap(),
+            "launch_receipt":binding(&storage.join("launch.json")).unwrap(),"tree":binding(&storage.join("rustfs-tree.json")).unwrap()}},
+        "redis":{"request":binding(&cache.join("request.json")).unwrap(),"runtime":runtime}})).unwrap();
+        state::finish(
+            &fixture.run,
+            number,
+            Some(&json!({"kind":"reference-fixture-service-lifecycle",
+        "operation":"restart","run":fixture.run,"remote_writes":0,"resources_deleted":false,
+        "status":"services_restarted","services":{"rustfs":"running","redis":"running"},
+            "generation":binding(&generation).unwrap(),"controller":controller})),
+            None,
+        )
+        .unwrap();
+        owner.release().unwrap();
+        assert_eq!(
+            fixture.history()["active_generation"],
+            binding(&state::result_path(&fixture.run, number)).unwrap()
+        );
+        (tree, binding(&cache.join("runtime.json")).unwrap())
+    }
 }
 
 #[test]

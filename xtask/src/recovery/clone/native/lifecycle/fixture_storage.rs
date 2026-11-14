@@ -3,7 +3,13 @@ use super::{bound_file, exact, json_io, text};
 use crate::{
     Result,
     local_test_path::{LocalTestPathKind, validate_local_test_path},
-    recovery::{clone::native::lifecycle::state, fixture_control::services::history},
+    recovery::{
+        clone::native::{
+            lifecycle::{lock::ProcessGuard, state},
+            resources::common,
+        },
+        fixture_control::services::{history, lifecycle::readonly::NativeRuntime},
+    },
 };
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -32,14 +38,57 @@ impl Fixture {
     }
 }
 
-/// 以原 RustFS 进程收据定位夹具，已移交时只允许接续指定复制账本。
+pub(in crate::recovery) struct RustfsHandoff {
+    pub(in crate::recovery) binding: Value,
+    service: PathBuf,
+    state: Value,
+    stopped: Value,
+    registration: Value,
+    selected: history::handoff::Selected,
+    completion: Value,
+}
+
+impl RustfsHandoff {
+    pub(in crate::recovery) fn lock(&self) -> Result<ProcessGuard> {
+        ProcessGuard::acquire(&self.service)
+    }
+
+    pub(in crate::recovery) fn check(&self, backend: &Path) -> Result<()> {
+        for binding in [
+            &self.state,
+            &self.binding,
+            &self.stopped,
+            &self.selected.redis_binding,
+            &self.registration,
+            &self.selected.tree_binding,
+            &self.selected.request_binding,
+            &self.completion,
+        ] {
+            common::bound_file(backend, binding, "RustFS 接续原移交或关闭收据")?;
+        }
+        Ok(())
+    }
+
+    pub(in crate::recovery) fn require_stopped(&self, backend: &Path) -> Result<()> {
+        for role in ["supervisor", "monitor", "process"] {
+            common::require_recorded_stopped(&self.selected.tree[role])?;
+        }
+        let mut runtime = NativeRuntime::new(backend);
+        if runtime.complete_registered_tree(&self.selected.tree)? != self.completion {
+            return Err("RustFS 接续前的完整关闭证明与移交收据不同".into());
+        }
+        Ok(())
+    }
+}
+
+/// 以原 RustFS 收据定位夹具，以活动代次和移交证明核定实际停止的进程树。
 pub(in crate::recovery) fn rustfs_handoff(
     backend: &Path,
     copy: &Path,
+    copy_manifest: &Value,
     request: &Value,
-) -> Result<Option<Value>> {
-    use crate::recovery::clone::native::resources::common;
-
+    require_open: bool,
+) -> Result<Option<RustfsHandoff>> {
     let process = &request["previous"]["process_receipt"];
     let path = bound_file(backend, process, "存储重启原进程收据", true)?;
     let Some(service) = path
@@ -64,35 +113,115 @@ pub(in crate::recovery) fn rustfs_handoff(
     let fixture = history::validate(service, &value, true, true)?;
     let descriptor = &fixture["rustfs_handoff"];
     if descriptor.is_null() {
+        if fixture["active_generation"]["kind"] != "initial" {
+            return Err("已重启的夹具 RustFS 必须先移交至原复制账本".into());
+        }
         return Ok(None);
     }
+    let generation = &fixture["active_generation"];
+    let registration =
+        verify_fresh_origin(backend, service, &manifest_path, &manifest, copy_manifest)?;
     let handoff = common::read_bound(backend, descriptor, "RustFS 移交结果")?;
     if Path::new(text(&handoff["copy_state"]["path"], "移交复制账本")?) != copy.join("state.json")
     {
         return Err("RustFS 已移交其他复制账本".into());
     }
     let observed = state::historical(copy, &handoff["copy_state"], true)?;
-    let proof = common::read_bound(
-        backend,
-        &handoff["evidence"]["rustfs"],
-        "RustFS 移交整树收据",
-    )?;
+    let stopped = &handoff["evidence"]["rustfs"];
+    let proof = common::read_bound(backend, stopped, "RustFS 移交整树收据")?;
     let last = observed["historical_attempts"]
         .as_u64()
         .and_then(|count| count.checked_sub(1))
         .and_then(|index| usize::try_from(index).ok())
         .and_then(|index| observed["state"]["attempts"].get(index))
         .ok_or("RustFS 移交的复制账本前缀无关闭结果")?;
-    if fixture["closed"] != false
+    let selected = history::handoff::selected(service, generation)?;
+    if (require_open && fixture["closed"] != false)
         || value["manifest"] != common::binding(&manifest_path)?
+        || last["stage"] != "seed-runtime"
+        || last["mode"] != "close"
+        || last["status"] != "passed"
         || last["result"] != handoff["seed_close"]
-        || proof["tree"]["process"] != request["previous"]["identity"]
+        || proof["tree"] != selected.tree
+        || !selected.matches_redis(&handoff["evidence"]["redis"])?
+        || (generation["kind"] == "initial"
+            && proof["tree"]["process"] != request["previous"]["identity"])
         || proof["data_directory"] != request["data_directory"]
+        || !same_storage(&selected.rustfs_request, request)
         || common::binding(&service.join("state.json"))? != current
+        || common::binding(&copy.join("state.json"))? != observed["current"]
     {
         return Err("RustFS 重启的原代次、数据目录或移交账本不一致".into());
     }
-    Ok(Some(descriptor.clone()))
+    Ok(Some(RustfsHandoff {
+        binding: descriptor.clone(),
+        service: service.to_owned(),
+        state: current,
+        stopped: stopped.clone(),
+        registration,
+        selected,
+        completion: proof["completion"].clone(),
+    }))
+}
+
+fn same_storage(registered: &Value, request: &Value) -> bool {
+    ["scope_id", "api_url", "console_url", "credential_files"]
+        .iter()
+        .all(|field| registered[*field] == request[*field])
+        && ["path", "sha256"]
+            .iter()
+            .all(|field| registered["executable"][*field] == request["executable"][*field])
+}
+
+fn verify_fresh_origin(
+    backend: &Path,
+    service: &Path,
+    manifest_path: &Path,
+    manifest: &Value,
+    copy_manifest: &Value,
+) -> Result<Value> {
+    let initial = common::bound_file(backend, &copy_manifest["initialized"], "接续的原初始化")?;
+    let target = initial.parent().ok_or("接续的原初始化缺少目标目录")?;
+    let workspace = target.parent().ok_or("接续的原初始化缺少登记目录")?;
+    let path = common::common_file(
+        backend,
+        &workspace.join("registration.json"),
+        "接续的原 fresh 登记",
+    )?;
+    let binding = common::binding(&path)?;
+    let registration = common::read_bound(backend, &binding, "接续的原 fresh 登记")?;
+    let origin = exact(
+        &registration["storage_run"],
+        &["path", "manifest", "state"],
+        "接续的原夹具登记",
+    )?;
+    let frozen = crate::recovery::clone::native::resources::origin::initialized(
+        backend,
+        &copy_manifest["initialized"],
+    )?;
+    let review = &frozen.request["review"];
+    if registration["format_version"] != 1
+        || registration["kind"] != "devex-clone-fresh-target-registration"
+        || registration["target_directory"] != json!(target)
+        || registration["environment"] != copy_manifest["target_environment"]
+        || frozen.request["side"] != "seed"
+        || origin["path"] != json!(service)
+        || origin["manifest"] != common::binding(manifest_path)?
+        || manifest["review"]
+            != json!({"path":review["path"],"bytes":review["bytes"],"sha256":review["sha256"]})
+        || common::binding(&path)? != binding
+    {
+        return Err("RustFS 接续未绑定同一原初始化及原夹具登记".into());
+    }
+    let prefix = state::historical(service, &origin["state"], true)?;
+    if prefix["historical_attempts"]
+        .as_u64()
+        .is_none_or(|number| number < 3)
+        || common::binding(&path)? != binding
+    {
+        return Err("RustFS 接续缺少原夹具首代追加历史".into());
+    }
+    Ok(binding)
 }
 
 /// None 只表示摘要已核定的清单不是夹具服务清单。
