@@ -213,6 +213,9 @@ fn run_policy_checks(context: &VerifyExecutionContext, profile: PolicyProfile) -
             PolicyTaskInvocation::MigrationHistory => {
                 run_migration_history_check(&context.root, false, "HEAD")?;
             }
+            PolicyTaskInvocation::FullStackWorkflow => {
+                super::super::full_stack_workflow::run(&context.root)?;
+            }
         }
     }
     Ok(())

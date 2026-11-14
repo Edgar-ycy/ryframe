@@ -20,6 +20,8 @@ pub(crate) mod deployment_assets;
 mod execution;
 #[path = "check/feature.rs"]
 mod feature;
+#[path = "check/full_stack_workflow.rs"]
+mod full_stack_workflow;
 #[path = "check/language.rs"]
 pub(crate) mod language;
 #[path = "check/metrics.rs"]

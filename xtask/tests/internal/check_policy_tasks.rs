@@ -12,7 +12,7 @@ fn policy_tasks_have_unique_ids() {
 }
 
 #[test]
-fn smart_and_ci_profiles_reuse_the_same_policy_task_definitions() {
+fn full_and_ci_preflight_run_the_full_stack_workflow_policy() {
     let definitions = |profile| {
         policy_tasks(profile)
             .into_iter()
@@ -22,11 +22,23 @@ fn smart_and_ci_profiles_reuse_the_same_policy_task_definitions() {
 
     assert_eq!(
         definitions(PolicyProfile::FullStatic),
-        [("supply-chain", PolicyTaskInvocation::SupplyChain)]
+        [
+            ("supply-chain", PolicyTaskInvocation::SupplyChain),
+            (
+                "full-stack-workflow",
+                PolicyTaskInvocation::FullStackWorkflow
+            ),
+        ]
     );
     assert_eq!(
         definitions(PolicyProfile::Smart),
         [("migration-history", PolicyTaskInvocation::MigrationHistory)]
     );
-    assert_eq!(definitions(PolicyProfile::CiPreflight), []);
+    assert_eq!(
+        definitions(PolicyProfile::CiPreflight),
+        [(
+            "full-stack-workflow",
+            PolicyTaskInvocation::FullStackWorkflow
+        )]
+    );
 }
