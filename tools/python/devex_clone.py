@@ -5,7 +5,6 @@ import os
 from dataclasses import dataclass
 import json
 from pathlib import Path
-import sys
 from weakref import WeakKeyDictionary
 
 import devex_clone_model
@@ -164,72 +163,3 @@ def write_plan(backend: Path, filename: str, output: str) -> dict:
 def verify_plan(backend: Path, filename: str) -> dict:
     """公开只读核验始终完整解析；复用只通过进程内明确组合参数传递。"""
     return verify_plan_result(backend, filename).plan
-
-
-def _run_private_protocol(protocol, actual_argv, decoder, protocol_error, label, dispatch) -> int:
-    if actual_argv:
-        print(f"{label} 私有协议不接受 argv", file=sys.stderr)
-        return 2
-    try:
-        backend, args = decoder(protocol)
-        from rate_limit_tool import install_binding
-
-        install_binding(json.dumps(args.native_tool, ensure_ascii=False))
-    except (protocol_error, ValueError, UnicodeError, RecursionError) as error:
-        print(f"{label} 私有协议无效：{error}", file=sys.stderr)
-        return 2
-    try:
-        backend = backend.resolve(strict=True)
-        print(json.dumps(dispatch(args, backend), ensure_ascii=False))
-        return 0
-    except (OSError, ValueError, KeyError, TypeError) as error:
-        print(f"开发复制未完成：{type(error).__name__}", file=sys.stderr)
-        return 1
-
-
-def main(argv=None) -> int:
-    from devex_clone_run_cli import (
-        SEED_SOURCE_PROTOCOL_KIND, STAGE_PROTOCOL_KIND,
-        decode_clone_stage_protocol,
-        decode_seed_source_protocol, dispatch, dispatch_stage_operation,
-    )
-    from devex_clone_protocol import (
-        CloneProtocolError, PROTOCOL_KIND, decode as decode_clone_protocol, read_private_stdin,
-    )
-    actual_argv = sys.argv[1:] if argv is None else list(argv)
-    if actual_argv != ["--private-stdin"]:
-        print("开发复制脚本只接受私有 --private-stdin", file=sys.stderr)
-        return 2
-    try:
-        kind, source = read_private_stdin(sys.stdin.buffer)
-        handlers = {
-            SEED_SOURCE_PROTOCOL_KIND: (decode_seed_source_protocol, dispatch),
-            STAGE_PROTOCOL_KIND: (decode_clone_stage_protocol, dispatch_stage_operation),
-        }
-        if kind != PROTOCOL_KIND:
-            if kind not in handlers:
-                raise CloneProtocolError("复制私有 stdin 类型不受支持")
-            decoder, handler = handlers[kind]
-            return _run_private_protocol(source, [], decoder, ValueError, "复制", handler)
-    except (ValueError, OSError, RecursionError) as error:
-        print(f"开发复制私有协议无效：{type(error).__name__}", file=sys.stderr)
-        return 2
-    def clone_dispatch(args, backend):
-        if args.command == "plan":
-            result = write_plan(backend, args.input, args.output)
-        elif args.command == "verify":
-            result = verify_plan(backend, args.plan)
-        else:
-            return dispatch(args, backend)
-        return {"status": result["status"], "plan_sha256": result["plan_sha256"],
-                "pending_target_actions": len(result["pending_target_actions"]), "target_ready": False,
-                "worker_must_remain_stopped": True, "execution_authorized": False,
-                "resources_modified": False}
-    return _run_private_protocol(
-        source, [], decode_clone_protocol, CloneProtocolError,
-        "clone", clone_dispatch,
-    )
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

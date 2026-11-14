@@ -1,14 +1,11 @@
 import copy
-from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from decimal import Decimal
 import hashlib
-from io import StringIO
 import json
 import os
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 import unittest
 from workspace_directory import WorkspaceDirectory
@@ -16,8 +13,6 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from devex_clone import read_json, verify_plan, write_plan
-import devex_clone
-import devex_clone_protocol
 from artifact_digests import filesystem_path
 from devex_clone_model import create_plan, local_path, object_plan
 from devex_clone_rows import EXCLUDED, rows, reject_physical, schema_catalog, validate_state
@@ -340,47 +335,6 @@ TenantDataTableDescriptor { table: \"biz_order\", tenant_column: \"tenant_id\", 
             stream.write("\nCREATE TABLE IF NOT EXISTS `sys_future_queue` (\n    `id` BIGINT\n) ENGINE=InnoDB;\n")
         with self.assertRaisesRegex(ValueError, "白名单不同"):
             create_plan(self.value, self.backend)
-
-    def test_cli_requires_write_and_verify_does_not_change_evidence(self):
-        filename = self.backend / ".local-tests/input.json"
-        filename.write_text(json.dumps(self.value), encoding="utf-8")
-        output = self.backend / ".local-tests/plan.json"
-        command = [sys.executable, "-X", "utf8", str(REPO / "tools/python/devex_clone.py")]
-        arguments = ["plan", "--backend-dir", str(self.backend), "--input", str(filename), "--output", str(output)]
-        denied = subprocess.run([*command, *arguments], capture_output=True, text=True, encoding="utf-8", timeout=15)
-        self.assertEqual(denied.returncode, 2)
-        self.assertFalse(output.exists())
-        def private_input(name, options, write):
-            from io import BytesIO
-            from types import SimpleNamespace
-            from rate_limit_tool import tool_binding
-            value = {"format_version": 1, "kind": "ryframe-xtask-recovery-clone",
-                "native_tool": tool_binding(),
-                "request": {"backend_dir": str(self.backend), "command": name,
-                            "effect": devex_clone_protocol.effect(name, options),
-                            "options": options, "write": write}}
-            return SimpleNamespace(buffer=BytesIO(json.dumps(value).encode("utf-8")))
-        protocol_file = self.backend / "tools/python/devex_clone_protocol.py"
-        prepared_output = StringIO()
-        with patch("sys.stdin", private_input(
-                "plan", {"input": str(filename), "output": str(output)}, True)), \
-                patch.object(devex_clone_protocol, "__file__", str(protocol_file)), \
-                patch("rate_limit_tool.install_binding"), \
-                redirect_stdout(prepared_output):
-            self.assertEqual(devex_clone.main(["--private-stdin"]), 0)
-        prepared = json.loads(prepared_output.getvalue())
-        self.assertFalse(prepared["execution_authorized"])
-        before = {path: file_digest(path) for path in self.backend.rglob("*") if path.is_file()}
-        verified_output = StringIO()
-        with patch("sys.stdin", private_input(
-                "verify", {"plan": str(output)}, False)), \
-                patch.object(devex_clone_protocol, "__file__", str(protocol_file)), \
-                patch("rate_limit_tool.install_binding"), \
-                redirect_stdout(verified_output):
-            self.assertEqual(devex_clone.main(["--private-stdin"]), 0)
-        verified = json.loads(verified_output.getvalue())
-        self.assertEqual(before, {path: file_digest(path) for path in self.backend.rglob("*") if path.is_file()})
-        self.assertEqual(prepared, verified)
 
     def schedule(self):
         row = self.add("shared-control", "sys_job_schedule", id=3, tenant_id="system", name="数据保留清理",
