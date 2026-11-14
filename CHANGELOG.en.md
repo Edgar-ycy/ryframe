@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove the Python private stdin entry point for development cloning and its protocol tests. The formal Rust entry point retains coverage for write authorization, read-only plan verification, source operations, and prevention of replay after failure.
+
 - Test fresh-target request issuance against per-side configuration files, the shared seed service generation, rejected credentials and ledger bindings, and exclusive publication. Remove the Python request and private protocol used only by the retired tests and keep the independent service lifecycle tests.
 
 - Remove the unused Python runtime controller lock module. Formal recovery uses Rust to acquire controller locks, verify ownership, and recover locks after interruption.

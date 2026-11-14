@@ -1,16 +1,10 @@
 """统一开发复制入口的参数与编排；真实结果由阶段工具产生。"""
-import json
 from pathlib import Path
-from types import SimpleNamespace
-
-from rate_limit_tool import parse_binding
 
 from devex_clone_capture import read_json
 from devex_clone_model import local_path
 from devex_clone_run import execute
 
-SEED_SOURCE_PROTOCOL_KIND = "ryframe-xtask-recovery-seed-source"
-STAGE_PROTOCOL_KIND = "ryframe-xtask-recovery-clone-stage"
 SEED_SOURCE_OPERATIONS = {
     "source-generation-start",
     "source-generation-stop", "source-generation-status",
@@ -24,166 +18,6 @@ SEED_RUNTIME_OPERATIONS = SEED_SOURCE_OPERATIONS | {
     "identities-apply", "identities-verify", "prepare", "close",
     "recover-session",
 }
-SEED_SOURCE_REQUEST_OPERATIONS = {
-    "source-generation-start", "source-generation-stop",
-    "source-generation-recover", "source-generation-reboot-close",
-}
-
-
-class SeedSourceProtocolError(ValueError):
-    """表示 xtask 与 seed 来源阶段之间的协议输入无效。"""
-
-
-class StageProtocolError(ValueError):
-    """表示 xtask 与阶段资源执行子进程之间的协议输入无效。"""
-
-
-def _seed_strict_object(pairs):
-    value = {}
-    for key, item in pairs:
-        if key in value:
-            raise SeedSourceProtocolError(f"seed source 私有协议字段重复：{key}")
-        value[key] = item
-    return value
-
-
-def _seed_exact_keys(value, expected, label):
-    if not isinstance(value, dict) or set(value) != set(expected):
-        raise SeedSourceProtocolError(f"seed source 私有协议 {label} 字段不匹配")
-
-
-def _seed_protocol_path(value, name, *, optional=False):
-    if optional and value is None:
-        return None
-    if (not isinstance(value, str) or not value.strip()
-            or any(character in value for character in ("\r", "\n", "\0"))):
-        raise SeedSourceProtocolError(f"seed source 私有协议 {name} 必须是有效路径")
-    path = Path(value)
-    if not path.is_absolute():
-        raise SeedSourceProtocolError(f"seed source 私有协议 {name} 必须是绝对路径")
-    return path
-
-
-def decode_seed_source_protocol(source: str):
-    """严格解码正式 seed 来源链请求；路径的最终 ownership 由 dispatch 再核验。"""
-    if (not isinstance(source, str) or not source or len(source.encode("utf-8")) > 32 * 1024
-            or any(character in source for character in ("\r", "\n", "\0"))):
-        raise SeedSourceProtocolError("seed source 私有协议为空、过长或包含换行/NUL")
-    try:
-        value = json.loads(source, object_pairs_hook=_seed_strict_object)
-    except (json.JSONDecodeError, TypeError) as error:
-        raise SeedSourceProtocolError("seed source 私有协议不是有效 JSON") from error
-    _seed_exact_keys(value, {"format_version", "kind", "native_tool", "request"}, "根")
-    if (type(value["format_version"]) is not int or value["format_version"] != 1
-            or value["kind"] != SEED_SOURCE_PROTOCOL_KIND):
-        raise SeedSourceProtocolError("seed source 私有协议版本或类型不受支持")
-    try:
-        native_tool = parse_binding(json.dumps(value["native_tool"], ensure_ascii=False))
-    except (ValueError, TypeError):
-        raise SeedSourceProtocolError("seed source 私有协议 native_tool 无效") from None
-    request = value["request"]
-    _seed_exact_keys(
-        request,
-        {"backend_dir", "operation", "run_dir", "request", "write"},
-        "request",
-    )
-    operation = request["operation"]
-    if not isinstance(operation, str) or operation not in SEED_SOURCE_OPERATIONS:
-        raise SeedSourceProtocolError("seed source 私有协议 operation 无效")
-    if not isinstance(request["write"], bool):
-        raise SeedSourceProtocolError("seed source 私有协议 write 必须是布尔值")
-    supplied = request["request"] is not None
-    if supplied != (operation in SEED_SOURCE_REQUEST_OPERATIONS):
-        raise SeedSourceProtocolError("seed source 私有协议 request 与操作不匹配")
-    read_only = operation in {"source-generation-status", "source-generation-reboot-status"}
-    if request["write"] == read_only:
-        raise SeedSourceProtocolError("seed source 私有协议 write 与操作不匹配")
-    backend = _seed_protocol_path(request["backend_dir"], "backend_dir")
-    arguments = SimpleNamespace(
-        command="seed-runtime",
-        native_tool=native_tool,
-        operation=operation,
-        run_dir=_seed_protocol_path(request["run_dir"], "run_dir"),
-        request=_seed_protocol_path(request["request"], "request", optional=True),
-        producer_binding=None,
-        write=request["write"],
-    )
-    return backend, arguments
-
-
-def _stage_strict_object(pairs):
-    value = {}
-    for key, item in pairs:
-        if key in value:
-            raise StageProtocolError(f"clone stage 私有协议字段重复：{key}")
-        value[key] = item
-    return value
-
-
-def _stage_exact(value, fields, label):
-    if not isinstance(value, dict) or set(value) != set(fields):
-        raise StageProtocolError(f"clone stage 私有协议 {label} 字段不匹配")
-
-
-def _stage_path(value, label):
-    if (not isinstance(value, str) or not value.strip()
-            or any(character in value for character in ("\r", "\n", "\0"))):
-        raise StageProtocolError(f"clone stage 私有协议 {label} 必须是有效路径")
-    path = Path(value)
-    if not path.is_absolute() or any(part in {".", ".."} for part in value.replace("\\", "/").split("/")):
-        raise StageProtocolError(f"clone stage 私有协议 {label} 必须是绝对路径")
-    return path
-
-
-def decode_clone_stage_protocol(source: str):
-    """严格解码 Rust 生命周期状态机交给未迁移资源编排的单一请求。"""
-    if (not isinstance(source, str) or not source or len(source.encode("utf-8")) > 32 * 1024
-            or any(character in source for character in ("\r", "\n", "\0"))):
-        raise StageProtocolError("clone stage 私有协议为空、过长或包含换行/NUL")
-    try:
-        value = json.loads(source, object_pairs_hook=_stage_strict_object)
-    except (json.JSONDecodeError, TypeError) as error:
-        raise StageProtocolError("clone stage 私有协议不是有效 JSON") from error
-    _stage_exact(value, {"format_version", "kind", "native_tool", "request"}, "根")
-    if (type(value["format_version"]) is not int or value["format_version"] != 1
-            or value["kind"] != STAGE_PROTOCOL_KIND):
-        raise StageProtocolError("clone stage 私有协议版本或类型不受支持")
-    try:
-        native_tool = parse_binding(json.dumps(value["native_tool"], ensure_ascii=False))
-    except (ValueError, TypeError):
-        raise StageProtocolError("clone stage 私有协议 native_tool 无效") from None
-    request = value["request"]
-    _stage_exact(
-        request,
-        {"backend_dir", "run_dir", "stage", "mode", "operation", "attempt", "write"},
-        "request",
-    )
-    if not isinstance(request["stage"], str) or request["stage"] != "copy":
-        raise StageProtocolError("clone stage 私有协议 stage 无效")
-    if not isinstance(request["mode"], str) or request["mode"] not in {"run", "reconcile", "resume"}:
-        raise StageProtocolError("clone stage 私有协议 mode 无效")
-    if not isinstance(request["operation"], str) or request["operation"] not in {"preflight", "run"}:
-        raise StageProtocolError("clone stage 私有协议 operation 无效")
-    attempt = request["attempt"]
-    if request["operation"] == "preflight":
-        if attempt is not None or request["write"] is not False:
-            raise StageProtocolError("clone stage 预检不接受 attempt 或 --write")
-    elif type(attempt) is not int or attempt <= 0 or request["write"] is not True:
-        raise StageProtocolError("clone stage 执行必须绑定正整数 attempt 和 --write")
-    backend = _stage_path(request["backend_dir"], "backend_dir")
-    expected = Path(__file__).resolve().parents[2]
-    if str(backend.resolve()) != str(expected):
-        raise StageProtocolError("clone stage 私有协议 backend_dir 不是当前后端")
-    return backend, SimpleNamespace(
-        command="stage-operation",
-        native_tool=native_tool,
-        run_dir=_stage_path(request["run_dir"], "run_dir"),
-        stage=request["stage"],
-        mode=request["mode"],
-        operation=request["operation"],
-        attempt=attempt,
-        write=request["write"],
-    )
 
 
 def evidence_path(backend: Path, value: Path, *, new: bool = False) -> Path:
@@ -237,20 +71,3 @@ def dispatch(args, backend: Path) -> dict:
         result = execute(backend, directory, "post-copy", args.operation, producer_binding=producer)
         return {key: result[key] for key in ("status", "stage", "mode", "attempt", "restore_qualified")}
     raise ValueError("未知统一验收命令")
-
-
-def dispatch_stage_operation(args, backend: Path) -> dict:
-    """只执行未迁移的资源编排；attempt、锁、状态发布和来源终检由 Rust 持有。"""
-    if args.command != "stage-operation":
-        raise ValueError("clone stage 子进程命令无效")
-    from devex_clone_run import execute_operation
-
-    directory = evidence_path(backend, args.run_dir)
-    return execute_operation(
-        backend,
-        directory,
-        args.stage,
-        args.mode,
-        args.attempt,
-        preflight=args.operation == "preflight",
-    )
