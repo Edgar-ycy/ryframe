@@ -543,15 +543,24 @@ fn stable_readiness_comparison_reports_and_enforces_adapter_provenance() {
     );
     assert_eq!(
         comparison["baselineProvenance"]["patch_sha256"],
-        format!("sha256:{}", crate::recovery::b0::PATCH_SHA256)
+        BaselineContract::STABLE_READINESS_B0_PATCH_SHA256
+    );
+    assert_eq!(
+        comparison["baselineProvenance"]["adapter_commit"],
+        BaselineContract::STABLE_READINESS_B0_ADAPTER_COMMIT
     );
 
+    let command_provenance = comparison["baselineProvenance"].clone();
     for run in [&baseline, &candidate] {
         let metadata_path = run.join("metadata.json");
         let mut metadata: serde_json::Value =
             serde_json::from_slice(&fs::read(&metadata_path).unwrap()).unwrap();
-        metadata["pairing"]["baseline_provenance"]["adapter_commit"] =
-            serde_json::json!("1111111111111111111111111111111111111111");
+        let provenance = &mut metadata["pairing"]["baseline_provenance"];
+        provenance["adapter_commit"] = serde_json::json!(crate::recovery::b0::COMMIT);
+        provenance["adapter_tree"] = serde_json::json!(crate::recovery::b0::TREE);
+        provenance["patch_sha256"] =
+            serde_json::json!(format!("sha256:{}", crate::recovery::b0::PATCH_SHA256));
+        provenance["adapter_paths"] = serde_json::json!(crate::recovery::b0::PATHS);
         fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
     }
     let error = compare(&baseline, &candidate).unwrap_err().to_string();
@@ -561,8 +570,7 @@ fn stable_readiness_comparison_reports_and_enforces_adapter_provenance() {
         let metadata_path = run.join("metadata.json");
         let mut metadata: serde_json::Value =
             serde_json::from_slice(&fs::read(&metadata_path).unwrap()).unwrap();
-        metadata["pairing"]["baseline_provenance"]["adapter_commit"] =
-            serde_json::json!(crate::recovery::b0::COMMIT);
+        metadata["pairing"]["baseline_provenance"] = command_provenance.clone();
         fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
     }
 
@@ -573,7 +581,8 @@ fn stable_readiness_comparison_reports_and_enforces_adapter_provenance() {
     fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
     let error = compare(&baseline, &candidate).unwrap_err().to_string();
     assert!(error.contains("实际 B0 源码身份不一致"), "{error}");
-    metadata["backend"]["commit"] = serde_json::json!(crate::recovery::b0::COMMIT);
+    metadata["backend"]["commit"] =
+        serde_json::json!(BaselineContract::STABLE_READINESS_B0_ADAPTER_COMMIT);
     fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
 
     for run in [&baseline, &candidate] {
@@ -787,34 +796,34 @@ fn fake_stable_readiness_run(name: &str, arm: PairedArm) -> PathBuf {
     metadata["features"] = serde_json::json!(["resource"]);
     metadata["frontend"] = serde_json::json!({
         "commit": if arm == PairedArm::Baseline {
-            crate::recovery::b0::FRONTEND
+            BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT
         } else {
             "1111111111111111111111111111111111111111"
         },
         "dirty": false,
         "worktree_fingerprint": if arm == PairedArm::Baseline {
-            clean_source_fingerprint(crate::recovery::b0::FRONTEND)
+            clean_source_fingerprint(BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT)
         } else {
             format!("sha256:frontend-{}", arm.as_str())
         },
     });
     if arm == PairedArm::Baseline {
         metadata["backend"] = serde_json::json!({
-            "commit": crate::recovery::b0::COMMIT,
+            "commit": BaselineContract::STABLE_READINESS_B0_ADAPTER_COMMIT,
             "dirty": false,
             "worktree_fingerprint": clean_source_fingerprint(
-                crate::recovery::b0::COMMIT
+                BaselineContract::STABLE_READINESS_B0_ADAPTER_COMMIT
             ),
         });
     }
     metadata["pairing"]["baseline_contract"] = serde_json::json!("legacy-stable-readiness-b0-v1");
     metadata["pairing"]["baseline_provenance"] = serde_json::json!({
-        "base_commit": crate::recovery::b0::BACKEND,
-        "adapter_commit": crate::recovery::b0::COMMIT,
-        "patch_sha256": format!("sha256:{}", crate::recovery::b0::PATCH_SHA256),
-        "adapter_tree": crate::recovery::b0::TREE,
-        "frontend_commit": crate::recovery::b0::FRONTEND,
-        "adapter_paths": crate::recovery::b0::PATHS,
+        "base_commit": BaselineContract::STABLE_READINESS_B0_BASE_COMMIT,
+        "adapter_commit": BaselineContract::STABLE_READINESS_B0_ADAPTER_COMMIT,
+        "patch_sha256": BaselineContract::STABLE_READINESS_B0_PATCH_SHA256,
+        "adapter_tree": BaselineContract::STABLE_READINESS_B0_ADAPTER_TREE,
+        "frontend_commit": BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT,
+        "adapter_paths": BaselineContract::STABLE_READINESS_B0_ADAPTER_PATHS,
     });
     fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
 
@@ -826,10 +835,12 @@ fn fake_stable_readiness_run(name: &str, arm: PairedArm) -> PathBuf {
             let mut sample: serde_json::Value = serde_json::from_str(line).unwrap();
             sample["cache_state"] = serde_json::json!("warm");
             if arm == PairedArm::Baseline {
-                sample["source_fingerprints"]["backend"] =
-                    serde_json::json!(clean_source_fingerprint(crate::recovery::b0::COMMIT));
-                sample["source_fingerprints"]["frontend"] =
-                    serde_json::json!(clean_source_fingerprint(crate::recovery::b0::FRONTEND));
+                sample["source_fingerprints"]["backend"] = serde_json::json!(
+                    clean_source_fingerprint(BaselineContract::STABLE_READINESS_B0_ADAPTER_COMMIT)
+                );
+                sample["source_fingerprints"]["frontend"] = serde_json::json!(
+                    clean_source_fingerprint(BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT)
+                );
             } else {
                 sample["source_fingerprints"]["frontend"] =
                     serde_json::json!(format!("sha256:frontend-{}", arm.as_str()));

@@ -19,10 +19,9 @@ pub(super) fn collect(
     if let Some(expected) = contract.required_adapter_commit() {
         require_commit(backend_root, "后端适配", expected, contract)?;
     }
+    require_parent(backend_root, base_commit, contract)?;
     if contract == BaselineContract::LegacyStableReadinessB0V1 {
-        require_b0(backend_root)?;
-    } else {
-        require_parent(backend_root, base_commit, contract)?;
+        require_stable_readiness_trees(backend_root)?;
     }
     require_clean(backend_root, "后端适配", contract)?;
 
@@ -50,18 +49,19 @@ pub(super) fn collect(
         require_commit(
             frontend_root,
             "前端 B0",
-            crate::recovery::b0::FRONTEND,
+            BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT,
             contract,
         )?;
         require_clean(frontend_root, "前端 B0", contract)?;
-        frontend_commit = Some(crate::recovery::b0::FRONTEND.to_owned());
-        require_b0(backend_root)?;
+        frontend_commit = Some(BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT.to_owned());
         require_commit(
             backend_root,
             "后端适配",
-            crate::recovery::b0::COMMIT,
+            BaselineContract::STABLE_READINESS_B0_ADAPTER_COMMIT,
             contract,
         )?;
+        require_parent(backend_root, base_commit, contract)?;
+        require_stable_readiness_trees(backend_root)?;
         require_clean(backend_root, "后端适配", contract)?;
     }
 
@@ -81,27 +81,27 @@ fn validate_stable_readiness_adapter(
     paths: &[String],
     tree: &str,
 ) -> Result<()> {
-    crate::recovery::b0::validate_patch(crate::recovery::b0::PATCH_BYTES)?;
-    if patch_sha256 != format!("sha256:{}", crate::recovery::b0::PATCH_SHA256)
-        || patch != crate::recovery::b0::PATCH_BYTES
+    if sha256(BaselineContract::STABLE_READINESS_B0_ADAPTER_PATCH)
+        != BaselineContract::STABLE_READINESS_B0_PATCH_SHA256
+    {
+        return Err("stable-readiness B0 内嵌适配资产摘要无效".into());
+    }
+    if patch_sha256 != BaselineContract::STABLE_READINESS_B0_PATCH_SHA256
+        || patch != BaselineContract::STABLE_READINESS_B0_ADAPTER_PATCH
     {
         return Err("stable-readiness B0 适配补丁摘要不匹配".into());
     }
-    let expected = crate::recovery::b0::PATHS;
-    if paths
-        .iter()
-        .map(String::as_str)
-        .ne(expected.iter().copied())
-    {
+    let expected = BaselineContract::STABLE_READINESS_B0_ADAPTER_PATHS;
+    if paths.iter().map(String::as_str).ne(expected) {
         return Err(format!(
             "stable-readiness B0 适配超出登记路径：预期 {expected:?}，实际 {paths:?}"
         )
         .into());
     }
-    if tree != crate::recovery::b0::TREE {
+    if tree != BaselineContract::STABLE_READINESS_B0_ADAPTER_TREE {
         return Err(format!(
             "stable-readiness B0 适配树不匹配：预期 {}，实际 {tree}",
-            crate::recovery::b0::TREE
+            BaselineContract::STABLE_READINESS_B0_ADAPTER_TREE
         )
         .into());
     }
@@ -125,9 +125,17 @@ fn require_commit(
     Ok(())
 }
 
-fn require_b0(root: &Path) -> Result<()> {
-    use crate::recovery::b0;
-    for (commit, tree) in [(b0::BACKEND, b0::BASE_TREE), (b0::COMMIT, b0::TREE)] {
+fn require_stable_readiness_trees(root: &Path) -> Result<()> {
+    for (commit, tree) in [
+        (
+            BaselineContract::STABLE_READINESS_B0_BASE_COMMIT,
+            BaselineContract::STABLE_READINESS_B0_BASE_TREE,
+        ),
+        (
+            BaselineContract::STABLE_READINESS_B0_ADAPTER_COMMIT,
+            BaselineContract::STABLE_READINESS_B0_ADAPTER_TREE,
+        ),
+    ] {
         if !git_text(
             root,
             &[
@@ -142,10 +150,6 @@ fn require_b0(root: &Path) -> Result<()> {
             return Err("B0 产品或执行对象存在替换引用或树不匹配".into());
         }
     }
-    git_output(
-        root,
-        &["merge-base", "--is-ancestor", b0::BACKEND, b0::COMMIT],
-    )?;
     Ok(())
 }
 

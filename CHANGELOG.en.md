@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Restore the original B0 command adapter binding for non-runtime DevEx comparisons. Run and report validation check the registered commit, tree, patch digest, and path. Formal recovery continues to use its separately registered B0 database adapter.
+
 - Remove the unused Python wrappers and corresponding private operations for fixture service manifests and initialization prefixes. Formal service operations continue to validate manifests, initialization order, and service history directly in Rust.
 
 - Windows Redis marker recovery for the original `source_to_seed` copy verifies a second restart at the same endpoint when reconciliation binds the preceding nonzero exit. It reuses the original initialization and copy ledger.

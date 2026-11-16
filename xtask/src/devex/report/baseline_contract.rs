@@ -96,7 +96,9 @@ pub(super) fn validate_source_binding(metadata: &RunMetadata) -> Result<()> {
         && (frontend.commit.as_deref() != provenance.frontend_commit.as_deref()
             || frontend.dirty != Some(false)
             || frontend.worktree_fingerprint
-                != clean_worktree_fingerprint(crate::recovery::b0::FRONTEND))
+                != clean_worktree_fingerprint(
+                    BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT,
+                ))
     {
         return Err("legacy-stable-readiness-b0-v1 报告与实际前端 B0 身份不一致".into());
     }
@@ -130,16 +132,18 @@ fn validate_workload_binding(metadata: &RunMetadata, pairing: &PairingMetadata) 
 }
 
 fn valid_stable_readiness_provenance(provenance: &BaselineProvenance) -> bool {
-    provenance.base_commit == crate::recovery::b0::BACKEND
-        && provenance.adapter_commit == crate::recovery::b0::COMMIT
-        && provenance.patch_sha256 == format!("sha256:{}", crate::recovery::b0::PATCH_SHA256)
-        && provenance.adapter_tree.as_deref() == Some(crate::recovery::b0::TREE)
-        && provenance.frontend_commit.as_deref() == Some(crate::recovery::b0::FRONTEND)
+    provenance.base_commit == BaselineContract::STABLE_READINESS_B0_BASE_COMMIT
+        && provenance.adapter_commit == BaselineContract::STABLE_READINESS_B0_ADAPTER_COMMIT
+        && provenance.patch_sha256 == BaselineContract::STABLE_READINESS_B0_PATCH_SHA256
+        && provenance.adapter_tree.as_deref()
+            == Some(BaselineContract::STABLE_READINESS_B0_ADAPTER_TREE)
+        && provenance.frontend_commit.as_deref()
+            == Some(BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT)
         && provenance
             .adapter_paths
             .iter()
             .map(String::as_str)
-            .eq(crate::recovery::b0::PATHS.iter().copied())
+            .eq(BaselineContract::STABLE_READINESS_B0_ADAPTER_PATHS)
 }
 
 fn clean_worktree_fingerprint(commit: &str) -> String {
