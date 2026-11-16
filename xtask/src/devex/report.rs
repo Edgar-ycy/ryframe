@@ -62,6 +62,10 @@ pub(crate) struct ResourceGateDecisionEvidence {
 }
 
 impl ResourceGateDecisionEvidence {
+    pub(super) fn matches_plan(&self, steps: &[String]) -> bool {
+        self.is_targeted() && self.steps == steps
+    }
+
     pub(crate) fn is_valid(&self) -> bool {
         self.is_targeted()
             || (self.format_version == 1

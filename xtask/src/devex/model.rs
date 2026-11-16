@@ -194,6 +194,12 @@ impl DevexSuite {
                 _ => definition.steps,
             };
         }
+        if self == Self::ResourceGate
+            && contract.is_some_and(BaselineContract::uses_common_toolchain)
+            && arm == PairedArm::Baseline
+        {
+            definition.steps = PAIRED_RESOURCE_GATE_B0;
+        }
         Ok(definition)
     }
 
@@ -375,6 +381,12 @@ pub(crate) struct PairingMetadata {
     pub(crate) workload_contract: Option<PairedWorkloadContract>,
 }
 
+impl PairingMetadata {
+    pub(in crate::devex) fn targeted_pair(&self) -> Option<&super::targeted_source::TargetedPair> {
+        self.baseline_provenance.as_ref()?.targeted_pair.as_ref()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DevexPairedOptions {
     pub(crate) check_comparability: bool,
@@ -384,6 +396,7 @@ pub(crate) struct DevexPairedOptions {
     pub(crate) baseline_frontend: Option<PathBuf>,
     pub(crate) candidate_frontend: Option<PathBuf>,
     pub(crate) baseline_contract: Option<BaselineContract>,
+    pub(crate) targeted_source: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

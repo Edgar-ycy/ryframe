@@ -235,6 +235,23 @@ pub(super) const RESOURCE_GATE: &[StepDefinition] = &[StepDefinition {
         "{frontend}",
     ],
 }];
+pub(super) const PAIRED_RESOURCE_GATE_B0: &[StepDefinition] = &[StepDefinition {
+    working_directory: WorkingDirectory::Backend,
+    program: "cargo",
+    args: &[
+        "run",
+        "--locked",
+        "--target-dir",
+        "{target}/driver",
+        "-p",
+        "xtask",
+        "--",
+        "ci",
+        "resource-gate",
+        "--frontend-dir",
+        "{frontend}",
+    ],
+}];
 pub(super) const RUST_GATE: &[StepDefinition] = &[StepDefinition {
     working_directory: WorkingDirectory::Backend,
     program: "cargo",

@@ -34,6 +34,10 @@ pub(super) fn validate_execution_contract(metadata: &RunMetadata) -> Result<()> 
         _ => return Err("运行时 metadata 契约与 suite 不一致".into()),
     }
     if metadata.suite == DevexSuite::ResourceGate
+        && !metadata.pairing.as_ref().is_some_and(|pairing| {
+            pairing.arm == super::super::model::PairedArm::Baseline
+                && pairing.targeted_pair().is_some()
+        })
         && !metadata
             .commands
             .iter()
@@ -114,11 +118,27 @@ fn validate_sample(metadata: &RunMetadata, sample: &SampleRecord) -> Result<()> 
             return Err("共同 DevEx 保存测量的实际 Cargo 调用数或就绪结果不匹配".into());
         }
     }
-    validate_decision(metadata.suite, sample)
+    validate_decision(metadata, sample)
 }
 
-fn validate_decision(suite: DevexSuite, sample: &SampleRecord) -> Result<()> {
-    match (suite, sample.status, sample.resource_gate_decision.as_ref()) {
+fn validate_decision(metadata: &RunMetadata, sample: &SampleRecord) -> Result<()> {
+    if sample.status == SampleStatus::Passed
+        && let Some(pair) = metadata
+            .pairing
+            .as_ref()
+            .and_then(|pairing| pairing.targeted_pair())
+        && !sample
+            .resource_gate_decision
+            .as_ref()
+            .is_some_and(|decision| decision.matches_plan(&pair.steps))
+    {
+        return Err("resource-gate 成功样本未执行登记的定向计划".into());
+    }
+    match (
+        metadata.suite,
+        sample.status,
+        sample.resource_gate_decision.as_ref(),
+    ) {
         (DevexSuite::ResourceGate, SampleStatus::Passed, Some(decision)) if decision.is_valid() => {
             Ok(())
         }

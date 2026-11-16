@@ -96,9 +96,6 @@ impl BaselineContract {
                         "该共同 DevEx 保存场景需要绑定 B0 历史保存入口及实际隔离配置".into(),
                     );
                 }
-                DevexSuite::ResourceGate => {
-                    return Err("共同 DevEx 资源门禁需要绑定两侧的定向入口及实际 Git 范围".into());
-                }
                 _ => {}
             }
         }
@@ -153,6 +150,16 @@ impl BaselineContract {
             && variant == "default"
         {
             return Some(frontend_fast_contract(self.uses_common_toolchain()));
+        }
+        if self.uses_common_toolchain() && suite == DevexSuite::ResourceGate && variant == "auto" {
+            let task = "post-targeted-resource-gate";
+            return Some(PairedWorkloadContract {
+                format_version: 1,
+                kind: "stable-readiness-resource-gate".to_owned(),
+                logical_tasks: vec![task.to_owned()],
+                baseline_primitives: vec![primitive("ci-resource-gate-environment", &[task])],
+                candidate_primitives: vec![primitive("ci-resource-gate-arguments", &[task])],
+            });
         }
         (self.uses_common_toolchain()
             && suite == DevexSuite::CargoDevSave
@@ -260,6 +267,8 @@ pub(crate) struct BaselineProvenance {
     pub(crate) frontend_adaptation: Option<FrontendAdaptation>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) adapter_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in crate::devex) targeted_pair: Option<crate::devex::targeted_source::TargetedPair>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

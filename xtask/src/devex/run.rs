@@ -3,26 +3,18 @@ use std::{
     fs,
     net::{Ipv4Addr, TcpListener},
     path::{Path, PathBuf},
-    process::{Command, ExitStatus},
-    time::Instant,
+    process::Command,
 };
 
 use chrono::Utc;
 
-use crate::{
-    Result,
-    dev::{ReadyKind, SaveMeasurementContract},
-};
+use crate::{Result, dev::SaveMeasurementContract};
 
 use super::{
-    incremental::with_source_edit,
     metadata::{MetadataContext, PathNormalizer, SourceFingerprints, collect as collect_metadata},
-    model::{CacheState, DevexRunOptions, DevexSuite, PairedArm, PairingMetadata, SuiteDefinition},
+    model::{CacheState, DevexRunOptions, DevexSuite, PairingMetadata, SuiteDefinition},
     preflight,
-    report::{
-        ResourceGateDecisionEvidence, SampleKind, SampleRecord, SampleStatus, append_sample,
-        summarize, write_metadata,
-    },
+    report::{SampleKind, append_sample, summarize, write_metadata},
     support::{cleanup_successful_sample_target, metric, sample_target},
 };
 
@@ -30,9 +22,14 @@ use super::{
 mod environment;
 #[path = "run/process.rs"]
 mod process;
-use process::{StepInvocation, execute_steps};
+use process::StepInvocation;
 #[path = "run/resource_gate.rs"]
 mod resource_gate;
+#[path = "run/sample.rs"]
+mod sample;
+pub(super) use resource_gate::{lock_cache, verify_cache};
+use sample::SampleOutcome;
+pub(super) use sample::{SampleAudit, execute_sample, sample_record};
 #[path = "run/save.rs"]
 mod save;
 
@@ -300,16 +297,13 @@ pub(super) fn execute_warmup_with_contract(
 ) -> Result<()> {
     if options.cache_state == CacheState::Warm {
         let target = super::support::compiler_target_root(&session.run_dir).join("warm");
-        let outcome = execute_sample_with_contract(
+        let outcome = execute_sample(
             backend_root,
             frontend_root,
             runner_frontend_root,
             &target,
-            session.definition,
-            &session.environment,
-            session.runtime_input.as_ref(),
-            options.suite,
-            &options.variant,
+            session,
+            options,
             "warmup",
             save_contract,
         )?;
@@ -331,7 +325,7 @@ pub(super) fn execute_warmup_with_contract(
                 }),
             ),
         )?;
-        if !outcome.status.success() {
+        if !outcome.passed() {
             summarize(&session.run_dir)?;
             return Err(format!("suite `{}` 预热失败", options.suite.as_str()).into());
         }
@@ -366,12 +360,10 @@ fn execute_measurements(
             frontend_root,
             runner_frontend_root,
             &target,
-            session.definition,
-            &session.environment,
-            session.runtime_input.as_ref(),
-            options.suite,
-            &options.variant,
+            session,
+            options,
             &label,
+            SaveMeasurementContract::Current,
         )?;
         append_sample(
             &session.run_dir,
@@ -386,7 +378,7 @@ fn execute_measurements(
                 None,
             ),
         )?;
-        if outcome.status.success() {
+        if outcome.passed() {
             cleanup_successful_sample_target(
                 &session.run_dir,
                 &target,
@@ -406,175 +398,6 @@ fn execute_measurements(
         }
     }
     Ok(())
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct SampleOutcome {
-    started_at: chrono::DateTime<Utc>,
-    duration_ms: f64,
-    memory: super::memory::MemoryEvidence,
-    cargo_invocations: Option<usize>,
-    ready_kind: Option<ReadyKind>,
-    resource_gate_decision: Option<ResourceGateDecisionEvidence>,
-    runtime: Option<super::runtime::RuntimeEvidence>,
-    pub(super) status: ExitStatus,
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn execute_sample(
-    backend_root: &Path,
-    frontend_root: &Path,
-    runner_frontend_root: &Path,
-    target: &Path,
-    definition: SuiteDefinition,
-    environment: &BTreeMap<String, String>,
-    runtime_input: Option<&super::runtime_native::Input>,
-    suite: DevexSuite,
-    variant: &str,
-    label: &str,
-) -> Result<SampleOutcome> {
-    execute_sample_with_contract(
-        backend_root,
-        frontend_root,
-        runner_frontend_root,
-        target,
-        definition,
-        environment,
-        runtime_input,
-        suite,
-        variant,
-        label,
-        SaveMeasurementContract::Current,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn execute_sample_with_contract(
-    backend_root: &Path,
-    frontend_root: &Path,
-    runner_frontend_root: &Path,
-    target: &Path,
-    definition: SuiteDefinition,
-    environment: &BTreeMap<String, String>,
-    runtime_input: Option<&super::runtime_native::Input>,
-    suite: DevexSuite,
-    variant: &str,
-    label: &str,
-    save_contract: SaveMeasurementContract,
-) -> Result<SampleOutcome> {
-    fs::create_dir_all(target)?;
-    let save_result = (suite == DevexSuite::CargoDevSave)
-        .then(|| save::result_path(target, label, definition))
-        .transpose()?;
-    let started_at = Utc::now();
-    let started = Instant::now();
-    let source = suite
-        .incremental_source(variant)
-        .map_err(|error| format!("DevEx 增量源码选择失败：{error}"))?
-        .map(|relative| backend_root.join(relative));
-    let execute = || {
-        execute_steps(
-            backend_root,
-            frontend_root,
-            runner_frontend_root,
-            target,
-            definition,
-            environment,
-            StepInvocation {
-                variant,
-                label,
-                runtime_input,
-            },
-        )
-    };
-    let (status, memory) = if let Some(source) = source.as_deref() {
-        with_source_edit(source, label, execute)?
-    } else {
-        execute()?
-    };
-    let resource_gate_decision = if suite == DevexSuite::ResourceGate && status.success() {
-        Some(read_resource_gate_decision(target, label)?)
-    } else {
-        None
-    };
-    let outcome = SampleOutcome {
-        started_at,
-        duration_ms: started.elapsed().as_secs_f64() * 1_000.0,
-        memory,
-        cargo_invocations: None,
-        ready_kind: None,
-        resource_gate_decision,
-        runtime: if suite.is_runtime() {
-            super::runtime::read(target, label, suite, status.success())?
-        } else {
-            None
-        },
-        status,
-    };
-    if let Some(result) = save_result.filter(|_| outcome.status.success()) {
-        save::measurement_outcome(
-            &result,
-            variant,
-            outcome.status,
-            save_contract,
-            outcome.memory,
-        )
-    } else {
-        Ok(outcome)
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn sample_record(
-    run_id: &str,
-    sequence: usize,
-    kind: SampleKind,
-    cache_state: CacheState,
-    target: &Path,
-    outcome: &SampleOutcome,
-    normalizer: &PathNormalizer,
-    audit: Option<SampleAudit>,
-) -> SampleRecord {
-    let (arm, pair, order, source_fingerprints) = audit.map_or((None, None, None, None), |audit| {
-        (
-            Some(audit.arm),
-            audit.pair,
-            audit.order,
-            Some(audit.source_fingerprints),
-        )
-    });
-    SampleRecord {
-        schema_version: 1,
-        run_id: run_id.to_owned(),
-        sequence,
-        kind,
-        cache_state,
-        started_at: outcome.started_at.to_rfc3339(),
-        duration_ms: outcome.duration_ms,
-        memory: outcome.memory.clone(),
-        cargo_invocations: outcome.cargo_invocations,
-        ready_kind: outcome.ready_kind,
-        status: if outcome.status.success() {
-            SampleStatus::Passed
-        } else {
-            SampleStatus::Failed
-        },
-        exit_code: outcome.status.code(),
-        target_directory: normalizer.normalize(&target.to_string_lossy()),
-        arm,
-        pair,
-        order,
-        source_fingerprints,
-        resource_gate_decision: outcome.resource_gate_decision.clone(),
-        runtime: outcome.runtime.clone(),
-    }
-}
-
-pub(super) struct SampleAudit {
-    pub(super) arm: PairedArm,
-    pub(super) pair: Option<usize>,
-    pub(super) order: Option<usize>,
-    pub(super) source_fingerprints: SourceFingerprints,
 }
 
 fn create_run_directory(devex_root: &Path, options: &DevexRunOptions) -> Result<(String, PathBuf)> {

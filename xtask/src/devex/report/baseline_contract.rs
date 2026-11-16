@@ -86,6 +86,35 @@ pub(super) fn validate_source_binding(metadata: &RunMetadata) -> Result<()> {
         return Err("DevEx B0 同工具链合同只接受非运行时测量".into());
     }
     validate_workload_binding(metadata, pairing, contract)?;
+    let targeted = contract.uses_common_toolchain() && metadata.suite == DevexSuite::ResourceGate;
+    if targeted || pairing.targeted_pair().is_some() {
+        let pair = pairing
+            .targeted_pair()
+            .filter(|_| targeted)
+            .ok_or("定向门禁报告缺少共同来源绑定或 scope 不匹配")?;
+        let provenance = pairing
+            .baseline_provenance
+            .as_ref()
+            .ok_or("定向门禁报告缺少 B0 来源")?;
+        let arm = pair.arm(pairing.arm);
+        let frontend = metadata
+            .frontend
+            .as_ref()
+            .ok_or("定向门禁报告缺少前端工作树来源")?;
+        if !valid_stable_readiness_provenance(provenance, contract)
+            || !pair.valid_report_shape()
+            || pair.b0.backend_base != provenance.adapter_commit
+            || provenance
+                .frontend_adaptation
+                .as_ref()
+                .is_none_or(|adaptation| pair.b0.frontend_base != adaptation.commit)
+            || !valid_clean_source(&metadata.backend, &arm.backend_head)
+            || !valid_clean_source(frontend, &arm.frontend_head)
+        {
+            return Err("定向门禁报告与实际前后端来源或计划不匹配".into());
+        }
+        return Ok(());
+    }
     if pairing.arm != PairedArm::Baseline {
         return Ok(());
     }
@@ -136,16 +165,25 @@ fn validate_workload_binding(
     if pairing.workload_contract != expected {
         return Err(format!("{} 实际任务集合合同不匹配", contract.as_str()).into());
     }
-    if contract.uses_common_toolchain() && metadata.suite == DevexSuite::CargoDevSave {
+    if contract.uses_common_toolchain()
+        && matches!(
+            metadata.suite,
+            DevexSuite::CargoDevSave | DevexSuite::ResourceGate
+        )
+    {
         let definition =
             metadata
                 .suite
                 .paired_definition(&metadata.variant, Some(contract), pairing.arm)?;
         if expected.is_none()
             || metadata.commands
-                != crate::devex::metadata::command_metadata(definition.steps, &metadata.variant)?
+                != crate::devex::metadata::command_metadata(
+                    definition.steps,
+                    &metadata.variant,
+                    Some(pairing),
+                )?
         {
-            return Err("共同 DevEx 保存测量的实际执行入口不匹配".into());
+            return Err("共同 DevEx 的实际执行入口不匹配".into());
         }
     }
     if metadata.suite != DevexSuite::FrontendFast {
@@ -196,6 +234,12 @@ fn validate_workload_binding(
         return Err(format!("{} frontend-fast 实际执行入口不匹配", contract.as_str()).into());
     }
     Ok(())
+}
+
+fn valid_clean_source(source: &crate::devex::metadata::SourceState, commit: &str) -> bool {
+    source.commit.as_deref() == Some(commit)
+        && source.dirty == Some(false)
+        && source.worktree_fingerprint == clean_worktree_fingerprint(commit)
 }
 
 fn valid_stable_readiness_provenance(

@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- DevEx targeted resource gate pairing validates both frozen measurement successors, their Git ranges and targeted plan. Each arm locks its cache during pairing, and full fallbacks are recorded as failed samples.
+
 - Synchronize ownership digests for the generated notice and post pages so the resource generator recognizes the committed files with their current read permission guards.
 
 - Common-toolchain DevEx cancellation invokes the original B0 save entry point and the explicit B1 arguments. Each run keeps its own result and validates the Cargo invocation count and process cleanup outcome for the superseded API build.

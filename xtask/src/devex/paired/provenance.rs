@@ -4,25 +4,53 @@ use sha2::{Digest, Sha256};
 
 use crate::Result;
 
-use crate::devex::model::{BaselineContract, BaselineProvenance};
+use crate::devex::{
+    model::{BaselineContract, BaselineProvenance, DevexPairedOptions, PairedArm},
+    targeted_source::TargetedPair,
+};
 
 #[path = "provenance/frontend.rs"]
 mod frontend;
 
 pub(super) fn collect(
-    backend_root: &Path,
-    frontend_root: &Path,
-    contract: Option<BaselineContract>,
+    roots: &super::PairedRoots,
+    options: &DevexPairedOptions,
 ) -> Result<Option<BaselineProvenance>> {
-    let Some(contract) = contract else {
+    let Some(contract) = options.baseline_contract else {
         return Ok(None);
     };
+    let (backend_root, frontend_root) = roots.arm(PairedArm::Baseline);
+    let targeted_pair = options
+        .targeted_source
+        .as_deref()
+        .map(|path| {
+            let candidate = roots.arm(PairedArm::Candidate);
+            crate::devex::execution::verify_cache(backend_root)?;
+            crate::devex::execution::verify_cache(candidate.0)?;
+            TargetedPair::load(path, (backend_root, frontend_root), candidate)
+        })
+        .transpose()?;
     let base_commit = contract.base_commit();
-    let adapter_commit = git_text(backend_root, &["rev-parse", "HEAD"])?;
+    let adapter_commit = match &targeted_pair {
+        Some(pair) => pair.b0.backend_base.clone(),
+        None => git_text(backend_root, &["rev-parse", "HEAD"])?,
+    };
+    let execution_backend = targeted_pair
+        .as_ref()
+        .map_or(adapter_commit.as_str(), |pair| {
+            pair.b0.backend_head.as_str()
+        });
     if let Some(expected) = contract.required_adapter_commit() {
-        require_commit(backend_root, "后端适配", expected, contract)?;
+        if expected != adapter_commit {
+            return Err(format!(
+                "{} 后端适配应为 {expected}，实际为 {adapter_commit}",
+                contract.as_str()
+            )
+            .into());
+        }
     }
-    require_parent(backend_root, base_commit, contract)?;
+    require_commit(backend_root, "后端适配", execution_backend, contract)?;
+    require_parent(backend_root, &adapter_commit, base_commit, contract)?;
     if contract.is_stable_readiness_b0() {
         require_stable_readiness_trees(backend_root)?;
     }
@@ -47,13 +75,19 @@ pub(super) fn collect(
     let mut adapter_tree = None;
     if contract.is_stable_readiness_b0() {
         adapter_paths = changed_paths(backend_root, base_commit, &adapter_commit)?;
-        let tree = git_text(backend_root, &["rev-parse", "HEAD^{tree}"])?;
+        let tree = git_text(
+            backend_root,
+            &["rev-parse", &format!("{adapter_commit}^{{tree}}")],
+        )?;
         validate_stable_readiness_adapter(&patch, &patch_sha256, &adapter_paths, &tree)?;
         adapter_tree = Some(tree);
         let original = BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT;
-        let execution = frontend_adaptation
+        let adapter = frontend_adaptation
             .as_ref()
             .map_or(original, |value| value.commit.as_str());
+        let execution = targeted_pair
+            .as_ref()
+            .map_or(adapter, |pair| pair.b0.frontend_head.as_str());
         require_commit(frontend_root, "前端 B0", execution, contract)?;
         require_clean(frontend_root, "前端 B0", contract)?;
         if let Some(adaptation) = &frontend_adaptation {
@@ -62,13 +96,8 @@ pub(super) fn collect(
             require_clean(frontend_root, "前端 B0", contract)?;
         }
         frontend_commit = Some(original.to_owned());
-        require_commit(
-            backend_root,
-            "后端适配",
-            BaselineContract::STABLE_READINESS_B0_ADAPTER_COMMIT,
-            contract,
-        )?;
-        require_parent(backend_root, base_commit, contract)?;
+        require_commit(backend_root, "后端适配", execution_backend, contract)?;
+        require_parent(backend_root, &adapter_commit, base_commit, contract)?;
         require_stable_readiness_trees(backend_root)?;
         require_clean(backend_root, "后端适配", contract)?;
     }
@@ -81,6 +110,7 @@ pub(super) fn collect(
         frontend_commit,
         frontend_adaptation,
         adapter_paths,
+        targeted_pair,
     }))
 }
 
@@ -166,8 +196,13 @@ fn has_replacement(root: &Path, object: &str) -> Result<bool> {
     .is_empty())
 }
 
-fn require_parent(root: &Path, expected: &str, contract: BaselineContract) -> Result<()> {
-    let parent = git_text(root, &["rev-parse", "HEAD^"])?;
+fn require_parent(
+    root: &Path,
+    commit: &str,
+    expected: &str,
+    contract: BaselineContract,
+) -> Result<()> {
+    let parent = git_text(root, &["rev-parse", &format!("{commit}^")])?;
     if parent != expected {
         return Err(format!(
             "{} 适配提交不再直接基于 B0 提交 {expected}",

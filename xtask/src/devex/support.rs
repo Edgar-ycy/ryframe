@@ -19,9 +19,9 @@ pub(super) fn frontend_fast_arguments(
     let cache = frontend
         .join(".local-tests/devex-fast")
         .join(hex::encode(&token[..12]));
-    let frontend = node_path(frontend);
-    let runner = node_path(runner);
-    let cache = node_path(&cache);
+    let frontend = child_path(frontend);
+    let runner = child_path(runner);
+    let cache = child_path(&cache);
     step.args
         .iter()
         .map(|arg| {
@@ -32,7 +32,7 @@ pub(super) fn frontend_fast_arguments(
         .collect()
 }
 
-fn node_path(path: &Path) -> String {
+pub(super) fn child_path(path: &Path) -> String {
     let text = path.to_string_lossy();
     if cfg!(windows) {
         if let Some(share) = text.strip_prefix(r"\\?\UNC\") {
@@ -50,9 +50,9 @@ fn node_path(path: &Path) -> String {
 #[cfg(all(test, windows))]
 #[test]
 fn common_frontend_cli_receives_node_compatible_windows_paths() {
-    assert_eq!(node_path(Path::new(r"\\?\D:\ryframe")), r"D:\ryframe");
+    assert_eq!(child_path(Path::new(r"\\?\D:\ryframe")), r"D:\ryframe");
     assert_eq!(
-        node_path(Path::new(r"\\?\UNC\server\share")),
+        child_path(Path::new(r"\\?\UNC\server\share")),
         r"\\server\share"
     );
 }

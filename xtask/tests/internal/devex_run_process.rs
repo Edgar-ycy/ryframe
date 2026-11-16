@@ -17,6 +17,7 @@ fn common_save_binds_each_arm_to_its_protocol_and_preserves_sample_results() {
         variant: "cancellation",
         label: "sample-002",
         runtime_input: None,
+        pairing: None,
     };
     let contract = Some(BaselineContract::StableReadinessB0CommonToolchainV1);
     let expected = target.join("cargo-dev-save-result-sample-002.json");
@@ -108,6 +109,7 @@ fn native_step_keeps_only_app_env_from_project_protocol_environment() {
             variant: "10",
             label: "test",
             runtime_input: Some(&input),
+            pairing: None,
         },
     )
     .unwrap();
@@ -120,6 +122,7 @@ fn native_step_keeps_only_app_env_from_project_protocol_environment() {
             variant: "10",
             label: "test",
             runtime_input: Some(&input),
+            pairing: None,
         },
     )
     .unwrap();
@@ -176,6 +179,7 @@ fn save_step_passes_validated_case_and_output_as_arguments() {
         variant: "worker-only",
         label: "sample-001",
         runtime_input: None,
+        pairing: None,
     };
     let command = step_command(
         &definition.steps[0],
@@ -212,13 +216,15 @@ fn save_step_passes_validated_case_and_output_as_arguments() {
             .and_then(|(_, value)| value),
         Some(roots.target.as_os_str()),
     );
-    assert!(command.get_envs().all(
-        |(key, _)| key != "RYFRAME_DEVEX_SAVE_CASE" && key != "RYFRAME_DEVEX_SAVE_RESULT_PATH"
-    ));
+    assert!(command.get_envs().all(|(key, value)| {
+        (key != "RYFRAME_DEVEX_SAVE_CASE" && key != "RYFRAME_DEVEX_SAVE_RESULT_PATH")
+            || value.is_none()
+    }));
     let invalid = StepInvocation {
         variant: "unregistered",
         label: "sample-001",
         runtime_input: None,
+        pairing: None,
     };
     assert!(
         step_command(

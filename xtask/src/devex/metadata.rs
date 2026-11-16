@@ -26,8 +26,8 @@ mod source;
 
 pub(crate) use path_normalizer::PathNormalizer;
 pub(crate) use schema::SourceFingerprints;
-use schema::{CommandMetadata, SourceState, Toolchain};
-pub(super) use schema::{MetadataContext, RunMetadata};
+use schema::{CommandMetadata, Toolchain};
+pub(super) use schema::{MetadataContext, RunMetadata, SourceState};
 pub(super) use source::{
     collect_runtime_source_fingerprints, collect_source_fingerprints, source_state,
 };
@@ -88,7 +88,11 @@ pub(super) fn collect(context: MetadataContext<'_>) -> Result<RunMetadata> {
     let comparable_environment = comparable_environment(context.effective_environment, &normalizer);
     let environment_hash = environment_hash(&comparable_environment);
     let environment = visible_environment(&comparable_environment);
-    let commands = command_metadata(context.definition.steps, &context.options.variant)?;
+    let commands = command_metadata(
+        context.definition.steps,
+        &context.options.variant,
+        context.pairing.as_ref(),
+    )?;
     let target = rust_host(&toolchain.rustc).unwrap_or_else(|| env::consts::ARCH.to_owned());
     let jobs = effective_jobs(context.options.suite, context.effective_environment);
     let compile_surface_fingerprint = compile_surface_fingerprint(
@@ -256,8 +260,9 @@ fn environment_hash(environment: &BTreeMap<String, String>) -> String {
 pub(in crate::devex) fn command_metadata(
     steps: &[StepDefinition],
     variant: &str,
+    pairing: Option<&super::model::PairingMetadata>,
 ) -> Result<Vec<CommandMetadata>> {
-    steps
+    let mut commands = steps
         .iter()
         .map(|step| {
             Ok(CommandMetadata {
@@ -274,7 +279,19 @@ pub(in crate::devex) fn command_metadata(
                     .collect(),
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>>>()?;
+    if let Some(pairing) = pairing
+        && pairing.arm == super::model::PairedArm::Candidate
+        && let Some(pair) = pairing.targeted_pair()
+    {
+        let [command] = commands.as_mut_slice() else {
+            return Err("共同 DevEx 定向门禁只接受一个门禁入口".into());
+        };
+        command
+            .args
+            .extend(pair.b1.candidate_arguments().into_iter().map(str::to_owned));
+    }
+    Ok(commands)
 }
 
 fn command_argument(step: &StepDefinition, arg: &str) -> String {
@@ -489,7 +506,7 @@ mod tests {
     #[test]
     fn save_metadata_distinguishes_source_workspace_and_sample_target() {
         let definition = DevexSuite::CargoDevSave.definition("worker-only").unwrap();
-        let commands = command_metadata(definition.steps, "worker-only").unwrap();
+        let commands = command_metadata(definition.steps, "worker-only", None).unwrap();
         assert_eq!(commands[0].working_directory, "$BACKEND");
         assert_eq!(
             commands[0].args,

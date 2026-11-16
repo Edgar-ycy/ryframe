@@ -10,8 +10,9 @@ use crate::{Result, dev::SaveMeasurementContract};
 
 use super::{
     execution::{
-        RunSession, SampleAudit, capture_sccache_stats, execute_sample_with_contract,
-        execute_warmup_with_contract, prepare_run_at, sample_record, stop_sccache_server,
+        RunSession, SampleAudit, capture_sccache_stats, execute_sample,
+        execute_warmup_with_contract, lock_cache, prepare_run_at, sample_record,
+        stop_sccache_server,
     },
     metadata::collect_source_fingerprints,
     model::{
@@ -44,11 +45,7 @@ pub(super) fn execute(
     )?;
     let baseline_definition = arm_definition(&roots, options, PairedArm::Baseline)?;
     let candidate_definition = arm_definition(&roots, options, PairedArm::Candidate)?;
-    let baseline_provenance = provenance::collect(
-        &roots.baseline_backend,
-        &roots.baseline_frontend,
-        options.baseline_contract,
-    )?;
+    let baseline_provenance = provenance::collect(&roots, options)?;
 
     let devex_root = coordinator_backend.join(".local-tests/devex");
     let directories = create_run_directories(&devex_root, &options.run)?;
@@ -118,11 +115,7 @@ fn verify_ready(
     baseline: &RunSession,
     candidate: &RunSession,
 ) -> Result<()> {
-    let prepared = provenance::collect(
-        &roots.baseline_backend,
-        &roots.baseline_frontend,
-        options.baseline_contract,
-    )?;
+    let prepared = provenance::collect(roots, options)?;
     if prepared.as_ref()
         != baseline
             .pairing
@@ -154,6 +147,16 @@ fn run_pair(
     baseline: &RunSession,
     candidate: &RunSession,
 ) -> Result<()> {
+    let _caches = options
+        .targeted_source
+        .as_ref()
+        .map(|_| -> Result<_> {
+            Ok((
+                lock_cache(&roots.baseline_backend)?,
+                lock_cache(&roots.candidate_backend)?,
+            ))
+        })
+        .transpose()?;
     let execution = execute_samples(
         roots,
         &options.run,
@@ -457,16 +460,13 @@ fn execute_measurement(
         options.runs * 2,
         options.cache_state.as_str()
     );
-    let outcome = execute_sample_with_contract(
+    let outcome = execute_sample(
         backend_root,
         frontend_root,
         &roots.runner_frontend,
         &target,
-        session.definition,
-        &session.environment,
-        session.runtime_input.as_ref(),
-        options.suite,
-        &options.variant,
+        session,
+        options,
         &label,
         save_contract(baseline_contract, arm),
     )?;
@@ -497,7 +497,7 @@ fn execute_measurement(
             }),
         ),
     )?;
-    if outcome.status.success() {
+    if outcome.passed() {
         cleanup_successful_sample_target(
             &session.run_dir,
             &target,

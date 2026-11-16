@@ -288,6 +288,15 @@ fn common_toolchain_paired_preflight_requires_supported_workload() {
         let error = parse(args(suite, variant)).unwrap_err().to_string();
         assert!(error.contains(binding), "{error}");
     }
+    let source = strings(&["--targeted-source", "D:/evidence/source.json"]);
+    let targeted = parse([args("resource-gate", "auto"), source.clone()].concat()).unwrap();
+    assert!(matches!(
+        targeted.command,
+        Command::Check(CheckCommand::Perf(DevexCommand::Paired(options)))
+            if options.targeted_source.as_ref().and_then(|path| path.to_str()) == Some("D:/evidence/source.json")
+    ));
+    assert!(parse([args("frontend-fast", "default"), source.clone()].concat()).is_err());
+    assert!(parse([args("resource-gate", "auto"), source.clone(), source].concat()).is_err());
 }
 
 #[test]

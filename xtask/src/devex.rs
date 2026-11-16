@@ -41,6 +41,8 @@ pub(crate) mod runtime_pacing;
 pub(crate) mod runtime_selection;
 #[path = "devex/support.rs"]
 mod support;
+#[path = "devex/targeted_source.rs"]
+mod targeted_source;
 
 #[allow(unused_imports)]
 pub(crate) use model::{
@@ -128,6 +130,7 @@ fn parse_paired(args: &[String]) -> std::result::Result<DevexCommand, String> {
     let mut baseline_frontend = None;
     let mut candidate_frontend = None;
     let mut baseline_contract = None;
+    let mut targeted_source = None;
     let mut run_args = Vec::new();
     let mut index = 0;
     while index < args.len() {
@@ -159,6 +162,7 @@ fn parse_paired(args: &[String]) -> std::result::Result<DevexCommand, String> {
             "--candidate-backend" if candidate_backend.is_none() => Some(&mut candidate_backend),
             "--base-frontend" if baseline_frontend.is_none() => Some(&mut baseline_frontend),
             "--candidate-frontend" if candidate_frontend.is_none() => Some(&mut candidate_frontend),
+            "--targeted-source" if targeted_source.is_none() => Some(&mut targeted_source),
             _ => None,
         };
         if let Some(slot) = slot {
@@ -182,6 +186,13 @@ fn parse_paired(args: &[String]) -> std::result::Result<DevexCommand, String> {
     if let Some(contract) = baseline_contract {
         contract.validate(&run)?;
     }
+    let paired_targeted = run.suite == DevexSuite::ResourceGate
+        && baseline_contract.is_some_and(BaselineContract::uses_common_toolchain);
+    match (paired_targeted, targeted_source.is_some()) {
+        (true, false) => return Err("共同 DevEx 定向入口需要 --targeted-source".into()),
+        (false, true) => return Err("--targeted-source 仅用于共同 DevEx resource-gate 配对".into()),
+        _ => {}
+    }
     let has_frontend_pair = baseline_frontend.is_some() && candidate_frontend.is_some();
     if baseline_frontend.is_some() != candidate_frontend.is_some() {
         return Err("paired 的 --base-frontend 与 --candidate-frontend 必须成对提供".to_owned());
@@ -203,6 +214,7 @@ fn parse_paired(args: &[String]) -> std::result::Result<DevexCommand, String> {
         baseline_frontend,
         candidate_frontend,
         baseline_contract,
+        targeted_source,
     }))
 }
 
@@ -385,7 +397,7 @@ fn resolve_run_reference(devex_root: &Path, reference: &str) -> Result<PathBuf> 
 
 pub(crate) fn usage() -> &'static str {
     "cargo xtask check perf run --suite <suite> --variant <name> --runs <1..50> --cache <cold|warm>\n\
-     cargo xtask check perf paired --base-backend <dir> --candidate-backend <dir> [--base-frontend <dir> --candidate-frontend <dir>] [--baseline-contract legacy-cargo-dev-v1|legacy-cargo-dev-v2|legacy-stable-readiness-b0-v1|stable-readiness-b0-common-toolchain-v1] [--check-comparability] --suite <suite> --variant <name> --runs <1..50> --cache <cold|warm>\n\
+     cargo xtask check perf paired --base-backend <dir> --candidate-backend <dir> [--base-frontend <dir> --candidate-frontend <dir>] [--baseline-contract legacy-cargo-dev-v1|legacy-cargo-dev-v2|legacy-stable-readiness-b0-v1|stable-readiness-b0-common-toolchain-v1] [--targeted-source <JSON 文件>] [--check-comparability] --suite <suite> --variant <name> --runs <1..50> --cache <cold|warm>\n\
      cargo xtask check perf summarize <日期/run-id>\n\
      cargo xtask check perf compare --base <日期/run-id> --candidate <日期/run-id>\n\
      cargo xtask check perf cgroup <run|cleanup> --output <.local-tests 内目录> [--plan]\n\

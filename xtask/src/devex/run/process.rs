@@ -2,8 +2,9 @@ use super::super::{
     memory::{self, MemoryEvidence},
     metadata::corepack_executable,
     model::{
-        PAIRED_SAVE_OUTPUT, StepDefinition, SuiteDefinition, WorkingDirectory,
-        is_common_frontend_fast, step_arguments, uses_historical_save_protocol,
+        PAIRED_SAVE_OUTPUT, PairingMetadata, RESOURCE_GATE_DECISION_TEMPLATE, StepDefinition,
+        SuiteDefinition, WorkingDirectory, is_common_frontend_fast, step_arguments,
+        uses_historical_save_protocol,
     },
     support::{display_step, frontend_fast_arguments, success_status},
 };
@@ -18,6 +19,7 @@ pub(super) struct StepInvocation<'a> {
     pub(super) variant: &'a str,
     pub(super) label: &'a str,
     pub(super) runtime_input: Option<&'a super::super::runtime_native::Input>,
+    pub(super) pairing: Option<&'a PairingMetadata>,
 }
 
 pub(super) fn execute_steps(
@@ -110,6 +112,18 @@ fn step_command(
     if uses_historical_save_protocol(step) {
         super::save::bind_historical_protocol(&mut command, roots.target, invocation)?;
     }
+    if let Some(pairing) = invocation.pairing
+        && let Some(pair) = pairing.targeted_pair()
+    {
+        super::resource_gate::bind(
+            &mut command,
+            roots.backend,
+            roots.target,
+            invocation.label,
+            pairing.arm,
+            pair.arm(pairing.arm),
+        )?;
+    }
     Ok(command)
 }
 
@@ -119,7 +133,15 @@ fn render_args(
     invocation: &StepInvocation<'_>,
 ) -> Result<Vec<String>> {
     let target = roots.target.to_string_lossy();
-    let frontend = roots.frontend.to_string_lossy();
+    let frontend = if invocation
+        .pairing
+        .and_then(PairingMetadata::targeted_pair)
+        .is_some()
+    {
+        std::borrow::Cow::Owned(super::super::support::child_path(roots.frontend))
+    } else {
+        roots.frontend.to_string_lossy()
+    };
     let runner_frontend = roots.runner_frontend.to_string_lossy();
     let backend = roots.backend.to_string_lossy();
     let driver_root = crate::workspace::root_dir();
@@ -129,6 +151,11 @@ fn render_args(
         .map(|arg| {
             if arg == PAIRED_SAVE_OUTPUT {
                 return super::save::paired_result_path(roots.target, invocation.label)
+                    .to_string_lossy()
+                    .into_owned();
+            }
+            if arg == RESOURCE_GATE_DECISION_TEMPLATE {
+                return super::resource_gate::decision_path(roots.target, invocation.label)
                     .to_string_lossy()
                     .into_owned();
             }

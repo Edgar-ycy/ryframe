@@ -31,7 +31,7 @@ orchestrations = [
     { path = "xtask/src/devex/run.rs", symbol = "prepare_run" },
     { path = "xtask/src/devex/run.rs", symbol = "execute_warmup" },
     { path = "xtask/src/devex/run.rs", symbol = "execute_measurements" },
-    { path = "xtask/src/devex/run.rs", symbol = "execute_sample" },
+    { path = "xtask/src/devex/run/sample.rs", symbol = "execute_sample" },
     { path = "xtask/src/devex/preflight.rs", symbol = "check" },
     { path = "xtask/src/devex/metadata.rs", symbol = "collect" },
     { path = "xtask/src/devex/report.rs", symbol = "summarize" },
