@@ -43,12 +43,6 @@ struct FrontendToolchain {
     preferred_node: ToolVersion,
 }
 
-const MINIMUM_PYTHON_VERSION: ToolVersion = ToolVersion {
-    major: 3,
-    minor: 11,
-    patch: 0,
-};
-
 pub(crate) fn run(frontend_dir: &Path) -> Result<()> {
     run_backend()?;
     check_frontend(frontend_dir)?;
@@ -57,7 +51,9 @@ pub(crate) fn run(frontend_dir: &Path) -> Result<()> {
 }
 
 pub(crate) fn run_backend() -> Result<()> {
-    check_backend_at(&root_dir())?;
+    let root = root_dir();
+    check_backend_at(&root)?;
+    crate::check::python_environment::run(&root)?;
     println!("RyFrame 后端开发环境检查通过。");
     Ok(())
 }
@@ -69,17 +65,8 @@ pub(crate) fn run_backend_at(root: &Path) -> Result<()> {
 }
 
 fn check_backend_at(root: &Path) -> Result<()> {
-    for executable in ["cargo", "rustc", "python", "git"] {
+    for executable in ["cargo", "rustc", "git"] {
         run_process(root, executable, &["--version"])?;
-    }
-
-    let python_version = python_version(root)?;
-    if python_version < MINIMUM_PYTHON_VERSION {
-        return Err(format!(
-            "Python {python_version} 低于后端脚本要求的 {}；请安装 Python 3.11+",
-            MINIMUM_PYTHON_VERSION
-        )
-        .into());
     }
 
     for (name, path) in [("后端 Git 仓库", root.join(".git"))] {
@@ -129,19 +116,6 @@ fn command_version(dir: &Path, executable: &str) -> Result<ToolVersion> {
 fn corepack_pnpm_version(dir: &Path) -> Result<ToolVersion> {
     let output = pnpm_version_output(dir)?;
     ToolVersion::parse(&output, "项目级 pnpm --version")
-}
-
-fn python_version(dir: &Path) -> Result<ToolVersion> {
-    let output = command_version_output(dir, "python")?;
-    parse_python_version(&output)
-}
-
-pub(crate) fn parse_python_version(output: &str) -> Result<ToolVersion> {
-    let version = output
-        .trim()
-        .strip_prefix("Python ")
-        .ok_or_else(|| format!("python --version 输出不是预期格式：{}", output.trim()))?;
-    ToolVersion::parse(version, "python --version")
 }
 
 fn frontend_toolchain(frontend_dir: &Path) -> Result<FrontendToolchain> {
