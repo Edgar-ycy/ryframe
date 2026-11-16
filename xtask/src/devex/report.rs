@@ -19,6 +19,11 @@ use super::{
 mod acceptance;
 #[path = "report/baseline_contract.rs"]
 mod baseline_contract;
+#[path = "report/comparability.rs"]
+mod comparability;
+
+use comparability::ensure_comparable;
+pub(super) use comparability::ensure_compile_surface;
 #[path = "report/markdown.rs"]
 mod markdown;
 #[path = "report/sccache.rs"]
@@ -123,6 +128,8 @@ pub(crate) struct RunSummary {
     pub(crate) variant: String,
     pub(crate) cache_state: CacheState,
     pub(crate) compile_surface_fingerprint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) common_toolchain: Option<super::common_toolchain::CommonToolchain>,
     pub(crate) input_fingerprint: String,
     pub(crate) requested_runs: usize,
     pub(crate) samples: usize,
@@ -174,6 +181,8 @@ struct ComparisonReport<'a> {
     variant: &'a str,
     cache_state: CacheState,
     compile_surface_fingerprint: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    common_toolchain: Option<&'a super::common_toolchain::CommonToolchain>,
     baseline_run: &'a str,
     candidate_run: &'a str,
     baseline_input_fingerprint: &'a str,
@@ -234,6 +243,7 @@ pub(crate) fn summarize(run_dir: &Path) -> Result<RunSummary> {
         variant: metadata.variant,
         cache_state: metadata.cache_state,
         compile_surface_fingerprint: metadata.compile_surface_fingerprint,
+        common_toolchain: metadata.toolchain.common,
         input_fingerprint: metadata.input_fingerprint,
         requested_runs: metadata.requested_runs,
         samples: measurements.len(),
@@ -311,6 +321,7 @@ pub(crate) fn compare(baseline_dir: &Path, candidate_dir: &Path) -> Result<Strin
         variant: &baseline.variant,
         cache_state: baseline.cache_state,
         compile_surface_fingerprint: &baseline.compile_surface_fingerprint,
+        common_toolchain: baseline.common_toolchain.as_ref(),
         baseline_run: &baseline.run_id,
         candidate_run: &candidate.run_id,
         baseline_input_fingerprint: &baseline.input_fingerprint,
@@ -392,36 +403,6 @@ fn read_samples(run_dir: &Path) -> Result<Vec<SampleRecord>> {
             })
         })
         .collect()
-}
-
-fn ensure_comparable(
-    baseline: &RunSummary,
-    candidate: &RunSummary,
-    baseline_records: &[SampleRecord],
-    candidate_records: &[SampleRecord],
-) -> Result<()> {
-    ensure_complete("基线", baseline)?;
-    ensure_complete("候选", candidate)?;
-    super::memory::ensure_comparable(baseline.memory.as_ref(), candidate.memory.as_ref())?;
-    if baseline.suite != candidate.suite {
-        return Err("DevEx 对比要求 suite 相同".into());
-    }
-    if baseline.variant != candidate.variant {
-        return Err("DevEx 对比要求工作负载 variant 相同".into());
-    }
-    if baseline.cache_state != candidate.cache_state {
-        return Err("DevEx 对比要求 cache state 相同".into());
-    }
-    if baseline.sccache_version != candidate.sccache_version {
-        return Err("DevEx 对比要求 sccache 可执行版本相同".into());
-    }
-    if baseline.compile_surface_fingerprint != candidate.compile_surface_fingerprint {
-        return Err("DevEx 对比的 compile_surface_fingerprint 不一致，拒绝生成误导结论".into());
-    }
-    if baseline.samples != candidate.samples {
-        return Err("DevEx 对比要求两侧具有相同样本数".into());
-    }
-    validate_paired_records(baseline, candidate, baseline_records, candidate_records)
 }
 
 fn validate_paired_records(

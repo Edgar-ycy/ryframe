@@ -1,8 +1,10 @@
 use super::super::{
     memory::{self, MemoryEvidence},
     metadata::corepack_executable,
-    model::{StepDefinition, SuiteDefinition, WorkingDirectory, step_arguments},
-    support::{display_step, success_status},
+    model::{
+        StepDefinition, SuiteDefinition, WorkingDirectory, is_common_frontend_fast, step_arguments,
+    },
+    support::{display_step, frontend_fast_arguments, success_status},
 };
 use crate::Result;
 use std::{
@@ -69,23 +71,11 @@ fn step_command(
     } else {
         step.program
     };
-    let target = roots.target.to_string_lossy();
-    let frontend = roots.frontend.to_string_lossy();
-    let runner_frontend = roots.runner_frontend.to_string_lossy();
-    let backend = roots.backend.to_string_lossy();
-    let driver_root = crate::workspace::root_dir();
-    let driver = driver_root.to_string_lossy();
-    let args = step_arguments(step, invocation.variant)?
-        .iter()
-        .map(|arg| {
-            arg.replace("{driver}", &driver)
-                .replace("{backend}", &backend)
-                .replace("{target}", &target)
-                .replace("{frontend}", &frontend)
-                .replace("{runner-frontend}", &runner_frontend)
-                .replace("{label}", label)
-        })
-        .collect::<Vec<_>>();
+    let args = if is_common_frontend_fast(step) {
+        frontend_fast_arguments(step, roots.frontend, roots.runner_frontend, roots.target)
+    } else {
+        render_args(step, roots, invocation)?
+    };
     let mut command = if super::super::runtime_native::entry::is_native(program) {
         let mut input = invocation
             .runtime_input
@@ -105,19 +95,82 @@ fn step_command(
         }
         super::super::runtime_native::entry::command(&input)?
     } else {
-        let mut command = Command::new(program);
-        if step.program == "corepack" && args.first().is_some_and(|arg| arg == "pnpm") {
-            command.arg("pnpm");
-            if let Some(cache) = crate::process::pnpm_cache_argument(roots.backend)? {
-                command.arg(cache);
-            }
-            command.args(&args[1..]);
-        } else {
-            command.args(&args);
-        }
-        command.stdin(Stdio::null());
-        command
+        process_command(step, program, roots.backend, &args)?
     };
+    configure_command(
+        &mut command,
+        step,
+        roots,
+        definition,
+        environment,
+        label,
+        program,
+    );
+    Ok(command)
+}
+
+fn render_args(
+    step: &StepDefinition,
+    roots: StepRoots<'_>,
+    invocation: &StepInvocation<'_>,
+) -> Result<Vec<String>> {
+    let target = roots.target.to_string_lossy();
+    let frontend = roots.frontend.to_string_lossy();
+    let runner_frontend = roots.runner_frontend.to_string_lossy();
+    let backend = roots.backend.to_string_lossy();
+    let driver_root = crate::workspace::root_dir();
+    let driver = driver_root.to_string_lossy();
+    Ok(step_arguments(step, invocation.variant)?
+        .iter()
+        .map(|arg| {
+            arg.replace("{driver}", &driver)
+                .replace("{backend}", &backend)
+                .replace("{target}", &target)
+                .replace("{frontend}", &frontend)
+                .replace("{runner-frontend}", &runner_frontend)
+                .replace("{label}", invocation.label)
+        })
+        .collect())
+}
+
+fn process_command(
+    step: &StepDefinition,
+    program: &str,
+    backend: &Path,
+    args: &[String],
+) -> Result<Command> {
+    let mut command = Command::new(program);
+    if step.program == "corepack" && args.first().is_some_and(|arg| arg == "pnpm") {
+        command.arg("pnpm");
+        if let Some(cache) = crate::process::pnpm_cache_argument(backend)? {
+            command.arg(cache);
+        }
+        command.args(&args[1..]);
+    } else {
+        command.args(args);
+        if is_common_frontend_fast(step)
+            && let Some(cache) =
+                ryframe_config::ToolSettings::load(backend)?.pnpm_cache_dir(backend)?
+        {
+            command.arg("--pnpm-cache-dir").arg(cache);
+        }
+    }
+    command.stdin(Stdio::null());
+    Ok(command)
+}
+
+fn configure_command(
+    command: &mut Command,
+    step: &StepDefinition,
+    roots: StepRoots<'_>,
+    definition: SuiteDefinition,
+    environment: &BTreeMap<String, String>,
+    label: &str,
+    program: &str,
+) {
+    let target = roots.target.to_string_lossy();
+    let frontend = roots.frontend.to_string_lossy();
+    let runner_frontend = roots.runner_frontend.to_string_lossy();
     command
         .current_dir(match step.working_directory {
             WorkingDirectory::Backend => roots.backend,
@@ -154,7 +207,6 @@ fn step_command(
     command
         .env_remove("RYFRAME_DEVEX_TARGET_ROOT")
         .env_remove("RYFRAME_FAST_CHECK_CACHE_ROOT");
-    Ok(command)
 }
 
 #[cfg(test)]

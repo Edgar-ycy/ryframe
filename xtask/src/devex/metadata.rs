@@ -13,17 +13,24 @@ use sha2::{Digest, Sha256};
 
 use crate::{Result, process::child_command};
 
-use super::model::{DevexSuite, StepDefinition, SuiteDefinition, WorkingDirectory};
+use super::model::{
+    DevexSuite, StepDefinition, SuiteDefinition, WorkingDirectory, is_common_frontend_fast,
+};
 
 #[path = "metadata/path_normalizer.rs"]
 mod path_normalizer;
 #[path = "metadata/schema.rs"]
 mod schema;
+#[path = "metadata/source.rs"]
+mod source;
 
 pub(crate) use path_normalizer::PathNormalizer;
 pub(crate) use schema::SourceFingerprints;
 use schema::{CommandMetadata, SourceState, Toolchain};
 pub(super) use schema::{MetadataContext, RunMetadata};
+pub(super) use source::{
+    collect_runtime_source_fingerprints, collect_source_fingerprints, source_state,
+};
 
 const ENVIRONMENT_WHITELIST: &[&str] = &[
     "CC",
@@ -72,7 +79,12 @@ pub(super) fn collect(context: MetadataContext<'_>) -> Result<RunMetadata> {
         context.devex_root,
     );
     let frontend_suite = context.definition.requires_frontend;
-    let toolchain = collect_toolchain(&context, frontend_suite);
+    let common = context.pairing.as_ref().is_some_and(|pairing| {
+        pairing
+            .baseline_contract
+            .is_some_and(|contract| contract.uses_common_toolchain())
+    });
+    let toolchain = collect_toolchain(&context, frontend_suite || common, common)?;
     let comparable_environment = comparable_environment(context.effective_environment, &normalizer);
     let environment_hash = environment_hash(&comparable_environment);
     let environment = visible_environment(&comparable_environment);
@@ -100,16 +112,7 @@ pub(super) fn collect(context: MetadataContext<'_>) -> Result<RunMetadata> {
         &normalizer,
     )?;
 
-    let backend = source_state(context.backend_root)?;
-    let frontend = frontend_suite
-        .then(|| source_state(context.frontend_root))
-        .transpose()?;
-    let runner_frontend = context
-        .options
-        .suite
-        .is_runtime()
-        .then(|| source_state(context.runner_frontend_root))
-        .transpose()?;
+    let (backend, frontend, runner_frontend) = collect_sources(&context, frontend_suite, common)?;
     Ok(RunMetadata {
         schema_version: 1,
         run_id: context.run_id.to_owned(),
@@ -140,13 +143,42 @@ pub(super) fn collect(context: MetadataContext<'_>) -> Result<RunMetadata> {
     })
 }
 
-fn collect_toolchain(context: &MetadataContext<'_>, frontend_suite: bool) -> Toolchain {
+fn collect_sources(
+    context: &MetadataContext<'_>,
+    frontend_suite: bool,
+    common: bool,
+) -> Result<(SourceState, Option<SourceState>, Option<SourceState>)> {
+    let backend = source_state(context.backend_root)?;
+    let frontend = (frontend_suite || common)
+        .then(|| source_state(context.frontend_root))
+        .transpose()?;
+    if common
+        && (backend.dirty != Some(false)
+            || frontend.as_ref().and_then(|source| source.dirty) != Some(false))
+    {
+        return Err("共同 DevEx 的实际前后端测量工作树必须干净".into());
+    }
+    let runner_frontend = (context.options.suite.is_runtime()
+        || context.definition.steps.iter().any(is_common_frontend_fast))
+    .then(|| source_state(context.runner_frontend_root))
+    .transpose()?;
+    Ok((backend, frontend, runner_frontend))
+}
+
+fn collect_toolchain(
+    context: &MetadataContext<'_>,
+    frontend_suite: bool,
+    common: bool,
+) -> Result<Toolchain> {
     let frontend_tooling = if context.options.suite.is_runtime() {
         context.runner_frontend_root
     } else {
         context.frontend_root
     };
-    Toolchain {
+    let common = common
+        .then(|| super::common_toolchain::capture(context.backend_root, context.frontend_root))
+        .transpose()?;
+    Ok(Toolchain {
         cargo: version(context.backend_root, "cargo", &["--version"]),
         rustc: version(context.backend_root, "rustc", &["-vV"]),
         sccache: context
@@ -162,7 +194,8 @@ fn collect_toolchain(context: &MetadataContext<'_>, frontend_suite: bool) -> Too
                 &["pnpm", "--version"],
             )
         }),
-    }
+        common,
+    })
 }
 
 pub(super) fn inherited_environment() -> BTreeMap<String, String> {
@@ -234,14 +267,22 @@ fn command_metadata(steps: &[StepDefinition], variant: &str) -> Result<Vec<Comma
                 program: step.program.to_owned(),
                 args: super::model::step_arguments(step, variant)?
                     .iter()
-                    .map(|arg| {
-                        arg.replace("{backend}", "$BACKEND")
-                            .replace("{target}", "$TARGET")
-                    })
+                    .map(|arg| command_argument(step, arg))
                     .collect(),
             })
         })
         .collect()
+}
+
+fn command_argument(step: &StepDefinition, arg: &str) -> String {
+    if is_common_frontend_fast(step) {
+        return arg
+            .replace("{frontend-cache}", "$FRONTEND_CACHE")
+            .replace("{runner-frontend}", "$RUNNER_FRONTEND")
+            .replace("{frontend}", "$FRONTEND");
+    }
+    arg.replace("{backend}", "$BACKEND")
+        .replace("{target}", "$TARGET")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -379,126 +420,6 @@ fn input_hashes(root: &Path, paths: &[&str]) -> Result<BTreeMap<String, String>>
         })
         .map(|(relative, path)| Ok((relative.to_owned(), sha256(&fs::read(path)?))))
         .collect()
-}
-
-fn source_state(root: &Path) -> Result<SourceState> {
-    let commit = git_text(root, &["rev-parse", "HEAD"])
-        .ok_or_else(|| format!("无法读取源码提交：{}", root.display()))?;
-    let status = git_text(root, &["status", "--porcelain", "--untracked-files=all"])
-        .ok_or_else(|| format!("无法读取源码状态：{}", root.display()))?;
-    Ok(SourceState {
-        commit: Some(commit.clone()),
-        dirty: Some(!status.is_empty()),
-        worktree_fingerprint: worktree_fingerprint(root, &commit)?,
-    })
-}
-
-pub(super) fn collect_source_fingerprints(
-    backend_root: &Path,
-    frontend_root: Option<&Path>,
-) -> Result<SourceFingerprints> {
-    Ok(SourceFingerprints {
-        backend: source_state(backend_root)?.worktree_fingerprint,
-        frontend: frontend_root
-            .map(source_state)
-            .transpose()?
-            .map(|state| state.worktree_fingerprint),
-        runner_frontend: None,
-    })
-}
-
-pub(super) fn collect_runtime_source_fingerprints(
-    backend_root: &Path,
-    frontend_root: &Path,
-    runner_frontend_root: Option<&Path>,
-) -> Result<SourceFingerprints> {
-    let mut fingerprints = collect_source_fingerprints(backend_root, Some(frontend_root))?;
-    fingerprints.runner_frontend = runner_frontend_root
-        .map(source_state)
-        .transpose()?
-        .map(|state| state.worktree_fingerprint);
-    Ok(fingerprints)
-}
-
-impl RunMetadata {
-    pub(super) fn source_fingerprints(&self) -> SourceFingerprints {
-        SourceFingerprints {
-            backend: self.backend.worktree_fingerprint.clone(),
-            frontend: self
-                .frontend
-                .as_ref()
-                .map(|state| state.worktree_fingerprint.clone()),
-            runner_frontend: self
-                .runner_frontend
-                .as_ref()
-                .map(|state| state.worktree_fingerprint.clone()),
-        }
-    }
-}
-
-fn worktree_fingerprint(root: &Path, commit: &str) -> Result<String> {
-    let tracked = git_output(
-        root,
-        &["diff", "--binary", "--no-ext-diff", "HEAD", "--", "."],
-    )?;
-    let untracked = git_output(root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
-    let mut digest = Sha256::new();
-    update_digest(&mut digest, commit.as_bytes());
-    update_digest(&mut digest, &tracked);
-    for raw_path in untracked
-        .split(|byte| *byte == 0)
-        .filter(|path| !path.is_empty())
-    {
-        let relative = std::str::from_utf8(raw_path)
-            .map_err(|_| "未跟踪文件路径不是 UTF-8，无法建立源码指纹")?;
-        let relative_path = Path::new(relative);
-        if relative_path.is_absolute()
-            || relative_path.components().any(|component| {
-                matches!(
-                    component,
-                    std::path::Component::ParentDir
-                        | std::path::Component::RootDir
-                        | std::path::Component::Prefix(_)
-                )
-            })
-        {
-            return Err(format!("Git 返回越界的未跟踪路径：{relative}").into());
-        }
-        update_digest(&mut digest, raw_path);
-        update_digest(&mut digest, &fs::read(root.join(relative_path))?);
-    }
-    Ok(format_digest(digest.finalize()))
-}
-
-fn git_output(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
-    let output = Command::new("git").args(args).current_dir(root).output()?;
-    if output.status.success() {
-        Ok(output.stdout)
-    } else {
-        Err(format!(
-            "git {} 失败：{}",
-            args.join(" "),
-            String::from_utf8_lossy(&output.stderr).trim()
-        )
-        .into())
-    }
-}
-
-fn update_digest(digest: &mut Sha256, value: &[u8]) {
-    digest.update((value.len() as u64).to_le_bytes());
-    digest.update(value);
-}
-
-fn git_text(root: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(root)
-        .output()
-        .ok()?;
-    output
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
 fn version(root: &Path, program: &str, args: &[&str]) -> String {

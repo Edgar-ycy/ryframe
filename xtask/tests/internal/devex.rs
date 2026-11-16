@@ -853,7 +853,7 @@ fn fake_stable_readiness_run(name: &str, arm: PairedArm) -> PathBuf {
     directory
 }
 
-fn fake_stable_frontend_fast_run(name: &str, arm: PairedArm) -> PathBuf {
+pub(super) fn fake_stable_frontend_fast_run(name: &str, arm: PairedArm) -> PathBuf {
     let directory = fake_stable_readiness_run(name, arm);
     let metadata_path = directory.join("metadata.json");
     let mut metadata: serde_json::Value =
@@ -880,7 +880,7 @@ fn fake_stable_frontend_fast_run(name: &str, arm: PairedArm) -> PathBuf {
     directory
 }
 
-fn clean_source_fingerprint(commit: &str) -> String {
+pub(super) fn clean_source_fingerprint(commit: &str) -> String {
     use sha2::{Digest, Sha256};
 
     let mut digest = Sha256::new();

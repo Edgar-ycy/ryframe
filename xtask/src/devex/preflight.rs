@@ -1,12 +1,16 @@
 use std::{fs, path::Path, process::Command};
 
+use serde::Deserialize;
+
 use crate::Result;
 
 use super::{
     metadata::corepack_executable,
     model::{
-        BaselineContract, DevexRunOptions, DevexSuite, PairedArm, SuiteDefinition, SuiteRequirement,
+        BaselineContract, DevexRunOptions, DevexSuite, PairedArm, SuiteDefinition,
+        SuiteRequirement, is_common_frontend_fast,
     },
+    support::frontend_fast_arguments,
 };
 
 pub(super) fn check(
@@ -51,10 +55,101 @@ pub(super) fn check_paired(
         options,
         definition,
     )?;
-    if contract == Some(BaselineContract::LegacyStableReadinessB0V1)
-        && options.suite == DevexSuite::FrontendFast
+    if options.suite == DevexSuite::FrontendFast {
+        match contract {
+            Some(BaselineContract::LegacyStableReadinessB0V1) => {
+                verify_frontend_fast_contract(backend_root, frontend_root, options, arm)?;
+            }
+            Some(contract) if contract.uses_common_toolchain() => {
+                verify_common_frontend_fast(
+                    frontend_root,
+                    runner_frontend_root,
+                    definition,
+                    contract,
+                    arm,
+                )?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SharedFastPlan {
+    arm: String,
+    tasks: Vec<SharedFastTask>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SharedFastTask {
+    id: String,
+    covers: Vec<String>,
+    node: Option<Vec<String>>,
+    pnpm: Option<Vec<String>>,
+}
+
+fn verify_common_frontend_fast(
+    frontend: &Path,
+    runner: &Path,
+    definition: SuiteDefinition,
+    contract: BaselineContract,
+    arm: PairedArm,
+) -> Result<()> {
+    let [step] = definition.steps else {
+        return Err("共同 DevEx 前端快速检查必须使用一个共享入口".into());
+    };
+    if !is_common_frontend_fast(step) {
+        return Err("共同 DevEx 前端快速检查缺少共享入口".into());
+    }
+    let runner_source = super::metadata::source_state(runner)?;
+    if runner_source.commit.as_deref() != Some(BaselineContract::COMMON_FRONTEND_RUNNER_COMMIT)
+        || runner_source.dirty != Some(false)
     {
-        verify_frontend_fast_contract(backend_root, frontend_root, options, arm)?;
+        return Err("共同 DevEx 快速检查须使用已验收且干净的前端工具提交 66d9f747".into());
+    }
+    let output = Command::new(step.program)
+        .args(frontend_fast_arguments(
+            step,
+            frontend,
+            runner,
+            Path::new("plan"),
+        ))
+        .arg("--plan")
+        .current_dir(frontend)
+        .output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "共同 DevEx 前端任务计划检查失败：{}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
+        .into());
+    }
+    let actual = serde_json::from_slice::<SharedFastPlan>(&output.stdout)?;
+    let workload = contract
+        .workload_contract(DevexSuite::FrontendFast, "default")
+        .ok_or("共同 DevEx 前端快速检查缺少逻辑任务合同")?;
+    let (label, expected) = match arm {
+        PairedArm::Baseline => ("b0", workload.baseline_primitives),
+        PairedArm::Candidate => ("b1", workload.candidate_primitives),
+    };
+    let valid = actual.arm == label
+        && actual.tasks.len() == expected.len()
+        && actual.tasks.iter().zip(expected).all(|(actual, expected)| {
+            actual.id == expected.id
+                && actual.covers == expected.covers
+                && match (&actual.node, &actual.pnpm) {
+                    (Some(args), None) | (None, Some(args)) => !args.is_empty(),
+                    _ => false,
+                }
+        });
+    if !valid {
+        return Err(format!("共同 DevEx {label} 计划与九项前端逻辑检查不一致").into());
+    }
+    if super::metadata::source_state(runner)? != runner_source {
+        return Err("共同 DevEx 前端工具在计划检查期间发生变化".into());
     }
     Ok(())
 }

@@ -5,6 +5,8 @@ use crate::{Result, workspace::root_dir};
 #[cfg_attr(not(target_os = "linux"), allow(dead_code, unused_imports))]
 #[path = "devex/cgroup.rs"]
 pub(crate) mod cgroup;
+#[path = "devex/common_toolchain.rs"]
+mod common_toolchain;
 #[path = "devex/run.rs"]
 mod execution;
 #[path = "devex/import_samples.rs"]
@@ -120,6 +122,7 @@ fn parse_cgroup(args: &[String]) -> std::result::Result<DevexCommand, String> {
 }
 
 fn parse_paired(args: &[String]) -> std::result::Result<DevexCommand, String> {
+    let mut check_comparability = false;
     let mut baseline_backend = None;
     let mut candidate_backend = None;
     let mut baseline_frontend = None;
@@ -128,6 +131,14 @@ fn parse_paired(args: &[String]) -> std::result::Result<DevexCommand, String> {
     let mut run_args = Vec::new();
     let mut index = 0;
     while index < args.len() {
+        if args[index] == "--check-comparability" {
+            if check_comparability {
+                return Err("--check-comparability 不能重复".to_owned());
+            }
+            check_comparability = true;
+            index += 1;
+            continue;
+        }
         if args[index] == "--baseline-contract" {
             if baseline_contract.is_some() {
                 return Err("--baseline-contract 不能重复".to_owned());
@@ -136,9 +147,10 @@ fn parse_paired(args: &[String]) -> std::result::Result<DevexCommand, String> {
                 .get(index + 1)
                 .filter(|value| !value.starts_with("--"))
                 .ok_or("--baseline-contract 缺少取值")?;
-            baseline_contract = Some(BaselineContract::parse(value).ok_or(
-                "--baseline-contract 只允许 legacy-cargo-dev-v1、legacy-cargo-dev-v2 或 legacy-stable-readiness-b0-v1",
-            )?);
+            baseline_contract = Some(
+                BaselineContract::parse(value)
+                    .ok_or("--baseline-contract 无效，见 cargo xtask check perf --help")?,
+            );
             index += 2;
             continue;
         }
@@ -179,11 +191,12 @@ fn parse_paired(args: &[String]) -> std::result::Result<DevexCommand, String> {
         .definition(&run.variant)
         .map_err(|error| format!("DevEx 变体无效：{error}"))?
         .requires_frontend
-        || baseline_contract == Some(BaselineContract::LegacyStableReadinessB0V1);
+        || baseline_contract.is_some_and(BaselineContract::is_stable_readiness_b0);
     if requires_frontend && !has_frontend_pair {
         return Err("该 paired suite 必须显式提供两个前端 worktree".to_owned());
     }
     Ok(DevexCommand::Paired(DevexPairedOptions {
+        check_comparability,
         run,
         baseline_backend: baseline_backend.ok_or("paired 缺少 --base-backend")?,
         candidate_backend: candidate_backend.ok_or("paired 缺少 --candidate-backend")?,
@@ -305,7 +318,9 @@ pub(crate) fn run(command: &DevexCommand, frontend_dir: &Path) -> Result<()> {
         }
         DevexCommand::Paired(options) => {
             let (baseline, candidate) = paired::execute(&root, frontend_dir, options)?;
-            println!("{}", report::compare(&baseline, &candidate)?);
+            if !options.check_comparability {
+                println!("{}", report::compare(&baseline, &candidate)?);
+            }
         }
         DevexCommand::Summarize { run } => {
             let run_dir = resolve_run_reference(&devex_root, run)?;
@@ -370,7 +385,7 @@ fn resolve_run_reference(devex_root: &Path, reference: &str) -> Result<PathBuf> 
 
 pub(crate) fn usage() -> &'static str {
     "cargo xtask check perf run --suite <suite> --variant <name> --runs <1..50> --cache <cold|warm>\n\
-     cargo xtask check perf paired --base-backend <dir> --candidate-backend <dir> [--base-frontend <dir> --candidate-frontend <dir>] [--baseline-contract legacy-cargo-dev-v1|legacy-cargo-dev-v2|legacy-stable-readiness-b0-v1] --suite <suite> --variant <name> --runs <1..50> --cache <cold|warm>\n\
+     cargo xtask check perf paired --base-backend <dir> --candidate-backend <dir> [--base-frontend <dir> --candidate-frontend <dir>] [--baseline-contract legacy-cargo-dev-v1|legacy-cargo-dev-v2|legacy-stable-readiness-b0-v1|stable-readiness-b0-common-toolchain-v1] [--check-comparability] --suite <suite> --variant <name> --runs <1..50> --cache <cold|warm>\n\
      cargo xtask check perf summarize <日期/run-id>\n\
      cargo xtask check perf compare --base <日期/run-id> --candidate <日期/run-id>\n\
      cargo xtask check perf cgroup <run|cleanup> --output <.local-tests 内目录> [--plan]\n\

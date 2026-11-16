@@ -113,6 +113,7 @@ pub(super) fn summary(suite: DevexSuite, variant: &str) -> RunSummary {
             CacheState::Warm
         },
         compile_surface_fingerprint: "surface".into(),
+        common_toolchain: None,
         input_fingerprint: "input".into(),
         requested_runs: 1,
         samples: 1,

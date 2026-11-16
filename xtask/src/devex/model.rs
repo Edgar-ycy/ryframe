@@ -12,10 +12,13 @@ mod runtime;
 mod steps;
 use steps::*;
 
-pub(crate) use baseline::{BaselineContract, BaselineProvenance, PairedWorkloadContract};
+pub(crate) use baseline::{
+    BaselineContract, BaselineProvenance, FrontendAdaptation, PairedWorkloadContract,
+};
 pub(crate) use execution_contract::{
     RESOURCE_GATE_DECISION_TEMPLATE, RESOURCE_GATE_TARGETED_ACTIVATION,
 };
+pub(super) use steps::is_common_frontend_fast;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -166,11 +169,21 @@ impl DevexSuite {
         arm: PairedArm,
     ) -> Result<SuiteDefinition, String> {
         let mut definition = self.definition(variant)?;
-        if contract == Some(BaselineContract::LegacyStableReadinessB0V1)
-            && arm == PairedArm::Baseline
-            && self == Self::FrontendFast
-        {
-            definition.steps = FRONTEND_FAST_STABLE_READINESS_B0;
+        if self == Self::FrontendFast {
+            definition.steps = match (contract, arm) {
+                (
+                    Some(BaselineContract::StableReadinessB0CommonToolchainV1),
+                    PairedArm::Baseline,
+                ) => FRONTEND_FAST_COMMON_B0,
+                (
+                    Some(BaselineContract::StableReadinessB0CommonToolchainV1),
+                    PairedArm::Candidate,
+                ) => FRONTEND_FAST_COMMON_B1,
+                (Some(BaselineContract::LegacyStableReadinessB0V1), PairedArm::Baseline) => {
+                    FRONTEND_FAST_STABLE_READINESS_B0
+                }
+                _ => definition.steps,
+            };
         }
         Ok(definition)
     }
@@ -355,6 +368,7 @@ pub(crate) struct PairingMetadata {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DevexPairedOptions {
+    pub(crate) check_comparability: bool,
     pub(crate) run: DevexRunOptions,
     pub(crate) baseline_backend: PathBuf,
     pub(crate) candidate_backend: PathBuf,

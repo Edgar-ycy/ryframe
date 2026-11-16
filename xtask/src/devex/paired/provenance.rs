@@ -6,6 +6,9 @@ use crate::Result;
 
 use crate::devex::model::{BaselineContract, BaselineProvenance};
 
+#[path = "provenance/frontend.rs"]
+mod frontend;
+
 pub(super) fn collect(
     backend_root: &Path,
     frontend_root: &Path,
@@ -20,7 +23,7 @@ pub(super) fn collect(
         require_commit(backend_root, "后端适配", expected, contract)?;
     }
     require_parent(backend_root, base_commit, contract)?;
-    if contract == BaselineContract::LegacyStableReadinessB0V1 {
+    if contract.is_stable_readiness_b0() {
         require_stable_readiness_trees(backend_root)?;
     }
     require_clean(backend_root, "后端适配", contract)?;
@@ -39,21 +42,26 @@ pub(super) fn collect(
     )?;
     let patch_sha256 = sha256(&patch);
     let mut frontend_commit = None;
+    let frontend_adaptation = contract.registered_frontend_adaptation();
     let mut adapter_paths = Vec::new();
     let mut adapter_tree = None;
-    if contract == BaselineContract::LegacyStableReadinessB0V1 {
+    if contract.is_stable_readiness_b0() {
         adapter_paths = changed_paths(backend_root, base_commit, &adapter_commit)?;
         let tree = git_text(backend_root, &["rev-parse", "HEAD^{tree}"])?;
         validate_stable_readiness_adapter(&patch, &patch_sha256, &adapter_paths, &tree)?;
         adapter_tree = Some(tree);
-        require_commit(
-            frontend_root,
-            "前端 B0",
-            BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT,
-            contract,
-        )?;
+        let original = BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT;
+        let execution = frontend_adaptation
+            .as_ref()
+            .map_or(original, |value| value.commit.as_str());
+        require_commit(frontend_root, "前端 B0", execution, contract)?;
         require_clean(frontend_root, "前端 B0", contract)?;
-        frontend_commit = Some(BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT.to_owned());
+        if let Some(adaptation) = &frontend_adaptation {
+            frontend::verify(frontend_root, original, adaptation)?;
+            require_commit(frontend_root, "前端 B0", execution, contract)?;
+            require_clean(frontend_root, "前端 B0", contract)?;
+        }
+        frontend_commit = Some(original.to_owned());
         require_commit(
             backend_root,
             "后端适配",
@@ -71,6 +79,7 @@ pub(super) fn collect(
         patch_sha256,
         adapter_tree,
         frontend_commit,
+        frontend_adaptation,
         adapter_paths,
     }))
 }
@@ -136,21 +145,25 @@ fn require_stable_readiness_trees(root: &Path) -> Result<()> {
             BaselineContract::STABLE_READINESS_B0_ADAPTER_TREE,
         ),
     ] {
-        if !git_text(
-            root,
-            &[
-                "for-each-ref",
-                "--format=%(refname)",
-                &format!("refs/replace/{commit}"),
-            ],
-        )?
-        .is_empty()
+        if has_replacement(root, commit)?
             || git_text(root, &["rev-parse", &format!("{commit}^{{tree}}")])? != tree
         {
             return Err("B0 产品或执行对象存在替换引用或树不匹配".into());
         }
     }
     Ok(())
+}
+
+fn has_replacement(root: &Path, object: &str) -> Result<bool> {
+    Ok(!git_text(
+        root,
+        &[
+            "for-each-ref",
+            "--format=%(refname)",
+            &format!("refs/replace/{object}"),
+        ],
+    )?
+    .is_empty())
 }
 
 fn require_parent(root: &Path, expected: &str, contract: BaselineContract) -> Result<()> {

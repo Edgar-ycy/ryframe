@@ -156,6 +156,8 @@ pub(super) struct RunSession {
     pub(super) environment: BTreeMap<String, String>,
     pub(super) runtime_input: Option<super::runtime_native::Input>,
     pub(super) source_fingerprints: SourceFingerprints,
+    pub(super) compile_surface_fingerprint: String,
+    pub(super) common_toolchain: Option<super::common_toolchain::CommonToolchain>,
     pub(super) pairing: Option<PairingMetadata>,
     pub(super) normalizer: PathNormalizer,
 }
@@ -258,6 +260,8 @@ pub(super) fn prepare_run_at(
         environment,
         runtime_input,
         source_fingerprints,
+        compile_surface_fingerprint: metadata.compile_surface_fingerprint,
+        common_toolchain: metadata.toolchain.common,
         pairing,
         normalizer,
     })

@@ -19,7 +19,7 @@ use super::{
         PairingMetadata, SuiteDefinition,
     },
     preflight,
-    report::{SampleKind, append_sample, summarize},
+    report::{SampleKind, append_sample, ensure_compile_surface, summarize},
     support::{cleanup_successful_sample_target, sample_target},
 };
 
@@ -42,42 +42,8 @@ pub(super) fn execute(
         options,
         definition,
     )?;
-    let baseline_definition = options
-        .run
-        .suite
-        .paired_definition(
-            &options.run.variant,
-            options.baseline_contract,
-            PairedArm::Baseline,
-        )
-        .map_err(|error| format!("DevEx 基线变体无效：{error}"))?;
-    let candidate_definition = options
-        .run
-        .suite
-        .paired_definition(
-            &options.run.variant,
-            options.baseline_contract,
-            PairedArm::Candidate,
-        )
-        .map_err(|error| format!("DevEx 候选变体无效：{error}"))?;
-    preflight::check_paired(
-        &roots.baseline_backend,
-        &roots.baseline_frontend,
-        &roots.runner_frontend,
-        &options.run,
-        baseline_definition,
-        options.baseline_contract,
-        PairedArm::Baseline,
-    )?;
-    preflight::check_paired(
-        &roots.candidate_backend,
-        &roots.candidate_frontend,
-        &roots.runner_frontend,
-        &options.run,
-        candidate_definition,
-        options.baseline_contract,
-        PairedArm::Candidate,
-    )?;
+    let baseline_definition = arm_definition(&roots, options, PairedArm::Baseline)?;
+    let candidate_definition = arm_definition(&roots, options, PairedArm::Candidate)?;
     let baseline_provenance = provenance::collect(
         &roots.baseline_backend,
         &roots.baseline_frontend,
@@ -110,26 +76,90 @@ pub(super) fn execute(
         options.baseline_contract,
         baseline_provenance,
     )?;
-    let prepared_provenance = provenance::collect(
+    verify_ready(&roots, options, &baseline, &candidate)?;
+    if options.check_comparability {
+        println!(
+            "DevEx paired 预检通过：base={}，candidate={}",
+            baseline.run_dir.display(),
+            candidate.run_dir.display()
+        );
+        return Ok((baseline.run_dir, candidate.run_dir));
+    }
+    run_pair(&roots, options, &baseline, &candidate)?;
+    Ok((baseline.run_dir, candidate.run_dir))
+}
+
+fn arm_definition(
+    roots: &PairedRoots,
+    options: &DevexPairedOptions,
+    arm: PairedArm,
+) -> Result<SuiteDefinition> {
+    let (backend, frontend) = roots.arm(arm);
+    let definition = options
+        .run
+        .suite
+        .paired_definition(&options.run.variant, options.baseline_contract, arm)
+        .map_err(|error| format!("DevEx {} 变体无效：{error}", arm.as_str()))?;
+    preflight::check_paired(
+        backend,
+        frontend,
+        &roots.runner_frontend,
+        &options.run,
+        definition,
+        options.baseline_contract,
+        arm,
+    )?;
+    Ok(definition)
+}
+
+fn verify_ready(
+    roots: &PairedRoots,
+    options: &DevexPairedOptions,
+    baseline: &RunSession,
+    candidate: &RunSession,
+) -> Result<()> {
+    let prepared = provenance::collect(
         &roots.baseline_backend,
         &roots.baseline_frontend,
         options.baseline_contract,
     )?;
-    if prepared_provenance
+    if prepared.as_ref()
         != baseline
             .pairing
             .as_ref()
-            .and_then(|value| value.baseline_provenance.clone())
+            .and_then(|pairing| pairing.baseline_provenance.as_ref())
     {
         return Err("baseline 来源在创建运行记录期间发生变化，拒绝开始测量".into());
     }
+    ensure_compile_surface(
+        &baseline.compile_surface_fingerprint,
+        &candidate.compile_surface_fingerprint,
+    )?;
+    if baseline.common_toolchain != candidate.common_toolchain {
+        return Err("共同 DevEx 工具链文件、实际版本或缓存绑定不同".into());
+    }
+    for (arm, session) in [
+        (PairedArm::Baseline, baseline),
+        (PairedArm::Candidate, candidate),
+    ] {
+        let (backend, frontend) = roots.arm(arm);
+        source_fingerprints(backend, frontend, &roots.runner_frontend, session)?;
+    }
+    Ok(())
+}
 
+fn run_pair(
+    roots: &PairedRoots,
+    options: &DevexPairedOptions,
+    baseline: &RunSession,
+    candidate: &RunSession,
+) -> Result<()> {
     let execution = execute_samples(
-        &roots,
+        roots,
         &options.run,
         options.baseline_contract,
-        &baseline,
-        &candidate,
+        baseline,
+        candidate,
     );
     let baseline_cleanup = stop_sccache_server(
         &roots.baseline_backend,
@@ -148,6 +178,9 @@ pub(super) fn execute(
     execution?;
     baseline_cleanup?;
     candidate_cleanup?;
+    if let Some(toolchain) = &baseline.common_toolchain {
+        toolchain.verify_digests()?;
+    }
     summarize(&baseline.run_dir)?;
     summarize(&candidate.run_dir)?;
     println!(
@@ -159,7 +192,7 @@ pub(super) fn execute(
             .normalizer
             .normalize(&candidate.run_dir.to_string_lossy())
     );
-    Ok((baseline.run_dir, candidate.run_dir))
+    Ok(())
 }
 
 struct PairedRoots {
@@ -168,6 +201,15 @@ struct PairedRoots {
     baseline_frontend: PathBuf,
     candidate_frontend: PathBuf,
     runner_frontend: PathBuf,
+}
+
+impl PairedRoots {
+    fn arm(&self, arm: PairedArm) -> (&Path, &Path) {
+        match arm {
+            PairedArm::Baseline => (&self.baseline_backend, &self.baseline_frontend),
+            PairedArm::Candidate => (&self.candidate_backend, &self.candidate_frontend),
+        }
+    }
 }
 
 fn paired_roots(
@@ -185,8 +227,9 @@ fn paired_roots(
         &baseline_backend,
         &candidate_backend,
     )?;
-    let binds_stable_product =
-        options.baseline_contract == Some(BaselineContract::LegacyStableReadinessB0V1);
+    let binds_stable_product = options
+        .baseline_contract
+        .is_some_and(BaselineContract::is_stable_readiness_b0);
     let (baseline_frontend, candidate_frontend, runner_frontend) =
         if definition.requires_frontend || binds_stable_product {
             let coordinator = canonical_worktree(coordinator_frontend, "当前前端")?;
@@ -311,22 +354,22 @@ fn execute_samples(
     baseline: &RunSession,
     candidate: &RunSession,
 ) -> Result<()> {
-    execute_warmup_with_contract(
-        &roots.baseline_backend,
-        &roots.baseline_frontend,
-        &roots.runner_frontend,
-        options,
-        baseline,
-        save_contract(baseline_contract, PairedArm::Baseline),
-    )?;
-    execute_warmup_with_contract(
-        &roots.candidate_backend,
-        &roots.candidate_frontend,
-        &roots.runner_frontend,
-        options,
-        candidate,
-        save_contract(baseline_contract, PairedArm::Candidate),
-    )?;
+    for (arm, session) in [
+        (PairedArm::Baseline, baseline),
+        (PairedArm::Candidate, candidate),
+    ] {
+        let (backend, frontend) = roots.arm(arm);
+        source_fingerprints(backend, frontend, &roots.runner_frontend, session)?;
+        execute_warmup_with_contract(
+            backend,
+            frontend,
+            &roots.runner_frontend,
+            options,
+            session,
+            save_contract(baseline_contract, arm),
+        )?;
+        source_fingerprints(backend, frontend, &roots.runner_frontend, session)?;
+    }
     capture_sccache_stats(
         &roots.baseline_backend,
         options.suite,
@@ -493,13 +536,15 @@ fn source_fingerprints(
     runner_frontend_root: &Path,
     session: &RunSession,
 ) -> Result<super::metadata::SourceFingerprints> {
-    let observed = if session.definition.requires_frontend {
+    if let Some(toolchain) = &session.common_toolchain {
+        toolchain.check_files()?;
+    }
+    let observed = if session.source_fingerprints.frontend.is_some() {
         let runner = session
-            .definition
-            .steps
-            .iter()
-            .any(|step| step.working_directory == super::model::WorkingDirectory::RunnerFrontend)
-            .then_some(runner_frontend_root);
+            .source_fingerprints
+            .runner_frontend
+            .as_ref()
+            .map(|_| runner_frontend_root);
         super::metadata::collect_runtime_source_fingerprints(backend_root, frontend_root, runner)?
     } else {
         collect_source_fingerprints(backend_root, None)?

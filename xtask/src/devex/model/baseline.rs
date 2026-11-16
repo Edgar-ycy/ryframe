@@ -23,6 +23,7 @@ pub(crate) enum BaselineContract {
     LegacyCargoDevV1,
     LegacyCargoDevV2,
     LegacyStableReadinessB0V1,
+    StableReadinessB0CommonToolchainV1,
 }
 
 impl BaselineContract {
@@ -35,12 +36,16 @@ impl BaselineContract {
     pub(crate) const LEGACY_CARGO_DEV_V2_ADAPTER_COMMIT: &'static str =
         "47ee7937aed3ac035049abb360cc235716377a65";
     const STABLE_READINESS_B0_CONTRACT: &'static str = "legacy-stable-readiness-b0-v1";
+    const STABLE_READINESS_B0_COMMON_TOOLCHAIN: &'static str =
+        "stable-readiness-b0-common-toolchain-v1";
     pub(crate) const STABLE_READINESS_B0_BASE_COMMIT: &'static str =
         "815c5eafb09d4b493319d255fb7ab88ddd02c8b6";
     pub(crate) const STABLE_READINESS_B0_BASE_TREE: &'static str =
         "aeb1824ee52ea12d53d0cf87c327c7be3d1e12b4";
     pub(crate) const STABLE_READINESS_B0_FRONTEND_COMMIT: &'static str =
         "0087ea2ecf62530d042b9e52f5c950fb34c66d78";
+    pub(crate) const COMMON_FRONTEND_RUNNER_COMMIT: &'static str =
+        "66d9f74755ed2d034de1345de4050a5846fcfc9d";
     pub(crate) const STABLE_READINESS_B0_ADAPTER_COMMIT: &'static str =
         "c05114bcdf5c369cd74087db6317ce3c8f89bee8";
     pub(crate) const STABLE_READINESS_B0_ADAPTER_TREE: &'static str =
@@ -56,6 +61,9 @@ impl BaselineContract {
             "legacy-cargo-dev-v1" => Some(Self::LegacyCargoDevV1),
             "legacy-cargo-dev-v2" => Some(Self::LegacyCargoDevV2),
             Self::STABLE_READINESS_B0_CONTRACT => Some(Self::LegacyStableReadinessB0V1),
+            Self::STABLE_READINESS_B0_COMMON_TOOLCHAIN => {
+                Some(Self::StableReadinessB0CommonToolchainV1)
+            }
             _ => None,
         }
     }
@@ -65,10 +73,33 @@ impl BaselineContract {
             Self::LegacyCargoDevV1 => "legacy-cargo-dev-v1",
             Self::LegacyCargoDevV2 => "legacy-cargo-dev-v2",
             Self::LegacyStableReadinessB0V1 => Self::STABLE_READINESS_B0_CONTRACT,
+            Self::StableReadinessB0CommonToolchainV1 => Self::STABLE_READINESS_B0_COMMON_TOOLCHAIN,
         }
     }
 
+    pub(crate) const fn is_stable_readiness_b0(self) -> bool {
+        matches!(
+            self,
+            Self::LegacyStableReadinessB0V1 | Self::StableReadinessB0CommonToolchainV1
+        )
+    }
+
+    pub(crate) const fn uses_common_toolchain(self) -> bool {
+        matches!(self, Self::StableReadinessB0CommonToolchainV1)
+    }
+
     pub(crate) fn validate(self, options: &DevexRunOptions) -> Result<(), String> {
+        if self.uses_common_toolchain() {
+            match options.suite {
+                DevexSuite::CargoDevSave => {
+                    return Err("共同 DevEx 保存测量需要绑定 B0 历史保存入口及实际隔离配置".into());
+                }
+                DevexSuite::ResourceGate => {
+                    return Err("共同 DevEx 资源门禁需要绑定两侧的定向入口及实际 Git 范围".into());
+                }
+                _ => {}
+            }
+        }
         let valid = match self {
             Self::LegacyCargoDevV1 => {
                 options.suite == DevexSuite::CargoDevSave && options.variant == "config-only"
@@ -78,6 +109,7 @@ impl BaselineContract {
                     && matches!(options.variant.as_str(), "api-only" | "worker-only")
             }
             Self::LegacyStableReadinessB0V1 => true,
+            Self::StableReadinessB0CommonToolchainV1 => !options.suite.is_runtime(),
         };
         valid.then_some(()).ok_or_else(|| {
             format!(
@@ -93,7 +125,9 @@ impl BaselineContract {
         match self {
             Self::LegacyCargoDevV1 => Self::LEGACY_CARGO_DEV_BASE_COMMIT,
             Self::LegacyCargoDevV2 => Self::LEGACY_CARGO_DEV_V2_BASE_COMMIT,
-            Self::LegacyStableReadinessB0V1 => Self::STABLE_READINESS_B0_BASE_COMMIT,
+            Self::LegacyStableReadinessB0V1 | Self::StableReadinessB0CommonToolchainV1 => {
+                Self::STABLE_READINESS_B0_BASE_COMMIT
+            }
         }
     }
 
@@ -101,7 +135,9 @@ impl BaselineContract {
         match self {
             Self::LegacyCargoDevV1 => Some(Self::LEGACY_CARGO_DEV_ADAPTER_COMMIT),
             Self::LegacyCargoDevV2 => Some(Self::LEGACY_CARGO_DEV_V2_ADAPTER_COMMIT),
-            Self::LegacyStableReadinessB0V1 => Some(Self::STABLE_READINESS_B0_ADAPTER_COMMIT),
+            Self::LegacyStableReadinessB0V1 | Self::StableReadinessB0CommonToolchainV1 => {
+                Some(Self::STABLE_READINESS_B0_ADAPTER_COMMIT)
+            }
         }
     }
 
@@ -110,10 +146,19 @@ impl BaselineContract {
         suite: DevexSuite,
         variant: &str,
     ) -> Option<PairedWorkloadContract> {
-        (self == Self::LegacyStableReadinessB0V1
-            && suite == DevexSuite::FrontendFast
-            && variant == "default")
-            .then(frontend_fast_contract)
+        (self.is_stable_readiness_b0() && suite == DevexSuite::FrontendFast && variant == "default")
+            .then(|| frontend_fast_contract(self.uses_common_toolchain()))
+    }
+
+    pub(crate) fn registered_frontend_adaptation(self) -> Option<FrontendAdaptation> {
+        self.uses_common_toolchain().then(|| FrontendAdaptation {
+            original_tree: "52fed4e1321ab4b4c04839a3a165c6bd1645e4b6".to_owned(),
+            commit: "85fd2ac857ca4ac293474b97f5ace8b397af8576".to_owned(),
+            tree: "388f51e88aaa0f9864de1946f8edabf6760040d1".to_owned(),
+            patch_sha256: "sha256:4c41efb1dfc478a8ed60353369f1cef9eb77189027f232ea56eee8a913131781".to_owned(),
+            application_lock_sha256: "sha256:b7bd14748faf8c1d8207b6007a2be8d99c3223789ef0e64d22eae2f124d07b14".to_owned(),
+            manager_lock_sha256: "sha256:117d00a660b7189873f7a815580bab9345d624ee39c3b54068ec739359bdd7fe".to_owned(),
+        })
     }
 }
 
@@ -124,7 +169,7 @@ fn primitive(id: &str, covers: &[&str]) -> WorkloadPrimitive {
     }
 }
 
-fn frontend_fast_contract() -> PairedWorkloadContract {
+fn frontend_fast_contract(common_toolchain: bool) -> PairedWorkloadContract {
     let logical_tasks = [
         "format",
         "source-size",
@@ -143,17 +188,24 @@ fn frontend_fast_contract() -> PairedWorkloadContract {
             .iter()
             .map(|value| (*value).to_owned())
             .collect(),
-        baseline_primitives: vec![
-            primitive("format:check:fast", &["format"]),
-            primitive("check:source-size", &["source-size"]),
-            primitive("check:imports", &["imports"]),
-            primitive("check:api-operations", &["api-operation-policy"]),
-            primitive("check:api-artifacts", &["api-artifacts"]),
-            primitive("lint", &["eslint"]),
-            primitive("lint:styles", &["stylelint"]),
-            primitive("typecheck:app", &["typecheck-app"]),
-            primitive("test:unit", &["unit"]),
-        ],
+        baseline_primitives: if common_toolchain {
+            logical_tasks
+                .iter()
+                .map(|id| primitive(id, &[*id]))
+                .collect()
+        } else {
+            vec![
+                primitive("format:check:fast", &["format"]),
+                primitive("check:source-size", &["source-size"]),
+                primitive("check:imports", &["imports"]),
+                primitive("check:api-operations", &["api-operation-policy"]),
+                primitive("check:api-artifacts", &["api-artifacts"]),
+                primitive("lint", &["eslint"]),
+                primitive("lint:styles", &["stylelint"]),
+                primitive("typecheck:app", &["typecheck-app"]),
+                primitive("test:unit", &["unit"]),
+            ]
+        },
         candidate_primitives: vec![
             primitive("format", &["format"]),
             primitive("source-size", &["source-size"]),
@@ -161,7 +213,14 @@ fn frontend_fast_contract() -> PairedWorkloadContract {
             primitive("api-artifacts", &["api-artifacts"]),
             primitive("eslint", &["eslint"]),
             primitive("stylelint", &["stylelint"]),
-            primitive("typecheck", &["typecheck-app"]),
+            primitive(
+                if common_toolchain {
+                    "typecheck-app"
+                } else {
+                    "typecheck"
+                },
+                &["typecheck-app"],
+            ),
             primitive("unit", &["unit"]),
         ],
     }
@@ -176,6 +235,19 @@ pub(crate) struct BaselineProvenance {
     pub(crate) adapter_tree: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) frontend_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) frontend_adaptation: Option<FrontendAdaptation>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) adapter_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FrontendAdaptation {
+    pub(crate) original_tree: String,
+    pub(crate) commit: String,
+    pub(crate) tree: String,
+    pub(crate) patch_sha256: String,
+    pub(crate) application_lock_sha256: String,
+    pub(crate) manager_lock_sha256: String,
 }

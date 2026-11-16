@@ -9,6 +9,54 @@ use crate::{Result, workspace::remove_isolated_directory};
 
 use super::model::{CacheState, DevexSuite, StepDefinition};
 
+pub(super) fn frontend_fast_arguments(
+    step: &StepDefinition,
+    frontend: &Path,
+    runner: &Path,
+    target: &Path,
+) -> Vec<String> {
+    let token = Sha256::digest(target.as_os_str().as_encoded_bytes());
+    let cache = frontend
+        .join(".local-tests/devex-fast")
+        .join(hex::encode(&token[..12]));
+    let frontend = node_path(frontend);
+    let runner = node_path(runner);
+    let cache = node_path(&cache);
+    step.args
+        .iter()
+        .map(|arg| {
+            arg.replace("{frontend-cache}", &cache)
+                .replace("{runner-frontend}", &runner)
+                .replace("{frontend}", &frontend)
+        })
+        .collect()
+}
+
+fn node_path(path: &Path) -> String {
+    let text = path.to_string_lossy();
+    if cfg!(windows) {
+        if let Some(share) = text.strip_prefix(r"\\?\UNC\") {
+            return format!(r"\\{share}");
+        }
+        if let Some(drive) = text.strip_prefix(r"\\?\")
+            && drive.as_bytes().get(1) == Some(&b':')
+        {
+            return drive.to_owned();
+        }
+    }
+    text.into_owned()
+}
+
+#[cfg(all(test, windows))]
+#[test]
+fn common_frontend_cli_receives_node_compatible_windows_paths() {
+    assert_eq!(node_path(Path::new(r"\\?\D:\ryframe")), r"D:\ryframe");
+    assert_eq!(
+        node_path(Path::new(r"\\?\UNC\server\share")),
+        r"\\server\share"
+    );
+}
+
 pub(crate) fn sample_target(
     run_dir: &Path,
     suite: DevexSuite,

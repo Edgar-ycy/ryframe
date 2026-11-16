@@ -59,6 +59,8 @@ pub(crate) struct Toolchain {
     pub(crate) sccache: Option<String>,
     pub(crate) node: Option<String>,
     pub(crate) pnpm: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in crate::devex) common: Option<super::super::common_toolchain::CommonToolchain>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

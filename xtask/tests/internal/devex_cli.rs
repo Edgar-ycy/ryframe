@@ -237,6 +237,53 @@ fn legacy_baseline_contract_is_closed_to_config_only() {
 }
 
 #[test]
+fn common_toolchain_paired_preflight_requires_supported_workload() {
+    let args = |suite: &str, variant: &str| {
+        strings(&[
+            "check",
+            "perf",
+            "paired",
+            "--check-comparability",
+            "--base-backend",
+            "D:/worktrees/base",
+            "--candidate-backend",
+            "D:/worktrees/candidate",
+            "--base-frontend",
+            "D:/worktrees/base-frontend",
+            "--candidate-frontend",
+            "D:/worktrees/candidate-frontend",
+            "--baseline-contract",
+            "stable-readiness-b0-common-toolchain-v1",
+            "--suite",
+            suite,
+            "--variant",
+            variant,
+            "--runs",
+            "6",
+            "--cache",
+            "warm",
+        ])
+    };
+    let cli = parse(args("frontend-fast", "default")).unwrap();
+    let Command::Check(CheckCommand::Perf(DevexCommand::Paired(options))) = cli.command else {
+        panic!("应解析为 DevEx paired");
+    };
+    assert!(options.check_comparability);
+    assert_eq!(
+        options.baseline_contract,
+        Some(BaselineContract::StableReadinessB0CommonToolchainV1)
+    );
+    assert!(parse(args("runtime-api", "10")).is_err());
+    for (suite, variant, binding) in [
+        ("cargo-dev-save", "config-only", "B0 历史保存入口"),
+        ("resource-gate", "auto", "定向入口"),
+    ] {
+        let error = parse(args(suite, variant)).unwrap_err().to_string();
+        assert!(error.contains(binding), "{error}");
+    }
+}
+
+#[test]
 fn stable_readiness_b0_contract_accepts_all_suites_and_binds_both_product_roots() {
     for (suite, variant, runs, cache) in [
         ("rust-cold-build", "api", "20", "cold"),

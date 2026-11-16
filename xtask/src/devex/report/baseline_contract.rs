@@ -4,7 +4,9 @@ use crate::{Result, dev::ReadyKind};
 
 use super::{RunSummary, SampleRecord};
 use crate::devex::metadata::RunMetadata;
-use crate::devex::model::{BaselineContract, BaselineProvenance, DevexSuite, PairingMetadata};
+use crate::devex::model::{
+    BaselineContract, BaselineProvenance, DevexSuite, PairedArm, PairingMetadata,
+};
 
 pub(super) fn validate(
     baseline: &RunSummary,
@@ -36,9 +38,10 @@ pub(super) fn validate(
             candidate_records,
             baseline_pairing,
         ),
-        Some(BaselineContract::LegacyStableReadinessB0V1) => {
-            validate_stable_readiness_b0(baseline, candidate, baseline_pairing)
-        }
+        Some(
+            contract @ (BaselineContract::LegacyStableReadinessB0V1
+            | BaselineContract::StableReadinessB0CommonToolchainV1),
+        ) => validate_stable_readiness_b0(baseline, candidate, baseline_pairing, contract),
     }
 }
 
@@ -46,23 +49,25 @@ fn validate_stable_readiness_b0(
     baseline: &RunSummary,
     candidate: &RunSummary,
     pairing: &PairingMetadata,
+    contract: BaselineContract,
 ) -> Result<()> {
     if baseline.suite != candidate.suite || baseline.variant != candidate.variant {
-        return Err("legacy-stable-readiness-b0-v1 只允许同一 suite 与变体".into());
+        return Err(format!("{} 只允许同一 suite 与变体", contract.as_str()).into());
     }
-    if baseline.suite.is_runtime()
+    if (baseline.suite.is_runtime()
+        || (contract.uses_common_toolchain() && baseline.suite == DevexSuite::FrontendFast))
         && (baseline.source_fingerprints.runner_frontend.is_none()
             || baseline.source_fingerprints.runner_frontend
                 != candidate.source_fingerprints.runner_frontend)
     {
-        return Err("stable-readiness 运行时两侧必须使用同一 runner 前端工具闭包".into());
+        return Err("stable-readiness 两侧必须使用同一 runner 前端工具闭包".into());
     }
     let provenance = pairing
         .baseline_provenance
         .as_ref()
-        .ok_or("legacy-stable-readiness-b0-v1 缺少 baseline 来源证据")?;
-    if !valid_stable_readiness_provenance(provenance) {
-        return Err("legacy-stable-readiness-b0-v1 来源或执行适配证据无效".into());
+        .ok_or_else(|| format!("{} 缺少 baseline 来源证据", contract.as_str()))?;
+    if !valid_stable_readiness_provenance(provenance, contract) {
+        return Err(format!("{} 来源或执行适配证据无效", contract.as_str()).into());
     }
     Ok(())
 }
@@ -71,67 +76,120 @@ pub(super) fn validate_source_binding(metadata: &RunMetadata) -> Result<()> {
     let Some(pairing) = metadata.pairing.as_ref() else {
         return Ok(());
     };
-    if pairing.baseline_contract != Some(BaselineContract::LegacyStableReadinessB0V1) {
+    let Some(contract) = pairing
+        .baseline_contract
+        .filter(|value| value.is_stable_readiness_b0())
+    else {
         return Ok(());
+    };
+    if contract.uses_common_toolchain() && metadata.suite.is_runtime() {
+        return Err("DevEx B0 同工具链合同只接受非运行时测量".into());
     }
-    validate_workload_binding(metadata, pairing)?;
-    if pairing.arm != crate::devex::model::PairedArm::Baseline {
+    validate_workload_binding(metadata, pairing, contract)?;
+    if pairing.arm != PairedArm::Baseline {
         return Ok(());
     }
     let provenance = pairing
         .baseline_provenance
         .as_ref()
-        .ok_or("legacy-stable-readiness-b0-v1 缺少 baseline 来源证据")?;
-    if !valid_stable_readiness_provenance(provenance) {
-        return Err("legacy-stable-readiness-b0-v1 来源或执行适配证据无效".into());
+        .ok_or_else(|| format!("{} 缺少 baseline 来源证据", contract.as_str()))?;
+    if !valid_stable_readiness_provenance(provenance, contract) {
+        return Err(format!("{} 来源或执行适配证据无效", contract.as_str()).into());
     }
     if metadata.backend.commit.as_deref() != Some(provenance.adapter_commit.as_str())
         || metadata.backend.dirty != Some(false)
         || metadata.backend.worktree_fingerprint
             != clean_worktree_fingerprint(&provenance.adapter_commit)
     {
-        return Err("legacy-stable-readiness-b0-v1 报告与实际 B0 源码身份不一致".into());
+        return Err(format!("{} 报告与实际 B0 源码身份不一致", contract.as_str()).into());
     }
-    if let Some(frontend) = metadata.frontend.as_ref()
-        && (frontend.commit.as_deref() != provenance.frontend_commit.as_deref()
-            || frontend.dirty != Some(false)
-            || frontend.worktree_fingerprint
-                != clean_worktree_fingerprint(
-                    BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT,
-                ))
-    {
-        return Err("legacy-stable-readiness-b0-v1 报告与实际前端 B0 身份不一致".into());
+    let execution = provenance.frontend_adaptation.as_ref().map_or(
+        BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT,
+        |value| value.commit.as_str(),
+    );
+    let valid_frontend = match metadata.frontend.as_ref() {
+        Some(frontend) => {
+            frontend.commit.as_deref() == Some(execution)
+                && frontend.dirty == Some(false)
+                && frontend.worktree_fingerprint == clean_worktree_fingerprint(execution)
+        }
+        None => {
+            !contract.uses_common_toolchain()
+                || !metadata
+                    .suite
+                    .definition(&metadata.variant)?
+                    .requires_frontend
+        }
+    };
+    if !valid_frontend {
+        return Err(format!("{} 报告与实际前端 B0 身份不一致", contract.as_str()).into());
     }
     Ok(())
 }
 
-fn validate_workload_binding(metadata: &RunMetadata, pairing: &PairingMetadata) -> Result<()> {
-    let expected = BaselineContract::LegacyStableReadinessB0V1
-        .workload_contract(metadata.suite, &metadata.variant);
+fn validate_workload_binding(
+    metadata: &RunMetadata,
+    pairing: &PairingMetadata,
+    contract: BaselineContract,
+) -> Result<()> {
+    let expected = contract.workload_contract(metadata.suite, &metadata.variant);
     if pairing.workload_contract != expected {
-        return Err("legacy-stable-readiness-b0-v1 实际任务集合合同不匹配".into());
+        return Err(format!("{} 实际任务集合合同不匹配", contract.as_str()).into());
     }
     if metadata.suite != DevexSuite::FrontendFast {
         return Ok(());
     }
-    let expected_args: &[&str] = match pairing.arm {
-        crate::devex::model::PairedArm::Baseline => &["pnpm", "check:fast"],
-        crate::devex::model::PairedArm::Candidate => &["pnpm", "check"],
+    if contract.uses_common_toolchain() {
+        let commit = BaselineContract::COMMON_FRONTEND_RUNNER_COMMIT;
+        let fingerprint = clean_worktree_fingerprint(commit);
+        if !metadata.runner_frontend.as_ref().is_some_and(|runner| {
+            runner.commit.as_deref() == Some(commit)
+                && runner.dirty == Some(false)
+                && runner.worktree_fingerprint == fingerprint
+        }) {
+            return Err("共同 DevEx 前端快速检查的工具来源不匹配".into());
+        }
+    }
+    let arm = match pairing.arm {
+        PairedArm::Baseline => "b0",
+        PairedArm::Candidate => "b1",
     };
-    if metadata.commands.len() != 1
-        || metadata.commands[0].program != "corepack"
-        || metadata.commands[0]
-            .args
-            .iter()
-            .map(String::as_str)
-            .ne(expected_args.iter().copied())
-    {
-        return Err("legacy-stable-readiness-b0-v1 frontend-fast 实际执行入口不匹配".into());
+    let common_arguments = [
+        "$RUNNER_FRONTEND/scripts/devex-fast.mjs",
+        "--root",
+        "$FRONTEND",
+        "--arm",
+        arm,
+        "--cache-root",
+        "$FRONTEND_CACHE",
+    ];
+    let (program, arguments): (&str, &[&str]) =
+        match (contract.uses_common_toolchain(), pairing.arm) {
+            (true, _) => ("node", &common_arguments),
+            (false, PairedArm::Baseline) => ("corepack", &["pnpm", "check:fast"]),
+            (false, PairedArm::Candidate) => ("corepack", &["pnpm", "check"]),
+        };
+    let valid = if let [command] = metadata.commands.as_slice() {
+        command.program == program
+            && (!contract.uses_common_toolchain() || command.working_directory == "$FRONTEND")
+            && command
+                .args
+                .iter()
+                .map(String::as_str)
+                .eq(arguments.iter().copied())
+    } else {
+        false
+    };
+    if !valid {
+        return Err(format!("{} frontend-fast 实际执行入口不匹配", contract.as_str()).into());
     }
     Ok(())
 }
 
-fn valid_stable_readiness_provenance(provenance: &BaselineProvenance) -> bool {
+fn valid_stable_readiness_provenance(
+    provenance: &BaselineProvenance,
+    contract: BaselineContract,
+) -> bool {
     provenance.base_commit == BaselineContract::STABLE_READINESS_B0_BASE_COMMIT
         && provenance.adapter_commit == BaselineContract::STABLE_READINESS_B0_ADAPTER_COMMIT
         && provenance.patch_sha256 == BaselineContract::STABLE_READINESS_B0_PATCH_SHA256
@@ -139,6 +197,7 @@ fn valid_stable_readiness_provenance(provenance: &BaselineProvenance) -> bool {
             == Some(BaselineContract::STABLE_READINESS_B0_ADAPTER_TREE)
         && provenance.frontend_commit.as_deref()
             == Some(BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT)
+        && provenance.frontend_adaptation == contract.registered_frontend_adaptation()
         && provenance
             .adapter_paths
             .iter()

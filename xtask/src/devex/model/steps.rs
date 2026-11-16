@@ -236,6 +236,38 @@ pub(super) const FRONTEND_FAST_STABLE_READINESS_B0: &[StepDefinition] = &[StepDe
     program: "corepack",
     args: &["pnpm", "check:fast"],
 }];
+const COMMON_FRONTEND_FAST: &str = "{runner-frontend}/scripts/devex-fast.mjs";
+pub(super) const FRONTEND_FAST_COMMON_B0: &[StepDefinition] = &[StepDefinition {
+    working_directory: WorkingDirectory::Frontend,
+    program: "node",
+    args: &[
+        COMMON_FRONTEND_FAST,
+        "--root",
+        "{frontend}",
+        "--arm",
+        "b0",
+        "--cache-root",
+        "{frontend-cache}",
+    ],
+}];
+pub(super) const FRONTEND_FAST_COMMON_B1: &[StepDefinition] = &[StepDefinition {
+    working_directory: WorkingDirectory::Frontend,
+    program: "node",
+    args: &[
+        COMMON_FRONTEND_FAST,
+        "--root",
+        "{frontend}",
+        "--arm",
+        "b1",
+        "--cache-root",
+        "{frontend-cache}",
+    ],
+}];
+
+pub(in crate::devex) fn is_common_frontend_fast(step: &StepDefinition) -> bool {
+    step.program == "node" && step.args.first() == Some(&COMMON_FRONTEND_FAST)
+}
+
 pub(super) const FRONTEND_BUILD: &[StepDefinition] = &[StepDefinition {
     working_directory: WorkingDirectory::Frontend,
     program: "corepack",
