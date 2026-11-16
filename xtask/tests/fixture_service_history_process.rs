@@ -24,34 +24,31 @@ fn request(operation: &str, arguments: Value) -> Vec<u8> {
         "backend":PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap(),"arguments":arguments})).unwrap()
 }
 
-#[test]
-fn manifest_is_native_and_never_invokes_python() {
-    let payload = request(
-        "manifest",
-        json!({"value":{"format_version":1,"kind":"reference-fixture-service-run",
-        "review":{},"bootstrap":{},"execution_backend":"backend","scope_id":"fixture","data_directory_was_empty":true}}),
-    );
-    let output = invoke(&payload, &[]);
-    assert!(output.status.success());
-    assert!(output.stderr.is_empty());
-    assert_eq!(
-        serde_json::from_slice::<Value>(&output.stdout).unwrap(),
-        json!({"ok":true,"result":null})
-    );
+fn test_directory() -> tempfile::TempDir {
+    let parent = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join(".local-tests");
+    std::fs::create_dir_all(&parent).unwrap();
+    tempfile::tempdir_in(parent).unwrap()
 }
 
 #[test]
 fn unknown_fields_duplicates_and_cli_arguments_fail_with_private_diagnostics() {
+    let run = test_directory();
+    let history = request(
+        "history",
+        json!({"run":run.path(),"state":{"attempts":[]},"ready":false,"settled":false}),
+    );
+    assert!(invoke(&history, &[]).status.success());
+
     for (payload, extra) in [
         (request("credential-marker", json!({})), Vec::new()),
         (
             br#"{"format_version":1,"format_version":2,"secret":"credential-marker"}"#.to_vec(),
             Vec::new(),
         ),
-        (
-            request("manifest", json!({"value":{"secret":"credential-marker"}})),
-            vec!["--write"],
-        ),
+        (history, vec!["--write", "credential-marker"]),
     ] {
         let output = invoke(&payload, &extra);
         assert_eq!(output.status.code(), Some(2));
@@ -116,32 +113,6 @@ fn service_registration_and_observation_reject_escaped_or_unknown_inputs_private
 }
 
 #[test]
-fn initial_prefix_is_native_and_obsolete_python_evidence_routes_are_rejected() {
-    let attempts = [
-        ("storage-target", "initial"),
-        ("cache-target", "initial"),
-        ("fixture-buckets", "prepare"),
-    ]
-    .map(|(stage, mode)| json!({"stage":stage,"mode":mode,"status":"passed"}));
-    let output = invoke(
-        &request("initial", json!({"state":{"attempts":attempts}})),
-        &[],
-    );
-    assert!(output.status.success());
-    let output = invoke(
-        &request(
-            "reconcilable-close",
-            json!({"state":{"attempts":[{"number":1,"stage":"fixture-services","mode":"close","status":"failed"}]},
-        "history":{"closed":false,"external_recovery":null,"unsettled":[1]}}),
-        ),
-        &[],
-    );
-    assert_eq!(output.status.code(), Some(2));
-    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(response["ok"], false);
-}
-
-#[test]
 fn service_path_projection_runs_without_python_and_rejects_unknown_fields() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -169,11 +140,7 @@ fn service_path_projection_runs_without_python_and_rejects_unknown_fields() {
 
 #[test]
 fn private_service_response_limit_never_prints_large_credentials() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .to_path_buf();
-    let directory = tempfile::tempdir_in(root.join(".local-tests")).unwrap();
+    let directory = test_directory();
     let path = directory.path().join("large-private.json");
     std::fs::write(
         &path,

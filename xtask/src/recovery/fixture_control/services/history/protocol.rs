@@ -3,7 +3,7 @@ use std::{env, io::Read, path::PathBuf};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::{evidence, validate, validate_manifest};
+use super::{evidence, validate};
 use crate::{
     Result,
     local_test_path::{LocalTestPathKind, validate_local_test_path},
@@ -87,29 +87,6 @@ fn dispatch(input: &[u8]) -> Result<Value> {
     evidence::check(request.format_version == 1, "夹具历史协议版本无效")?;
     let args = &request.arguments;
     match request.operation.as_str() {
-        "manifest" => {
-            evidence::exact(args, &["value"])?;
-            validate_manifest(&args["value"])?;
-            Ok(Value::Null)
-        }
-        "initial" => {
-            evidence::exact(args, &["state"])?;
-            let attempts =
-                crate::recovery::clone::native::lifecycle::state::attempts(&args["state"])?;
-            evidence::check(
-                attempts.len() >= super::INITIAL.len()
-                    && attempts
-                        .iter()
-                        .zip(super::INITIAL)
-                        .all(|(item, (stage, mode))| {
-                            item["stage"] == stage
-                                && item["mode"] == mode
-                                && item["status"] == "passed"
-                        }),
-                "夹具服务账本必须完整包含 RustFS、Redis 与对象桶初始化",
-            )?;
-            Ok(Value::Null)
-        }
         "history" => {
             evidence::exact(args, &["run", "state", "ready", "settled"])?;
             let run = run_path(&request.backend, args)?;

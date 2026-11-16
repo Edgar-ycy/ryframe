@@ -29,7 +29,7 @@ class FixtureServiceClientTests(unittest.TestCase):
         with (patch.object(client, "verified_tool", return_value=nullcontext("native-xtask.exe")),
               patch.object(client.subprocess, "run", return_value=subprocess.CompletedProcess(
                   [], code, stdout, b"private stderr marker")) as run):
-            result = client._invoke("manifest", {"value": {}})
+            result = client._invoke("service-document", {"path": Path("local.json")})
         return result, run.call_args
 
     def test_request_uses_stdin_and_excludes_credentials_and_project_overrides(self):
@@ -39,7 +39,9 @@ class FixtureServiceClientTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertEqual(call.args[0], ["native-xtask.exe", "__fixture-service-history"])
         self.assertNotIn("secret", repr(call))
-        self.assertEqual(json.loads(call.kwargs["input"])["arguments"], {"value": {}})
+        request = json.loads(call.kwargs["input"])
+        self.assertEqual(request["operation"], "service-document")
+        self.assertEqual(request["arguments"], {"path": "local.json"})
         self.assertEqual(call.kwargs["stderr"], subprocess.DEVNULL)
         self.assertNotIn("shell", call.kwargs)
 
@@ -82,7 +84,7 @@ class FixtureServiceClientTests(unittest.TestCase):
                   patch.object(client, "verified_tool", return_value=nullcontext("native-xtask.exe")),
                   patch.object(client.subprocess, "run", side_effect=failure),
                   self.assertRaises(RuntimeError) as raised):
-                client._invoke("manifest", {"value": {}})
+                client._invoke("service-document", {"path": Path("local.json")})
             self.assertNotIn("credential marker", str(raised.exception))
 
 if __name__ == "__main__":

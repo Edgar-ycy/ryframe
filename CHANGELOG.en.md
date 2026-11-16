@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Remove the unused Python wrappers and corresponding private operations for fixture service manifests and initialization prefixes. Formal service operations continue to validate manifests, initialization order, and service history directly in Rust.
+
 - Windows Redis marker recovery for the original `source_to_seed` copy verifies a second restart at the same endpoint when reconciliation binds the preceding nonzero exit. It reuses the original initialization and copy ledger.
 
 - After a failed fixture service close, explicitly reconcile a registered Windows Redis v3 generation that exited with a nonzero code before the attempt and the same stopped RustFS tree. Reconciliation preserves the original exit proof and failure receipt, checks the ports, and registers a restart predecessor without sending stop requests.

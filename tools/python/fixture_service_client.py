@@ -81,13 +81,5 @@ def _unique_object(pairs):
     return value
 
 
-def validate_manifest(value: dict) -> None:
-    _invoke("manifest", {"value": value})
-
-
-def validate_initial(state: dict) -> None:
-    _invoke("initial", {"state": state})
-
-
 def validate_history(run: Path, state: dict, *, ready: bool = True, settled: bool = True) -> dict:
     return _invoke("history", {"run": str(run), "state": state, "ready": ready, "settled": settled})
