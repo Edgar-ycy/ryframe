@@ -1,4 +1,4 @@
-//! 在独立 reconcile 阶段收尾已正常退出的原 Redis；绝不重发 cache-stop。
+//! 在独立 reconcile 阶段核对原 Redis 退出和 RustFS 完整进程树。
 use super::*;
 use crate::recovery::clone::native::cache::host_control::recovery_port_error;
 
@@ -281,7 +281,12 @@ fn publish(
     let (number, controller, running, output, started) = stage;
     let deadline = started + Duration::from_secs(180);
     let recovery_file = output.join("close-recovery.json");
-    let receipt = json!({"format_version":1,"kind":"reference-fixture-close-recovery","owner":context.value["sources"]["state_before"],
+    let version = if original.get("prior_windows_redis_exit").is_some() {
+        2
+    } else {
+        1
+    };
+    let receipt = json!({"format_version":version,"kind":"reference-fixture-close-recovery","owner":context.value["sources"]["state_before"],
         "candidate":original,"redis_observation":observed,"rustfs_tree":services["tree"],"rustfs_members":completion,
         "windows_port":{"port":services["requests"]["redis"]["port"],"bound_and_closed":true},
         "elapsed_millis":runtime.now().saturating_sub(started).as_millis(),"budget_seconds":180,"remote_writes":0,"resources_deleted":false});
@@ -397,7 +402,7 @@ pub(super) fn qualify(
 ) -> Result<Option<TreeProof>> {
     // 首轮进程观察前冻结有无事实及文件身份，不能接纳观察期间补出的关闭证明。
     let proof = TreeProof::capture(services)?;
-    candidate(context, history, failed, services)?;
+    let original = candidate(context, history, failed, services)?;
     cache_observation(runtime, services)?;
     let mut alive = 0;
     for role in ["supervisor", "monitor", "process"] {
@@ -410,6 +415,12 @@ pub(super) fn qualify(
         alive += usize::from(!actual.is_null());
     }
     check(alive == 0 || alive == 3, "关闭恢复原RustFS树仅部分退出")?;
+    if original.get("prior_windows_redis_exit").is_some() {
+        check(
+            alive == 0,
+            "Windows Redis 非零退出要求原 RustFS 完整进程树已停止",
+        )?;
+    }
     if alive == 3 {
         check(
             proof.files.len() == 1,

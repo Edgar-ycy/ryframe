@@ -41,6 +41,10 @@ impl Recovery {
             )
             .unwrap();
         }
+        Self::from_inner(inner)
+    }
+
+    fn from_inner(inner: FakeRuntime) -> Self {
         Self {
             inner,
             port_error: None,
@@ -209,6 +213,9 @@ impl Runtime for Recovery {
             "storage-running" => Ok(json!(self.inner.observation["rustfs"] == "running")),
             "cache-stop" => {
                 self.inner.events.push(operation.into());
+                if args["runtime"]["format_version"] == 3 {
+                    return Err(model::error("原 Redis 已非零退出"));
+                }
                 json_io::write_new(
                     &self.inner.fixture.run.join("redis/linux-exited.json"),
                     &json!({"identity":args["runtime"]["linux_identity"],"returncode":0}),
@@ -219,6 +226,9 @@ impl Runtime for Recovery {
                 }
                 Err(model::error("停止后结果未发布"))
             }
+            "cache-status" if args["runtime"]["format_version"] == 3 => Ok(
+                json!({"state":"stopped","launcher_alive":false,"windows":{"identity":args["runtime"]["process"],"alive":false}}),
+            ),
             "cache-status" => Ok(
                 json!({"state":"stopped","launcher_alive":false,"linux":{"identity":args["runtime"]["linux_identity"],"alive":false,"boot_id":args["runtime"]["boot_id"],"terminated":false}}),
             ),
@@ -249,6 +259,185 @@ impl Runtime for Recovery {
             }
             _ => self.inner.call(operation, args),
         }
+    }
+}
+
+fn windows_exited_fixture(returncode: i32) -> Recovery {
+    let mut inner = FakeRuntime::new();
+    let directory = inner.fixture.run.join("redis");
+    let request = json!({"format_version":3,"port":16390});
+    let executable = std::env::current_exe().unwrap();
+    let process = json!({"pid":2147481021u32,"started":"1","executable":executable});
+    let supervisor = json!({"pid":2147481020u32,"started":"1","executable":executable});
+    let launch = json!({"test":"original"});
+    let process_path = directory.join("process.json");
+    json_io::write_new(
+        &process_path,
+        &json!({"launch":launch,"process":process,"supervisor":supervisor}),
+    )
+    .unwrap();
+    let process_receipt = binding(&process_path).unwrap();
+    let registered = json!({"format_version":3,"output":directory,"request_sha256":digest::plan_hash(&request).unwrap(),
+        "launch":launch,"process":process,"supervisor":supervisor,"process_receipt":process_receipt,
+        "redis":{"platform":"windows","port":16390,"run_id":"1".repeat(40)}});
+    json_io::write_replace(&directory.join("request.json"), &request).unwrap();
+    json_io::write_replace(&directory.join("runtime.json"), &registered).unwrap();
+    for name in [
+        "launch-request.json",
+        "intent.json",
+        "authorized.json",
+        "acknowledged.json",
+        "accepted.json",
+    ] {
+        json_io::write_new(&directory.join(name), &json!({"fixture":true})).unwrap();
+    }
+    let exited = directory.join("exited.json");
+    json_io::write_new(
+        &exited,
+        &json!({"process":process_receipt,"job_empty":true,"returncode":returncode}),
+    )
+    .unwrap();
+    inner.fixture.services["requests"]["redis"] = request;
+    inner.fixture.services["runtime"] = registered;
+    inner.observation["redis"] = json!("stopped");
+    let mut runtime = Recovery::from_inner(inner);
+    runtime.closed_tree(true);
+    let members = runtime
+        .inner
+        .stopped_members(&runtime.inner.fixture.services["tree"]);
+    let prior_time = std::time::UNIX_EPOCH + Duration::from_secs(1);
+    set_test_mtime(&exited, prior_time);
+    set_test_mtime(Path::new(text(&members, "path").unwrap()), prior_time);
+    runtime
+}
+
+fn set_test_mtime(path: &Path, time: std::time::SystemTime) {
+    fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(time))
+        .unwrap();
+}
+
+#[test]
+fn prior_windows_nonzero_exit_reconciles_only_the_original_stopped_generation() {
+    let mut runtime = windows_exited_fixture(-1);
+    let original_exit = runtime.inner.fixture.run.join("redis").join("exited.json");
+    let exit_before = binding(&original_exit).unwrap();
+    runtime.failed_close();
+    let state_before = runtime.inner.fixture.state();
+    runtime.inner.events.clear();
+    assert_eq!(
+        runtime.execute("status").unwrap()["next_operation"],
+        "reconcile"
+    );
+    let result = runtime.execute("reconcile").unwrap();
+    assert_eq!(result["status"], "failed_close_reconciled");
+    let run = &runtime.inner.fixture.run;
+    let proof_path = run.join("lifecycle-0005/close-recovery.json");
+    let proof = read(&proof_path).unwrap();
+    assert_eq!(proof["format_version"], 2);
+    assert_eq!(proof["candidate"]["exit"], exit_before);
+    assert_eq!(
+        proof["candidate"]["prior_windows_redis_exit"]["returncode"],
+        -1
+    );
+    assert_eq!(
+        proof["candidate"]["prior_windows_redis_exit"]["rustfs_members"],
+        proof["rustfs_members"]
+    );
+    assert!(!run.join("lifecycle-0005/stopped.json").exists());
+    assert_eq!(fs::read_dir(run.join("lifecycle-0004")).unwrap().count(), 0);
+    assert_eq!(binding(&original_exit).unwrap(), exit_before);
+    assert_eq!(
+        &state::attempts(&runtime.inner.fixture.state()).unwrap()[..4],
+        state::attempts(&state_before).unwrap()
+    );
+    assert_eq!(
+        runtime.inner.fixture.history()["restart_predecessor"],
+        runtime.inner.fixture.state()["attempts"][4]["result"]
+    );
+    assert_eq!(
+        runtime.execute("status").unwrap()["next_operation"],
+        "restart"
+    );
+    assert!(
+        runtime
+            .inner
+            .events
+            .iter()
+            .any(|event| event == "cache-closed-port")
+    );
+    assert!(!runtime.inner.events.iter().any(|event| matches!(
+        event.as_str(),
+        "cache-stop" | "tree-stop" | "cache-start" | "storage-start"
+    )));
+
+    set_test_mtime(
+        &original_exit,
+        std::time::UNIX_EPOCH + Duration::from_secs(2),
+    );
+    assert!(runtime.execute("status").is_err());
+}
+
+#[test]
+fn prior_exit_recovery_rejects_unqualified_windows_evidence_without_service_control() {
+    for scenario in [
+        "zero-before",
+        "late-redis",
+        "late-rustfs",
+        "job-not-empty",
+        "wrong-process",
+        "rustfs-pid-reused",
+        "rustfs-running",
+    ] {
+        let mut runtime = windows_exited_fixture(if scenario == "zero-before" { 0 } else { -1 });
+        runtime.failed_close();
+        let run = &runtime.inner.fixture.run;
+        let exited = run.join("redis").join("exited.json");
+        let tree = &runtime.inner.fixture.services["tree"];
+        let stopped = runtime.inner.stopped_members(tree);
+        match scenario {
+            "late-redis" => set_test_mtime(
+                &exited,
+                std::time::SystemTime::now() + Duration::from_secs(1),
+            ),
+            "late-rustfs" => set_test_mtime(
+                Path::new(text(&stopped, "path").unwrap()),
+                std::time::SystemTime::now() + Duration::from_secs(1),
+            ),
+            "job-not-empty" | "wrong-process" => {
+                let mut exit = read(&exited).unwrap();
+                if scenario == "job-not-empty" {
+                    exit["job_empty"] = json!(false);
+                } else {
+                    exit["process"]["sha256"] = json!("0".repeat(64));
+                }
+                json_io::write_replace(&exited, &exit).unwrap();
+                set_test_mtime(&exited, std::time::UNIX_EPOCH + Duration::from_secs(1));
+            }
+            "rustfs-pid-reused" => runtime.member_state = Some("reused"),
+            "rustfs-running" => runtime.member_state = Some("alive"),
+            _ => {}
+        }
+        runtime.inner.events.clear();
+        let state_before = runtime.inner.fixture.state();
+        assert_eq!(
+            runtime.execute("status").unwrap()["next_operation"],
+            "reconcile-evidence",
+            "{scenario}"
+        );
+        assert!(runtime.execute("reconcile").is_err(), "{scenario}");
+        assert_eq!(runtime.inner.fixture.state(), state_before, "{scenario}");
+        assert!(
+            !runtime
+                .inner
+                .events
+                .iter()
+                .any(|event| matches!(event.as_str(), "cache-stop" | "tree-stop")),
+            "{scenario}"
+        );
     }
 }
 
@@ -303,6 +492,8 @@ fn failed_close_recovery_never_replays_stop_preserves_failure_and_closes_origina
         .run
         .join("lifecycle-0005/close-recovery.json");
     let mut proof = read(&proof_path).unwrap();
+    assert_eq!(proof["format_version"], 1);
+    assert!(proof["candidate"].get("prior_windows_redis_exit").is_none());
     proof["candidate"]["failed_attempt"] = json!(3);
     json_io::write_replace(&proof_path, &proof).unwrap();
     assert!(
