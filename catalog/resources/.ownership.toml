@@ -300,7 +300,7 @@ root = "frontend"
 path = "src/generated/resources/notice/page.vue"
 source_hash = "9c7717ecf319783c9296cc84459c3b661dcadc10a233acf1bf058176b737d151"
 schema_hash = "b68503cbce094b4575d4b533331cf0e09c0b3ea55291b17d2b06cfba23d80803"
-content_hash = "ba3611b5d0abbe09b278d6911bdc1cc3fd945bf96edb76d24c1f7d384f4da42c"
+content_hash = "abee0db14bfb9dd4c9b4e9026e79690cdc88fd79703c5ea0d0d18f8b59c7e3a2"
 
 [[entries]]
 resource = "notice"
@@ -340,7 +340,7 @@ root = "frontend"
 path = "src/generated/resources/post/page.vue"
 source_hash = "1e4cc234204ac1def97cf88ed4548ec2fa3990698e32477838dd45a31269e63f"
 schema_hash = "2f4af73c2cfc449e270f2cf5eae8104ebe75cf19f7001cbfcf2ac750feb4fdc9"
-content_hash = "f260d820e15b2cd36d2b801fb0aa50f9cb9e58dcadeabd959048d60b5c140f51"
+content_hash = "c0fd3d956df8ad07c3f8591b3744cb92df3fa9e45cf85ad78d988800fb3dad6d"
 
 [[entries]]
 resource = "post"
