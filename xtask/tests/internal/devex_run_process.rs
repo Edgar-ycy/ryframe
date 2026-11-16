@@ -1,6 +1,72 @@
 use super::*;
 
 #[test]
+fn common_save_binds_each_arm_to_its_protocol_and_preserves_sample_results() {
+    use crate::devex::{BaselineContract, DevexSuite, PairedArm};
+
+    let root = tempfile::tempdir().unwrap();
+    let target = root.path().join("warm");
+    std::fs::create_dir(&target).unwrap();
+    let roots = StepRoots {
+        backend: root.path(),
+        frontend: root.path(),
+        runner_frontend: root.path(),
+        target: &target,
+    };
+    let invocation = StepInvocation {
+        variant: "cancellation",
+        label: "sample-002",
+        runtime_input: None,
+    };
+    let contract = Some(BaselineContract::StableReadinessB0CommonToolchainV1);
+    let expected = target.join("cargo-dev-save-result-sample-002.json");
+    for arm in [PairedArm::Baseline, PairedArm::Candidate] {
+        let definition = DevexSuite::CargoDevSave
+            .paired_definition(invocation.variant, contract, arm)
+            .unwrap();
+        let command = step_command(
+            &definition.steps[0],
+            roots,
+            definition,
+            &BTreeMap::new(),
+            &invocation,
+        )
+        .unwrap();
+        assert_eq!(command.get_current_dir(), Some(root.path()));
+        let args: Vec<_> = command.get_args().collect();
+        let environment = |name: &str| {
+            command
+                .get_envs()
+                .find_map(|(key, value)| (key == name).then_some(value))
+        };
+        if arm == PairedArm::Baseline {
+            assert_eq!(args, ["xtask", "dev", "--measure-once"]);
+            assert_eq!(
+                environment("RYFRAME_DEVEX_SAVE_CASE"),
+                Some(Some(std::ffi::OsStr::new("cancellation")))
+            );
+            assert_eq!(
+                environment("RYFRAME_DEVEX_SAVE_RESULT_PATH"),
+                Some(Some(expected.as_os_str()))
+            );
+            assert_eq!(environment("RYFRAME_WORKSPACE_ROOT"), Some(None));
+        } else {
+            assert_eq!(args.last().copied(), Some(expected.as_os_str()));
+            assert_eq!(environment("RYFRAME_DEVEX_SAVE_CASE"), Some(None));
+            assert_eq!(environment("RYFRAME_DEVEX_SAVE_RESULT_PATH"), Some(None));
+        }
+        assert_eq!(environment("RYFRAME_DEVEX_TARGET_ROOT"), Some(None));
+        let result =
+            super::super::save::result_path(&target, invocation.label, definition).unwrap();
+        assert_eq!(result, expected);
+        std::fs::write(&result, b"prior receipt").unwrap();
+        assert!(super::super::save::result_path(&target, invocation.label, definition).is_err());
+        assert_eq!(std::fs::read(&result).unwrap(), b"prior receipt");
+        std::fs::remove_file(&result).unwrap();
+    }
+}
+
+#[test]
 fn native_step_keeps_only_app_env_from_project_protocol_environment() {
     let definition = super::super::super::model::DevexSuite::RuntimeApi
         .definition("10")

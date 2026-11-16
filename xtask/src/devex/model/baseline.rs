@@ -91,8 +91,10 @@ impl BaselineContract {
     pub(crate) fn validate(self, options: &DevexRunOptions) -> Result<(), String> {
         if self.uses_common_toolchain() {
             match options.suite {
-                DevexSuite::CargoDevSave => {
-                    return Err("共同 DevEx 保存测量需要绑定 B0 历史保存入口及实际隔离配置".into());
+                DevexSuite::CargoDevSave if options.variant != "cancellation" => {
+                    return Err(
+                        "该共同 DevEx 保存场景需要绑定 B0 历史保存入口及实际隔离配置".into(),
+                    );
                 }
                 DevexSuite::ResourceGate => {
                     return Err("共同 DevEx 资源门禁需要绑定两侧的定向入口及实际 Git 范围".into());
@@ -146,8 +148,16 @@ impl BaselineContract {
         suite: DevexSuite,
         variant: &str,
     ) -> Option<PairedWorkloadContract> {
-        (self.is_stable_readiness_b0() && suite == DevexSuite::FrontendFast && variant == "default")
-            .then(|| frontend_fast_contract(self.uses_common_toolchain()))
+        if self.is_stable_readiness_b0()
+            && suite == DevexSuite::FrontendFast
+            && variant == "default"
+        {
+            return Some(frontend_fast_contract(self.uses_common_toolchain()));
+        }
+        (self.uses_common_toolchain()
+            && suite == DevexSuite::CargoDevSave
+            && variant == "cancellation")
+            .then(cancellation_contract)
     }
 
     pub(crate) fn registered_frontend_adaptation(self) -> Option<FrontendAdaptation> {
@@ -166,6 +176,17 @@ fn primitive(id: &str, covers: &[&str]) -> WorkloadPrimitive {
     WorkloadPrimitive {
         id: id.to_owned(),
         covers: covers.iter().map(|value| (*value).to_owned()).collect(),
+    }
+}
+
+fn cancellation_contract() -> PairedWorkloadContract {
+    let task = "cancel-superseded-api-build";
+    PairedWorkloadContract {
+        format_version: 1,
+        kind: "stable-readiness-cargo-dev-cancellation".to_owned(),
+        logical_tasks: vec![task.to_owned()],
+        baseline_primitives: vec![primitive("dev-measure-once-environment", &[task])],
+        candidate_primitives: vec![primitive("dev-measure-once-arguments", &[task])],
     }
 }
 

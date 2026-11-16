@@ -100,6 +100,20 @@ fn validate_sample(metadata: &RunMetadata, sample: &SampleRecord) -> Result<()> 
     if metadata.suite == DevexSuite::CargoDevSave && sample.ready_kind.is_none() {
         return Err(format!("cargo-dev-save 样本 {} 缺少就绪结果", sample.sequence).into());
     }
+    if metadata.suite == DevexSuite::CargoDevSave
+        && metadata
+            .pairing
+            .as_ref()
+            .and_then(|pairing| pairing.baseline_contract)
+            .is_some_and(crate::devex::BaselineContract::uses_common_toolchain)
+    {
+        let case = crate::dev::SaveCase::parse(&metadata.variant).ok_or("保存测量场景无效")?;
+        if sample.cargo_invocations != Some(case.expected_cargo_invocations())
+            || sample.ready_kind != Some(case.expected_ready())
+        {
+            return Err("共同 DevEx 保存测量的实际 Cargo 调用数或就绪结果不匹配".into());
+        }
+    }
     validate_decision(metadata.suite, sample)
 }
 

@@ -2,7 +2,8 @@ use super::super::{
     memory::{self, MemoryEvidence},
     metadata::corepack_executable,
     model::{
-        StepDefinition, SuiteDefinition, WorkingDirectory, is_common_frontend_fast, step_arguments,
+        PAIRED_SAVE_OUTPUT, StepDefinition, SuiteDefinition, WorkingDirectory,
+        is_common_frontend_fast, step_arguments, uses_historical_save_protocol,
     },
     support::{display_step, frontend_fast_arguments, success_status},
 };
@@ -106,6 +107,9 @@ fn step_command(
         label,
         program,
     );
+    if uses_historical_save_protocol(step) {
+        super::save::bind_historical_protocol(&mut command, roots.target, invocation)?;
+    }
     Ok(command)
 }
 
@@ -123,6 +127,11 @@ fn render_args(
     Ok(step_arguments(step, invocation.variant)?
         .iter()
         .map(|arg| {
+            if arg == PAIRED_SAVE_OUTPUT {
+                return super::save::paired_result_path(roots.target, invocation.label)
+                    .to_string_lossy()
+                    .into_owned();
+            }
             arg.replace("{driver}", &driver)
                 .replace("{backend}", &backend)
                 .replace("{target}", &target)
@@ -206,6 +215,8 @@ fn configure_command(
     }
     command
         .env_remove("RYFRAME_DEVEX_TARGET_ROOT")
+        .env_remove("RYFRAME_DEVEX_SAVE_CASE")
+        .env_remove("RYFRAME_DEVEX_SAVE_RESULT_PATH")
         .env_remove("RYFRAME_FAST_CHECK_CACHE_ROOT");
 }
 

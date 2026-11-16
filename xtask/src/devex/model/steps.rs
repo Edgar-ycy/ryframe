@@ -120,6 +120,33 @@ pub(super) const CARGO_DEV_SAVE: &[StepDefinition] = &[StepDefinition {
         "{target}/cargo-dev-save-result.json",
     ],
 }];
+pub(in crate::devex) const PAIRED_SAVE_OUTPUT: &str = "{target}/cargo-dev-save-result-{label}.json";
+const HISTORICAL_SAVE_ARGS: &[&str] = &["xtask", "dev", "--measure-once"];
+pub(super) const PAIRED_CARGO_DEV_SAVE_B0: &[StepDefinition] = &[StepDefinition {
+    working_directory: WorkingDirectory::Backend,
+    program: "cargo",
+    args: HISTORICAL_SAVE_ARGS,
+}];
+pub(super) const PAIRED_CARGO_DEV_SAVE_B1: &[StepDefinition] = &[StepDefinition {
+    working_directory: WorkingDirectory::Backend,
+    program: "cargo",
+    args: &[
+        "xtask",
+        "dev",
+        "--measure-once",
+        "--workspace-root",
+        "{backend}",
+        "--case",
+        "{variant}",
+        "--output",
+        PAIRED_SAVE_OUTPUT,
+    ],
+}];
+
+pub(in crate::devex) fn uses_historical_save_protocol(step: &StepDefinition) -> bool {
+    step.program == "cargo" && step.args == HISTORICAL_SAVE_ARGS
+}
+
 pub(super) const RESOURCE_GENERATOR_ALL: &[StepDefinition] = &[StepDefinition {
     working_directory: WorkingDirectory::Backend,
     program: "cargo",

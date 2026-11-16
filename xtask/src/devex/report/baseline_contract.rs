@@ -136,6 +136,18 @@ fn validate_workload_binding(
     if pairing.workload_contract != expected {
         return Err(format!("{} 实际任务集合合同不匹配", contract.as_str()).into());
     }
+    if contract.uses_common_toolchain() && metadata.suite == DevexSuite::CargoDevSave {
+        let definition =
+            metadata
+                .suite
+                .paired_definition(&metadata.variant, Some(contract), pairing.arm)?;
+        if expected.is_none()
+            || metadata.commands
+                != crate::devex::metadata::command_metadata(definition.steps, &metadata.variant)?
+        {
+            return Err("共同 DevEx 保存测量的实际执行入口不匹配".into());
+        }
+    }
     if metadata.suite != DevexSuite::FrontendFast {
         return Ok(());
     }

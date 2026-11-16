@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Common-toolchain DevEx cancellation invokes the original B0 save entry point and the explicit B1 arguments. Each run keeps its own result and validates the Cargo invocation count and process cleanup outcome for the superseded API build.
+
 - Common-toolchain DevEx pairing binds the separate B0 frontend measurement source and the actual toolchain and uses common frontend checks. Pairing checks comparability before warmup and can retain metadata from a standalone readiness check.
 
 - Restore the original B0 command adapter binding for non-runtime DevEx comparisons. Run and report validation check the registered commit, tree, patch digest, and path. Formal recovery continues to use its separately registered B0 database adapter.

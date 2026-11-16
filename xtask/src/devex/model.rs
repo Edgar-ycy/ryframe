@@ -19,6 +19,7 @@ pub(crate) use execution_contract::{
     RESOURCE_GATE_DECISION_TEMPLATE, RESOURCE_GATE_TARGETED_ACTIVATION,
 };
 pub(super) use steps::is_common_frontend_fast;
+pub(super) use steps::{PAIRED_SAVE_OUTPUT, uses_historical_save_protocol};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -169,6 +170,14 @@ impl DevexSuite {
         arm: PairedArm,
     ) -> Result<SuiteDefinition, String> {
         let mut definition = self.definition(variant)?;
+        if self == Self::CargoDevSave
+            && contract.is_some_and(BaselineContract::uses_common_toolchain)
+        {
+            definition.steps = match arm {
+                PairedArm::Baseline => PAIRED_CARGO_DEV_SAVE_B0,
+                PairedArm::Candidate => PAIRED_CARGO_DEV_SAVE_B1,
+            };
+        }
         if self == Self::FrontendFast {
             definition.steps = match (contract, arm) {
                 (

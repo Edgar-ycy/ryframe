@@ -253,7 +253,10 @@ fn environment_hash(environment: &BTreeMap<String, String>) -> String {
     sha256(&serde_json::to_vec(environment).expect("环境映射必须可序列化"))
 }
 
-fn command_metadata(steps: &[StepDefinition], variant: &str) -> Result<Vec<CommandMetadata>> {
+pub(in crate::devex) fn command_metadata(
+    steps: &[StepDefinition],
+    variant: &str,
+) -> Result<Vec<CommandMetadata>> {
     steps
         .iter()
         .map(|step| {

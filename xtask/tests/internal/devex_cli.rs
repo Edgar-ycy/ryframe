@@ -239,6 +239,7 @@ fn legacy_baseline_contract_is_closed_to_config_only() {
 #[test]
 fn common_toolchain_paired_preflight_requires_supported_workload() {
     let args = |suite: &str, variant: &str| {
+        let runs = if variant == "cancellation" { "20" } else { "6" };
         strings(&[
             "check",
             "perf",
@@ -259,7 +260,7 @@ fn common_toolchain_paired_preflight_requires_supported_workload() {
             "--variant",
             variant,
             "--runs",
-            "6",
+            runs,
             "--cache",
             "warm",
         ])
@@ -274,6 +275,12 @@ fn common_toolchain_paired_preflight_requires_supported_workload() {
         Some(BaselineContract::StableReadinessB0CommonToolchainV1)
     );
     assert!(parse(args("runtime-api", "10")).is_err());
+    let cancellation = parse(args("cargo-dev-save", "cancellation")).unwrap();
+    assert!(matches!(
+        cancellation.command,
+        Command::Check(CheckCommand::Perf(DevexCommand::Paired(options)))
+            if options.run.variant == "cancellation"
+    ));
     for (suite, variant, binding) in [
         ("cargo-dev-save", "config-only", "B0 历史保存入口"),
         ("resource-gate", "auto", "定向入口"),

@@ -463,6 +463,9 @@ pub(super) fn execute_sample_with_contract(
     save_contract: SaveMeasurementContract,
 ) -> Result<SampleOutcome> {
     fs::create_dir_all(target)?;
+    let save_result = (suite == DevexSuite::CargoDevSave)
+        .then(|| save::result_path(target, label, definition))
+        .transpose()?;
     let started_at = Utc::now();
     let started = Instant::now();
     let source = suite
@@ -508,9 +511,9 @@ pub(super) fn execute_sample_with_contract(
         },
         status,
     };
-    if suite == DevexSuite::CargoDevSave && outcome.status.success() {
+    if let Some(result) = save_result.filter(|_| outcome.status.success()) {
         save::measurement_outcome(
-            target,
+            &result,
             variant,
             outcome.status,
             save_contract,
