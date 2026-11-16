@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Windows Redis marker recovery for the original `source_to_seed` copy verifies a second restart at the same endpoint when reconciliation binds the preceding nonzero exit. It reuses the original initialization and copy ledger.
+
 - After a failed fixture service close, explicitly reconcile a registered Windows Redis v3 generation that exited with a nonzero code before the attempt and the same stopped RustFS tree. Reconciliation preserves the original exit proof and failure receipt, checks the ports, and registers a restart predecessor without sending stop requests.
 
 - Routine development startup works without Python. The environment doctor uses the same interpreter identity and minimum-version checks as the maintenance gate.

@@ -18,7 +18,9 @@ use super::{
     },
     Generation, ProcessGuard, StageRequest, Storage, Target, absent, protected_file,
 };
-use crate::{Result, recovery::fixture_control::services};
+use crate::Result;
+
+mod successor;
 
 pub(super) fn preflight(request: &StageRequest<'_>, manifest: &Value) -> Result<()> {
     if !cfg!(windows)
@@ -207,31 +209,24 @@ impl<'a> Recovery<'a> {
             storage.directory.join("state.json"),
         ];
         let fixture_guard = hold(backend, &paths)?;
-        let fixture = fixture_successor(backend, &storage.directory, target)?;
+        let fixture = successor::load(backend, &storage.directory, target)?;
         require_marker_model(target)?;
         let (heads, proof, plan, source) = journal(stage, target)?;
         fixture_guard.check()?;
         plan.check()?;
-        let protected = hold(
-            backend,
-            &[
-                paths[0].clone(),
-                paths[1].clone(),
-                common::bound_file(backend, &fixture["restart"], "原夹具重启")?,
-                common::bound_file(backend, &fixture["generation"], "原夹具重启代次")?,
-                common::bound_file(backend, &fixture["termination"], "原夹具外部终止")?,
-                common::bound_file(
-                    backend,
-                    &fixture["termination_evidence"],
-                    "原 Redis 外部终止",
-                )?,
-                stage.ledger.join("events.ndjson"),
-                stage.ledger.join("head.json"),
-            ],
-        )?;
+        let mut files = fixture.files.clone();
+        files.extend(paths);
+        files.extend([
+            stage.ledger.join("events.ndjson"),
+            stage.ledger.join("head.json"),
+        ]);
+        let protected = hold(backend, &files)?;
+        if successor::load(backend, &storage.directory, target)? != fixture {
+            return Err("Redis 标记恢复固定代次期间夹具证据变化".into());
+        }
         let binding = json!({
             "run":stage.manifest_binding, "initialized":stage.manifest["initialized"],
-            "fixture":fixture, "plan_sha256":heads["plan_sha256"],
+            "fixture":fixture.value, "plan_sha256":heads["plan_sha256"],
             "generation_sha256":heads["generation_sha256"],
         });
         let recovered = Self {
@@ -416,100 +411,6 @@ fn journal(stage: &Stage<'_>, target: &Target) -> Result<(Value, Proofs, Inputs,
     plan_guard.check()?;
     guard.check()?;
     Ok((head, proof, guard, source))
-}
-
-fn fixture_successor(backend: &Path, run: &Path, target: &Target) -> Result<Value> {
-    let manifest = common::binding(&run.join("manifest.json"))?;
-    services::history::validate_manifest(&common::read_bound(
-        backend,
-        &manifest,
-        "原夹具服务清单",
-    )?)?;
-    let saved = state::load(run, true)?;
-    let history = services::history::validate(run, &saved, true, true)?;
-    let restart = original_restart(&history, state::attempts(&saved)?)?;
-    let outer = common::read_bound(backend, &restart["result"], "已登记夹具重启")?;
-    let generation = common::read_bound(backend, &outer["generation"], "已登记夹具后继代次")?;
-    let termination = &generation["predecessor"];
-    let predecessor = common::read_bound(backend, termination, "已登记外部终止核对")?;
-    let proof = common::read_bound(backend, &predecessor["evidence"], "原 Windows 终止观察")?;
-    let selected = &target.storage.value["redis"];
-    let initial = &target.initialized["generation"]["storage"]["redis"];
-    let previous_runtime = common::read_bound(
-        backend,
-        &proof["observation"]["evidence"]["redis_runtime"],
-        "原 Windows Redis 代次",
-    )?;
-    let next_request = common::read_bound(
-        backend,
-        &generation["redis"]["request"],
-        "原 Redis 重启请求",
-    )?;
-    check_redis_successor(
-        initial,
-        selected,
-        &previous_runtime,
-        &next_request,
-        &generation,
-        &proof,
-    )?;
-    if target.cache.as_ref() != Some(&json!({"redis":selected,"generation":restart["result"]})) {
-        return Err("目标 Redis 选择不属于同一原夹具后继".into());
-    }
-    Ok(
-        json!({"manifest":manifest,"restart":restart["result"],"generation":outer["generation"],
-        "termination":termination,"termination_evidence":predecessor["evidence"],"redis":selected}),
-    )
-}
-
-fn original_restart<'a>(history: &Value, attempts: &'a [Value]) -> Result<&'a Value> {
-    let mut restarts = attempts.iter().filter(|row| {
-        row["stage"] == "fixture-services" && row["mode"] == "restart" && row["status"] == "passed"
-    });
-    let first = restarts.next().ok_or("原夹具尚未发布成功重启")?;
-    if restarts.next().is_some()
-        || history["active_generation"] != first["result"]
-        || history["closed"] != false
-        || !history["external_recovery"].is_null()
-        || !history["rustfs_handoff"].is_null()
-    {
-        return Err("Redis 标记恢复只接受原夹具唯一且当前活跃的重启代次".into());
-    }
-    Ok(first)
-}
-
-fn check_redis_successor(
-    initial: &Value,
-    selected: &Value,
-    previous: &Value,
-    request: &Value,
-    generation: &Value,
-    proof: &Value,
-) -> Result<()> {
-    let mut allowed = initial.clone();
-    for name in ["pid", "started", "run_id"] {
-        allowed[name] = selected[name].clone();
-    }
-    if initial["platform"] != "windows"
-        || selected["platform"] != "windows"
-        || *selected != allowed
-        || initial["run_id"] == selected["run_id"]
-        || initial["started"] == selected["started"]
-        || previous["redis"] != *initial
-        || previous["format_version"] != 3
-        || request["format_version"] != 3
-        || request["previous_identity"] != previous["process"]
-        || request["previous_run_id"] != initial["run_id"]
-        || generation["previous_generation"]["kind"] != "initial"
-        || generation["redis"]["runtime"]["redis"] != *selected
-        || proof["format_version"] != 2
-        || proof["kind"] != "reference-fixture-external-termination"
-        || proof["observation"]["evidence"]["redis_external"]["kind"]
-            != "windows-redis-external-termination"
-    {
-        return Err("原 Windows Redis 外部终止或同端点后继不完整".into());
-    }
-    Ok(())
 }
 
 fn require_marker_model(target: &Target) -> Result<()> {
