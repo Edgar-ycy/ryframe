@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- After a failed fixture service close, explicitly reconcile a registered Windows Redis v3 generation that exited with a nonzero code before the attempt and the same stopped RustFS tree. Reconciliation preserves the original exit proof and failure receipt, checks the ports, and registers a restart predecessor without sending stop requests.
+
 - The native recovery build validates Git-ignored output paths and publishes receipts exclusively. Remove the Python receipt writer used only by retired tests and add real Git regression coverage for out-of-scope and unignored output paths.
 
 - Remove the Python build source lock used only by legacy tests. The Rust tests verify that the lock exists during the build operation and continue to check cleanup, preservation of drifted evidence, and rejection of an occupied binding.
