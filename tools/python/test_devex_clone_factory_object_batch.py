@@ -23,7 +23,15 @@ class FactoryObjectBatchTests(unittest.TestCase):
         self.started, self.finished, self.paths, self.proofs = [], [], [], []
         self.active = self.peak = 0
         self.source_hook = self.target_hook = None
-        self.original_environment = dict(os.environ)
+        self.inherited_environment = {"PATH": "fixture-path"}
+        self.original_environment = self.inherited_environment | {"APP_CONFIG_DIR": "host-fixture-config"}
+        self.private_environments = {
+            "source": {"CLONE_SIDE": "source", "READ_SECRET": "source-fixture", "SOURCE_ONLY": "source-only"},
+            "target": {"CLONE_SIDE": "target", "READ_SECRET": "target-fixture", "TARGET_ONLY": "target-only"},
+        }
+        host = patch.dict(os.environ, self.original_environment, clear=True)
+        host.start()
+        self.addCleanup(host.stop)
         self.targets = [("uploads", f"target/system/{index}.bin") for index in range(4)]
         self.parent = None
 
@@ -35,8 +43,8 @@ class FactoryObjectBatchTests(unittest.TestCase):
                                    for bucket, key in self.targets]}
         session.tools = SimpleNamespace(work=self.work)
         session.source_verified = {"fixture": "fixed source proof"}
-        session.environment = Environments({"CLONE_SIDE": "source", "READ_SECRET": "source-fixture"},
-                                           {"CLONE_SIDE": "target", "READ_SECRET": "target-fixture"})
+        session.environment = Environments(
+            self.private_environments["source"].copy(), self.private_environments["target"].copy())
         session.latest_objects = {}
         return session
 
@@ -45,12 +53,9 @@ class FactoryObjectBatchTests(unittest.TestCase):
         self.assertEqual(os.environ["CLONE_SIDE"], "source")
         self.proofs.append(selection)
 
-    def read(self, side, key, output, expected_environment=None):
+    def read(self, side, key, output):
         self.assertNotEqual(threading.get_ident(), self.parent)
-        self.assertEqual(os.environ["CLONE_SIDE"], side)
-        self.assertEqual(os.environ["READ_SECRET"], side + "-fixture")
-        if expected_environment is not None:
-            self.assertEqual(dict(expected_environment), dict(os.environ))
+        self.assertEqual(dict(os.environ), self.inherited_environment | self.private_environments[side])
         with self.lock:
             if side == "target":
                 self.assertEqual(sum(value[0] == "source" for value in self.finished), 4)
@@ -70,7 +75,8 @@ class FactoryObjectBatchTests(unittest.TestCase):
                 self.finished.append((side, key))
 
     def source(self, _backend, _tools, _verified, _bucket, key, output, *, environment):
-        self.read("source", key, output, environment)
+        self.assertEqual(environment, self.private_environments["source"])
+        self.read("source", key, output)
 
     def target(self, _backend, _tools, bucket, key, output, *, expected, max_bytes):
         self.assertEqual(expected, {"bytes": 4, "sha256": "a" * 64})
