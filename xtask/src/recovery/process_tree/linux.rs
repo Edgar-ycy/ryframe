@@ -202,7 +202,7 @@ fn group_of(pid: u32) -> Result<(u32, u32)> {
         .1
         .split_whitespace()
         .collect::<Vec<_>>();
-    let parse = |index| {
+    let parse = |index: usize| -> Result<u32> {
         fields
             .get(index)
             .ok_or("RustFS /proc 字段缺失")?
