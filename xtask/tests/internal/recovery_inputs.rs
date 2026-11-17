@@ -676,6 +676,39 @@ fn document_rejects_file_links_and_windows_junction_ancestors() {
     assert_eq!(fs::read(&target).unwrap(), raw);
 }
 
+#[test]
+fn artifact_digest_reads_current_bytes_and_rejects_non_files() {
+    use super::recovery::clone::native::digest;
+
+    let fixture = Fixture::new();
+    let path = fixture.root.join("unregistered-artifact.bin");
+    let directory_error = digest::file(&fixture.root).unwrap_err().to_string();
+    assert!(
+        directory_error.contains("复制证据必须是普通文件"),
+        "{directory_error}"
+    );
+    let absent_error = digest::file(&path).unwrap_err().to_string();
+    assert!(absent_error.contains("无法读取复制证据"), "{absent_error}");
+
+    for (content, bytes, sha256) in [
+        (
+            b"first".as_slice(),
+            5,
+            "a7937b64b8caa58f03721bb6bacf5c78cb235febe0e70b1b84cd99541461a08e",
+        ),
+        (
+            b"changed and longer".as_slice(),
+            18,
+            "1cc02c98c3cfaa5074a27f6eac65507dd3a9311d755cdf64c1a4698dc4a55b26",
+        ),
+    ] {
+        fs::write(&path, content).unwrap();
+        let actual = digest::file(&path).unwrap();
+        assert_eq!(actual.bytes, bytes);
+        assert_eq!(actual.sha256, sha256);
+    }
+}
+
 #[cfg(windows)]
 #[test]
 fn document_and_artifact_read_use_real_windows_paths_beyond_max_path() {

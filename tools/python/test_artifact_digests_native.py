@@ -222,17 +222,6 @@ class NativeDigestTests(unittest.TestCase):
                 pass
         self.writable(payload)
 
-    def test_generic_digest_rejects_non_files_and_reads_current_unregistered_bytes(self):
-        for path in (self.directory, self.directory / "missing"):
-            with self.subTest(path=path), self.assertRaises(ValueError):
-                file_digest(path)
-        payload = self.root / "payload.bin"
-        for content in (b"first", b"changed and longer"):
-            payload.write_bytes(content)
-            self.assertEqual(file_digest(payload), {
-                "bytes": len(content), "sha256": hashlib.sha256(content).hexdigest(),
-            })
-
     def test_generic_guard_blocks_a_b_a_and_same_byte_path_replacement(self):
         payload = self.root / "credential.txt"
         payload.write_bytes(b"A-private-value")
