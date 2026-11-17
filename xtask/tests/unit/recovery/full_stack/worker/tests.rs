@@ -159,6 +159,74 @@ fn process_tree_cannot_cross_role_scope_or_product_identity() {
     }
 }
 
+#[test]
+fn closure_requires_original_stopped_member_proof_without_mutation() {
+    let local = crate::workspace::root_dir().join(".local-tests");
+    std::fs::create_dir_all(&local).unwrap();
+    let temporary = tempfile::tempdir_in(local).unwrap();
+    let directory = operation::canonical(temporary.path()).unwrap();
+    let executable = std::env::current_exe().unwrap();
+    // 使用本机可核实为不存在的 PID，避免启动额外进程。
+    let absent = |pid: u32| json!({"pid":pid,"started":"1","executable":executable});
+    let supervisor = absent(2_147_482_000);
+    let monitor = absent(2_147_482_004);
+    let product = absent(2_147_482_008);
+    let operation_id = "a".repeat(32);
+    let tree = json!({"format_version":2,"kind":"full-stack-process-tree",
+        "runtime_directory":directory,"role":"api","scope_id":"stopped-proof",
+        "operation_id":operation_id,"supervisor":supervisor,"monitor":monitor,
+        "process":product,"group_id":supervisor["pid"]});
+    let original = json!({"format_version":1,"operation_id":operation_id,"directory":directory,
+        "role":"api","scope_id":"stopped-proof","supervisor":supervisor,"monitor":monitor,
+        "status":"stopped","members":[supervisor,product],"error_type":null});
+    let path = tree::path(&directory, role::Role::Api, &operation_id, "stopped");
+    let timeout = std::time::Duration::ZERO;
+    operation::write_new(&path, &original).unwrap();
+    assert_eq!(tree::closure(&tree, timeout, false).unwrap(), original);
+    std::fs::remove_file(&path).unwrap();
+
+    let mut failed = original.clone();
+    failed["status"] = json!("failed");
+    failed["error_type"] = json!("PermissionError");
+    let mut foreign_operation = original.clone();
+    foreign_operation["operation_id"] = json!("b".repeat(32));
+    let mut empty_members = original.clone();
+    empty_members["members"] = json!([]);
+    let mut foreign_monitor = original;
+    foreign_monitor["monitor"]["started"] = json!("2");
+
+    let members = || {
+        std::fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    for (case, proof, expected) in [
+        ("缺少证明", None, "没有完整成员关闭证明"),
+        ("失败证明", Some(failed), "关闭证明不匹配或失败"),
+        ("错误操作", Some(foreign_operation), "关闭证明不匹配或失败"),
+        ("空成员", Some(empty_members), "缺少原监督进程"),
+        (
+            "监控创建身份不符",
+            Some(foreign_monitor),
+            "关闭证明不匹配或失败",
+        ),
+    ] {
+        let bytes = proof.map(|value| {
+            operation::write_new(&path, &value).unwrap();
+            std::fs::read(&path).unwrap()
+        });
+        let before = members();
+        let error = tree::closure(&tree, timeout, false).unwrap_err();
+        assert!(error.to_string().contains(expected), "{case}: {error}");
+        assert_eq!(members(), before, "{case}");
+        if let Some(bytes) = bytes {
+            assert_eq!(std::fs::read(&path).unwrap(), bytes, "{case}");
+            std::fs::remove_file(&path).unwrap();
+        }
+    }
+}
+
 fn fixture() -> Value {
     let identity =
         json!({"pid":42,"started":"12345","executable":std::env::current_exe().unwrap()});
