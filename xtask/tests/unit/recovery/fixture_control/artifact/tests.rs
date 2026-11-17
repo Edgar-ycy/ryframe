@@ -258,6 +258,38 @@ fn artifact_runtime_binds_files_scope_instances_and_all_binaries() {
             .receipt,
         receipt
     );
+    let manifest = directory.join("binaries.json");
+    let original_manifest = fs::read(&manifest).unwrap();
+    let manifest_value: Value = serde_json::from_slice(&original_manifest).unwrap();
+    let mut missing_role = manifest_value.clone();
+    assert!(
+        missing_role
+            .as_object_mut()
+            .unwrap()
+            .remove("ryframe-reset")
+            .is_some()
+    );
+    let mut relative_path = manifest_value.clone();
+    relative_path["ryframe-reset"] = json!("relative-reset.exe");
+    let mut missing_file = manifest_value;
+    missing_file["ryframe-reset"] = json!(directory.join("missing-reset.exe"));
+
+    let runtime_receipt = directory.join("runtime.json");
+    let original_receipt = fs::read(&runtime_receipt).unwrap();
+    for (changed, reason) in [
+        (missing_role, "全栈二进制清单"),
+        (relative_path, "路径必须是绝对路径"),
+        (missing_file, "输入路径不存在"),
+    ] {
+        let changed_bytes = serde_json::to_vec(&changed).unwrap();
+        fs::write(&manifest, &changed_bytes).unwrap();
+        let error = runtime::verify(root.path(), &directory).err().unwrap();
+        assert!(error.to_string().contains(reason), "{reason}: {error}");
+        assert_eq!(fs::read(&manifest).unwrap(), changed_bytes);
+        assert_eq!(fs::read(&runtime_receipt).unwrap(), original_receipt);
+    }
+    fs::write(&manifest, original_manifest).unwrap();
+
     let config = root.path().join("config/app.test.toml");
     let original = fs::read(&config).unwrap();
     fs::write(&config, b"scope_id='other-scope'").unwrap();
