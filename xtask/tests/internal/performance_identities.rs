@@ -214,7 +214,7 @@ fn environment_fixture(fixture: &Fixture) -> Value {
         "api_url":"http://127.0.0.1:18999/","frontend_url":"http://127.0.0.1:4199/",
         "environment_document":{"path":document,"sha256":digest::file(&document).unwrap().sha256},
         "runtime":{"directory":runtime,"receipt_sha256":digest::file(&runtime.join("runtime.json")).unwrap().sha256,"api_process_sha256":digest::file(&runtime.join("api.json")).unwrap().sha256},
-        "database":{"python":root.join("python-fixture"),"mysql_client":root.join("mysql-fixture"),"server_uuid":"11111111-1111-1111-1111-111111111111","control":connection("identity_control"),"targets":[{"key":"shared","mode":"shared","connection":connection("identity_shared")}]},
+        "database":{"mysql_client":root.join("mysql-fixture"),"server_uuid":"11111111-1111-1111-1111-111111111111","control":connection("identity_control"),"targets":[{"key":"shared","mode":"shared","connection":connection("identity_shared")}]},
         "system_admin":admin("system",0),"tenants":(1..=10).map(|index| { let tenant=format!("fixture-{index}"); json!({"slot":format!("tenant-{index:02}"),"tenant_id":tenant,"target_key":"shared","admin":admin(&tenant,index)}) }).collect::<Vec<_>>(),
         "passwords":{"system":"Fixture-User-Password!123","tenant":"Fixture-User-Password!123"},
         "quota":{"system_max_users":1000,"tenant_max_users":1000,"import_headroom_per_tenant":100},
@@ -271,6 +271,8 @@ fn native_plan_is_offline_deterministic_and_keeps_two_hundred_fixed_identities()
 fn native_plan_rejects_invalid_tenant_targets_permissions_and_source_drift() {
     let fixture = Fixture::new();
     let environment = environment_fixture(&fixture);
+    let mut legacy_database = environment["database"].clone();
+    legacy_database["python"] = json!(fixture.directory.join("unused-python.exe"));
     for (pointer, replacement) in [
         ("/tenants/1/tenant_id", json!("fixture-1")),
         ("/tenants/1/admin/client_address", json!("198.18.30.1")),
@@ -278,6 +280,7 @@ fn native_plan_rejects_invalid_tenant_targets_permissions_and_source_drift() {
         ("/passwords/system", json!("")),
         ("/api_url", json!("https://example.test/")),
         ("/api_url", json!("http://private:secret@127.0.0.1/")),
+        ("/database", legacy_database),
         ("/database/control/database", json!("unsafe;drop")),
         ("/database/targets/0/connection/password", json!("")),
         ("/database/targets/0/mode", json!("dedicated")),

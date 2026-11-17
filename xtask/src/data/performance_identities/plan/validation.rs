@@ -97,16 +97,9 @@ pub(super) fn environment(value: &Value, private: bool) -> Result<()> {
 fn database(value: &Value, private: bool) -> Result<()> {
     json::exact(
         value,
-        &[
-            "python",
-            "mysql_client",
-            "server_uuid",
-            "control",
-            "targets",
-        ],
+        &["mysql_client", "server_uuid", "control", "targets"],
         "数据库来源",
     )?;
-    absolute(text(value, "python")?)?;
     absolute(text(value, "mysql_client")?)?;
     let uuid = text(value, "server_uuid")?;
     if uuid.len() != 36

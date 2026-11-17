@@ -206,7 +206,7 @@ fn private_environment(fixture: &Fixture) -> PathBuf {
         "api_url":"http://127.0.0.1:18999/","frontend_url":"http://127.0.0.1:4199/",
         "environment_document":{"path":document,"sha256":hash("隔离环境")},
         "runtime":{"directory":runtime,"receipt_sha256":hash("{}"),"api_process_sha256":hash("{}")},
-        "database":{"python":backend.join("python-fixture"),"mysql_client":backend.join("mysql-fixture"),"server_uuid":"11111111-1111-1111-1111-111111111111","control":connection("identity_control"),"targets":[{"key":"shared","mode":"shared","connection":connection("identity_shared")}]},
+        "database":{"mysql_client":backend.join("mysql-fixture"),"server_uuid":"11111111-1111-1111-1111-111111111111","control":connection("identity_control"),"targets":[{"key":"shared","mode":"shared","connection":connection("identity_shared")}]},
         "system_admin":admin("system",1),
         "tenants":(1..=10).map(|index|json!({"slot":format!("tenant-{index:02}"),"tenant_id":format!("fixture-{index}"),"target_key":"shared","admin":admin(&format!("fixture-{index}"),index+1)})).collect::<Vec<_>>(),
         "passwords":{"system":"Process-User-Secret!123","tenant":"Process-User-Secret!123"},
