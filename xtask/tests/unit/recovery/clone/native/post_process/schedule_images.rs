@@ -34,17 +34,23 @@ pub(in crate::recovery::clone::native::post_process) fn action(
         "handler_key":"system.cleanup","expected_version":5,"source_row_sha256":schedule::row_sha256(&row).unwrap()})
 }
 
+fn disabled_after(initial: &Value) -> Value {
+    let mut after = initial.clone();
+    after["row"]["enabled"] = json!(0);
+    after["row"]["next_run_at"] = Value::Null;
+    after["row"]["version"] = json!(6);
+    after["row"]["updated_at"] = json!(AT);
+    after
+}
+
 #[test]
 fn full_row_hash_versions_and_database_clock_preserve_the_original_inspection_shape() {
     let backend = crate::workspace::root_dir();
     let initial = before();
     let action = action(&backend, &initial);
     validate_before(&backend, &action, &initial).unwrap();
-    let mut after = initial.clone();
-    after["row"]["enabled"] = json!(0);
-    after["row"]["next_run_at"] = Value::Null;
-    after["row"]["version"] = json!(6);
-    after["row"]["updated_at"] = json!(AT);
+    let after = disabled_after(&initial);
+    let original = [initial.clone(), after.clone(), action.clone()];
     let result = inspect_disabled(&backend, &action, &initial, &after).unwrap();
     assert_eq!(result["status"], "disabled_row_verified");
     assert_eq!(result["before_sha256"], action["source_row_sha256"]);
@@ -60,15 +66,50 @@ fn full_row_hash_versions_and_database_clock_preserve_the_original_inspection_sh
     assert_eq!(result["worker_must_remain_stopped"], true);
     let mut normalized = initial.clone();
     normalized["row"]["created_at"] = json!("2026-11-08 00:00:00.000000");
-    assert_eq!(
-        inspect_disabled(&backend, &action, &initial, &normalized).unwrap()["status"],
-        "unchanged_before"
-    );
-    after["row"]["name"] = json!("变化");
-    assert_eq!(
-        inspect_disabled(&backend, &action, &initial, &after).unwrap()["status"],
-        "needs_reconciliation"
-    );
+    for observed in [&initial, &normalized] {
+        let unchanged = inspect_disabled(&backend, &action, &initial, observed).unwrap();
+        assert_eq!(unchanged["status"], "unchanged_before");
+        assert_eq!(unchanged["observed_sha256"], action["source_row_sha256"]);
+        assert_eq!(unchanged["automatic_retry_allowed"], false);
+        assert_eq!(unchanged["worker_must_remain_stopped"], true);
+    }
+    assert_eq!([initial, after, action], original);
+}
+
+#[test]
+fn changed_business_fields_or_invalid_disable_transition_require_reconciliation() {
+    let backend = crate::workspace::root_dir();
+    let mut initial = before();
+    initial["row"]["last_run_at"] = json!("2026-11-08 03:00:00");
+    let action = action(&backend, &initial);
+    let mut after = disabled_after(&initial);
+    after["database_now"] = json!("2026-11-09 10:00:02");
+    after["row"]["updated_at"] = json!("2026-11-09 10:00:01.123456");
+    let result = inspect_disabled(&backend, &action, &initial, &after).unwrap();
+    assert_eq!(result["status"], "disabled_row_verified");
+    for (field, value) in [
+        ("name", json!("变化")),
+        ("handler_key", json!("system.other")),
+        ("cron_expression", json!("0 0 * * * *")),
+        ("timezone", json!("Asia/Shanghai")),
+        ("last_run_at", Value::Null),
+        ("created_at", json!("2026-11-08 00:00:01")),
+        ("del_flag", json!("2")),
+        ("id", json!(ID - 1)),
+        ("tenant_id", json!("other")),
+        ("version", json!(5)),
+        ("version", json!(7)),
+        ("enabled", json!(1)),
+        ("next_run_at", initial["row"]["next_run_at"].clone()),
+        ("updated_at", Value::Null),
+        ("updated_at", json!("2026-11-09 09:59:59")),
+        ("updated_at", json!("2026-11-09 10:00:03")),
+    ] {
+        let mut drift = after.clone();
+        drift["row"][field] = value;
+        let result = inspect_disabled(&backend, &action, &initial, &drift).unwrap();
+        assert_eq!(result["status"], "needs_reconciliation", "{field}");
+    }
     after["database_now"] = json!("2026-11-09 09:59:59");
     assert!(inspect_disabled(&backend, &action, &initial, &after).is_err());
 }
@@ -93,9 +134,44 @@ fn action_and_api_projection_reject_partial_rows_wrong_types_and_unbound_actions
     wrong = initial.clone();
     wrong["row"].as_object_mut().unwrap().remove("timezone");
     assert!(validate_before(&backend, &action, &wrong).is_err());
-    wrong = initial;
+    wrong = initial.clone();
     wrong["database_now"] = json!("2026-11-09 10:00:00.000001Z");
     assert!(validate_before(&backend, &action, &wrong).is_err());
+
+    let after = disabled_after(&initial);
+    for (field, value) in [
+        ("source_row_sha256", json!("a".repeat(64))),
+        ("schedule_id", json!("42")),
+        ("tenant_id", json!("other")),
+        ("handler_key", json!("system.other")),
+        ("expected_version", json!(4)),
+    ] {
+        let mut unbound = action.clone();
+        unbound[field] = value;
+        assert!(
+            inspect_disabled(&backend, &unbound, &initial, &after).is_err(),
+            "{field}"
+        );
+    }
+    let mut incomplete = after.clone();
+    incomplete["row"]
+        .as_object_mut()
+        .unwrap()
+        .remove("created_at");
+    assert!(inspect_disabled(&backend, &action, &initial, &incomplete).is_err());
+    for (field, value) in [
+        ("unknown", json!(1)),
+        ("version", json!(true)),
+        ("id", json!(3.5)),
+        ("updated_at", json!("2026-11-09T10:00:00.000001+00:00")),
+    ] {
+        let mut malformed = after.clone();
+        malformed["row"][field] = value;
+        assert!(
+            inspect_disabled(&backend, &action, &initial, &malformed).is_err(),
+            "{field}"
+        );
+    }
 }
 
 struct Fixture {
