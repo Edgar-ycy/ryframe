@@ -148,7 +148,7 @@ impl Port for Cargo<'_> {
     fn sleep(&mut self, _: Duration) -> Result<()> {
         panic!("构建不重试")
     }
-    fn storage(&mut self, _: &Value) -> Result<()> {
+    fn storage(&mut self, _: &crate::ci::databases::snapshot::Frozen) -> Result<()> {
         panic!("构建不访问对象存储")
     }
     fn databases(&mut self, _: &crate::ci::databases::snapshot::Frozen) -> Result<()> {

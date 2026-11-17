@@ -1,7 +1,11 @@
 //! 在同一 Rust 调用内冻结配置，秘密快照不经过 Python 或公开收据。
 use super::{files, model::Input, prepare};
-use crate::{Result, devex::runtime_native::process::Cancellation};
-use serde_json::Value;
+use crate::{
+    Result, devex::runtime_native::process::Cancellation,
+    recovery::clone::native::s3::app_configuration,
+};
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::path::Path;
 
 pub(crate) struct Frozen(Input);
@@ -46,6 +50,23 @@ impl Frozen {
 
     pub(crate) fn settings(&self) -> &Value {
         &self.0.settings
+    }
+
+    pub(crate) fn object_configuration_binding(&self) -> Result<Value> {
+        let binding = app_configuration::configuration_value(
+            &self.0.backend,
+            &self.0.config_dir,
+            &self.0.app_env,
+        )?;
+        let file = |text: &str| json!({"bytes": text.len(), "sha256": hex::encode(Sha256::digest(text.as_bytes()))});
+        let expected = json!({
+            "app.toml": file(&self.0.common_text),
+            "app.test.toml": file(&self.0.environment_text),
+        });
+        if binding["files"] != expected {
+            return Err("原生对象配置文件与全栈准备的冻结配置不同；未启动对象准备".into());
+        }
+        Ok(binding)
     }
 
     pub(crate) fn scope(&self) -> Result<String> {

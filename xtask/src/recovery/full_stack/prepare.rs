@@ -48,7 +48,7 @@ pub(super) fn phases(context: &Context, port: &mut impl Port, frozen: &Frozen) -
     };
     let binaries = port.leaf("build")?;
     stage("storage")?;
-    port.storage(frozen.settings())?;
+    port.storage(frozen)?;
     stage("databases")?;
     port.databases(frozen)?;
     let config = vec![

@@ -1,6 +1,7 @@
 use super::{
     Port,
     context::Context,
+    storage,
     worker::{self, role::Role},
 };
 use crate::{
@@ -292,19 +293,20 @@ impl Port for Native<'_> {
         }
         Ok(())
     }
-    fn storage(&mut self, table: &Value) -> Result<()> {
-        let storage = &table["object_storage"];
-        let buckets = ["uploads", "avatar", "exports", "imports", "config-packages"];
+    fn storage(&mut self, frozen: &Frozen) -> Result<()> {
+        let storage = &frozen.settings()["object_storage"];
         if storage["backend"] == "local" {
             let root = Path::new(
                 storage["local_base_dir"]
                     .as_str()
                     .ok_or("缺少本地存储目录")?,
             );
-            for bucket in buckets {
+            for bucket in storage::BUCKETS {
                 fs::create_dir_all(root.join(bucket))?;
             }
         } else {
+            let binding = frozen.object_configuration_binding()?;
+            let scope = frozen.scope()?;
             let endpoint = url::Url::parse(storage["endpoint"].as_str().ok_or("缺少S3端点")?)?;
             let address = endpoint.socket_addrs(|| {
                 Some(if endpoint.scheme() == "https" {
@@ -323,32 +325,9 @@ impl Port for Native<'_> {
                 }
                 self.sleep(Duration::from_secs(1))?;
             }
-            let path = self.context.output.join("ci-storage.json");
-            let mut receipt =
-                json!({"format_version":1,"buckets":[],"automatic_retry_permitted":false});
-            crate::recovery::clone::native::json::write_new(&path, &receipt)?;
-            for (index, bucket) in buckets.iter().enumerate() {
-                receipt["buckets"]
-                    .as_array_mut()
-                    .ok_or("对象收据无效")?
-                    .push(json!({"bucket":bucket,"state":"creation-unknown"}));
-                super::context::journal(&path, &receipt)?;
-                let configuration = json!({"endpoint":storage["endpoint"],"region":storage["region"],
-                    "access_key":storage["access_key"],"secret_key":storage["secret_key"]});
-                let mut request = json!({"format_version":1,"kind":"ryframe-native-s3-create-bucket",
-                    "scope_id":table["scope_id"],"configuration":configuration,"bucket":bucket});
-                let result = self.s3_request("__s3-create-bucket", &request)?;
-                if result["status"] != "created_unverified" {
-                    return Err("对象桶创建未确认，保留 ci-storage.json，禁止自动重放".into());
-                }
-                request["kind"] = json!("ryframe-native-s3-inspect");
-                request["operation"] = json!("head-bucket");
-                request["prefix"] = Value::Null;
-                request["continuation"] = Value::Null;
-                self.s3_request("__s3-inspect", &request)?;
-                receipt["buckets"][index]["state"] = json!("created");
-                super::context::journal(&path, &receipt)?;
-            }
+            storage::prepare_buckets(&self.context.output, &scope, &binding, |marker, request| {
+                self.s3_request(marker, request)
+            })?;
         }
         Ok(())
     }

@@ -11,6 +11,8 @@ mod lifecycle;
 mod prepare;
 #[path = "full_stack/provenance.rs"]
 pub(in crate::recovery) mod provenance;
+#[path = "full_stack/storage.rs"]
+mod storage;
 #[cfg(test)]
 #[path = "../../tests/unit/recovery/full_stack/tests.rs"]
 mod tests;
@@ -34,7 +36,7 @@ pub(super) trait Port {
         self.command(program, args, log)
     }
     fn sleep(&mut self, duration: Duration) -> Result<()>;
-    fn storage(&mut self, table: &Value) -> Result<()>;
+    fn storage(&mut self, frozen: &crate::ci::databases::snapshot::Frozen) -> Result<()>;
     fn databases(&mut self, frozen: &crate::ci::databases::snapshot::Frozen) -> Result<()>;
 }
 

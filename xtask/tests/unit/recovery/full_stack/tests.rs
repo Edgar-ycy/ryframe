@@ -42,7 +42,7 @@ impl Port for Fake {
     fn sleep(&mut self, _duration: Duration) -> Result<()> {
         Ok(())
     }
-    fn storage(&mut self, _table: &Value) -> Result<()> {
+    fn storage(&mut self, _frozen: &crate::ci::databases::snapshot::Frozen) -> Result<()> {
         self.events.push("storage".into());
         Ok(())
     }

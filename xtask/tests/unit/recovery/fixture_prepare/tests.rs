@@ -127,7 +127,7 @@ impl Port for GitPort {
     fn sleep(&mut self, _duration: std::time::Duration) -> Result<()> {
         unreachable!()
     }
-    fn storage(&mut self, _table: &Value) -> Result<()> {
+    fn storage(&mut self, _frozen: &crate::ci::databases::snapshot::Frozen) -> Result<()> {
         unreachable!()
     }
     fn databases(&mut self, _frozen: &crate::ci::databases::snapshot::Frozen) -> Result<()> {

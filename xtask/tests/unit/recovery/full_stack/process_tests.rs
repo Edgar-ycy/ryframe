@@ -8,6 +8,163 @@ fn directory() -> tempfile::TempDir {
     fs::create_dir(directory.path().join(".local-tests")).unwrap();
     directory
 }
+
+const REMOTE_STORAGE: &str = "[object_storage]\nbackend='s3'\nendpoint='http://127.0.0.1:9000'\n\
+    region='us-east-1'\naccess_key='access-fixture'\nsecret_key='secret-fixture'\n";
+
+fn frozen_storage(storage: impl FnOnce(&Path) -> String) -> (tempfile::TempDir, Context, Frozen) {
+    let root = directory();
+    let context = Context {
+        root: root.path().into(),
+        output: root.path().join("runtime"),
+        control: Value::Null,
+        run: "42".into(),
+        attempt: "3".into(),
+    };
+    fs::create_dir(&context.output).unwrap();
+    let directory = context.root.join(".local-tests/full-stack-config");
+    fs::create_dir(&directory).unwrap();
+    fs::write(directory.join("app.toml"), "# common=A\r\n").unwrap();
+    let mut text = "scope_id='ci-42-3'\nsnowflake_worker_id=3\n\
+        [database.primary]\nhost='127.0.0.1'\nport=3306\ndatabase='ryframe_e2e_42_3'\n\
+        username='root'\npassword='db-fixture-secret'\ntls_mode='required'\n"
+        .to_owned();
+    text.push_str(&storage(&context.root));
+    fs::write(directory.join("app.test.toml"), text).unwrap();
+    let frozen =
+        Frozen::capture(&context.root, &context.output, "42", "3", &"a".repeat(64)).unwrap();
+    (root, context, frozen)
+}
+
+#[test]
+fn native_storage_rejects_same_size_configuration_changes_before_probing() {
+    for (name, before, after) in [
+        ("app.toml", "common=A", "common=B"),
+        ("app.test.toml", "secret-fixture", "secret-changed"),
+    ] {
+        let (_root, context, frozen) = frozen_storage(|_| {
+            REMOTE_STORAGE.replace("http://127.0.0.1:9000", "invalid-endpoint-before-probe")
+        });
+        frozen.object_configuration_binding().unwrap();
+        let path = context
+            .root
+            .join(".local-tests/full-stack-config")
+            .join(name);
+        let original = fs::read_to_string(&path).unwrap();
+        let changed = original.replace(before, after);
+        assert_ne!(original, changed);
+        assert_eq!(original.len(), changed.len());
+        fs::write(path, changed).unwrap();
+        let mut native = Native {
+            context: &context,
+            cancel: Arc::new(AtomicBool::new(false)),
+            api: None,
+        };
+        let error = native.storage(&frozen).unwrap_err().to_string();
+        assert!(error.contains("未启动对象准备"));
+        assert!(!error.contains("secret-fixture") && !error.contains("secret-changed"));
+        assert_eq!(fs::read_dir(&context.output).unwrap().count(), 0);
+    }
+}
+
+#[test]
+fn native_storage_sends_bound_create_and_head_for_each_bucket() {
+    let (_root, context, frozen) = frozen_storage(|_| REMOTE_STORAGE.into());
+    let scope = frozen.scope().unwrap();
+    let binding = frozen.object_configuration_binding().unwrap();
+    let configuration =
+        crate::recovery::clone::native::s3::app_configuration::private_configuration(
+            &context.root,
+            &binding,
+        )
+        .unwrap();
+    assert!(configuration["access_key"] == "access-fixture");
+    let path = context.output.join("ci-storage.json");
+    let mut calls = Vec::new();
+    storage::prepare_buckets(&context.output, &scope, &binding, |marker, request| {
+        let state = documents::read(&path)?;
+        assert_eq!(state["automatic_retry_permitted"], false);
+        assert_eq!(
+            state["buckets"].as_array().unwrap().last().unwrap(),
+            &json!({"bucket":request["bucket"],"state":"creation-unknown"})
+        );
+        let encoded = request.to_string();
+        assert!(!encoded.contains("secret-fixture") && !encoded.contains("access-fixture"));
+        calls.push((marker.to_owned(), request.clone()));
+        Ok(json!({"status":"created_unverified"}))
+    })
+    .unwrap();
+    assert_eq!(calls.len(), 10);
+    for (bucket, pair) in ["uploads", "avatar", "exports", "imports", "config-packages"]
+        .into_iter()
+        .zip(calls.chunks_exact(2))
+    {
+        assert_eq!(
+            pair[0],
+            (
+                "__s3-create-bucket".into(),
+                json!({
+                    "format_version":1,"kind":"ryframe-native-s3-create-bucket","scope_id":scope,
+                    "configuration_binding":binding,"bucket":bucket
+                })
+            )
+        );
+        assert_eq!(
+            pair[1],
+            (
+                "__s3-inspect".into(),
+                json!({
+                    "format_version":1,"kind":"ryframe-native-s3-inspect","scope_id":scope,
+                    "configuration_binding":binding,"bucket":bucket,"operation":"head-bucket",
+                    "prefix":null,"continuation":null
+                })
+            )
+        );
+    }
+    let receipt = documents::read(&path).unwrap();
+    assert_eq!(receipt["buckets"].as_array().unwrap().len(), 5);
+    assert!(
+        receipt["buckets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|bucket| bucket["state"] == "created")
+    );
+}
+
+#[test]
+fn native_storage_retains_unknown_bucket_and_does_not_send_again() {
+    let (_root, context, frozen) = frozen_storage(|_| REMOTE_STORAGE.into());
+    let scope = frozen.scope().unwrap();
+    let binding = frozen.object_configuration_binding().unwrap();
+    let mut calls = Vec::new();
+    let result = storage::prepare_buckets(&context.output, &scope, &binding, |marker, _| {
+        calls.push(marker.to_owned());
+        if marker == "__s3-inspect" {
+            return Err("HEAD 失响".into());
+        }
+        Ok(json!({"status":"created_unverified"}))
+    });
+    assert!(result.unwrap_err().to_string().contains("HEAD 失响"));
+    let path = context.output.join("ci-storage.json");
+    let original = fs::read(&path).unwrap();
+    let receipt = documents::read(&path).unwrap();
+    assert_eq!(
+        receipt["buckets"],
+        json!([{"bucket":"uploads","state":"creation-unknown"}])
+    );
+    assert_eq!(receipt["automatic_retry_permitted"], false);
+    assert!(
+        storage::prepare_buckets(&context.output, &scope, &binding, |marker, _| {
+            calls.push(marker.to_owned());
+            Ok(json!({}))
+        })
+        .is_err()
+    );
+    assert_eq!(calls, ["__s3-create-bucket", "__s3-inspect"]);
+    assert_eq!(fs::read(path).unwrap(), original);
+}
+
 fn fixture() -> &'static Path {
     static VALUE: OnceLock<(tempfile::TempDir, PathBuf)> = OnceLock::new();
     &VALUE
@@ -377,23 +534,20 @@ fn private_cargo_json_never_merges_compiler_diagnostics_into_artifact_events() {
 
 #[test]
 fn bound_local_storage_configuration_creates_only_business_buckets_and_preserves_files() {
-    let root = directory();
-    let context = Context {
-        root: root.path().into(),
-        output: root.path().into(),
-        control: json!({}),
-        run: String::new(),
-        attempt: String::new(),
-    };
+    let (_root, context, frozen) = frozen_storage(|root| {
+        format!(
+            "[object_storage]\nbackend='local'\nlocal_base_dir={}\nendpoint='invalid-unused-endpoint'\n",
+            json!(root.join("绑定配置 本地对象"))
+        )
+    });
+    fs::remove_file(context.root.join(".local-tests/full-stack-config/app.toml")).unwrap();
     let mut native = Native {
         context: &context,
         cancel: Arc::new(AtomicBool::new(false)),
         api: None,
     };
-    let storage = root.path().join("绑定配置 本地对象");
-    let table = json!({"object_storage":{"backend":"local","local_base_dir":storage,
-        "endpoint":"invalid-unused-endpoint","access_key":"unused","secret_key":"unused"}});
-    native.storage(&table).unwrap();
+    let storage = context.root.join("绑定配置 本地对象");
+    native.storage(&frozen).unwrap();
     let mut actual = fs::read_dir(&storage)
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
@@ -405,9 +559,9 @@ fn bound_local_storage_configuration_creates_only_business_buckets_and_preserves
     );
     let existing = storage.join("uploads/existing.txt");
     fs::write(&existing, b"keep").unwrap();
-    native.storage(&table).unwrap();
+    native.storage(&frozen).unwrap();
     assert_eq!(fs::read(existing).unwrap(), b"keep");
-    assert!(!root.path().join("ci-storage.json").exists());
+    assert!(!context.output.join("ci-storage.json").exists());
 }
 
 #[test]
