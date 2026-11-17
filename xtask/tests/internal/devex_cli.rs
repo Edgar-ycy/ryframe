@@ -282,12 +282,31 @@ fn common_toolchain_paired_preflight_requires_supported_workload() {
             if options.run.variant == "cancellation"
     ));
     for (suite, variant, binding) in [
-        ("cargo-dev-save", "config-only", "B0 历史保存入口"),
+        (
+            "cargo-dev-save",
+            "config-only",
+            "该保存场景要求成对提供 --base-config-dir 与 --candidate-config-dir",
+        ),
         ("resource-gate", "auto", "定向入口"),
     ] {
         let error = parse(args(suite, variant)).unwrap_err().to_string();
         assert!(error.contains(binding), "{error}");
     }
+    let root = std::env::current_dir().unwrap();
+    let mut config_only = args("cargo-dev-save", "config-only");
+    config_only.extend(strings(&[
+        "--base-config-dir",
+        root.join("base-config-fixture").to_str().unwrap(),
+        "--candidate-config-dir",
+        root.join("candidate-config-fixture").to_str().unwrap(),
+    ]));
+    assert!(matches!(
+        parse(config_only).unwrap().command,
+        Command::Check(CheckCommand::Perf(DevexCommand::Paired(options)))
+            if options.check_comparability
+                && options.run.variant == "config-only"
+                && options.save_config_dirs.is_some()
+    ));
     let source = strings(&["--targeted-source", "D:/evidence/source.json"]);
     let targeted = parse([args("resource-gate", "auto"), source.clone()].concat()).unwrap();
     assert!(matches!(
