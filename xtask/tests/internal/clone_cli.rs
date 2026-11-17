@@ -438,7 +438,7 @@ fn seed_close_requires_explicit_write_and_keeps_the_selected_run() {
         "--operation",
         "close",
     ];
-    let error = fixture.parse(&args).err().expect("seed close 必须显式授权");
+    let error = fixture.parse(&args).expect_err("seed close 必须显式授权");
     assert!(error.contains("必须显式传入 --write"), "{error}");
 
     args.push("--write");

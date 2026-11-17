@@ -97,7 +97,7 @@ fn native_storage_sends_bound_create_and_head_for_each_bucket() {
     assert_eq!(calls.len(), 10);
     for (bucket, pair) in ["uploads", "avatar", "exports", "imports", "config-packages"]
         .into_iter()
-        .zip(calls.chunks_exact(2))
+        .zip(calls.as_chunks::<2>().0)
     {
         assert_eq!(
             pair[0],
