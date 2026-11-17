@@ -8,14 +8,18 @@ use std::{
 
 use chrono::Utc;
 
-use crate::{Result, dev::SaveMeasurementContract};
+use crate::{
+    Result,
+    dev::SaveMeasurementContract,
+    local_test_path::{LocalTestPathKind, validate_absolute_path},
+};
 
 use super::{
     metadata::{MetadataContext, PathNormalizer, SourceFingerprints, collect as collect_metadata},
     model::{CacheState, DevexRunOptions, DevexSuite, PairingMetadata, SuiteDefinition},
     preflight,
     report::{SampleKind, append_sample, summarize, write_metadata},
-    support::{cleanup_successful_sample_target, metric, sample_target},
+    support::{canonical_worktree, cleanup_successful_sample_target, metric, sample_target},
 };
 
 #[path = "run/environment.rs"]
@@ -37,10 +41,13 @@ use environment::effective_environment;
 pub(crate) use resource_gate::read_resource_gate_decision;
 
 pub(super) fn execute(
-    backend_root: &Path,
+    coordinator_root: &Path,
     frontend_root: &Path,
     options: &DevexRunOptions,
+    source_backend: Option<&Path>,
 ) -> Result<PathBuf> {
+    let source_backend = source_backend.map(validate_source_backend).transpose()?;
+    let backend_root = source_backend.as_deref().unwrap_or(coordinator_root);
     let definition = options
         .suite
         .definition(&options.variant)
@@ -52,7 +59,13 @@ pub(super) fn execute(
         options,
         definition,
     )?;
-    let session = prepare_run(backend_root, frontend_root, options, definition)?;
+    let session = prepare_run(
+        coordinator_root,
+        backend_root,
+        frontend_root,
+        options,
+        definition,
+    )?;
     let execution = (|| {
         execute_warmup(
             backend_root,
@@ -100,6 +113,20 @@ pub(super) fn execute(
         metric(summary.duration_ms.as_ref().map(|value| value.p95)),
     );
     Ok(session.run_dir)
+}
+
+fn validate_source_backend(path: &Path) -> Result<PathBuf> {
+    let source = validate_absolute_path(path, LocalTestPathKind::ExistingDirectory)
+        .map_err(|error| format!("--source-backend 无效：{error}"))?;
+    let root = canonical_worktree(&source, "--source-backend")?;
+    for manifest in ["Cargo.toml", "xtask/Cargo.toml"] {
+        validate_absolute_path(&root.join(manifest), LocalTestPathKind::ExistingFile)
+            .map_err(|error| format!("--source-backend 必须指向后端工作区：{manifest}：{error}"))?;
+    }
+    if super::metadata::source_state(&root)?.dirty != Some(false) {
+        return Err("--source-backend 必须指向干净的后端工作树".into());
+    }
+    Ok(root)
 }
 
 pub(super) fn capture_sccache_stats(
@@ -160,12 +187,13 @@ pub(super) struct RunSession {
 }
 
 fn prepare_run(
+    coordinator_root: &Path,
     backend_root: &Path,
     frontend_root: &Path,
     options: &DevexRunOptions,
     definition: SuiteDefinition,
 ) -> Result<RunSession> {
-    let devex_root = backend_root.join(".local-tests/devex");
+    let devex_root = coordinator_root.join(".local-tests/devex");
     let (run_id, run_dir) = create_run_directory(&devex_root, options)?;
     prepare_run_at(
         backend_root,
@@ -415,4 +443,45 @@ fn create_run_directory(devex_root: &Path, options: &DevexRunOptions) -> Result<
     fs::create_dir_all(directory.parent().expect("run 目录必须具有日期父目录"))?;
     fs::create_dir(&directory)?;
     Ok((run_id, directory))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn single_runtime_reads_product_configuration_and_keeps_reports_with_coordinator() {
+        let scratch = crate::workspace::root_dir().join(".local-tests");
+        fs::create_dir_all(&scratch).unwrap();
+        let temp = tempfile::tempdir_in(scratch).unwrap();
+        let coordinator = temp.path().join("coordinator");
+        let product = temp.path().join("product");
+        fs::create_dir(&product).unwrap();
+        let options = DevexRunOptions {
+            suite: DevexSuite::RuntimeApi,
+            variant: "10".to_owned(),
+            cache_state: CacheState::Warm,
+            runs: 6,
+        };
+        let definition = options.suite.definition(&options.variant).unwrap();
+        let Err(error) = prepare_run(&coordinator, &product, temp.path(), &options, definition)
+        else {
+            panic!("产品工作树缺少运行配置时必须拒绝测量");
+        };
+        let configuration = product.join(".local-tests/devex/runtime.json");
+        assert!(
+            error
+                .to_string()
+                .contains(&configuration.display().to_string())
+        );
+        let reports = coordinator.join(".local-tests/devex");
+        let date = fs::read_dir(reports)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert_eq!(fs::read_dir(date).unwrap().count(), 1);
+        assert!(!product.join(".local-tests").exists());
+    }
 }

@@ -71,7 +71,8 @@ pub(crate) fn parse_command(args: &[String]) -> std::result::Result<DevexCommand
         return Err(usage().to_owned());
     };
     match operation.as_str() {
-        "run" => parse_run(&args[1..]),
+        "run" => parse_run(&args[1..], true)
+            .map(|(options, source_backend)| DevexCommand::Run(options, source_backend)),
         "paired" => parse_paired(&args[1..]),
         "summarize" => match &args[1..] {
             [run] => Ok(DevexCommand::Summarize { run: run.clone() }),
@@ -188,9 +189,7 @@ fn parse_paired(args: &[String]) -> std::result::Result<DevexCommand, String> {
             index += 2;
         }
     }
-    let DevexCommand::Run(run) = parse_run(&run_args)? else {
-        unreachable!("parse_run 只会返回 Run")
-    };
+    let (run, _) = parse_run(&run_args, false)?;
     if let Some(contract) = baseline_contract {
         contract.validate(&run)?;
     }
@@ -249,11 +248,15 @@ fn validate_paired_sources(
     Ok(())
 }
 
-fn parse_run(args: &[String]) -> std::result::Result<DevexCommand, String> {
+fn parse_run(
+    args: &[String],
+    allow_source_backend: bool,
+) -> std::result::Result<(DevexRunOptions, Option<PathBuf>), String> {
     let mut suite = None;
     let mut variant = None;
     let mut cache_state = None;
     let mut runs = None;
+    let mut source_backend = None;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
@@ -287,10 +290,22 @@ fn parse_run(args: &[String]) -> std::result::Result<DevexCommand, String> {
                 );
                 index += 2;
             }
+            "--source-backend" if allow_source_backend && source_backend.is_none() => {
+                let path = args
+                    .get(index + 1)
+                    .map(PathBuf::from)
+                    .filter(|path| path.is_absolute())
+                    .ok_or("--source-backend 必须提供绝对路径")?;
+                source_backend = Some(path);
+                index += 2;
+            }
             value => return Err(format!("未知或重复参数：{value}")),
         }
     }
     let suite = suite.ok_or("devex run 缺少 --suite")?;
+    if source_backend.is_some() && !suite.is_runtime() {
+        return Err("--source-backend 只适用于单侧运行时测量".to_owned());
+    }
     let variant = variant.ok_or("devex run 缺少 --variant")?;
     let runs = runs.ok_or("devex run 缺少 --runs")?;
     let cache_state = cache_state.ok_or("devex run 缺少 --cache cold|warm")?;
@@ -306,12 +321,15 @@ fn parse_run(args: &[String]) -> std::result::Result<DevexCommand, String> {
             minimum_runs
         ));
     }
-    Ok(DevexCommand::Run(DevexRunOptions {
-        suite,
-        variant,
-        cache_state,
-        runs,
-    }))
+    Ok((
+        DevexRunOptions {
+            suite,
+            variant,
+            cache_state,
+            runs,
+        },
+        source_backend,
+    ))
 }
 
 fn parse_compare(args: &[String]) -> std::result::Result<DevexCommand, String> {
@@ -356,8 +374,8 @@ pub(crate) fn run(command: &DevexCommand, frontend_dir: &Path) -> Result<()> {
     let root = root_dir();
     let devex_root = root.join(".local-tests/devex");
     match command {
-        DevexCommand::Run(options) => {
-            execution::execute(&root, frontend_dir, options)?;
+        DevexCommand::Run(options, source_backend) => {
+            execution::execute(&root, frontend_dir, options, source_backend.as_deref())?;
         }
         DevexCommand::Paired(options) => {
             let (baseline, candidate) = paired::execute(&root, frontend_dir, options)?;
@@ -427,7 +445,7 @@ fn resolve_run_reference(devex_root: &Path, reference: &str) -> Result<PathBuf> 
 }
 
 pub(crate) fn usage() -> &'static str {
-    "cargo xtask check perf run --suite <suite> --variant <name> --runs <1..50> --cache <cold|warm>\n\
+    "cargo xtask check perf run --suite <suite> --variant <name> --runs <1..50> --cache <cold|warm> [--source-backend <运行时后端绝对目录>]\n\
      cargo xtask check perf paired --base-backend <dir> --candidate-backend <dir> [--base-frontend <dir> --candidate-frontend <dir>] [--base-config-dir <绝对目录> --candidate-config-dir <绝对目录>] [--baseline-contract legacy-cargo-dev-v1|legacy-cargo-dev-v2|legacy-stable-readiness-b0-v1|stable-readiness-b0-common-toolchain-v1] [--targeted-source <JSON 文件>] [--check-comparability] --suite <suite> --variant <name> --runs <1..50> --cache <cold|warm>\n\
      cargo xtask check perf summarize <日期/run-id>\n\
      cargo xtask check perf compare --base <日期/run-id> --candidate <日期/run-id>\n\

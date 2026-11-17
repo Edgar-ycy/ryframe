@@ -25,7 +25,7 @@ fn cli_requires_named_run_and_compare_arguments() {
         "cold",
     ]))
     .unwrap();
-    let Command::Check(CheckCommand::Perf(DevexCommand::Run(options))) = cli.command else {
+    let Command::Check(CheckCommand::Perf(DevexCommand::Run(options, None))) = cli.command else {
         panic!("应解析为 DevEx run");
     };
     assert_eq!(options.suite, DevexSuite::RustColdBuild);

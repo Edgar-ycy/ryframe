@@ -425,7 +425,7 @@ pub(crate) struct DevexPairedOptions {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum DevexCommand {
-    Run(DevexRunOptions),
+    Run(DevexRunOptions, Option<PathBuf>),
     Paired(DevexPairedOptions),
     Summarize { run: String },
     Compare { baseline: String, candidate: String },

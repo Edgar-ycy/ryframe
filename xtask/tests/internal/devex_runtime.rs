@@ -25,7 +25,7 @@ fn public_perf_plan_resolves_to_the_actual_runtime_driver() {
         "warm",
     ]))
     .unwrap();
-    let Command::Check(CheckCommand::Perf(DevexCommand::Run(options))) = cli.command else {
+    let Command::Check(CheckCommand::Perf(DevexCommand::Run(options, None))) = cli.command else {
         panic!("应解析为 DevEx runtime run");
     };
     let definition = options.suite.definition(&options.variant).unwrap();
@@ -40,6 +40,71 @@ fn public_perf_plan_resolves_to_the_actual_runtime_driver() {
     );
 
     assert!(definition.environment.is_empty());
+}
+
+#[test]
+fn source_backend_only_selects_an_absolute_path_for_single_runtime_suites() {
+    let source = std::env::current_dir().unwrap();
+    let absolute = source.to_str().unwrap();
+    for (suite, variant) in [
+        ("runtime-homepage", "default"),
+        ("runtime-api", "10"),
+        ("runtime-jobs", "50"),
+        ("runtime-tenants", "100"),
+    ] {
+        let cli = parse(strings(&[
+            "check",
+            "perf",
+            "run",
+            "--suite",
+            suite,
+            "--variant",
+            variant,
+            "--runs",
+            "6",
+            "--cache",
+            "warm",
+            "--source-backend",
+            absolute,
+        ]))
+        .unwrap();
+        let Command::Check(CheckCommand::Perf(DevexCommand::Run(options, source_backend))) =
+            cli.command
+        else {
+            panic!("应解析为单侧运行测量");
+        };
+        assert_eq!(options.suite.as_str(), suite);
+        assert_eq!(source_backend.as_deref(), Some(source.as_path()));
+    }
+    for (operation, suite, variant, path) in [
+        ("run", "runtime-api", "10", "relative"),
+        ("run", "cargo-dev-save", "config-only", absolute),
+        ("paired", "runtime-api", "10", absolute),
+    ] {
+        let mut args = strings(&["check", "perf", operation]);
+        if operation == "paired" {
+            args.extend(strings(&[
+                "--base-backend",
+                absolute,
+                "--candidate-backend",
+                absolute,
+            ]));
+        }
+        args.extend(strings(&[
+            "--suite",
+            suite,
+            "--variant",
+            variant,
+            "--runs",
+            "6",
+            "--cache",
+            "warm",
+            "--source-backend",
+            path,
+        ]));
+        let error = parse(args).unwrap_err().to_string();
+        assert!(error.contains("--source-backend"), "{error}");
+    }
 }
 
 #[test]

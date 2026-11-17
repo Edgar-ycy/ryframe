@@ -9,6 +9,29 @@ use crate::{Result, workspace::remove_isolated_directory};
 
 use super::model::{CacheState, DevexSuite, StepDefinition};
 
+pub(super) fn canonical_worktree(path: &Path, label: &str) -> Result<PathBuf> {
+    let canonical = path.canonicalize().map_err(|error| {
+        format!(
+            "{label} worktree 不存在或不可读 {}：{error}",
+            path.display()
+        )
+    })?;
+    let output = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(&canonical)
+        .output()?;
+    if !output.status.success() {
+        return Err(format!("{label} 不是 Git worktree：{}", canonical.display()).into());
+    }
+    let top = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim())
+        .canonicalize()
+        .map_err(|error| format!("无法规范化 {label} Git 根目录：{error}"))?;
+    if top != canonical {
+        return Err(format!("{label} 必须显式指向 worktree 根目录：{}", top.display()).into());
+    }
+    Ok(canonical)
+}
+
 pub(super) fn frontend_fast_arguments(
     step: &StepDefinition,
     frontend: &Path,
