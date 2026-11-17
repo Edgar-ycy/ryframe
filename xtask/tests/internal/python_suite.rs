@@ -8,7 +8,7 @@ use super::check::{PYTHON_TEST_ARGS, consumer_context::python, python_suite};
 #[test]
 fn suite_keeps_each_binding_argument_and_every_unittest_selection() {
     let binding = r#"{"path":"D:/中文 工具/xtask.exe","sha256":"fixed"}"#;
-    let arguments = python_suite::arguments(Some(binding));
+    let arguments = python_suite::arguments(Some(binding), false);
     assert_eq!(
         arguments[..4],
         ["-X", "utf8", "-B", "tools/python/run_checks.py"]
@@ -22,7 +22,7 @@ fn suite_keeps_each_binding_argument_and_every_unittest_selection() {
 
 #[test]
 fn suite_without_a_protected_binding_explicitly_uses_the_unbound_bootstrap() {
-    let arguments = python_suite::arguments(None);
+    let arguments = python_suite::arguments(None, false);
     assert_eq!(arguments[4], "--");
     assert_eq!(arguments[5..], *PYTHON_TEST_ARGS);
     assert!(
@@ -70,9 +70,13 @@ impl BootstrapFixture {
         } else {
             None
         };
-        let mut arguments = python_suite::arguments(binding.as_deref());
-        let last = arguments.len() - 1;
-        arguments[last] = "test_bound_probe.py".into();
+        let mut arguments = python_suite::arguments(binding.as_deref(), true);
+        let pattern = arguments
+            .iter()
+            .position(|argument| argument == "-p")
+            .unwrap()
+            + 1;
+        arguments[pattern] = "test_bound_probe.py".into();
         let directory = arguments
             .iter()
             .position(|argument| argument == "-s")
@@ -110,6 +114,9 @@ class Probe(unittest.TestCase):
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+    assert!(String::from_utf8_lossy(&output.stderr).contains(
+        "test_binding_and_actual_native_document (test_bound_probe.Probe.test_binding_and_actual_native_document)"
+    ));
     assert_eq!(
         serde_json::from_slice::<Value>(&output.stdout).unwrap(),
         json!({"native_called":true})

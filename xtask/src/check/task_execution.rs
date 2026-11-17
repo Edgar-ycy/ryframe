@@ -94,7 +94,9 @@ pub(crate) fn execute_registered_task(
         TaskExecutor::PolicyChecks | TaskExecutor::BackendPolicyChecks => {
             run_policy_checks(context, policy_profile(mode))
         }
-        TaskExecutor::PythonTests => super::super::python_suite::run(&context.root),
+        TaskExecutor::PythonTests => {
+            super::super::python_suite::run(&context.root, matches!(mode, TaskExecutionMode::Ci))
+        }
         TaskExecutor::BackendSources => check_backend_sources(&context.root),
         TaskExecutor::MigrationHistory => run_migration_history(context, mode),
         TaskExecutor::WorkspaceGates => run_workspace_gates(context, mode, state, true),
