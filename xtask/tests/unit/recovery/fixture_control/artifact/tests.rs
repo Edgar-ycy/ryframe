@@ -407,6 +407,62 @@ fn configuration_only_contract_keeps_both_directories_worker_drift_and_artifact_
     }
 }
 
+#[test]
+fn configuration_only_contract_rejects_invalid_shared_scope_and_worker_settings() {
+    let root = source_fixture_root();
+    let (directory, receipt) = runtime_fixture(root.path());
+    runtime::verify_configuration(root.path(), &directory).unwrap();
+    let configs = ["config", "worker-config"].map(|name| root.path().join(name));
+    let originals = configs
+        .each_ref()
+        .map(|path| fs::read_to_string(path.join("app.test.toml")).unwrap());
+    let endpoint_error = "全栈 Worker 就绪端点与绑定配置不匹配";
+    let port_error = "jobs.health_port 无效";
+    for (setting, replacement, scope, reason) in [
+        ("mode='external'", "mode='embedded'", None, endpoint_error),
+        (
+            "health_host='127.0.0.1'",
+            "health_host='192.0.2.1'",
+            None,
+            endpoint_error,
+        ),
+        ("health_port=18081", "health_port=0", None, port_error),
+        ("health_port=18081", "health_port=65536", None, port_error),
+        (
+            "scope_id='artifact-test'",
+            "scope_id='../scope'",
+            Some("../scope"),
+            "全栈运行 scope 与配置不匹配",
+        ),
+    ] {
+        for (path, original) in configs.iter().zip(&originals) {
+            let changed = original.replace(setting, replacement);
+            assert_ne!(changed.as_str(), original.as_str(), "{setting}");
+            fs::write(path.join("app.test.toml"), changed).unwrap();
+        }
+        let [api, worker] = configs
+            .each_ref()
+            .map(|path| runtime::configuration_digest(path).unwrap());
+        let mut receipt = receipt.clone();
+        receipt["configuration_sha256"] =
+            json!(python_configuration_hash(&json!([api, worker])).unwrap());
+        receipt["api_configuration_sha256"] = json!(api);
+        receipt["worker_configuration_sha256"] = json!(worker);
+        if let Some(scope) = scope {
+            receipt["scope_id"] = json!(scope);
+        }
+        fs::write(
+            directory.join("runtime.json"),
+            serde_json::to_vec(&receipt).unwrap(),
+        )
+        .unwrap();
+        let error = runtime::verify_configuration(root.path(), &directory)
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains(reason), "{replacement}: {error}");
+    }
+}
+
 fn source_fixture_root() -> tempfile::TempDir {
     let parent = crate::workspace::root_dir().join(".local-tests");
     fs::create_dir_all(&parent).unwrap();
@@ -560,7 +616,7 @@ fn runtime_register_checks_all_frozen_artifacts_and_current_jobs_before_writing(
 }
 
 #[test]
-fn runtime_register_rejects_manifest_extras_and_missing_source_before_writing() {
+fn runtime_register_rejects_manifest_extras_and_source_errors_before_writing() {
     let root = source_fixture_root();
     let directory = registration_fixture(root.path());
     let manifest = directory.join("binaries.json");
@@ -572,6 +628,20 @@ fn runtime_register_rejects_manifest_extras_and_missing_source_before_writing() 
     assert!(error.to_string().contains("全栈二进制清单"), "{error}");
     assert_registration_absent(&directory);
     fs::write(manifest, bytes).unwrap();
+
+    let build_path = directory.join("build-evidence.json");
+    let bytes = fs::read(&build_path).unwrap();
+    let mut build: Value = serde_json::from_slice(&bytes).unwrap();
+    build["source"]["source_pair"]["run_id"] = json!("other-run");
+    fs::write(&build_path, serde_json::to_vec(&build).unwrap()).unwrap();
+    let error = register_fixture(root.path(), &directory).unwrap_err();
+    assert!(
+        error.to_string().contains("构建来源与源码组合不匹配"),
+        "{error}"
+    );
+    assert_registration_absent(&directory);
+    fs::write(build_path, bytes).unwrap();
+
     fs::remove_file(directory.join("source-pair.json")).unwrap();
     let error = register_fixture(root.path(), &directory).unwrap_err();
     assert!(error.to_string().contains("运行登记来源"), "{error}");
@@ -583,13 +653,32 @@ fn runtime_register_publishes_verified_core_source_only_once() {
     let root = source_fixture_root();
     let directory = registration_fixture(root.path());
     assert_registration_absent(&directory);
+    let password = "artifact-runtime-fixture-password";
+    for role in ["config", "worker-config"] {
+        let path = root.path().join(role).join("app.test.toml");
+        let mut content = fs::read_to_string(&path).unwrap();
+        content.push_str(&format!("\n[database.primary]\npassword='{password}'\n"));
+        fs::write(path, content).unwrap();
+    }
     let receipt = register_fixture(root.path(), &directory).unwrap();
+    let api_configuration = root.path().join("config");
+    let digest = runtime::configuration_digest(&api_configuration).unwrap();
+    fs::write(api_configuration.join("notes.txt"), "辅助文本").unwrap();
     assert_eq!(
-        runtime::verify(root.path(), &directory).unwrap().receipt,
-        receipt
+        runtime::configuration_digest(&api_configuration).unwrap(),
+        digest
+    );
+    let verified = runtime::verify(root.path(), &directory).unwrap();
+    assert_eq!(verified.receipt, receipt);
+    assert_eq!(
+        verified.table["database"]["primary"]["password"].as_str(),
+        Some(password)
     );
     let outputs = ["runtime.json", "runtime-evidence.json"].map(|name| directory.join(name));
     let before = outputs.each_ref().map(|path| fs::read(path).unwrap());
+    for bytes in &before {
+        assert!(!std::str::from_utf8(bytes).unwrap().contains(password));
+    }
     assert!(register_fixture(root.path(), &directory).is_err());
     assert_eq!(
         outputs.each_ref().map(|path| fs::read(path).unwrap()),
@@ -601,7 +690,41 @@ fn runtime_register_publishes_verified_core_source_only_once() {
 fn artifact_source_rejects_source_and_receipt_drift() {
     let root = source_fixture_root();
     let directory = source_fixture(root.path());
-    runtime::verify(root.path(), &directory).unwrap();
+    let receipt = runtime::verify(root.path(), &directory).unwrap().receipt;
+    let runtime_path = directory.join("runtime.json");
+    let evidence_path = directory.join("runtime-evidence.json");
+    let runtime_bytes = fs::read(&runtime_path).unwrap();
+    let evidence_bytes = fs::read(&evidence_path).unwrap();
+    fs::remove_file(&runtime_path).unwrap();
+    let error = runtime::verify(root.path(), &directory).err().unwrap();
+    assert!(
+        error.to_string().contains("无法读取全栈运行收据"),
+        "{error}"
+    );
+    assert_eq!(
+        fs::symlink_metadata(&runtime_path).unwrap_err().kind(),
+        std::io::ErrorKind::NotFound
+    );
+    assert_eq!(fs::read(&evidence_path).unwrap(), evidence_bytes);
+
+    let wrong_root =
+        crate::recovery::fixture_control::portable_path(&directory.canonicalize().unwrap());
+    let identity_error = "全栈运行收据版本或后端目录不匹配";
+    for (key, value, reason) in [
+        ("format_version", json!(2), identity_error),
+        ("extra", json!(true), "全栈运行收据字段缺失或包含未知字段"),
+        ("backend_root", json!(wrong_root), identity_error),
+    ] {
+        let mut changed = receipt.clone();
+        changed[key] = value;
+        let bytes = serde_json::to_vec(&changed).unwrap();
+        fs::write(&runtime_path, &bytes).unwrap();
+        let error = runtime::verify(root.path(), &directory).err().unwrap();
+        assert!(error.to_string().contains(reason), "{key}: {error}");
+        assert_eq!(fs::read(&runtime_path).unwrap(), bytes);
+        assert_eq!(fs::read(&evidence_path).unwrap(), evidence_bytes);
+    }
+    fs::write(runtime_path, runtime_bytes).unwrap();
     fs::write(root.path().join("source.txt"), b"drift").unwrap();
     assert!(runtime::verify(root.path(), &directory).is_err());
     assert!(runtime::verify_configuration(root.path(), &directory).is_ok());
