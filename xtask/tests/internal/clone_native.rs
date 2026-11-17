@@ -642,6 +642,7 @@ fn active_schedule_without_exact_disposition_is_rejected() {
 #[test]
 fn exact_schedule_disposition_is_bound_without_writing_resources() {
     let mut fixture = Fixture::new();
+    let schedule_index = fixture.data["shared-control"].len();
     let row = fixture
         .add(
             "shared-control",
@@ -701,6 +702,48 @@ fn exact_schedule_disposition_is_bound_without_writing_resources() {
     assert_eq!(
         value["plan"]["pending_target_actions"][0]["body"],
         json!({"version": 1, "enabled": false})
+    );
+
+    fixture.value["copy_stage"] = json!("seed_to_arm");
+    let pending = "arm-pending.json";
+    let error = fixture.plan(pending).unwrap_err();
+    assert!(error.contains("只有来源到 seed"), "{error}");
+    assert!(
+        !fixture
+            .root
+            .join(".local-tests")
+            .join(pending)
+            .try_exists()
+            .unwrap()
+    );
+
+    // 用同一条调度模拟 seed 完成停用后的导出。
+    let (_, row) = &mut fixture.data.get_mut("shared-control").unwrap()[schedule_index];
+    row.insert("enabled".into(), json!(0));
+    row.insert("next_run_at".into(), Value::Null);
+    row.insert("version".into(), json!(2));
+    row.insert("updated_at".into(), json!("2026-09-04 00:01:00"));
+    fixture.value["target_schedule_actions"] = json!([]);
+    fixture.refresh();
+    let plan = fixture.plan("arm-disabled.json").unwrap();
+    let value: Value = serde_json::from_slice(&fs::read(plan).unwrap()).unwrap();
+    assert_eq!(value["plan"]["status"], "offline_verified");
+    assert_eq!(value["plan"]["pending_target_actions"], json!([]));
+
+    let (_, row) = &mut fixture.data.get_mut("shared-control").unwrap()[schedule_index];
+    row.insert("enabled".into(), json!(1));
+    row.insert("tenant_id".into(), json!("clone-source-01"));
+    fixture.refresh();
+    let unmatched = "arm-unmatched.json";
+    let error = fixture.plan(unmatched).unwrap_err();
+    assert!(error.contains("精确匹配"), "{error}");
+    assert!(
+        !fixture
+            .root
+            .join(".local-tests")
+            .join(unmatched)
+            .try_exists()
+            .unwrap()
     );
 }
 

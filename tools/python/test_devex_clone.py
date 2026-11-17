@@ -373,21 +373,6 @@ TenantDataTableDescriptor { table: \"biz_order\", tenant_column: \"tenant_id\", 
         with self.assertRaisesRegex(ValueError, "完整源行摘要"):
             create_plan(self.value, self.backend)
 
-    def test_seed_to_arm_requires_completed_disposition_and_never_allows_implicit_other_tenant(self):
-        row, _ = self.schedule()
-        self.value["copy_stage"] = "seed_to_arm"
-        with self.assertRaisesRegex(ValueError, "只有来源到 seed"):
-            create_plan(self.value, self.backend)
-        # 独立单测数据模拟目标 API 已完成后的新 seed 导出；并非真实资源操作。
-        row.update(enabled=0, next_run_at=None, version=2, updated_at="2026-09-04 00:01:00")
-        self.value["target_schedule_actions"] = []; self.refresh()
-        result = create_plan(self.value, self.backend)
-        self.assertEqual(result["status"], "offline_verified")
-        self.assertEqual(result["pending_target_actions"], [])
-        row.update(enabled=1, tenant_id="clone-source-01"); self.refresh()
-        with self.assertRaisesRegex(ValueError, "精确匹配"):
-            create_plan(self.value, self.backend)
-
     def test_schedule_row_digest_has_explicit_lossless_types_and_dates(self):
         self.assertEqual(canonical_value(Decimal("123456789012345678901234567890.000")),
                          ["decimal", "123456789012345678901234567890"])
