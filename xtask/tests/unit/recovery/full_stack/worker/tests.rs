@@ -112,6 +112,89 @@ fn start_environment_rejects_invalid_private_inputs_and_wrong_operation() {
     assert!(!temporary.path().join("api-control.lock").exists());
 }
 
+const PROBE_PATH: &str = "ryframe path with spaces";
+const PROBE_UNBOUND_KEYS: [&str; 9] = [
+    "APP_SCOPE_ID",
+    "APP_JOBS_HEALTH_PORT",
+    "APP_CONFIG_DIR",
+    "APP_DB_PASSWORD",
+    "SNOWFLAKE_WORKER_ID",
+    "RYFRAME_PRIVATE",
+    "VITE_APP_TARGET",
+    "UNDECLARED_TOOL_SECRET",
+    "AWS_SECRET_ACCESS_KEY",
+];
+const PROBE_VALUE: &str = "synthetic-environment-marker";
+const PROBE_COMPLETE: &str = "子进程环境已实际核验";
+
+#[test]
+fn launch_environment_preserves_path_and_excludes_unbound_values_in_child() {
+    // 只在探针父进程设置合成变量，避免修改并行测试共享的环境。
+    let mut command = launch_environment_probe("launch_environment_parent_probe");
+    command
+        .env("PATH", PROBE_PATH)
+        .env("APP_ENV", "prod")
+        .envs(PROBE_UNBOUND_KEYS.map(|key| (key, PROBE_VALUE)));
+    require_launch_environment_probe(command);
+}
+
+#[test]
+#[ignore = "仅由子进程环境回归测试按精确名称启动"]
+fn launch_environment_parent_probe() {
+    assert_eq!(std::env::var("APP_ENV").unwrap(), "prod");
+    assert_eq!(std::env::var("PATH").unwrap(), PROBE_PATH);
+    for key in PROBE_UNBOUND_KEYS {
+        assert_eq!(
+            std::env::var(key).ok().as_deref(),
+            Some(PROBE_VALUE),
+            "{key}"
+        );
+    }
+    let mut command = launch_environment_probe("launch_environment_child_probe");
+    launch::environment(&mut command);
+    require_launch_environment_probe(command);
+    println!("{PROBE_COMPLETE}");
+}
+
+#[test]
+#[ignore = "仅由子进程环境探针按精确名称启动"]
+fn launch_environment_child_probe() {
+    assert_eq!(std::env::var("PATH").unwrap(), PROBE_PATH);
+    let application_keys: Vec<_> = std::env::vars_os()
+        .filter(|(key, _)| {
+            key.to_string_lossy()
+                .to_ascii_uppercase()
+                .starts_with("APP_")
+        })
+        .collect();
+    assert_eq!(application_keys.len(), 1);
+    assert_eq!(application_keys[0].0, "APP_ENV");
+    assert_eq!(application_keys[0].1, "test");
+    for key in PROBE_UNBOUND_KEYS {
+        assert!(std::env::var_os(key).is_none(), "{key}");
+    }
+    println!("{PROBE_COMPLETE}");
+}
+
+fn launch_environment_probe(name: &str) -> std::process::Command {
+    let (_, module) = module_path!().split_once("::").unwrap();
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .arg(format!("{module}::{name}"))
+        .args(["--exact", "--ignored", "--nocapture"]);
+    command
+}
+
+fn require_launch_environment_probe(mut command: std::process::Command) {
+    let output = command.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains(PROBE_COMPLETE),
+        "环境探针没有通过：{stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 fn common(kind: &str) -> Value {
     json!({"format_version":1,"kind":kind,"operation_id":"a".repeat(32),
         "runtime_directory":std::env::current_dir().unwrap(),"source_sha256":"b".repeat(64)})
