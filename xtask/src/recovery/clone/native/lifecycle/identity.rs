@@ -206,7 +206,11 @@ fn platform(pid: u32) -> Result<Option<Value>> {
     let executable = match std::fs::read_link(root.join("exe")) {
         Ok(value) => value,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            if !root.join("stat").exists() {
+            let stat_exists = root
+                .join("stat")
+                .try_exists()
+                .map_err(|error| format!("无法复核进程 {pid} 状态是否存在：{error}"))?;
+            if !stat_exists {
                 return Ok(None);
             }
             return Err(format!("测试进程仍存在但可执行映像无法核验：{error}").into());
