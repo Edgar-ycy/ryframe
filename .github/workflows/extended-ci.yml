@@ -201,7 +201,10 @@ jobs:
       - name: 在隔离工作树生成业务 crate 并校验幂等性
         if: ${{ matrix.fixture == 'business' }}
         working-directory: backend
-        run: mkdir -p .local-tests
+        run: |
+          mkdir -p .local-tests
+          cargo fetch --locked
+          cargo metadata --locked --offline --format-version 1 > /dev/null
 
       - name: 生成业务 crate fixture 并校验幂等性
         if: ${{ matrix.fixture == 'business' }}
