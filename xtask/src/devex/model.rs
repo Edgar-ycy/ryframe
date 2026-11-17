@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +14,7 @@ use steps::*;
 
 pub(crate) use baseline::{
     BaselineContract, BaselineProvenance, FrontendAdaptation, PairedWorkloadContract,
+    SaveAdaptation,
 };
 pub(crate) use execution_contract::{
     RESOURCE_GATE_DECISION_TEMPLATE, RESOURCE_GATE_TARGETED_ACTIVATION,
@@ -379,12 +380,34 @@ pub(crate) struct PairingMetadata {
     pub(crate) baseline_provenance: Option<BaselineProvenance>,
     #[serde(default)]
     pub(crate) workload_contract: Option<PairedWorkloadContract>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) save_config: Option<SaveConfigBinding>,
 }
 
 impl PairingMetadata {
     pub(in crate::devex) fn targeted_pair(&self) -> Option<&super::targeted_source::TargetedPair> {
         self.baseline_provenance.as_ref()?.targeted_pair.as_ref()
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SaveConfigDirs {
+    pub(super) baseline: PathBuf,
+    pub(super) candidate: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SaveConfigBinding {
+    pub(super) directory: PathBuf,
+    pub(super) files: BTreeMap<String, SaveConfigFile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(super) struct SaveConfigFile {
+    pub(super) bytes: usize,
+    pub(super) sha256: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -395,6 +418,7 @@ pub(crate) struct DevexPairedOptions {
     pub(crate) candidate_backend: PathBuf,
     pub(crate) baseline_frontend: Option<PathBuf>,
     pub(crate) candidate_frontend: Option<PathBuf>,
+    pub(crate) save_config_dirs: Option<Box<SaveConfigDirs>>,
     pub(crate) baseline_contract: Option<BaselineContract>,
     pub(crate) targeted_source: Option<PathBuf>,
 }

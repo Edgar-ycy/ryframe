@@ -1,0 +1,568 @@
+diff --git a/xtask/src/cli.rs b/xtask/src/cli.rs
+index f5b4333a44754e53f3861aa0e614f5b421be281b..0f37d513278914f64283ca298ef2eb6dec484a08 100644
+--- a/xtask/src/cli.rs
++++ b/xtask/src/cli.rs
+@@ -14,2 +14,6 @@ pub(crate) enum Command {
+-    Check { scope: CheckScope },
+-    Contract { operation: ContractOperation },
++    Check {
++        scope: CheckScope,
++    },
++    Contract {
++        operation: ContractOperation,
++    },
+@@ -18,2 +22,8 @@ pub(crate) enum Command {
+-    Dev { measure_once: bool },
+-    Verify { scope: CheckScope, full: bool },
++    Dev {
++        measure_once: bool,
++        measurement_config: Option<PathBuf>,
++    },
++    Verify {
++        scope: CheckScope,
++        full: bool,
++    },
+@@ -209,0 +220,2 @@ pub(crate) fn parse(mut args: Vec<String>) -> Result<Cli, CliError> {
++            let measurement_config =
++                take_unique_option(&mut args, "--config-dir")?.map(PathBuf::from);
+@@ -215 +227 @@ pub(crate) fn parse(mut args: Vec<String>) -> Result<Cli, CliError> {
+-                        "用法：cargo dev [--measure-once]；一次性场景由 RYFRAME_DEVEX_SAVE_CASE 选择",
++                        "用法：cargo dev [--measure-once [--config-dir <绝对目录>]]；一次性场景由 RYFRAME_DEVEX_SAVE_CASE 选择",
+@@ -219 +231,12 @@ pub(crate) fn parse(mut args: Vec<String>) -> Result<Cli, CliError> {
+-            Command::Dev { measure_once }
++            if measurement_config
++                .as_ref()
++                .is_some_and(|path| !measure_once || !path.is_absolute())
++            {
++                return Err(CliError::new(
++                    "--config-dir 只用于 --measure-once，且必须是绝对目录",
++                ));
++            }
++            Command::Dev {
++                measure_once,
++                measurement_config,
++            }
+@@ -512 +535 @@ pub(crate) fn print_help(topic: Option<&str>) {
+-             RYFRAME_DEVEX_SAVE_CASE=<case> cargo dev --measure-once\n  只运行一次保存反馈测量；case 支持 config-only、api-only、worker-only、shared-runtime、locales、migration-only、resource-manifest、cancellation。"
++             RYFRAME_DEVEX_SAVE_CASE=<case> cargo dev --measure-once [--config-dir <绝对目录>]\n  只运行一次保存反馈测量；case 支持 config-only、api-only、worker-only、shared-runtime、locales、migration-only、resource-manifest、cancellation。"
+diff --git a/xtask/src/dev.rs b/xtask/src/dev.rs
+index 92be165a7ed97857336dd5bbbb2b1525dc909c56..646dc44edf6aa587fc7b5d496ca4a60e04774ed8 100644
+--- a/xtask/src/dev.rs
++++ b/xtask/src/dev.rs
+@@ -37,0 +38,2 @@ mod measure;
++#[path = "dev/measure_config.rs"]
++mod measure_config;
+diff --git a/xtask/src/dev/build.rs b/xtask/src/dev/build.rs
+index cdf80af8419f11a686ab045949a6288f6a353496..bb47c6825f3a2be9128cc6301778dab378da868e 100644
+--- a/xtask/src/dev/build.rs
++++ b/xtask/src/dev/build.rs
+@@ -114,10 +114 @@ pub(crate) fn build_candidate(
+-    match validate_candidate_migration(
+-        context.group,
+-        context.root,
+-        context.shutdown,
+-        context.watcher,
+-        plan,
+-        &artifacts,
+-        &mut candidate,
+-        &mut lkg_check,
+-    )? {
++    match validate_candidate_migration(context, plan, &artifacts, &mut candidate, &mut lkg_check)? {
+@@ -163 +153,0 @@ fn prepare_artifacts(
+-#[allow(clippy::too_many_arguments)]
+@@ -165,4 +155 @@ fn validate_candidate_migration(
+-    group: &ChildGroup,
+-    root: &Path,
+-    shutdown: &AtomicBool,
+-    watcher: &SourceWatcher,
++    context: &BuildContext<'_>,
+@@ -181,9 +168,7 @@ fn validate_candidate_migration(
+-    let config_dir = candidate
+-        .as_ref()
+-        .map_or_else(|| root.join("config"), |bundle| bundle.config_dir.clone());
+-    let locales_dir = candidate
+-        .as_ref()
+-        .map_or_else(|| root.join("locales"), |bundle| bundle.locales_dir.clone());
+-    let captured_secrets;
+-    let runtime_secrets = if let Some(bundle) = candidate.as_ref() {
+-        bundle.runtime_secrets.as_ref()
++    let captured;
++    let (config_dir, locales_dir, runtime_secrets) = if let Some(bundle) = candidate.as_ref() {
++        (
++            bundle.config_dir.clone(),
++            bundle.locales_dir.clone(),
++            bundle.runtime_secrets.as_ref(),
++        )
+@@ -191,2 +176,5 @@ fn validate_candidate_migration(
+-        captured_secrets = RuntimeSecrets::capture(&root.join("config"))?;
+-        &captured_secrets
++        let (directory, secrets) = context.session.read_source_config(context.root, |source| {
++            Ok((source.to_path_buf(), RuntimeSecrets::capture(source)?))
++        })?;
++        captured = secrets;
++        (directory, context.root.join("locales"), &captured)
+@@ -195,2 +183,2 @@ fn validate_candidate_migration(
+-        group,
+-        root,
++        context.group,
++        context.root,
+@@ -201,2 +189,2 @@ fn validate_candidate_migration(
+-        shutdown,
+-        watcher,
++        context.shutdown,
++        context.watcher,
+@@ -416,7 +404,9 @@ fn stage_candidate(
+-    session.install_generation(
+-        plan.source_revision,
+-        api_source,
+-        worker_source,
+-        &root.join("config"),
+-        &root.join("locales"),
+-    )
++    session.read_source_config(root, |source| {
++        session.install_generation(
++            plan.source_revision,
++            api_source,
++            worker_source,
++            source,
++            &root.join("locales"),
++        )
++    })
+diff --git a/xtask/src/dev/measure.rs b/xtask/src/dev/measure.rs
+index 0b3fcab298b273317ba648ce3f21e3242039deeb..ad53faac55db2f903950fcffc7091e977f86c6c3 100644
+--- a/xtask/src/dev/measure.rs
++++ b/xtask/src/dev/measure.rs
+@@ -20 +20 @@ use crate::{
+-    source_edit::SourceEdit,
++    source_edit::{EditStart, SourceEdit},
+@@ -28,0 +29 @@ use super::{
++    measure_config::MeasurementConfig,
+@@ -163 +164 @@ pub(crate) enum SaveMeasurementContract {
+-pub(crate) fn run() -> Result<()> {
++pub(crate) fn run(config_dir: Option<&Path>) -> Result<()> {
+@@ -165,0 +167,6 @@ pub(crate) fn run() -> Result<()> {
++    if case == SaveCase::Cancellation && config_dir.is_some() {
++        return Err("取消测量不使用应用配置，不能指定 --config-dir".into());
++    }
++    let configuration = config_dir
++        .map(|directory| MeasurementConfig::bind(&root, directory))
++        .transpose()?;
+@@ -169 +176 @@ pub(crate) fn run() -> Result<()> {
+-    let measurement = measure(&root, &state_root, case)?;
++    let measurement = measure(&root, &state_root, case, configuration)?;
+@@ -177 +184,6 @@ pub(crate) fn run() -> Result<()> {
+-fn measure(root: &Path, state_root: &Path, case: SaveCase) -> Result<SaveMeasurement> {
++fn measure(
++    root: &Path,
++    state_root: &Path,
++    case: SaveCase,
++    configuration: Option<MeasurementConfig>,
++) -> Result<SaveMeasurement> {
+@@ -182,2 +194,6 @@ fn measure(root: &Path, state_root: &Path, case: SaveCase) -> Result<SaveMeasure
+-    let watcher = SourceWatcher::new(root)?;
+-    let session = DevSession::prepare_isolated(state_root, watcher.current_revision())?;
++    let watcher = SourceWatcher::with_measurement_config(
++        root,
++        configuration.as_ref().map(MeasurementConfig::directory),
++    )?;
++    let session = DevSession::prepare_isolated(state_root, watcher.current_revision())?
++        .with_measurement_config(configuration);
+@@ -333 +348,0 @@ fn measure_cycle(
+-    let path = root.join(source.relative);
+@@ -335 +350 @@ fn measure_cycle(
+-    let (mut edit, started) = SourceEdit::apply(&path, &label, source.comment_prefix)?;
++    let (mut edit, started) = edit_case_source(root, session, case, &label)?;
+@@ -381,0 +397,19 @@ fn measure_cycle(
++fn edit_case_source(
++    root: &Path,
++    session: &DevSession,
++    case: SaveCase,
++    label: &str,
++) -> Result<(SourceEdit, EditStart)> {
++    let source = case.source();
++    if case == SaveCase::ConfigOnly {
++        return session.read_source_config(root, |directory| {
++            SourceEdit::apply(
++                &directory.join("app.dev.toml"),
++                label,
++                source.comment_prefix,
++            )
++        });
++    }
++    SourceEdit::apply(&root.join(source.relative), label, source.comment_prefix)
++}
++
+@@ -519,0 +554,4 @@ pub(crate) fn read_measurement_with_contract(
++
++#[cfg(test)]
++#[path = "measure_tests.rs"]
++mod tests;
+diff --git a/xtask/src/dev/measure_config.rs b/xtask/src/dev/measure_config.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..d824142a45bc2c35f9e7b21b1d106ca89360f752
+--- /dev/null
++++ b/xtask/src/dev/measure_config.rs
+@@ -0,0 +1,90 @@
++use std::{
++    ffi::OsStr,
++    fs,
++    path::{Component, Path, PathBuf},
++};
++
++use crate::Result;
++
++#[derive(Debug, Clone)]
++pub(super) struct MeasurementConfig(PathBuf);
++
++impl MeasurementConfig {
++    pub(super) fn bind(root: &Path, directory: &Path) -> Result<Self> {
++        if !directory.is_absolute()
++            || directory
++                .components()
++                .any(|part| matches!(part, Component::ParentDir))
++        {
++            return Err("测量配置必须是无父级跳转的绝对目录".into());
++        }
++        let selected = Self(directory.to_path_buf());
++        selected.verify()?;
++        let directory = directory.canonicalize()?;
++        if directory.starts_with(root.canonicalize()?) {
++            return Err("测量配置必须独立于本次 B0 后端工作树".into());
++        }
++        if std::env::vars_os().any(|(name, _)| is_app_override(&name)) {
++            return Err("测量配置不接受继承的历史应用覆盖；请清理子进程环境后重试".into());
++        }
++        Ok(selected)
++    }
++
++    pub(super) fn directory(&self) -> &Path {
++        &self.0
++    }
++
++    pub(super) fn verify(&self) -> Result<()> {
++        for path in self.0.ancestors() {
++            require_plain(path, true)?;
++        }
++        for name in ["app.toml", "app.dev.toml"] {
++            require_plain(&self.0.join(name), false)?;
++        }
++        for entry in fs::read_dir(&self.0)? {
++            require_plain(&entry?.path(), false)?;
++        }
++        Ok(())
++    }
++
++    pub(super) fn read<T>(&self, operation: impl FnOnce(&Path) -> Result<T>) -> Result<T> {
++        self.verify()?;
++        operation(&self.0).map_err(|_| {
++            format!(
++                "无法读取或校验私有测量配置 {}；请核对固定配置文件",
++                self.0.display()
++            )
++            .into()
++        })
++    }
++}
++
++fn require_plain(path: &Path, directory: bool) -> Result<()> {
++    let metadata = fs::symlink_metadata(path)
++        .map_err(|error| format!("无法检查测量配置路径 {}：{}", path.display(), error.kind()))?;
++    let expected = if directory {
++        metadata.is_dir()
++    } else {
++        metadata.is_file()
++    };
++    if !expected || metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
++        return Err(format!("测量配置要求普通目录和文件，拒绝链接：{}", path.display()).into());
++    }
++    Ok(())
++}
++
++#[cfg(windows)]
++fn is_reparse_point(metadata: &fs::Metadata) -> bool {
++    use std::os::windows::fs::MetadataExt;
++    metadata.file_attributes() & 0x0400 != 0
++}
++
++#[cfg(not(windows))]
++fn is_reparse_point(_metadata: &fs::Metadata) -> bool {
++    false
++}
++
++fn is_app_override(name: &OsStr) -> bool {
++    let name = name.to_string_lossy().to_ascii_uppercase();
++    (name.starts_with("APP_") && name != "APP_ENV") || name == "SNOWFLAKE_WORKER_ID"
++}
+diff --git a/xtask/src/dev/measure_tests.rs b/xtask/src/dev/measure_tests.rs
+new file mode 100644
+index 0000000000000000000000000000000000000000..6ad53c74ac75752e0d9ddf198805d874f85dda2e
+--- /dev/null
++++ b/xtask/src/dev/measure_tests.rs
+@@ -0,0 +1,104 @@
++use super::*;
++use crate::dev::runtime_secrets::{
++    RuntimeSecrets, runtime_config_matches_snapshot, snapshot_config_tree,
++};
++use crate::watch::WatchEvent;
++
++struct Fixture(PathBuf);
++
++impl Fixture {
++    fn new(name: &str) -> Self {
++        let root = std::env::temp_dir().join(format!(
++            "ryframe-xtask-b0-save-{name}-{}",
++            std::process::id()
++        ));
++        fs::create_dir(&root).unwrap();
++        Self(root)
++    }
++}
++
++impl Drop for Fixture {
++    fn drop(&mut self) {
++        let _ = fs::remove_dir_all(&self.0);
++    }
++}
++
++const PRIVATE_CONFIG: &[u8] = b"[app]\nport = 11880\n";
++
++#[test]
++fn b0_measurement_config_save_uses_only_selected_file_and_restores_exact_bytes() {
++    let fixture = Fixture::new("watched");
++    let root = fixture.0.join("backend");
++    let versioned = root.join("config/app.dev.toml");
++    fs::create_dir_all(versioned.parent().unwrap()).unwrap();
++    fs::write(&versioned, "[app]\nport = 8000\n").unwrap();
++    let directory = fixture.0.join("private configuration");
++    fs::create_dir(&directory).unwrap();
++    fs::write(directory.join("app.toml"), "# private fixture\n").unwrap();
++    let selected = directory.join("app.dev.toml");
++    fs::write(&selected, PRIVATE_CONFIG).unwrap();
++    let config = MeasurementConfig::bind(&root, &directory).unwrap();
++    let watcher = SourceWatcher::with_measurement_config(&root, Some(config.directory())).unwrap();
++    let session =
++        DevSession::prepare_isolated(&fixture.0.join("state"), watcher.current_revision())
++            .unwrap()
++            .with_measurement_config(Some(config));
++    let runtime = fixture.0.join("snapshot");
++    let secrets = session
++        .read_source_config(&root, |path| snapshot_config_tree(path, &runtime))
++        .unwrap();
++    let untouched = b"[app]\nport = 8001\n";
++    fs::write(&versioned, untouched).unwrap();
++    assert!(
++        watcher
++            .recv_timeout(Duration::from_millis(250))
++            .unwrap()
++            .is_none()
++    );
++    let (mut edit, _) = edit_case_source(&root, &session, SaveCase::ConfigOnly, "fixture").unwrap();
++    let Some(WatchEvent::BackendChanged { revision, paths }) =
++        watcher.recv_timeout(Duration::from_secs(3)).unwrap()
++    else {
++        panic!("外置配置原子保存应触发历史逻辑变更");
++    };
++    let batch = watcher
++        .drain_changes(revision, paths, Duration::from_millis(100))
++        .unwrap();
++    assert_eq!(batch.paths, ["config/app.dev.toml".to_owned()].into());
++    assert!(
++        session
++            .read_source_config(&root, |path| runtime_config_matches_snapshot(
++                path, &runtime, &secrets
++            ))
++            .unwrap()
++    );
++    assert_ne!(fs::read(&selected).unwrap(), PRIVATE_CONFIG);
++    finish_source_edit(Ok(()), &mut edit).unwrap();
++    assert_eq!(fs::read(&selected).unwrap(), PRIVATE_CONFIG);
++    assert_eq!(fs::read(&versioned).unwrap(), untouched);
++}
++
++#[test]
++fn b0_measurement_config_rejects_unbound_or_nonfile_inputs_and_hides_private_parser_text() {
++    let fixture = Fixture::new("rejected");
++    let root = fixture.0.join("backend");
++    let versioned = root.join("config");
++    let private = fixture.0.join("private");
++    fs::create_dir_all(&versioned).unwrap();
++    fs::create_dir(&private).unwrap();
++    for path in [&versioned, &private] {
++        fs::write(path.join("app.toml"), "").unwrap();
++        fs::write(path.join("app.dev.toml"), PRIVATE_CONFIG).unwrap();
++    }
++    assert!(MeasurementConfig::bind(&root, &versioned).is_err());
++    assert!(MeasurementConfig::bind(&root, Path::new("relative")).is_err());
++    let bound = MeasurementConfig::bind(&root, &private).unwrap();
++    let app_dev = private.join("app.dev.toml");
++    fs::write(&app_dev, "password = 'synthetic-secret\n").unwrap();
++    let error = bound.read(RuntimeSecrets::capture).unwrap_err().to_string();
++    assert!(error.contains("私有测量配置"));
++    assert!(!error.contains("synthetic-secret"));
++    fs::remove_file(&app_dev).unwrap();
++    fs::create_dir(&app_dev).unwrap();
++    assert!(bound.read(RuntimeSecrets::capture).is_err());
++}
+diff --git a/xtask/src/dev/orchestrator.rs b/xtask/src/dev/orchestrator.rs
+index df0a902255b186e2b77c8dd97f24f0749b9cd0a4..12baa053700cb06ef5490fa2afba31c7df808d63 100644
+--- a/xtask/src/dev/orchestrator.rs
++++ b/xtask/src/dev/orchestrator.rs
+@@ -359,5 +359,7 @@ pub(super) fn process_change(
+-        && runtime_config_matches_snapshot(
+-            &root.join("config"),
+-            &services.binaries.config_dir,
+-            services.binaries.runtime_secrets.as_ref(),
+-        )?
++        && session.read_source_config(root, |source| {
++            runtime_config_matches_snapshot(
++                source,
++                &services.binaries.config_dir,
++                services.binaries.runtime_secrets.as_ref(),
++            )
++        })?
+diff --git a/xtask/src/dev/snapshot.rs b/xtask/src/dev/snapshot.rs
+index f6e589be5867ce131a53eb4fff4fc830c050fd2c..98fd3e0c1ccd2b446368ff68a1b9919f51ac936c 100644
+--- a/xtask/src/dev/snapshot.rs
++++ b/xtask/src/dev/snapshot.rs
+@@ -12,0 +13 @@ use super::{
++    measure_config::MeasurementConfig,
+@@ -33,0 +35 @@ pub(crate) struct DevSession {
++    measurement_config: Option<MeasurementConfig>,
+@@ -90,0 +93,16 @@ impl DevSession {
++    pub(super) fn with_measurement_config(mut self, config: Option<MeasurementConfig>) -> Self {
++        self.measurement_config = config;
++        self
++    }
++
++    pub(super) fn read_source_config<T>(
++        &self,
++        root: &Path,
++        operation: impl FnOnce(&Path) -> Result<T>,
++    ) -> Result<T> {
++        match &self.measurement_config {
++            Some(config) => config.read(operation),
++            None => operation(&root.join("config")),
++        }
++    }
++
+@@ -140,0 +159 @@ impl DevSession {
++                measurement_config: None,
+diff --git a/xtask/src/main.rs b/xtask/src/main.rs
+index a2bd82385c00dc7662c9ff645c5e8ad8bbbe9155..b16b10c9d394c521d0916a33c1c5ad85fc69a71c 100644
+--- a/xtask/src/main.rs
++++ b/xtask/src/main.rs
+@@ -52 +52,4 @@ fn dispatch(cli: Cli) -> Result<()> {
+-        Command::Dev { measure_once: true } => dev::measure_once(),
++        Command::Dev {
++            measure_once: true,
++            measurement_config,
++        } => dev::measure_once(measurement_config.as_deref()),
+@@ -54,0 +58 @@ fn dispatch(cli: Cli) -> Result<()> {
++            ..
+diff --git a/xtask/src/watch.rs b/xtask/src/watch.rs
+index 679026626b5d0e8a959b62eb9007ecc8355c34a6..7f1ab574e1bd494d8262e478c777f23c03c5c62f 100644
+--- a/xtask/src/watch.rs
++++ b/xtask/src/watch.rs
+@@ -77,0 +78,9 @@ impl SourceRevisionTracker {
++    ) -> Option<(SourceRevision, BTreeSet<String>)> {
++        self.record_with_config(root, None, event_paths)
++    }
++
++    fn record_with_config(
++        &self,
++        root: &Path,
++        config: Option<&Path>,
++        event_paths: &[PathBuf],
+@@ -80 +89,4 @@ impl SourceRevisionTracker {
+-        let paths = relevant_paths(root, event_paths);
++        let paths = match config {
++            Some(config) => paths_with_config(root, Some(config), event_paths),
++            None => relevant_paths(root, event_paths),
++        };
+@@ -90,0 +103,4 @@ impl SourceWatcher {
++        Self::with_measurement_config(root, None)
++    }
++
++    pub(crate) fn with_measurement_config(root: &Path, config: Option<&Path>) -> Result<Self> {
+@@ -92,0 +109 @@ impl SourceWatcher {
++        let callback_config = config.map(Path::to_path_buf);
+@@ -105,3 +122,9 @@ impl SourceWatcher {
+-                if let Some((revision, paths)) =
+-                    callback_revision.record_paths(&callback_root, &event.paths)
+-                {
++                let recorded = match callback_config.as_deref() {
++                    Some(config) => callback_revision.record_with_config(
++                        &callback_root,
++                        Some(config),
++                        &event.paths,
++                    ),
++                    None => callback_revision.record_paths(&callback_root, &event.paths),
++                };
++                if let Some((revision, paths)) = recorded {
+@@ -115,0 +139,3 @@ impl SourceWatcher {
++            if relative == "config" && config.is_some() {
++                continue;
++            }
+@@ -120,0 +147,3 @@ impl SourceWatcher {
++        if let Some(config) = config {
++            watcher.watch(config, RecursiveMode::NonRecursive)?;
++        }
+@@ -175,0 +205,4 @@ pub(crate) fn relevant_paths(root: &Path, paths: &[PathBuf]) -> BTreeSet<String>
++    paths_with_config(root, None, paths)
++}
++
++fn paths_with_config(root: &Path, config: Option<&Path>, paths: &[PathBuf]) -> BTreeSet<String> {
+@@ -179,0 +213,10 @@ pub(crate) fn relevant_paths(root: &Path, paths: &[PathBuf]) -> BTreeSet<String>
++            if let Some(config) = config {
++                if let Ok(relative) = path.strip_prefix(config) {
++                    let logical = Path::new("config").join(relative);
++                    let normalized = logical.to_string_lossy().replace('\\', "/");
++                    return is_backend_watch_path(&normalized).then_some(normalized);
++                }
++                if relative.starts_with("config") {
++                    return None;
++                }
++            }
+diff --git a/xtask/tests/internal/cli.rs b/xtask/tests/internal/cli.rs
+index 206d79e0ad7bc93bdb5d19c36d3a0b36feacbe7e..ad741a51d5d821e9a064fea3ac288283b012208c 100644
+--- a/xtask/tests/internal/cli.rs
++++ b/xtask/tests/internal/cli.rs
+@@ -68 +68,2 @@ fn parses_daily_short_commands() {
+-            measure_once: false
++            measure_once: false,
++            measurement_config: None,
+@@ -73 +74,4 @@ fn parses_daily_short_commands() {
+-        Command::Dev { measure_once: true }
++        Command::Dev {
++            measure_once: true,
++            measurement_config: None,
++        }
+@@ -98,0 +103,28 @@ fn parses_daily_short_commands() {
++#[test]
++fn b0_measurement_config_is_absolute_unique_and_only_for_measure_once() {
++    let directory = std::env::current_dir()
++        .unwrap()
++        .join("private configuration");
++    let path = directory.to_str().unwrap();
++    assert_eq!(
++        parse_command(&["dev", "--measure-once", "--config-dir", path]).unwrap(),
++        Command::Dev {
++            measure_once: true,
++            measurement_config: Some(directory.clone()),
++        }
++    );
++    assert!(parse_command(&["dev", "--config-dir", path]).is_err());
++    assert!(parse_command(&["dev", "--measure-once", "--config-dir", "relative"]).is_err());
++    assert!(
++        parse_command(&[
++            "dev",
++            "--measure-once",
++            "--config-dir",
++            path,
++            "--config-dir",
++            path
++        ])
++        .is_err()
++    );
++}
++

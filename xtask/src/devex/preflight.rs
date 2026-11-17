@@ -72,6 +72,38 @@ pub(super) fn check_paired(
             _ => {}
         }
     }
+    if options.suite == DevexSuite::CargoDevSave
+        && options.variant == "resource-manifest"
+        && contract.is_some_and(BaselineContract::uses_common_toolchain)
+    {
+        verify_save_resource_frontend(backend_root, frontend_root, arm)?;
+    }
+    Ok(())
+}
+
+pub(super) fn verify_save_resource_frontend(
+    backend: &Path,
+    expected: &Path,
+    arm: PairedArm,
+) -> Result<()> {
+    // 保存反馈触发的是子门禁，外层 paired 的前端目录不会传给它。
+    let selected = match arm {
+        PairedArm::Baseline => backend
+            .parent()
+            .ok_or("B0 后端工作树缺少用于定位前端的父目录")?
+            .join("ryframe-vue3"),
+        PairedArm::Candidate => ryframe_config::ToolSettings::load(backend)?.frontend_dir(backend),
+    };
+    let selected = selected
+        .canonicalize()
+        .map_err(|error| format!("{} 保存测量的资源子门禁前端无效：{error}", arm.as_str()))?;
+    if selected != expected.canonicalize()? {
+        return Err(format!(
+            "{} 保存测量的资源子门禁前端与登记的前端工作树不同",
+            arm.as_str()
+        )
+        .into());
+    }
     Ok(())
 }
 
@@ -324,5 +356,33 @@ fn executable_available(root: &Path, executable: &str, args: &[&str]) -> Result<
         )
         .into()),
         Err(error) => Err(format!("DevEx 前置检查找不到 `{executable}`：{error}").into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PairedArm, fs, verify_save_resource_frontend};
+
+    #[test]
+    fn save_resource_preflight_tracks_each_actual_child_tool_root() {
+        let scratch = crate::workspace::root_dir().join(".local-tests");
+        fs::create_dir_all(&scratch).unwrap();
+        let root = tempfile::tempdir_in(scratch).unwrap();
+        let backend = root.path().join("backend");
+        let baseline = root.path().join("ryframe-vue3");
+        let candidate = root.path().join("configured-frontend");
+        fs::create_dir_all(backend.join(".local-tests")).unwrap();
+        fs::create_dir(&baseline).unwrap();
+        fs::create_dir(&candidate).unwrap();
+        fs::write(
+            backend.join(".local-tests/tools.toml"),
+            "[workspace]\nfrontend_dir = '../configured-frontend'\n",
+        )
+        .unwrap();
+
+        verify_save_resource_frontend(&backend, &baseline, PairedArm::Baseline).unwrap();
+        verify_save_resource_frontend(&backend, &candidate, PairedArm::Candidate).unwrap();
+        assert!(verify_save_resource_frontend(&backend, &candidate, PairedArm::Baseline).is_err());
+        assert!(verify_save_resource_frontend(&backend, &baseline, PairedArm::Candidate).is_err());
     }
 }

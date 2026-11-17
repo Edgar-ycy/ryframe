@@ -165,6 +165,69 @@ fn native_step_keeps_only_app_env_from_project_protocol_environment() {
 }
 
 #[test]
+fn paired_save_command_passes_private_directory_to_both_protocols() {
+    use super::super::super::model::{BaselineContract, DevexSuite, PairedArm, SaveConfigBinding};
+
+    let path = if cfg!(windows) {
+        r"\\?\D:\private config"
+    } else {
+        "/private config"
+    };
+    let expected = if cfg!(windows) {
+        r"D:\private config"
+    } else {
+        path
+    };
+    let contract = Some(BaselineContract::StableReadinessB0CommonToolchainV1);
+    let roots = StepRoots {
+        backend: Path::new("D:/measured-source"),
+        frontend: Path::new("D:/frontend"),
+        runner_frontend: Path::new("D:/runner-frontend"),
+        target: Path::new("D:/sample-target"),
+    };
+    for arm in [PairedArm::Baseline, PairedArm::Candidate] {
+        let pairing = PairingMetadata {
+            comparison_id: "save-pair".into(),
+            arm,
+            baseline_contract: contract,
+            baseline_provenance: None,
+            workload_contract: None,
+            save_config: Some(SaveConfigBinding {
+                directory: path.into(),
+                files: BTreeMap::new(),
+            }),
+        };
+        let definition = DevexSuite::CargoDevSave
+            .paired_definition("config-only", contract, arm)
+            .unwrap();
+        let command = step_command(
+            &definition.steps[0],
+            roots,
+            definition,
+            &BTreeMap::new(),
+            &StepInvocation {
+                variant: "config-only",
+                label: "sample-001",
+                runtime_input: None,
+                pairing: Some(&pairing),
+            },
+        )
+        .unwrap();
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(args[args.len() - 2..], ["--config-dir", expected]);
+        assert_eq!(args.iter().filter(|arg| **arg == "--config-dir").count(), 1);
+        assert!(
+            command
+                .get_envs()
+                .all(|(_, value)| value != Some(std::ffi::OsStr::new(expected)))
+        );
+    }
+}
+
+#[test]
 fn save_step_passes_validated_case_and_output_as_arguments() {
     let definition = super::super::super::model::DevexSuite::CargoDevSave
         .definition("worker-only")

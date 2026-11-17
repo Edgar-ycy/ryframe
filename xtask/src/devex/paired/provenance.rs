@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 use crate::Result;
 
 use crate::devex::{
-    model::{BaselineContract, BaselineProvenance, DevexPairedOptions, PairedArm},
+    model::{BaselineContract, BaselineProvenance, DevexPairedOptions, PairedArm, SaveAdaptation},
     targeted_source::TargetedPair,
 };
 
@@ -31,26 +31,33 @@ pub(super) fn collect(
         })
         .transpose()?;
     let base_commit = contract.base_commit();
-    let adapter_commit = match &targeted_pair {
-        Some(pair) => pair.b0.backend_base.clone(),
-        None => git_text(backend_root, &["rev-parse", "HEAD"])?,
+    let save_adaptation =
+        contract.registered_save_adaptation(options.run.suite, &options.run.variant);
+    let adapter_commit = match (&targeted_pair, &save_adaptation) {
+        (Some(pair), None) => pair.b0.backend_base.clone(),
+        (None, Some(_)) => BaselineContract::STABLE_READINESS_B0_ADAPTER_COMMIT.to_owned(),
+        (None, None) => git_text(backend_root, &["rev-parse", "HEAD"])?,
+        (Some(_), Some(_)) => return Err("定向门禁与保存测量不能使用同一后继来源".into()),
     };
     let execution_backend = targeted_pair
         .as_ref()
-        .map_or(adapter_commit.as_str(), |pair| {
-            pair.b0.backend_head.as_str()
-        });
-    if let Some(expected) = contract.required_adapter_commit() {
-        if expected != adapter_commit {
-            return Err(format!(
-                "{} 后端适配应为 {expected}，实际为 {adapter_commit}",
-                contract.as_str()
-            )
-            .into());
-        }
+        .map(|pair| pair.b0.backend_head.as_str())
+        .or_else(|| save_adaptation.as_ref().map(|save| save.commit.as_str()))
+        .unwrap_or(&adapter_commit);
+    if let Some(expected) = contract.required_adapter_commit()
+        && expected != adapter_commit
+    {
+        return Err(format!(
+            "{} 后端适配应为 {expected}，实际为 {adapter_commit}",
+            contract.as_str()
+        )
+        .into());
     }
     require_commit(backend_root, "后端适配", execution_backend, contract)?;
     require_parent(backend_root, &adapter_commit, base_commit, contract)?;
+    if let Some(save) = &save_adaptation {
+        verify_save_adaptation(backend_root, &adapter_commit, save, contract)?;
+    }
     if contract.is_stable_readiness_b0() {
         require_stable_readiness_trees(backend_root)?;
     }
@@ -109,9 +116,41 @@ pub(super) fn collect(
         adapter_tree,
         frontend_commit,
         frontend_adaptation,
+        save_adaptation,
         adapter_paths,
         targeted_pair,
     }))
+}
+
+fn verify_save_adaptation(
+    root: &Path,
+    parent: &str,
+    save: &SaveAdaptation,
+    contract: BaselineContract,
+) -> Result<()> {
+    require_parent(root, &save.commit, parent, contract)?;
+    let tree = git_text(root, &["rev-parse", &format!("{}^{{tree}}", save.commit)])?;
+    let patch = git_output(
+        root,
+        &[
+            "diff",
+            "--binary",
+            "--full-index",
+            "--unified=0",
+            parent,
+            &save.commit,
+            "--",
+            ".",
+        ],
+    )?;
+    if has_replacement(root, &save.commit)?
+        || tree != save.tree
+        || sha256(&patch) != save.patch_sha256
+        || patch != BaselineContract::B0_SAVE_CONFIG_PATCH
+    {
+        return Err("B0 保存测量适配的 Git 树或补丁与登记不一致".into());
+    }
+    Ok(())
 }
 
 fn validate_stable_readiness_adapter(

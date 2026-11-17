@@ -112,6 +112,7 @@ fn step_command(
     if uses_historical_save_protocol(step) {
         super::save::bind_historical_protocol(&mut command, roots.target, invocation)?;
     }
+    super::save::bind_private_config(&mut command, step, invocation);
     if let Some(pairing) = invocation.pairing
         && let Some(pair) = pairing.targeted_pair()
     {

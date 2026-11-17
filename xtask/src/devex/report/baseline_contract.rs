@@ -21,6 +21,13 @@ pub(super) fn validate(
     {
         return Err("DevEx paired baseline contract 或来源证据不一致".into());
     }
+    if let (Some(baseline), Some(candidate)) = (
+        &baseline_pairing.save_config,
+        &candidate_pairing.save_config,
+    ) && baseline.conflicts_with(candidate)
+    {
+        return Err("配对保存测量报告的两侧配置目录重叠".into());
+    }
     match baseline_pairing.baseline_contract {
         None if baseline_pairing.baseline_provenance.is_none() => Ok(()),
         None => Err("DevEx paired 未声明 baseline contract 却携带了来源证据".into()),
@@ -66,7 +73,10 @@ fn validate_stable_readiness_b0(
         .baseline_provenance
         .as_ref()
         .ok_or_else(|| format!("{} 缺少 baseline 来源证据", contract.as_str()))?;
-    if !valid_stable_readiness_provenance(provenance, contract) {
+    if !valid_stable_readiness_provenance(provenance, contract)
+        || provenance.save_adaptation
+            != contract.registered_save_adaptation(baseline.suite, &baseline.variant)
+    {
         return Err(format!("{} 来源或执行适配证据无效", contract.as_str()).into());
     }
     Ok(())
@@ -86,6 +96,20 @@ pub(super) fn validate_source_binding(metadata: &RunMetadata) -> Result<()> {
         return Err("DevEx B0 同工具链合同只接受非运行时测量".into());
     }
     validate_workload_binding(metadata, pairing, contract)?;
+    let expected_save = contract.registered_save_adaptation(metadata.suite, &metadata.variant);
+    if pairing
+        .baseline_provenance
+        .as_ref()
+        .and_then(|provenance| provenance.save_adaptation.as_ref())
+        != expected_save.as_ref()
+        || pairing.save_config.is_some() != expected_save.is_some()
+        || pairing
+            .save_config
+            .as_ref()
+            .is_some_and(|binding| !binding.valid_report_shape(pairing.arm))
+    {
+        return Err("保存测量报告的 B0 适配或私有配置来源不匹配".into());
+    }
     let targeted = contract.uses_common_toolchain() && metadata.suite == DevexSuite::ResourceGate;
     if targeted || pairing.targeted_pair().is_some() {
         let pair = pairing
@@ -125,11 +149,12 @@ pub(super) fn validate_source_binding(metadata: &RunMetadata) -> Result<()> {
     if !valid_stable_readiness_provenance(provenance, contract) {
         return Err(format!("{} 来源或执行适配证据无效", contract.as_str()).into());
     }
-    if metadata.backend.commit.as_deref() != Some(provenance.adapter_commit.as_str())
-        || metadata.backend.dirty != Some(false)
-        || metadata.backend.worktree_fingerprint
-            != clean_worktree_fingerprint(&provenance.adapter_commit)
-    {
+    let execution_backend = expected_save
+        .as_ref()
+        .map_or(provenance.adapter_commit.as_str(), |save| {
+            save.commit.as_str()
+        });
+    if !valid_clean_source(&metadata.backend, execution_backend) {
         return Err(format!("{} 报告与实际 B0 源码身份不一致", contract.as_str()).into());
     }
     let execution = provenance.frontend_adaptation.as_ref().map_or(

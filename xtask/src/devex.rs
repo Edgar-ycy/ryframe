@@ -39,6 +39,8 @@ pub(crate) mod runtime_native;
 pub(crate) mod runtime_pacing;
 #[path = "devex/runtime_selection.rs"]
 pub(crate) mod runtime_selection;
+#[path = "devex/save_config.rs"]
+mod save_config;
 #[path = "devex/support.rs"]
 mod support;
 #[path = "devex/targeted_source.rs"]
@@ -129,6 +131,8 @@ fn parse_paired(args: &[String]) -> std::result::Result<DevexCommand, String> {
     let mut candidate_backend = None;
     let mut baseline_frontend = None;
     let mut candidate_frontend = None;
+    let mut baseline_config_dir = None;
+    let mut candidate_config_dir = None;
     let mut baseline_contract = None;
     let mut targeted_source = None;
     let mut run_args = Vec::new();
@@ -162,6 +166,10 @@ fn parse_paired(args: &[String]) -> std::result::Result<DevexCommand, String> {
             "--candidate-backend" if candidate_backend.is_none() => Some(&mut candidate_backend),
             "--base-frontend" if baseline_frontend.is_none() => Some(&mut baseline_frontend),
             "--candidate-frontend" if candidate_frontend.is_none() => Some(&mut candidate_frontend),
+            "--base-config-dir" if baseline_config_dir.is_none() => Some(&mut baseline_config_dir),
+            "--candidate-config-dir" if candidate_config_dir.is_none() => {
+                Some(&mut candidate_config_dir)
+            }
             "--targeted-source" if targeted_source.is_none() => Some(&mut targeted_source),
             _ => None,
         };
@@ -186,15 +194,47 @@ fn parse_paired(args: &[String]) -> std::result::Result<DevexCommand, String> {
     if let Some(contract) = baseline_contract {
         contract.validate(&run)?;
     }
+    let save_config_dirs = model::SaveConfigDirs::select(
+        &run,
+        baseline_contract,
+        baseline_config_dir,
+        candidate_config_dir,
+    )?;
+    validate_paired_sources(
+        &run,
+        baseline_contract,
+        targeted_source.is_some(),
+        baseline_frontend.is_some(),
+        candidate_frontend.is_some(),
+    )?;
+    Ok(DevexCommand::Paired(DevexPairedOptions {
+        check_comparability,
+        run,
+        baseline_backend: baseline_backend.ok_or("paired 缺少 --base-backend")?,
+        candidate_backend: candidate_backend.ok_or("paired 缺少 --candidate-backend")?,
+        baseline_frontend,
+        candidate_frontend,
+        save_config_dirs: save_config_dirs.map(Box::new),
+        baseline_contract,
+        targeted_source,
+    }))
+}
+
+fn validate_paired_sources(
+    run: &DevexRunOptions,
+    baseline_contract: Option<BaselineContract>,
+    has_targeted_source: bool,
+    has_baseline_frontend: bool,
+    has_candidate_frontend: bool,
+) -> std::result::Result<(), String> {
     let paired_targeted = run.suite == DevexSuite::ResourceGate
         && baseline_contract.is_some_and(BaselineContract::uses_common_toolchain);
-    match (paired_targeted, targeted_source.is_some()) {
+    match (paired_targeted, has_targeted_source) {
         (true, false) => return Err("共同 DevEx 定向入口需要 --targeted-source".into()),
         (false, true) => return Err("--targeted-source 仅用于共同 DevEx resource-gate 配对".into()),
         _ => {}
     }
-    let has_frontend_pair = baseline_frontend.is_some() && candidate_frontend.is_some();
-    if baseline_frontend.is_some() != candidate_frontend.is_some() {
+    if has_baseline_frontend != has_candidate_frontend {
         return Err("paired 的 --base-frontend 与 --candidate-frontend 必须成对提供".to_owned());
     }
     let requires_frontend = run
@@ -203,19 +243,10 @@ fn parse_paired(args: &[String]) -> std::result::Result<DevexCommand, String> {
         .map_err(|error| format!("DevEx 变体无效：{error}"))?
         .requires_frontend
         || baseline_contract.is_some_and(BaselineContract::is_stable_readiness_b0);
-    if requires_frontend && !has_frontend_pair {
+    if requires_frontend && !has_baseline_frontend {
         return Err("该 paired suite 必须显式提供两个前端 worktree".to_owned());
     }
-    Ok(DevexCommand::Paired(DevexPairedOptions {
-        check_comparability,
-        run,
-        baseline_backend: baseline_backend.ok_or("paired 缺少 --base-backend")?,
-        candidate_backend: candidate_backend.ok_or("paired 缺少 --candidate-backend")?,
-        baseline_frontend,
-        candidate_frontend,
-        baseline_contract,
-        targeted_source,
-    }))
+    Ok(())
 }
 
 fn parse_run(args: &[String]) -> std::result::Result<DevexCommand, String> {
@@ -397,7 +428,7 @@ fn resolve_run_reference(devex_root: &Path, reference: &str) -> Result<PathBuf> 
 
 pub(crate) fn usage() -> &'static str {
     "cargo xtask check perf run --suite <suite> --variant <name> --runs <1..50> --cache <cold|warm>\n\
-     cargo xtask check perf paired --base-backend <dir> --candidate-backend <dir> [--base-frontend <dir> --candidate-frontend <dir>] [--baseline-contract legacy-cargo-dev-v1|legacy-cargo-dev-v2|legacy-stable-readiness-b0-v1|stable-readiness-b0-common-toolchain-v1] [--targeted-source <JSON 文件>] [--check-comparability] --suite <suite> --variant <name> --runs <1..50> --cache <cold|warm>\n\
+     cargo xtask check perf paired --base-backend <dir> --candidate-backend <dir> [--base-frontend <dir> --candidate-frontend <dir>] [--base-config-dir <绝对目录> --candidate-config-dir <绝对目录>] [--baseline-contract legacy-cargo-dev-v1|legacy-cargo-dev-v2|legacy-stable-readiness-b0-v1|stable-readiness-b0-common-toolchain-v1] [--targeted-source <JSON 文件>] [--check-comparability] --suite <suite> --variant <name> --runs <1..50> --cache <cold|warm>\n\
      cargo xtask check perf summarize <日期/run-id>\n\
      cargo xtask check perf compare --base <日期/run-id> --candidate <日期/run-id>\n\
      cargo xtask check perf cgroup <run|cleanup> --output <.local-tests 内目录> [--plan]\n\

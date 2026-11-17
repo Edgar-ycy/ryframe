@@ -13,10 +13,29 @@ use crate::{
 use super::{
     super::{
         memory::MemoryEvidence,
-        model::{PAIRED_SAVE_OUTPUT, SuiteDefinition, uses_historical_save_protocol},
+        model::{
+            PAIRED_SAVE_OUTPUT, StepDefinition, SuiteDefinition, uses_historical_save_protocol,
+        },
+        support::child_path,
     },
     SampleOutcome, StepInvocation,
 };
+
+pub(super) fn bind_private_config(
+    command: &mut Command,
+    step: &StepDefinition,
+    invocation: &StepInvocation<'_>,
+) {
+    if (uses_historical_save_protocol(step) || step.args.contains(&PAIRED_SAVE_OUTPUT))
+        && let Some(config) = invocation
+            .pairing
+            .and_then(|pair| pair.save_config.as_ref())
+    {
+        command
+            .arg("--config-dir")
+            .arg(child_path(&config.directory));
+    }
+}
 
 pub(super) fn bind_historical_protocol(
     command: &mut Command,

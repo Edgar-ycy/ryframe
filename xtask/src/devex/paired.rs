@@ -14,10 +14,9 @@ use super::{
         execute_warmup_with_contract, lock_cache, prepare_run_at, sample_record,
         stop_sccache_server,
     },
-    metadata::collect_source_fingerprints,
     model::{
         BaselineContract, BaselineProvenance, DevexPairedOptions, DevexRunOptions, PairedArm,
-        PairingMetadata, SuiteDefinition,
+        PairingMetadata, SaveConfigBinding, SuiteDefinition,
     },
     preflight,
     report::{SampleKind, append_sample, ensure_compile_surface, summarize},
@@ -26,6 +25,10 @@ use super::{
 
 #[path = "paired/provenance.rs"]
 mod provenance;
+#[path = "paired/sources.rs"]
+mod sources;
+
+use sources::{source_fingerprints, verify_save_inputs};
 
 pub(super) fn execute(
     coordinator_backend: &Path,
@@ -43,6 +46,7 @@ pub(super) fn execute(
         options,
         definition,
     )?;
+    let (baseline_config, candidate_config) = roots.bind_save_configs(options)?;
     let baseline_definition = arm_definition(&roots, options, PairedArm::Baseline)?;
     let candidate_definition = arm_definition(&roots, options, PairedArm::Candidate)?;
     let baseline_provenance = provenance::collect(&roots, options)?;
@@ -50,28 +54,24 @@ pub(super) fn execute(
     let devex_root = coordinator_backend.join(".local-tests/devex");
     let directories = create_run_directories(&devex_root, &options.run)?;
     let baseline = prepare_arm(
-        &roots.baseline_backend,
-        &roots.baseline_frontend,
-        &roots.runner_frontend,
+        &roots,
         &devex_root,
-        &options.run,
+        options,
         baseline_definition,
         &directories,
         PairedArm::Baseline,
-        options.baseline_contract,
         baseline_provenance.clone(),
+        baseline_config,
     )?;
     let candidate = prepare_arm(
-        &roots.candidate_backend,
-        &roots.candidate_frontend,
-        &roots.runner_frontend,
+        &roots,
         &devex_root,
-        &options.run,
+        options,
         candidate_definition,
         &directories,
         PairedArm::Candidate,
-        options.baseline_contract,
         baseline_provenance,
+        candidate_config,
     )?;
     verify_ready(&roots, options, &baseline, &candidate)?;
     if options.check_comparability {
@@ -136,7 +136,13 @@ fn verify_ready(
         (PairedArm::Candidate, candidate),
     ] {
         let (backend, frontend) = roots.arm(arm);
-        source_fingerprints(backend, frontend, &roots.runner_frontend, session)?;
+        source_fingerprints(
+            backend,
+            frontend,
+            &roots.runner_frontend,
+            &options.run,
+            session,
+        )?;
     }
     Ok(())
 }
@@ -207,6 +213,30 @@ struct PairedRoots {
 }
 
 impl PairedRoots {
+    fn bind_save_configs(
+        &self,
+        options: &DevexPairedOptions,
+    ) -> Result<(Option<SaveConfigBinding>, Option<SaveConfigBinding>)> {
+        let required = options.baseline_contract.is_some_and(|contract| {
+            contract.requires_save_configuration(options.run.suite, &options.run.variant)
+        });
+        if required != options.save_config_dirs.is_some() {
+            return Err("配对保存配置与场景不匹配，拒绝启动任何测量".into());
+        }
+        options
+            .save_config_dirs
+            .as_deref()
+            .map_or(Ok((None, None)), |dirs| {
+                let (baseline, candidate) = dirs.bind([
+                    &self.baseline_backend,
+                    &self.baseline_frontend,
+                    &self.candidate_backend,
+                    &self.candidate_frontend,
+                ])?;
+                Ok((Some(baseline), Some(candidate)))
+            })
+    }
+
     fn arm(&self, arm: PairedArm) -> (&Path, &Path) {
         match arm {
             PairedArm::Baseline => (&self.baseline_backend, &self.baseline_frontend),
@@ -315,17 +345,16 @@ struct PairedRunDirectories {
 
 #[allow(clippy::too_many_arguments)]
 fn prepare_arm(
-    backend_root: &Path,
-    frontend_root: &Path,
-    runner_frontend_root: &Path,
+    roots: &PairedRoots,
     devex_root: &Path,
-    options: &DevexRunOptions,
+    options: &DevexPairedOptions,
     definition: SuiteDefinition,
     directories: &PairedRunDirectories,
     arm: PairedArm,
-    baseline_contract: Option<BaselineContract>,
     baseline_provenance: Option<BaselineProvenance>,
+    save_config: Option<SaveConfigBinding>,
 ) -> Result<RunSession> {
+    let (backend_root, frontend_root) = roots.arm(arm);
     let (run_id, run_dir) = match arm {
         PairedArm::Baseline => (&directories.baseline_id, &directories.baseline_dir),
         PairedArm::Candidate => (&directories.candidate_id, &directories.candidate_dir),
@@ -333,19 +362,21 @@ fn prepare_arm(
     prepare_run_at(
         backend_root,
         frontend_root,
-        runner_frontend_root,
+        &roots.runner_frontend,
         devex_root,
-        options,
+        &options.run,
         definition,
         run_id.clone(),
         run_dir.clone(),
         Some(PairingMetadata {
             comparison_id: directories.comparison_id.clone(),
             arm,
-            baseline_contract,
+            baseline_contract: options.baseline_contract,
             baseline_provenance,
-            workload_contract: baseline_contract
-                .and_then(|contract| contract.workload_contract(options.suite, &options.variant)),
+            workload_contract: options.baseline_contract.and_then(|contract| {
+                contract.workload_contract(options.run.suite, &options.run.variant)
+            }),
+            save_config,
         }),
     )
 }
@@ -362,16 +393,20 @@ fn execute_samples(
         (PairedArm::Candidate, candidate),
     ] {
         let (backend, frontend) = roots.arm(arm);
-        source_fingerprints(backend, frontend, &roots.runner_frontend, session)?;
-        execute_warmup_with_contract(
+        source_fingerprints(backend, frontend, &roots.runner_frontend, options, session)?;
+        let execution = execute_warmup_with_contract(
             backend,
             frontend,
             &roots.runner_frontend,
             options,
             session,
             save_contract(baseline_contract, arm),
-        )?;
-        source_fingerprints(backend, frontend, &roots.runner_frontend, session)?;
+        );
+        if execution.is_err() {
+            verify_save_inputs(backend, frontend, options, session)?;
+        }
+        execution?;
+        source_fingerprints(backend, frontend, &roots.runner_frontend, options, session)?;
     }
     capture_sccache_stats(
         &roots.baseline_backend,
@@ -437,20 +472,13 @@ fn execute_measurement(
     pair: usize,
     order: usize,
 ) -> Result<()> {
-    let (backend_root, frontend_root, session) = match arm {
-        PairedArm::Baseline => (
-            roots.baseline_backend.as_path(),
-            roots.baseline_frontend.as_path(),
-            baseline,
-        ),
-        PairedArm::Candidate => (
-            roots.candidate_backend.as_path(),
-            roots.candidate_frontend.as_path(),
-            candidate,
-        ),
+    let (backend, frontend) = roots.arm(arm);
+    let session = match arm {
+        PairedArm::Baseline => baseline,
+        PairedArm::Candidate => candidate,
     };
     let expected_fingerprints =
-        source_fingerprints(backend_root, frontend_root, &roots.runner_frontend, session)?;
+        source_fingerprints(backend, frontend, &roots.runner_frontend, options, session)?;
     let target = sample_target(&session.run_dir, options.suite, options.cache_state, pair);
     let label = format!("{}-pair-{pair:03}-order-{order:03}", arm.as_str());
     println!(
@@ -461,17 +489,21 @@ fn execute_measurement(
         options.cache_state.as_str()
     );
     let outcome = execute_sample(
-        backend_root,
-        frontend_root,
+        backend,
+        frontend,
         &roots.runner_frontend,
         &target,
         session,
         options,
         &label,
         save_contract(baseline_contract, arm),
-    )?;
+    );
+    if outcome.is_err() {
+        verify_save_inputs(backend, frontend, options, session)?;
+    }
+    let outcome = outcome?;
     let restored =
-        source_fingerprints(backend_root, frontend_root, &roots.runner_frontend, session)?;
+        source_fingerprints(backend, frontend, &roots.runner_frontend, options, session)?;
     if restored != expected_fingerprints {
         return Err(format!(
             "paired {} 第 {pair} 对样本结束后源码指纹发生变化",
@@ -528,38 +560,6 @@ fn save_contract(
         }
         _ => SaveMeasurementContract::Current,
     }
-}
-
-fn source_fingerprints(
-    backend_root: &Path,
-    frontend_root: &Path,
-    runner_frontend_root: &Path,
-    session: &RunSession,
-) -> Result<super::metadata::SourceFingerprints> {
-    if let Some(toolchain) = &session.common_toolchain {
-        toolchain.check_files()?;
-    }
-    let observed = if session.source_fingerprints.frontend.is_some() {
-        let runner = session
-            .source_fingerprints
-            .runner_frontend
-            .as_ref()
-            .map(|_| runner_frontend_root);
-        super::metadata::collect_runtime_source_fingerprints(backend_root, frontend_root, runner)?
-    } else {
-        collect_source_fingerprints(backend_root, None)?
-    };
-    if observed != session.source_fingerprints {
-        return Err(format!(
-            "paired {} worktree 在测量期间发生变化，拒绝混入样本",
-            session
-                .pairing
-                .as_ref()
-                .map_or("unknown", |pairing| pairing.arm.as_str())
-        )
-        .into());
-    }
-    Ok(observed)
 }
 
 fn create_run_directories(

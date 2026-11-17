@@ -291,6 +291,14 @@ pub(in crate::devex) fn command_metadata(
             .args
             .extend(pair.b1.candidate_arguments().into_iter().map(str::to_owned));
     }
+    if pairing.is_some_and(|pairing| pairing.save_config.is_some()) {
+        let [command] = commands.as_mut_slice() else {
+            return Err("配对保存测量只接受一个 dev 入口".into());
+        };
+        command
+            .args
+            .extend(["--config-dir".to_owned(), "$SAVE_CONFIG".to_owned()]);
+    }
     Ok(commands)
 }
 

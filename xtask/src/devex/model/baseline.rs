@@ -55,6 +55,12 @@ impl BaselineContract {
     pub(crate) const STABLE_READINESS_B0_ADAPTER_PATHS: [&'static str; 1] = ["xtask/src/cli.rs"];
     pub(crate) const STABLE_READINESS_B0_ADAPTER_PATCH: &'static [u8; 1181] =
         include_bytes!("../../../assets/baseline-adapters/devex-b0-command.patch");
+    const B0_SAVE_CONFIG_COMMIT: &'static str = "3c0d50b2149325bb19a2273d7a8a969f0ffb94d3";
+    const B0_SAVE_CONFIG_TREE: &'static str = "bc2f302332aea38f2f2109e22c6946a9c7586f26";
+    const B0_SAVE_CONFIG_PATCH_SHA256: &'static str =
+        "sha256:6bdbd95382deb5fb85ccf72967f67a75d3be90640fd4d714afb4de8d9a609c4a";
+    pub(crate) const B0_SAVE_CONFIG_PATCH: &'static [u8] =
+        include_bytes!("../../../assets/baseline-adapters/devex-b0-save-config.patch");
 
     pub(crate) fn parse(value: &str) -> Option<Self> {
         match value {
@@ -88,17 +94,26 @@ impl BaselineContract {
         matches!(self, Self::StableReadinessB0CommonToolchainV1)
     }
 
+    pub(crate) fn registered_save_adaptation(
+        self,
+        suite: DevexSuite,
+        variant: &str,
+    ) -> Option<SaveAdaptation> {
+        self.requires_save_configuration(suite, variant)
+            .then(|| SaveAdaptation {
+                commit: Self::B0_SAVE_CONFIG_COMMIT.to_owned(),
+                tree: Self::B0_SAVE_CONFIG_TREE.to_owned(),
+                patch_sha256: Self::B0_SAVE_CONFIG_PATCH_SHA256.to_owned(),
+            })
+    }
+
+    pub(crate) fn requires_save_configuration(self, suite: DevexSuite, variant: &str) -> bool {
+        self.uses_common_toolchain()
+            && suite == DevexSuite::CargoDevSave
+            && variant != "cancellation"
+    }
+
     pub(crate) fn validate(self, options: &DevexRunOptions) -> Result<(), String> {
-        if self.uses_common_toolchain() {
-            match options.suite {
-                DevexSuite::CargoDevSave if options.variant != "cancellation" => {
-                    return Err(
-                        "该共同 DevEx 保存场景需要绑定 B0 历史保存入口及实际隔离配置".into(),
-                    );
-                }
-                _ => {}
-            }
-        }
         let valid = match self {
             Self::LegacyCargoDevV1 => {
                 options.suite == DevexSuite::CargoDevSave && options.variant == "config-only"
@@ -161,10 +176,14 @@ impl BaselineContract {
                 candidate_primitives: vec![primitive("ci-resource-gate-arguments", &[task])],
             });
         }
-        (self.uses_common_toolchain()
-            && suite == DevexSuite::CargoDevSave
-            && variant == "cancellation")
-            .then(cancellation_contract)
+        if self.uses_common_toolchain() && suite == DevexSuite::CargoDevSave {
+            return Some(if variant == "cancellation" {
+                cancellation_contract()
+            } else {
+                save_configuration_contract(variant)
+            });
+        }
+        None
     }
 
     pub(crate) fn registered_frontend_adaptation(self) -> Option<FrontendAdaptation> {
@@ -194,6 +213,17 @@ fn cancellation_contract() -> PairedWorkloadContract {
         logical_tasks: vec![task.to_owned()],
         baseline_primitives: vec![primitive("dev-measure-once-environment", &[task])],
         candidate_primitives: vec![primitive("dev-measure-once-arguments", &[task])],
+    }
+}
+
+fn save_configuration_contract(variant: &str) -> PairedWorkloadContract {
+    let task = format!("cargo-dev-save/{variant}");
+    PairedWorkloadContract {
+        format_version: 1,
+        kind: "stable-readiness-cargo-dev-save".into(),
+        logical_tasks: vec![task.clone()],
+        baseline_primitives: vec![primitive("historical-save-with-config-dir", &[&task])],
+        candidate_primitives: vec![primitive("current-save-with-config-dir", &[&task])],
     }
 }
 
@@ -265,10 +295,20 @@ pub(crate) struct BaselineProvenance {
     pub(crate) frontend_commit: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) frontend_adaptation: Option<FrontendAdaptation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) save_adaptation: Option<SaveAdaptation>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) adapter_paths: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(in crate::devex) targeted_pair: Option<crate::devex::targeted_source::TargetedPair>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SaveAdaptation {
+    pub(crate) commit: String,
+    pub(crate) tree: String,
+    pub(crate) patch_sha256: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
