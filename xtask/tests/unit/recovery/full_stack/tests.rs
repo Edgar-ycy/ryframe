@@ -6,6 +6,7 @@ use std::fs;
 struct Fake {
     events: Vec<String>,
     fail: Option<String>,
+    api_port_result: Option<Value>,
 }
 impl Port for Fake {
     fn leaf(&mut self, op: &str) -> Result<Value> {
@@ -28,6 +29,12 @@ impl Port for Fake {
         }
         if op == "api-stop" {
             return Ok(json!({"state":"stopped"}));
+        }
+        if op == "api-port-free" {
+            return Ok(self
+                .api_port_result
+                .clone()
+                .unwrap_or_else(|| json!({"state":"free"})));
         }
         Ok(json!({}))
     }
@@ -156,6 +163,42 @@ fn collect_failure_does_not_prevent_other_owned_cleanup() {
     let errors = fs::read_to_string(context.output.join("cleanup-errors.log")).unwrap();
     assert!(errors.contains("API 回收未确认"));
     assert!(errors.contains("API 端口未确认释放"));
+}
+
+#[test]
+fn collect_reports_unavailable_port_configuration_and_continues_diagnostics() {
+    let (_temp, context) = fixture();
+    fs::remove_file(context.output.join("config/app.test.toml")).unwrap();
+    let mut native = execution::Native::for_test(&context);
+    let api_port_result = native.leaf("api-port-free").unwrap();
+    assert_eq!(
+        api_port_result,
+        json!({"state":"configuration-unavailable"})
+    );
+    let mut port = Fake {
+        api_port_result: Some(api_port_result),
+        ..Default::default()
+    };
+
+    let error = lifecycle::collect(&context, &mut port).unwrap_err();
+    let diagnostic = "无法从绑定配置确定 API 端口，未执行端口检查";
+    assert!(error.to_string().contains(diagnostic));
+    assert_eq!(
+        fs::read_to_string(context.output.join("cleanup-errors.log")).unwrap(),
+        diagnostic
+    );
+    assert_eq!(
+        port.events,
+        [
+            "api-stop".into(),
+            "api-port-free".into(),
+            format!("logs {}", "a".repeat(64)),
+            format!("logs {}", "b".repeat(64)),
+            format!("logs {}", "c".repeat(64)),
+            "--show-stats".into(),
+            "--stop-server".into(),
+        ]
+    );
 }
 
 #[test]

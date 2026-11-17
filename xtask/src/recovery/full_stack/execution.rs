@@ -34,6 +34,16 @@ pub(crate) struct Native<'a> {
 mod process_tests;
 
 impl<'a> Native<'a> {
+    #[cfg(test)]
+    pub(super) fn for_test(context: &'a Context) -> Self {
+        // 个别叶操作的测试无需为测试进程安装全局信号观察。
+        Self {
+            context,
+            cancel: Arc::new(AtomicBool::new(false)),
+            api: None,
+        }
+    }
+
     pub fn new(context: &'a Context) -> Result<Self> {
         let cancel = Arc::new(AtomicBool::new(false));
         let trigger = cancel.clone();
@@ -192,7 +202,10 @@ impl Port for Native<'_> {
             "api-launch" => self.launch_api(),
             "api-probe" => self.observe_api(),
             "api-stop" => self.stop_api(),
-            "api-port-free" => worker::wait_api_port_free(&self.context.api_url()?),
+            "api-port-free" => match self.context.api_url() {
+                Ok(url) => worker::wait_api_port_free(&url),
+                Err(_) => Ok(json!({"state":"configuration-unavailable"})),
+            },
             "worker-start" => self.control(Role::Worker, "start"),
             "worker-stop" => self.control(Role::Worker, "stop"),
             _ => Err("未知全栈控制操作".into()),

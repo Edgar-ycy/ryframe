@@ -69,8 +69,12 @@ pub(super) fn collect(context: &Context, port: &mut impl Port) -> Result<()> {
     if port.leaf("api-stop").is_err() {
         failures.push("API 回收未确认");
     }
-    if port.leaf("api-port-free").is_err() {
-        failures.push("API 端口未确认释放");
+    match port.leaf("api-port-free") {
+        Ok(value) if value["state"] == "free" => {}
+        Ok(value) if value["state"] == "configuration-unavailable" => {
+            failures.push("无法从绑定配置确定 API 端口，未执行端口检查");
+        }
+        _ => failures.push("API 端口未确认释放"),
     }
     for (role, name) in [
         ("mysql", "mysql.log"),
