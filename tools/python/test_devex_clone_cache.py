@@ -175,6 +175,7 @@ class TransportTests(unittest.TestCase):
             self.assertEqual(sent, [["AUTH", "fixture-secret"], ["SELECT", "0"]][:max(0, rejected - 2)])
 
 
+@unittest.skipUnless(os.name == "nt", "历史 Redis 收据绑定需要 Windows 路径")
 class RequestTests(CacheFixture):
     def test_request_accepts_original_markers_and_distinct_service_scope(self):
         with self.patches(), patch.object(model, "process_binding", wraps=model.process_binding) as process_bound:

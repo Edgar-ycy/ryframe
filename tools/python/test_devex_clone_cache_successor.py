@@ -1,5 +1,7 @@
 """已发布 seed 的缓存工具换代只继承已验证 successor，不改变资源与旧登记。"""
+import os
 from pathlib import Path
+import unittest
 from unittest.mock import patch
 import devex_clone_cache_request as model
 from devex_clone_run_state import binding
@@ -48,6 +50,7 @@ class SuccessorRequestTests(CacheFixture):
         self.assertEqual([call.kwargs for call in validate.call_args_list],
                          [{"files": False}, {"files": False}, {"files": False}])
 
+    @unittest.skipUnless(os.name == "nt", "历史 Redis 收据绑定需要 Windows 路径")
     def test_frozen_successor_survives_later_launcher_change_but_live_path_rejects_it(self):
         successor = self.successor()
         with (self.successor_patches(),
