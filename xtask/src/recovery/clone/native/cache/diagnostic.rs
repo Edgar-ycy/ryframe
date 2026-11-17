@@ -53,7 +53,7 @@ pub(super) struct Diagnostic {
 }
 
 impl Diagnostic {
-    #[cfg(any(test, target_os = "linux"))]
+    #[cfg(test)]
     pub(super) fn decode_output(bytes: &[u8]) -> Result<Self> {
         if bytes.is_empty() || bytes.len() > 16384 {
             return Err("缓存失败诊断为空或超限".into());
@@ -235,23 +235,12 @@ impl std::fmt::Display for Diagnostic {
 }
 impl std::error::Error for Diagnostic {}
 
+#[cfg(any(test, windows))]
 pub(super) fn failure(category: Category, outcome: Outcome) -> Box<dyn std::error::Error> {
     Box::new(Diagnostic {
         category,
         write_outcome: outcome,
         os_code: None,
-    })
-}
-
-#[cfg(target_os = "linux")]
-pub(super) fn operating_system(
-    category: Category,
-    error: rustix::io::Errno,
-) -> Box<dyn std::error::Error> {
-    Box::new(Diagnostic {
-        category,
-        write_outcome: Outcome::Unknown,
-        os_code: Some(error.raw_os_error()),
     })
 }
 
@@ -504,6 +493,7 @@ fn prelaunch_fields(category: Category) -> (&'static str, &'static str, &'static
     }
 }
 
+#[cfg(any(test, windows))]
 pub(super) fn prelaunch(
     category: Category,
     error: Box<dyn std::error::Error>,

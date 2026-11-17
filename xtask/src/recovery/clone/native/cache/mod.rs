@@ -30,6 +30,7 @@ pub(crate) mod runner;
 mod runtime;
 mod session;
 mod stage;
+#[cfg(any(test, windows))]
 mod start_deadline;
 #[cfg(windows)]
 mod windows;
