@@ -234,16 +234,9 @@ fn workflow_calls_xtask_required_with_the_complete_needs_document() {
         step.get("run")
             .and_then(|value| value.as_str())
             .is_some_and(|value| {
-                value.split_whitespace().eq([
-                    "cargo",
-                    "build",
-                    "--locked",
-                    "--target-dir",
-                    "target/xtask-run",
-                    "-p",
-                    "xtask",
-                    "--bin",
-                    "xtask",
+                value.lines().eq([
+                    "cargo build --locked --target-dir target/xtask-run -p xtask --bin xtask",
+                    r#"printf '%s\n' "$GITHUB_WORKSPACE/target/xtask-run/debug" >> "$GITHUB_PATH""#,
                 ])
             })
     }));
@@ -251,7 +244,7 @@ fn workflow_calls_xtask_required_with_the_complete_needs_document() {
     assert!(step.get("env").is_none());
     assert_eq!(
         step.get("shell").unwrap().as_str(),
-        Some("${{ github.workspace }}/target/xtask-run/debug/xtask check ci required --input {0}")
+        Some(r#"xtask check ci required --input "{0}""#)
     );
     let needs = expected
         .needs

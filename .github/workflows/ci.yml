@@ -665,10 +665,12 @@ jobs:
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
 
       - name: 构建汇总工具
-        run: cargo build --locked --target-dir target/xtask-run -p xtask --bin xtask
+        run: |
+          cargo build --locked --target-dir target/xtask-run -p xtask --bin xtask
+          printf '%s\n' "$GITHUB_WORKSPACE/target/xtask-run/debug" >> "$GITHUB_PATH"
 
       - name: 汇总必须门禁
-        shell: ${{ github.workspace }}/target/xtask-run/debug/xtask check ci required --input {0}
+        shell: xtask check ci required --input "{0}"
         run: |
           {
             "event": ${{ toJSON(github.event_name) }},

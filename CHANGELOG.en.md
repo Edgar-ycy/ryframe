@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix startup for the required-check summary in GitHub Actions. The runner locates the Rust aggregator built for the current job and passes job results in a temporary JSON file.
+
 - DevEx targeted resource gate pairing validates both frozen measurement successors, their Git ranges and targeted plan. Each arm locks its cache during pairing, and full fallbacks are recorded as failed samples.
 
 - Synchronize ownership digests for the generated notice and post pages so the resource generator recognizes the committed files with their current read permission guards.
