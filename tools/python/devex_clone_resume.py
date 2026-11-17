@@ -33,6 +33,19 @@ def session_record(backend: Path, output: Path) -> dict:
 
 def hydrate(session: factory.CloneSession, saved: dict) -> None:
     """重新取得同一来源、初始目标和当前库存，复原 guard，不重复执行 prepare。"""
+    session.plan_file = regular_file(session.output / "plan.json")
+    session.verified_plan = verify_plan_result(session.backend, str(session.plan_file))
+    session.plan = session.verified_plan.plan
+    if saved["plan_sha256"] != session.plan["plan_sha256"]:
+        raise ValueError("续跑计划摘要与原复制会话不同")
+    wrapper = read_json(session.plan_file)
+    if local_path(session.backend, wrapper["input_path"]) != session.output / "input.json":
+        raise ValueError("续跑计划必须绑定原执行目录的输入")
+    session.declaration = read_json(regular_file(session.output / "input.json"))
+    stage = session.plan["copy_stage"]
+    if session.declaration["copy_stage"] != stage:
+        raise ValueError("续跑计划阶段与原输入不同")
+    session.copy_stage = stage
     session.source_verified = factory.verify_source_export(session.backend, session.export_binding)
     session.exported = session.source_verified["export"]
     session.source_request = session.source_verified["request"]
@@ -59,13 +72,6 @@ def hydrate(session: factory.CloneSession, saved: dict) -> None:
     by_name = initial["inventory"]["observations"]
     session.initialized = {db["key"]: factory.database_observation(by_name[db["database"]]) for db in target["databases"]}
     session.initial_target = initial
-    session.plan_file = regular_file(session.output / "plan.json")
-    session.verified_plan = verify_plan_result(session.backend, str(session.plan_file))
-    session.plan = session.verified_plan.plan
-    wrapper = read_json(session.plan_file)
-    if local_path(session.backend, wrapper["input_path"]) != session.output / "input.json":
-        raise ValueError("续跑计划必须绑定原执行目录的输入")
-    session.declaration = read_json(regular_file(session.output / "input.json"))
     evidence = session.declaration["evidence"]
     root = local_path(session.backend, session.exported["artifact_root"])
     if (read_json(artifact_file(root, evidence["target_initialized"])) != initial
@@ -76,7 +82,7 @@ def hydrate(session: factory.CloneSession, saved: dict) -> None:
         raise ValueError("原计划目标停止证明不属于本初始化")
     recorded = session.declaration.get("execution_backend")
     expected = compose_declaration(session.exported, session.source_initial, target, session.initialized, evidence,
-                                   copy_id=session.declaration["copy_id"], stage=session.declaration["copy_stage"],
+                                   copy_id=session.declaration["copy_id"], stage=stage,
                                    execution_backend=Path(recorded) if recorded else None)
     if session.declaration != expected or saved["plan_sha256"] != session.plan["plan_sha256"]:
         raise ValueError("原计划与当前完整来源、目标及初始像不同")
