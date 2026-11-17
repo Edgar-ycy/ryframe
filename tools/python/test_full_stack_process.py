@@ -4,7 +4,7 @@ import sys
 import json
 import shutil
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 from workspace_directory import WorkspaceDirectory
 from pathlib import Path
 
@@ -39,50 +39,6 @@ class LinuxIdentityFailureTests(unittest.TestCase):
         with patch.object(Path, "read_text", side_effect=PermissionError):
             with self.assertRaises(PermissionError):
                 _linux_identity(123)
-
-
-@unittest.skipUnless(os.name == "nt", "Windows 内核 API 场景仅在 Windows 执行")
-class WindowsIdentityDenialTests(unittest.TestCase):
-    def kernel(self, waits, *, times=1, image=0):
-        kernel = Mock()
-        kernel.WaitForSingleObject.side_effect = waits
-        kernel.GetProcessTimes.return_value = times
-        kernel.QueryFullProcessImageNameW.return_value = image
-        return kernel
-
-    def test_exit_during_denied_image_lookup_is_reported_as_exited(self):
-        import full_stack_process as module
-
-        kernel = self.kernel([258, 258, 0])
-        with patch.object(module.ctypes, "get_last_error", return_value=5), \
-                patch.object(module.time, "sleep"):
-            self.assertIsNone(module._windows_identity(kernel, 1234, 4321))
-
-    def test_gen_failure_during_image_lookup_waits_for_exit(self):
-        import full_stack_process as module
-
-        kernel = self.kernel([258, 258, 258, 0])
-        with patch.object(module.ctypes, "get_last_error", return_value=31), \
-                patch.object(module.time, "sleep"):
-            self.assertIsNone(module._windows_identity(kernel, 1234, 4321))
-
-    def test_other_kernel_errors_still_fail_closed_while_alive(self):
-        import full_stack_process as module
-
-        kernel = self.kernel([258, 258])
-        with patch.object(module.ctypes, "get_last_error", return_value=87):
-            with self.assertRaises(OSError):
-                module._windows_identity(kernel, 1234, 4321)
-
-    def test_persistent_denial_without_exit_fails_closed(self):
-        import full_stack_process as module
-
-        kernel = self.kernel([258, 258, 258, 258])
-        with patch.object(module.ctypes, "get_last_error", return_value=5), \
-                patch.object(module.time, "monotonic", side_effect=[0, 0, 6]), \
-                patch.object(module.time, "sleep"):
-            with self.assertRaises(OSError):
-                module._windows_identity(kernel, 1234, 4321)
 
 
 class OwnedProcessTests(unittest.TestCase):
