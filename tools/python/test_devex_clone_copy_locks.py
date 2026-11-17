@@ -14,6 +14,7 @@ from devex_clone_ledger import CloneLedger
 from devex_clone_target_state import generation_lock
 from full_stack_process import write_receipt
 from process_guard import process_guard
+from rate_limit_tool import tool_binding
 from restore_build import file_digest
 
 
@@ -24,6 +25,8 @@ sys.path.insert(0, sys.argv[1])
 from devex_clone_copy_locks import register_copy_owner
 from devex_clone_ledger import CloneLedger
 from devex_clone_target_state import generation_lock
+from rate_limit_tool import install_binding
+install_binding(sys.stdin.buffer.read().decode("utf-8"))
 backend, output, target = map(Path, sys.argv[2:])
 owner = register_copy_owner(backend, output)
 with generation_lock(target, copy_owner=owner):
@@ -58,9 +61,11 @@ class CopyLockTests(unittest.TestCase):
         return {"path": str(path), **file_digest(path)}
 
     def abandon(self):
+        native_binding = tool_binding()
+        self.assertIsNotNone(native_binding, "复制锁子进程需要正式检查入口绑定的原生工具")
         child = subprocess.run([sys.executable, "-c", CHILD, str(Path(__file__).resolve().parent),
                                 str(self.backend), str(self.output), str(self.target)],
-                               stdin=subprocess.DEVNULL, capture_output=True, timeout=10,
+                               input=json.dumps(native_binding).encode("utf-8"), capture_output=True, timeout=10,
                                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         self.assertEqual(child.returncode, 42, child.stderr.decode(errors="replace"))
         self.owner = json.loads((self.output / "registered.json").read_text(encoding="utf-8"))
