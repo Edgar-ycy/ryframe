@@ -11,8 +11,6 @@ import subprocess
 from pathlib import Path
 
 from restore_build import file_digest
-from restore_reference_plan import plan_hash
-from restore_runtime_evidence import read_json
 from native_s3_client import _invoke, _read_response
 
 

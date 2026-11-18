@@ -603,25 +603,3 @@ def execute(backend: Path, directory: Path, stage: str, mode: str,
             raise
     return {"status": "stage_finished", "stage": stage, "mode": mode, "attempt": number,
             "result": result, "restore_qualified": False}
-
-
-def execute_operation(backend: Path, directory: Path, stage: str, mode: str,
-                      number: int | None, *, preflight: bool = False) -> dict:
-    """只执行已拆分的资源编排；生命周期锁、attempt 和结果发布由 Rust 持有。"""
-    from source_fingerprints import artifact_sources, current_execution_source
-
-    if stage != "copy" or mode not in {"run", "reconcile", "resume"}:
-        raise ValueError("阶段与执行模式不匹配")
-    if preflight != (number is None):
-        raise ValueError("阶段资源编排 attempt 与预检模式不匹配")
-    value = read_manifest(backend, directory)
-    environment = environments(backend, value)
-    inherited = inherited_build_bridges(backend, value)
-    with artifact_sources(backend, value["build_bridges"], inherited):
-        if preflight:
-            return {"status": "stage_operation_preflight_ready", "stage": stage, "mode": mode}
-        current_execution_source(backend)
-        result = run_copy(backend, directory, value, environment, mode)
-        if read_manifest(backend, directory) != value:
-            raise ValueError("阶段运行期间验收清单发生变化")
-        return result
