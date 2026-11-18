@@ -1,4 +1,5 @@
 """验证历史配置复用的私有文件传输。"""
+import json
 from pathlib import Path
 import sys
 import unittest
@@ -11,25 +12,25 @@ import full_stack_ci_support as support
 
 
 class SupportTests(unittest.TestCase):
-    def test_file_helpers_only_forward_private_protocol(self):
-        with patch.object(support, '_configuration', return_value={'text':'rendered'}) as native:
-            self.assertEqual(support.instance_text('secret config', 2), 'rendered')
-            native.assert_called_once_with('instance-text', {'text':'secret config','worker_id':2})
-        with patch.object(support, '_configuration') as native:
-            support.configuration_directory(Path.cwd() / 'private')
-            native.assert_called_once_with('private-directory', {'path':str(Path.cwd() / 'private')})
-
     def test_file_transport_keeps_plaintext_in_stdin_only_and_checks_exit_status(self):
+        directory = Path.cwd() / 'private'
+        private_config = "password='private-password'"
+        directory_response = Mock(returncode=0, stdout=b'{"ok":true,"result":{}}')
         response=Mock(returncode=0,stdout=b'{"ok":true,"result":{"text":"rendered"}}')
         with patch('rate_limit_tool.tool_binding',return_value={'path':'/native-tool'}), \
                 patch('rate_limit_tool.verified_tool',return_value=nullcontext('/native-tool')), \
-                patch('subprocess.run',return_value=response) as run:
-            self.assertEqual(support.instance_text("password='private-password'",2),'rendered')
-        args=run.call_args
-        self.assertEqual(args.args[0],['/native-tool','__ci-databases','instance-text'])
-        self.assertIn(b'private-password',args.kwargs['input'])
-        self.assertNotIn('private-password',str(args.args))
-        self.assertNotIn('private-password',str(args.kwargs['env']))
+                patch('subprocess.run', side_effect=[directory_response, response]) as run:
+            support.configuration_directory(directory)
+            self.assertEqual(support.instance_text(private_config, 2), 'rendered')
+        calls = [
+            ('private-directory', {'path': str(directory)}),
+            ('instance-text', {'text': private_config, 'worker_id': 2}),
+        ]
+        for call, (operation, request) in zip(run.call_args_list, calls, strict=True):
+            self.assertEqual(call.args[0], ['/native-tool', '__ci-databases', operation])
+            self.assertEqual(json.loads(call.kwargs['input']), request)
+            self.assertNotIn('private-password', str(call.args))
+            self.assertNotIn('private-password', str(call.kwargs['env']))
         for changed in [Mock(returncode=1,stdout=response.stdout),
                         Mock(returncode=0,stdout=b'{"ok":false,"error":"private-password"}'),
                         Mock(returncode=0,stdout=b'{"ok":true,"ok":true,"result":{}}'),
@@ -37,7 +38,7 @@ class SupportTests(unittest.TestCase):
             with patch('rate_limit_tool.tool_binding',return_value={'path':'/native-tool'}), \
                     patch('rate_limit_tool.verified_tool',return_value=nullcontext('/native-tool')), \
                     patch('subprocess.run',return_value=changed),self.assertRaises(RuntimeError) as raised:
-                support.instance_text("password='private-password'",2)
+                support.instance_text(private_config, 2)
             self.assertNotIn('private-password',str(raised.exception))
 
     def test_missing_file_tool_binding_never_starts_a_runner(self):
