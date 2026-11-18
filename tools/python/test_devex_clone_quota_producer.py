@@ -13,15 +13,12 @@ class QuotaProducerContractTests(unittest.TestCase):
         from rate_limit_tool import tool_binding, verified_tool
         selected = tool_binding()
         self.assertIsNotNone(selected, "必须显式绑定本次编译的原生工具")
-        with verified_tool(selected):
-            native = {key: selected[key] for key in ("path", "bytes", "sha256")}
-        previous = __import__('devex_clone_post_process')._TEST_TOOL
-        __import__('devex_clone_post_process')._TEST_TOOL = native
-        self.addCleanup(setattr, __import__('devex_clone_post_process'), '_TEST_TOOL', previous)
+        with verified_tool(selected) as executable:
+            self.native = {'path': executable, 'sha256': selected['sha256']}
+
     def test_quota_kinds_bind_only_seed_modes_identity_plan_and_sha(self):
         root = Path(__file__).resolve().parents[2]
-        native = __import__('devex_clone_post_process')._TEST_TOOL
-        request = {'identity_tool': {'path': native['path'], 'sha256': native['sha256']},
+        request = {'identity_tool': self.native,
                    'identity_plan': {'path': str(root / 'plan.json'), 'sha256': 'a' * 64}}
         for mode in ('plan', 'apply', 'reconcile'):
             kind = 'quota-' + mode

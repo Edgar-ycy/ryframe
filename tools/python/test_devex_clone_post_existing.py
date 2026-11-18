@@ -22,14 +22,11 @@ from workspace_directory import WorkspaceDirectory
 
 class ExistingTests(unittest.TestCase):
     def setUp(self):
-        process = __import__("devex_clone_post_process")
         from rate_limit_tool import tool_binding, verified_tool
         selected = tool_binding()
         self.assertIsNotNone(selected, "必须显式绑定本次编译的原生工具")
-        with verified_tool(selected) as tool:
-            previous = process._TEST_TOOL
-            process._TEST_TOOL = {key: selected[key] for key in ("path", "bytes", "sha256")}
-        self.addCleanup(setattr, process, "_TEST_TOOL", previous)
+        with verified_tool(selected):
+            pass
         temporary = WorkspaceDirectory(Path(__file__).resolve().parents[2] / '.local-tests/tmp')
         self.addCleanup(temporary.cleanup)
         backend = Path(temporary.name).resolve()

@@ -6,6 +6,7 @@ import subprocess
 import sys
 import time
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -26,9 +27,16 @@ class NativeProducerTests(unittest.TestCase):
         with verified_tool(selected) as tool:
             self.tool = Path(tool)
             self.binding = {key: selected[key] for key in ("path", "sha256")}
-        previous = process._TEST_TOOL
-        process._TEST_TOOL = {**self.binding, "bytes": selected["bytes"]}
-        self.addCleanup(setattr, process, "_TEST_TOOL", previous)
+
+    def test_missing_coordinator_binding_rejects_without_spawning_a_process(self):
+        with (
+            patch("rate_limit_tool.tool_binding", return_value=None),
+            patch.object(process, "_TEST_TOOL", self.binding, create=True),
+            patch.object(process.subprocess, "run") as spawn,
+        ):
+            with self.assertRaisesRegex(ValueError, "缺少当前 xtask 工具绑定"):
+                process._native({}, "command")
+            spawn.assert_not_called()
 
     def test_existing_native_command_uses_explicit_public_configuration_binding(self):
         with WorkspaceDirectory(

@@ -32,21 +32,12 @@ PHASES = {"session": ("post-copy", {"schedules", "reconcile"}),
           "department-reconcile": ("seed-runtime", {"departments-reconcile"}),
           "department-verify": ("seed-runtime", {"departments-verify"})}
 STAGES = {"post-copy", "seed-runtime"}
-_TEST_TOOL = None
-
-
-def install_test_tool(value):
-    """测试夹具显式绑定本次构建；产品调用仍只接受协调器绑定。"""
-    global _TEST_TOOL
-    if _TEST_TOOL is not None:
-        raise ValueError("后处理测试工具已经绑定")
-    _TEST_TOOL = dict(value)
 
 
 def _native(payload, operation):
     from rate_limit_tool import tool_binding
 
-    tool = tool_binding() or _TEST_TOOL
+    tool = tool_binding()
     if tool is None:
         raise ValueError("clone 后处理缺少当前 xtask 工具绑定")
     content = json.dumps({"operation": operation, "payload": payload},
@@ -107,10 +98,6 @@ def producer_tool(request, kind):
     return request["identity_tool"]
 
 
-def producer_source(backend, kind):
-    return Path(backend) / KINDS[kind]
-
-
 def _command_payload(backend, request, directory, number, kind, output, tool, configuration):
     return {"backend": str(backend), "run_dir": str(directory), "attempt": number,
             "kind": kind, "output": str(output), "tool": tool, "registration": request,
@@ -150,13 +137,6 @@ def require_quiet(backend, directory, current_number=None):
             registrations[str(attempt["number"])] = {"request": request, "binding": descriptor}
     _native({"backend": str(backend), "run_dir": str(directory),
              "current_attempt": current_number, "registrations": registrations}, "quiet")
-
-
-def recover_identity_lock(backend, request, identity, owner_token):
-    result = _native({"backend": str(backend), "identity_state": request["identity_state"],
-        "identity": identity, "owner_token": owner_token,
-        "plan_sha256": request["identity_plan"]["sha256"]}, "recover-identity-lock")
-    return result["released"]
 
 
 def recover_session(backend, directory, number, descriptor):
@@ -247,10 +227,6 @@ class Producer:
         if self.child.returncode:
             raise ValueError("既有数据原生验证失败，保留独立日志")
         return stdout
-
-
-def runtime_proof(request):
-    return _native(request, "runtime-proof")
 
 
 if __name__ == "__main__":
