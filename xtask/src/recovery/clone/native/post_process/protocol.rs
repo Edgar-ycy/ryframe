@@ -10,7 +10,7 @@ use super::{
     super::{
         digest, json as json_io, lifecycle::state, resources::common, target_verify::guard::Inputs,
     },
-    command, inspection, lock, registration, runtime,
+    command, inspection, lock, registration,
 };
 use crate::{
     Result,
@@ -57,9 +57,7 @@ fn run() -> Result<Value> {
         "command" => command::build(&root["payload"]),
         "inspect" => inspection::inspect(&root["payload"]),
         "quiet" => inspection::quiet(&root["payload"]),
-        "recover-identity-lock" => lock::recover(&root["payload"]),
         "recover-session" => recover_session(&root["payload"]),
-        "runtime-proof" => runtime::proof(&root["payload"]),
         "prepare-launch" => prepare_launch(&root["payload"]),
         "record-process" => record_process(&root["payload"]),
         "terminate-process" => terminate_process(&root["payload"]),

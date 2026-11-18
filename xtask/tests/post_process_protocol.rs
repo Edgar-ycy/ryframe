@@ -64,6 +64,21 @@ fn command_plan_uses_bound_tool_and_never_serializes_credentials() {
 }
 
 #[test]
+fn retired_shortcuts_are_rejected_as_unknown_operations() {
+    for operation in ["recover-identity-lock", "runtime-proof"] {
+        let output = call(operation, Value::Null);
+        assert_eq!(output.status.code(), Some(1), "{operation}");
+        assert!(output.stderr.is_empty(), "{operation}");
+        let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            response,
+            json!({"ok":false,"error_type":"PostProcessError"}),
+            "{operation}"
+        );
+    }
+}
+
+#[test]
 fn duplicate_invalid_oversized_unknown_and_argument_requests_fail_closed() {
     for raw in [Vec::new(),br#"{"operation":"command","operation":"runtime-proof","payload":{"password":"Private-Secret"}}"#.to_vec(),vec![0xff],vec![b' ';1024*1024+1],serde_json::to_vec(&json!({"operation":"unknown","payload":{"password":"Private-Secret"}})).unwrap()]{rejected(invoke(&raw,&[]));}
     rejected(invoke(b"", &["Private-Secret"]));
