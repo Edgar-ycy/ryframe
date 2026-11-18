@@ -377,7 +377,16 @@ fn inventory_stdout_binding_capture_failure_duplicates_and_escape_fail_closed() 
     let command = json!({"command":["migrate","inventory"],"returncode":0,"error_type":null,
         "stdin":null,"stdout":null,"stderr":"","stdout_file":binding(&stdout)});
     fixture.write(&command_name, &command);
-    assert_eq!(fixture.records(Value::Null)["ok"], true);
+    let confirmed = fixture.records(Value::Null);
+    assert_eq!(confirmed["ok"], true);
+    let files = confirmed["result"]["files"].as_array().unwrap();
+    for name in [
+        &directory,
+        &command_name,
+        &format!("{directory}/capture.stdout"),
+    ] {
+        assert!(files.contains(&json!(name)));
+    }
     fs::write(&stdout, b"changed-output").unwrap();
     assert_eq!(
         fixture.records(Value::Null)["error"]["message"],
@@ -388,6 +397,14 @@ fn inventory_stdout_binding_capture_failure_duplicates_and_escape_fail_closed() 
     capture["stdout_capture_error"] = json!("FileNotFoundError");
     fixture.write(&command_name, &capture);
     assert_eq!(fixture.records(Value::Null)["ok"], true);
+    capture["stdout"] = json!("untrusted decoded body");
+    fixture.write(&command_name, &capture);
+    assert_eq!(
+        fixture.records(Value::Null)["error"]["message"],
+        "库存失败 stdout 采集错误字段无效"
+    );
+    capture["stdout"] = Value::Null;
+    fixture.write(&command_name, &capture);
     let duplicate = format!("{directory}/command-{}.json", "b".repeat(32));
     fixture.write(&duplicate, &capture);
     assert_eq!(
@@ -395,7 +412,13 @@ fn inventory_stdout_binding_capture_failure_duplicates_and_escape_fail_closed() 
         "库存失败 stdout 文件被多个命令收据重复引用"
     );
     fs::remove_file(fixture.directory.path().join(&duplicate)).unwrap();
-    capture["stdout_file"] = json!({"path":fixture.directory.path().join("outside.stdout")});
+    fs::remove_file(&stdout).unwrap();
+    fs::create_dir(&stdout).unwrap();
+    assert_eq!(fixture.records(Value::Null)["ok"], false);
+
+    let outside = fixture.directory.path().join("outside.stdout");
+    fs::write(&outside, b"outside the inventory directory").unwrap();
+    capture["stdout_file"] = json!({"path":outside});
     fixture.write(&command_name, &capture);
     assert_eq!(
         fixture.records(Value::Null)["error"]["message"],
