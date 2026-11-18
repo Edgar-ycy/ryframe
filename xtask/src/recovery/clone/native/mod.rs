@@ -105,29 +105,17 @@ pub(crate) fn run(command: &CloneCommand, backend: &Path) -> Result<()> {
 }
 
 fn plan(backend: &Path, input: &Path, output: &Path) -> Result<Value> {
-    validate_local_test_path(input, backend, LocalTestPathKind::ExistingFile)
-        .map_err(|error| format!("复制输入无效：{error}"))?;
     validate_local_test_path(output, backend, LocalTestPathKind::OutputFile)
         .map_err(|error| format!("复制计划输出无效：{error}"))?;
-    let declaration = json::read(input)?;
-    let artifact_root = PathBuf::from(
-        declaration["artifact_root"]
-            .as_str()
-            .ok_or("复制证据根目录必须为字符串")?,
-    );
-    let artifact_root = validate_local_test_path(
-        &artifact_root,
-        backend,
-        LocalTestPathKind::ExistingDirectory,
-    )
-    .map_err(|error| format!("复制证据根目录无效：{error}"))?;
-    if output.starts_with(&artifact_root) {
+    let inspected = inspect_input(backend, input)?;
+    let parent = output.parent().ok_or("复制计划输出缺少父目录")?;
+    if std::fs::canonicalize(parent)?.starts_with(std::fs::canonicalize(&inspected.artifact_root)?)
+    {
         return Err("计划输出不得写入来源导出目录".into());
     }
-    let (wrapper, _) = inspect_input(backend, input)?;
-    json::write_new(output, &wrapper)?;
-    let value = issue(backend, output, &wrapper)?;
-    summary(&value)
+    json::write_new(output, &inspected.wrapper)?;
+    finish_new_plan(backend, input, output, &inspected)?;
+    summary(&inspected.wrapper)
 }
 
 fn verify(backend: &Path, plan: &Path) -> Result<Value> {
@@ -153,7 +141,15 @@ fn verify(backend: &Path, plan: &Path) -> Result<Value> {
     summary(&value)
 }
 
-fn inspect_input(backend: &Path, input: &Path) -> Result<(Value, Vec<PathBuf>)> {
+pub(crate) struct InspectedInput {
+    pub(crate) wrapper: Value,
+    declaration: Value,
+    input_digest: digest::FileDigest,
+    artifact_root: PathBuf,
+    source_policy: plan::SourcePolicy,
+}
+
+pub(crate) fn inspect_input(backend: &Path, input: &Path) -> Result<InspectedInput> {
     validate_local_test_path(input, backend, LocalTestPathKind::ExistingFile)
         .map_err(|error| format!("复制输入无效：{error}"))?;
     let before = digest::file(input)?;
@@ -171,25 +167,67 @@ fn inspect_input(backend: &Path, input: &Path) -> Result<(Value, Vec<PathBuf>)> 
         },
         "plan": output.value,
     });
-    Ok((wrapper, output.sources))
+    Ok(InspectedInput {
+        wrapper,
+        declaration,
+        input_digest: before,
+        artifact_root: output.artifact_root,
+        source_policy: output.source_policy,
+    })
+}
+
+pub(crate) fn finish_new_plan(
+    backend: &Path,
+    input: &Path,
+    path: &Path,
+    inspected: &InspectedInput,
+) -> Result<()> {
+    let plan_before = verify_published_plan(path, &inspected.wrapper)?;
+    validate_local_test_path(input, backend, LocalTestPathKind::ExistingFile)
+        .map_err(|error| format!("复制输入无效：{error}"))?;
+    if Some(digest::path_text(input, "复制输入")?.as_str())
+        != inspected.wrapper["input_path"].as_str()
+        || digest::file(input)? != inspected.input_digest
+    {
+        return Err("离线核验期间输入清单变化".into());
+    }
+    plan::recheck_inputs(
+        &inspected.declaration,
+        backend,
+        &inspected.wrapper["plan"]["catalog_sha256"],
+        &inspected.source_policy,
+    )?;
+    if digest::file(input)? != inspected.input_digest {
+        return Err("离线核验期间输入清单变化".into());
+    }
+    verify_plan_digest(path, &plan_before)
 }
 
 pub(crate) fn issue(backend: &Path, plan: &Path, wrapper: &Value) -> Result<Value> {
-    let before = digest::file(plan)?;
-    if json::read(plan)? != *wrapper {
-        return Err("完整验证结果签发前计划文件变化".into());
-    }
+    let before = verify_published_plan(plan, wrapper)?;
     let input = wrapper["input_path"]
         .as_str()
         .ok_or("计划缺少完整输入路径")?;
-    let (actual, _) = inspect_input(backend, Path::new(input))?;
-    if actual != *wrapper {
+    if inspect_input(backend, Path::new(input))?.wrapper != *wrapper {
         return Err("已写计划与当前完整输入、源码策略或导出证据不一致".into());
     }
-    if digest::file(plan)? != before {
+    verify_plan_digest(plan, &before)?;
+    Ok(wrapper.clone())
+}
+
+fn verify_published_plan(path: &Path, wrapper: &Value) -> Result<digest::FileDigest> {
+    let before = digest::file(path)?;
+    if json::read(path)? != *wrapper {
         return Err("完整验证结果签发前计划文件变化".into());
     }
-    Ok(wrapper.clone())
+    Ok(before)
+}
+
+fn verify_plan_digest(path: &Path, before: &digest::FileDigest) -> Result<()> {
+    if digest::file(path)? != *before {
+        return Err("完整验证结果签发前计划文件变化".into());
+    }
+    Ok(())
 }
 
 fn summary(value: &Value) -> Result<Value> {

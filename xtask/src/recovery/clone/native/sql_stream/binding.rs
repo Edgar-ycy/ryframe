@@ -1,16 +1,18 @@
 use std::{
     fs::File,
-    io::{self, BufWriter, Read, Write},
+    io::{BufWriter, Write},
     path::Path,
 };
 
 use super::{
-    super::{digest, resources::common},
+    super::{
+        digest::{self, HashingIo},
+        resources::common,
+    },
     model,
 };
 use crate::{Result, recovery::monitoring::staging};
-use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
+use serde_json::Value;
 
 pub(super) fn receipt(path: &Path, name: &str, relative: bool) -> Result<Value> {
     model::plain(path, false)?;
@@ -51,56 +53,6 @@ pub(super) fn check_handle(path: &Path, file: &File, expected: &Value) -> Result
     Ok(())
 }
 
-pub(super) struct HashingIo<R> {
-    inner: R,
-    hash: Sha256,
-    bytes: u64,
-}
-
-impl<R> HashingIo<R> {
-    pub(super) fn new(inner: R) -> Self {
-        Self {
-            inner,
-            hash: Sha256::new(),
-            bytes: 0,
-        }
-    }
-    pub(super) fn finish(self) -> (R, Value) {
-        (
-            self.inner,
-            json!({"bytes": self.bytes, "sha256": hex::encode(self.hash.finalize())}),
-        )
-    }
-}
-
-impl<R: Read> Read for HashingIo<R> {
-    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        let read = self.inner.read(buffer)?;
-        self.hash.update(&buffer[..read]);
-        self.bytes = self
-            .bytes
-            .checked_add(read as u64)
-            .ok_or_else(|| io::Error::other("SQL 流计数字节溢出"))?;
-        Ok(read)
-    }
-}
-
-impl<W: Write> Write for HashingIo<W> {
-    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-        let written = self.inner.write(buffer)?;
-        self.hash.update(&buffer[..written]);
-        self.bytes = self
-            .bytes
-            .checked_add(written as u64)
-            .ok_or_else(|| io::Error::other("SQL 流写入字节数溢出"))?;
-        Ok(written)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.inner.flush()
-    }
-}
-
 pub(super) fn finish_output(mut writer: BufWriter<HashingIo<File>>, path: &Path) -> Result<Value> {
     writer.flush()?;
     let (file, written) = writer
@@ -111,8 +63,8 @@ pub(super) fn finish_output(mut writer: BufWriter<HashingIo<File>>, path: &Path)
     let (device, inode) = common::device_inode_for(path, &file.metadata()?)?;
     drop(file);
     let actual = receipt(path, "rows.jsonl", true)?;
-    if actual["bytes"] != written["bytes"]
-        || actual["sha256"] != written["sha256"]
+    if actual["bytes"] != written.bytes
+        || actual["sha256"] != written.sha256
         || actual["device"] != device
         || actual["inode"] != inode
     {

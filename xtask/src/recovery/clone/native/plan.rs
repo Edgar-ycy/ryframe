@@ -16,12 +16,15 @@ use super::{
 };
 use crate::Result;
 
-pub(crate) struct Output {
-    pub(crate) value: Value,
-    pub(crate) sources: Vec<PathBuf>,
+pub(super) type SourcePolicy = BTreeMap<PathBuf, digest::FileDigest>;
+
+pub(super) struct Output {
+    pub(super) value: Value,
+    pub(super) artifact_root: PathBuf,
+    pub(super) source_policy: SourcePolicy,
 }
 
-pub(crate) fn create(value: &Value, backend: &Path) -> Result<Output> {
+pub(super) fn create(value: &Value, backend: &Path) -> Result<Output> {
     let validated = input::validate(value, backend)?;
     let policy_before = source_policy(&validated.sources)?;
     let (databases, pending) = database_plan(value, &validated)?;
@@ -51,10 +54,7 @@ pub(crate) fn create(value: &Value, backend: &Path) -> Result<Output> {
     result.insert("target_scope".into(), value["target"]["scope_id"].clone());
     result.insert(
         "catalog_sha256".into(),
-        Value::String(digest::plan_hash(&json!({
-            "control": validated.control,
-            "tenant": validated.tenant,
-        }))?),
+        Value::String(catalog_hash(&validated)?),
     );
     result.insert("databases".into(), Value::Array(databases));
     result.insert("objects".into(), Value::Array(validated.objects.entries));
@@ -80,22 +80,46 @@ pub(crate) fn create(value: &Value, backend: &Path) -> Result<Output> {
     );
     Ok(Output {
         value: Value::Object(wrapped),
-        sources: validated.sources,
+        artifact_root: validated.artifact_root,
+        source_policy: policy_before,
     })
 }
 
-fn source_policy(sources: &[PathBuf]) -> Result<BTreeMap<String, String>> {
+pub(super) fn recheck_inputs(
+    value: &Value,
+    backend: &Path,
+    expected_catalog: &Value,
+    expected_policy: &SourcePolicy,
+) -> Result<()> {
+    let validated = input::validate(value, backend)?;
+    let policy_before = source_policy(&validated.sources)?;
+    if expected_catalog.as_str() != Some(catalog_hash(&validated)?.as_str())
+        || policy_before != *expected_policy
+    {
+        return Err("离线核验期间 schema、生成目录或业务目录发生变化".into());
+    }
+    // SQL 行已按实际消费的原件字节核验。发布后重新检查绑定并再次核对目录来源。
+    rebind_all(value, &validated.artifact_root)?;
+    if source_policy(&validated.sources)? != policy_before {
+        return Err("离线核验期间 schema、生成目录或业务目录发生变化".into());
+    }
+    Ok(())
+}
+
+fn catalog_hash(input: &ValidatedInput) -> Result<String> {
+    digest::plan_hash(&json!({
+        "control": input.control,
+        "tenant": input.tenant,
+    }))
+}
+
+fn source_policy(sources: &[PathBuf]) -> Result<SourcePolicy> {
     let mut paths = sources.to_vec();
     paths.sort();
     paths.dedup();
     paths
         .iter()
-        .map(|path| {
-            Ok((
-                path.to_string_lossy().into_owned(),
-                digest::canonical_binding(&digest::file(path)?),
-            ))
-        })
+        .map(|path| Ok((path.clone(), digest::file(path)?)))
         .collect()
 }
 
@@ -125,8 +149,9 @@ fn database_plan(value: &Value, input: &ValidatedInput) -> Result<(Vec<Value>, V
         let declared = exact_table_counts(dump.get("tables").unwrap(), &catalog)?;
         let binding = input::bound_file(&input.artifact_root, dump.get("artifact").unwrap())?;
         let mut counts = sql::empty_counts(&catalog);
-        sql::for_each_row(
-            &input.artifact_root.join(&binding.file),
+        sql::for_each_bound_row(
+            &input.artifact_root,
+            &binding,
             &catalog,
             None,
             |table, row| {
@@ -192,8 +217,9 @@ fn declared_tenants(value: &Value, input: &ValidatedInput) -> Result<BTreeSet<St
         .collect::<BTreeSet<_>>();
     let pattern = Regex::new(r"^[A-Za-z0-9_-]{1,64}$")?;
     let mut result = BTreeSet::new();
-    sql::for_each_row(
-        &input.artifact_root.join(&binding.file),
+    sql::for_each_bound_row(
+        &input.artifact_root,
+        &binding,
         &sql::all_columns(&input.control, &input.tenant, true),
         Some("sys_tenant"),
         |_, row| {

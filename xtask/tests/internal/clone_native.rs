@@ -439,6 +439,8 @@ fn sha(content: &[u8]) -> String {
 mod catalog;
 #[path = "clone_native/jobs.rs"]
 mod jobs;
+#[path = "clone_native/plan_publication.rs"]
+mod plan_publication;
 #[path = "clone_native/sql.rs"]
 mod sql;
 

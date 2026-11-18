@@ -5,7 +5,10 @@ use std::{
 };
 
 use super::{
-    super::{digest, json as json_io, sql},
+    super::{
+        digest::{self, HashingIo},
+        json as json_io, sql,
+    },
     binding, model,
 };
 use crate::{Result, recovery::monitoring::execution::ProtectedInputs};
@@ -95,8 +98,8 @@ fn create(
         options.share_mode(1);
     }
     let output_path = root.join("rows.jsonl");
-    let mut output = BufWriter::new(binding::HashingIo::new(options.open(&output_path)?));
-    let hashing = binding::HashingIo::new(file);
+    let mut output = BufWriter::new(HashingIo::new(options.open(&output_path)?));
+    let hashing = HashingIo::new(file);
     let mut reader = BufReader::new(hashing);
     let mut counts = sql::empty_counts(catalog);
     let mut rows = 0_u64;
@@ -111,8 +114,8 @@ fn create(
         Ok(())
     })?;
     let (file, consumed) = reader.into_inner().finish();
-    if consumed["bytes"] != descriptor["source"]["bytes"]
-        || consumed["sha256"] != descriptor["source"]["sha256"]
+    if descriptor["source"]["bytes"] != consumed.bytes
+        || descriptor["source"]["sha256"] != consumed.sha256
     {
         return Err("SQL 流实际消费字节与源绑定不同".into());
     }

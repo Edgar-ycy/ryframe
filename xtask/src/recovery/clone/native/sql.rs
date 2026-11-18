@@ -9,7 +9,12 @@ use std::{
 use regex::Regex;
 use serde_json::Value;
 
-use super::{catalog::Catalog, json};
+use super::{
+    catalog::Catalog,
+    digest::{self, HashingIo},
+    input::ArtifactBinding,
+    json,
+};
 use crate::Result;
 
 pub(crate) const DATA_HEADER: &str = "-- ryframe-reference-data-v1";
@@ -75,6 +80,23 @@ pub(crate) fn for_each_reader(
         if only_table.is_none_or(|selected| selected == table) {
             visit(&table, &row)?;
         }
+    }
+    Ok(())
+}
+
+pub(super) fn for_each_bound_row(
+    root: &Path,
+    binding: &ArtifactBinding,
+    catalog: &Catalog,
+    only_table: Option<&str>,
+    visit: impl FnMut(&str, &Row) -> Result<()>,
+) -> Result<()> {
+    let path = digest::safe_file(root, &binding.file)?;
+    let mut reader = BufReader::new(HashingIo::new(digest::open(&path)?));
+    for_each_reader(&mut reader, catalog, only_table, visit)?;
+    let (_, consumed) = reader.into_inner().finish();
+    if consumed != binding.digest {
+        return Err("SQL 计划实际消费字节与源绑定不同".into());
     }
     Ok(())
 }

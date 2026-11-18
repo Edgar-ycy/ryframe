@@ -1,6 +1,6 @@
 use std::{
     fs::{self, File},
-    io::{BufReader, Read},
+    io::{self, BufReader, Read, Write},
     path::{Component, Path, PathBuf},
 };
 
@@ -21,18 +21,7 @@ pub(crate) fn plan_hash(value: &Value) -> Result<String> {
 }
 
 pub(crate) fn file(path: &Path) -> Result<FileDigest> {
-    crate::recovery::runtime::dataset_authority::reads::file(path)?;
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|error| format!("无法读取复制证据 {}：{error}", path.display()))?;
-    if !metadata.file_type().is_file() || linked(&metadata) {
-        return Err(format!("复制证据必须是普通文件：{}", path.display()).into());
-    }
-    let stream = File::open(path)
-        .map_err(|error| format!("无法打开复制证据 {}：{error}", path.display()))?;
-    let actual = stream.metadata()?;
-    if !actual.is_file() || linked(&actual) {
-        return Err(format!("复制证据打开后不是普通文件：{}", path.display()).into());
-    }
+    let stream = open(path)?;
     let mut reader = BufReader::new(stream);
     let mut digest = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
@@ -51,8 +40,73 @@ pub(crate) fn file(path: &Path) -> Result<FileDigest> {
     })
 }
 
-pub(crate) fn canonical_binding(digest: &FileDigest) -> String {
-    format!("{}:{}", digest.bytes, digest.sha256)
+pub(super) fn open(path: &Path) -> Result<File> {
+    crate::recovery::runtime::dataset_authority::reads::file(path)?;
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("无法读取复制证据 {}：{error}", path.display()))?;
+    if !metadata.file_type().is_file() || linked(&metadata) {
+        return Err(format!("复制证据必须是普通文件：{}", path.display()).into());
+    }
+    let stream = File::open(path)
+        .map_err(|error| format!("无法打开复制证据 {}：{error}", path.display()))?;
+    let actual = stream.metadata()?;
+    if !actual.is_file() || linked(&actual) {
+        return Err(format!("复制证据打开后不是普通文件：{}", path.display()).into());
+    }
+    Ok(stream)
+}
+
+pub(super) struct HashingIo<R> {
+    inner: R,
+    hash: Sha256,
+    bytes: u64,
+}
+
+impl<R> HashingIo<R> {
+    pub(super) fn new(inner: R) -> Self {
+        Self {
+            inner,
+            hash: Sha256::new(),
+            bytes: 0,
+        }
+    }
+    pub(super) fn finish(self) -> (R, FileDigest) {
+        (
+            self.inner,
+            FileDigest {
+                bytes: self.bytes,
+                sha256: hex::encode(self.hash.finalize()),
+            },
+        )
+    }
+}
+
+impl<R: Read> Read for HashingIo<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let read = self.inner.read(buffer)?;
+        self.hash.update(&buffer[..read]);
+        self.bytes = self
+            .bytes
+            .checked_add(read as u64)
+            .ok_or_else(|| io::Error::other("SQL 流计数字节溢出"))?;
+        Ok(read)
+    }
+}
+
+impl<W: Write> Write for HashingIo<W> {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        let written = self.inner.write(buffer)?;
+        self.hash.update(&buffer[..written]);
+        self.bytes = self
+            .bytes
+            .checked_add(written as u64)
+            .ok_or_else(|| io::Error::other("SQL 流写入字节数溢出"))?;
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
 }
 
 pub(crate) fn linked_path(path: &Path) -> Result<Vec<bool>> {
