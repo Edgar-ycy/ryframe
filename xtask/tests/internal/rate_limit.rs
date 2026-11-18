@@ -92,6 +92,16 @@ user_capacity = 12
 }
 
 #[test]
+fn load_table_reads_the_current_redis_password_from_the_selected_file() {
+    let fixture = Fixture::new("[redis]\npassword='common-fixture'\n");
+    for password in ["first-fixture", "changed-fixture"] {
+        fixture.write_override("test", &format!("[redis]\npassword='{password}'\n"));
+        let loaded = load_app_table(&fixture.backend, None, "test").unwrap();
+        assert_eq!(loaded["redis"]["password"].as_str(), Some(password));
+    }
+}
+
+#[test]
 fn full_authority_matches_the_existing_shape_without_file_secrets() {
     let fixture = Fixture::new(&format!("[auth]\njwt_secret='private-value'\n{BASE}"));
     fixture.write_override("test", "[rate_limit]\ncapacity=80\nwindow_secs=45\nenable_user_rate_limit=true\nuser_capacity=12\nuser_window_secs=30\napi_window_secs=90\n");
@@ -212,6 +222,10 @@ fn selected_only_directories_missing_selected_and_bad_common_are_not_silent() {
     );
     fs::remove_file(fixture.backend.join("config/app.test.toml")).unwrap();
     let missing = load_app_table(&fixture.backend, None, "test").unwrap_err();
+    assert!(missing.message().contains("app.test.toml"));
+    fs::write(fixture.backend.join("config/app.toml"), BASE).unwrap();
+    let missing = load_app_table(&fixture.backend, None, "test").unwrap_err();
+    assert_eq!(missing.code(), "config_document_invalid");
     assert!(missing.message().contains("app.test.toml"));
     fixture.write_override("test", BASE);
     fs::write(

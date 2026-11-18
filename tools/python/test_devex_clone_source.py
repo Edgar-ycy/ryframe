@@ -42,11 +42,6 @@ class SourceFileConfigurationTests(unittest.TestCase):
         self.assertEqual(load_app_table(item.backend, item.environment, config_dir=item.backend / "config"), table)
         self.assertEqual((item.backend / "config/app.toml").read_text(encoding="utf-8").count("="), 0)
 
-    def test_missing_test_file_cannot_fall_back_to_common_configuration(self):
-        (self.fixture.backend / "config/app.test.toml").unlink()
-        with self.assertRaises((FileNotFoundError, ValueError)):
-            load_app_table(self.fixture.backend, self.fixture.environment)
-
     def test_generation_uses_registered_external_configuration_and_rejects_directory_or_runtime_drift(self):
         item = self.fixture
         item.relocate_configuration()
@@ -78,13 +73,6 @@ class SourceFileConfigurationTests(unittest.TestCase):
             proof.verify_generation(item.backend, item.request, item)
         path.write_bytes(before)
         self.assertEqual(item.calls, [])
-
-    def test_plaintext_password_change_is_read_from_the_selected_file(self):
-        path = self.fixture.backend / "config/app.test.toml"
-        path.write_text(path.read_text(encoding="utf-8").replace(
-            'password="redis-fixture-secret"', 'password="changed-fixture-secret"'), encoding="utf-8")
-        self.assertEqual(load_app_table(self.fixture.backend, self.fixture.environment)["redis"]["password"],
-                         "changed-fixture-secret")
 
 
 class SourceExportTests(unittest.TestCase):
