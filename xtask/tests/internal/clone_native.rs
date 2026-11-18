@@ -639,8 +639,7 @@ fn active_schedule_without_exact_disposition_is_rejected() {
     assert!(fixture.plan("schedule.json").is_err());
 }
 
-#[test]
-fn exact_schedule_disposition_is_bound_without_writing_resources() {
+fn pending_schedule_disposition() -> (Fixture, usize) {
     let mut fixture = Fixture::new();
     let schedule_index = fixture.data["shared-control"].len();
     let row = fixture
@@ -689,6 +688,12 @@ fn exact_schedule_disposition_is_bound_without_writing_resources() {
         "source_row_sha256": digest,
     }]);
     fixture.refresh();
+    (fixture, schedule_index)
+}
+
+#[test]
+fn exact_schedule_disposition_is_bound_without_writing_resources() {
+    let (mut fixture, schedule_index) = pending_schedule_disposition();
     let plan = fixture.plan("schedule-pending.json").unwrap();
     let value: Value = serde_json::from_slice(&fs::read(plan).unwrap()).unwrap();
     assert_eq!(
