@@ -1,5 +1,6 @@
 """目标 HEAD 使用真实线程与同步闸门；仅替身对象工具，无服务或性能测量。"""
 import copy
+from functools import cache
 import hashlib
 import json
 import os
@@ -48,6 +49,16 @@ class ConcurrentTargetHeadTests(unittest.TestCase):
                                "metadata": identity["metadata"]})
             self.observations["uploads", key] = ObjectObservation(resource, directory, None)
         self.tools = ExternalTools(self.plan, self.work, self.read)
+        # 避免为相同夹具值反复启动原生进程，让等待窗口覆盖 HEAD 同步。
+        # 新的 JSON 值仍由原生入口计算，计划漂移会得到新的摘要。
+        @cache
+        def fixture_digest(encoded):
+            return plan_hash(json.loads(encoded))
+
+        def cached_digest(value):
+            return fixture_digest(json.dumps(value, ensure_ascii=False, sort_keys=True))
+
+        self.enterContext(patch.object(live, "plan_hash", cached_digest))
         self.environment = patch.dict("os.environ", {"AWS_ACCESS_KEY_ID": "ambient-access", "AWS_SECRET_ACCESS_KEY": "ambient-secret"})
         self.environment.start()
         self.addCleanup(self.environment.stop)
