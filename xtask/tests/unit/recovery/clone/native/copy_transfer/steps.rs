@@ -5,6 +5,8 @@ use crate::recovery::clone::native::copy_ledger::session::tests::{ARTIFACT, Fixt
 
 #[path = "steps_database.rs"]
 mod database;
+#[path = "steps_finish.rs"]
+mod finish_cases;
 
 fn declaration(object_count: usize) -> Value {
     json!({
@@ -25,16 +27,19 @@ struct FixtureIo {
     database_events: Vec<DatabaseEvent>,
     database_evidence: Map<String, Value>,
     database_fault: Option<DatabaseFault>,
+    omitted_database: Option<String>,
     stop_at: Option<String>,
     failed_database_image: Option<Value>,
     resume_target_usable: bool,
     complete_checks: usize,
+    fail_verify_complete: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 enum DatabaseEvent {
     Observe(Vec<String>),
     Write(String),
+    WriteObject(String),
     VerifyComplete,
 }
 
@@ -71,10 +76,12 @@ impl FixtureIo {
             database_events: Vec::new(),
             database_evidence: Map::new(),
             database_fault: None,
+            omitted_database: None,
             stop_at: None,
             failed_database_image: None,
             resume_target_usable: true,
             complete_checks: 0,
+            fail_verify_complete: false,
         }
     }
 
@@ -136,7 +143,11 @@ impl CopyIo for FixtureIo {
     fn observe_databases(&mut self, all: &[Step<'_>]) -> Result<Observation<Self::Evidence>> {
         let ids = all.iter().map(|step| step.id.clone()).collect::<Vec<_>>();
         assert_eq!(ids, self.database_ids);
-        let observed = self.snapshot(all.iter());
+        let mut observed = self.snapshot(all.iter());
+        if let Some(id) = self.omitted_database.take() {
+            assert!(observed.images.remove(&id).is_some());
+            assert!(observed.evidence.remove(&id).is_some());
+        }
         self.database_evidence = observed.evidence.clone();
         self.database_events.push(DatabaseEvent::Observe(ids));
         Ok(observed)
@@ -172,6 +183,9 @@ impl CopyIo for FixtureIo {
                 if step.kind == Kind::Database {
                     self.database_events
                         .push(DatabaseEvent::Write(step.id.clone()));
+                } else {
+                    self.database_events
+                        .push(DatabaseEvent::WriteObject(step.id.clone()));
                 }
                 if self.stop_at.as_ref() == Some(&step.id) {
                     if let Some(image) = self.failed_database_image.take() {
@@ -188,6 +202,9 @@ impl CopyIo for FixtureIo {
     fn verify_complete(&mut self) -> Result<()> {
         self.complete_checks += 1;
         self.database_events.push(DatabaseEvent::VerifyComplete);
+        if self.fail_verify_complete {
+            return Err("测试：独立完整核验失败".into());
+        }
         Ok(())
     }
 }
