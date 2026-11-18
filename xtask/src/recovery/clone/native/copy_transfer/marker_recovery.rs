@@ -9,7 +9,7 @@ use super::super::{
     lifecycle::{
         lock::ProcessGuard,
         manifest,
-        stage::{StageRequest, StageRunner},
+        stage::{MarkerCheckpoint as Checkpoint, StageRequest, StageRunner},
     },
     post_process::files::{absent, combine},
     resources::common,
@@ -37,32 +37,43 @@ impl StageRunner for MarkerRecovery {
     }
 
     fn execute(&self, request: &StageRequest<'_>) -> Result<Value> {
-        let manifest = manifest::load(request.backend, &request.run_dir.join("manifest.json"))?;
-        authority::preflight(request, &manifest.value)?;
-        let stage = Stage::load(request, &manifest.value)?;
-        let storage = Storage::acquire(request.backend, request.run_dir, &manifest.value)?;
+        let manifest = Checkpoint::RunBinding.check(manifest::load(
+            request.backend,
+            &request.run_dir.join("manifest.json"),
+        ))?;
+        Checkpoint::RunBinding.check(authority::preflight(request, &manifest.value))?;
+        let stage = Checkpoint::RunBinding.check(Stage::load(request, &manifest.value))?;
+        let storage = Checkpoint::StorageLock.check(Storage::acquire(
+            request.backend,
+            request.run_dir,
+            &manifest.value,
+        ))?;
         let result = with_storage(&stage, &storage);
         storage.finish(result)
     }
 }
 
 fn with_storage(stage: &Stage<'_>, storage: &Storage) -> Result<Value> {
-    let owner = Generation::acquire(stage.request.backend, &stage.target)?;
+    let owner =
+        Checkpoint::TargetOwner.check(Generation::acquire(stage.request.backend, &stage.target))?;
     let result = (|| {
         let lock = stage.ledger.join("clone.lock");
-        absent(&lock)?;
-        let fence = ProcessGuard::acquire_named(&stage.ledger, "copy-ledger.guard")?;
-        absent(&lock)?;
-        owner.check_initialization_lock()?;
+        Checkpoint::CopyLedgerLock.check(absent(&lock))?;
+        let fence = Checkpoint::CopyLedgerLock.check(ProcessGuard::acquire_named(
+            &stage.ledger,
+            "copy-ledger.guard",
+        ))?;
+        Checkpoint::CopyLedgerLock.check(absent(&lock))?;
+        Checkpoint::TargetOwner.check(owner.check_initialization_lock())?;
         let copy = stage.ledger.parent().ok_or("原复制账本缺少目录")?;
-        let target = Target::bind(
+        let target = Checkpoint::TargetBinding.check(Target::bind(
             stage.request.backend,
             stage.manifest,
             &storage.directory,
             copy,
             Some(&owner),
             || Scope::load(stage.request.backend, &[], &[]),
-        )?;
+        ))?;
         let recovery = Recovery::load(stage, storage, &owner, &fence, &target)?;
         let result = execute(&recovery, &target);
         combine(result, recovery.check())
@@ -73,7 +84,7 @@ fn with_storage(stage: &Stage<'_>, storage: &Storage) -> Result<Value> {
 fn execute(recovery: &Recovery<'_>, target: &Target) -> Result<Value> {
     let stage = recovery.stage;
     let selected = &target.storage.value["redis"];
-    let receipts = Receipts::open(recovery)?;
+    let receipts = Checkpoint::ReceiptOpen.check(Receipts::open(recovery))?;
     let inputs = target.storage_inputs(&receipts.directory);
     let checkpoint = || {
         recovery.check()?;

@@ -16,7 +16,7 @@ use super::{
         record::{Facts, Files},
         steps::Plan,
     },
-    Generation, ProcessGuard, StageRequest, Storage, Target, absent, protected_file,
+    Checkpoint, Generation, ProcessGuard, StageRequest, Storage, Target, absent, protected_file,
 };
 use crate::Result;
 
@@ -208,21 +208,31 @@ impl<'a> Recovery<'a> {
             storage.directory.join("manifest.json"),
             storage.directory.join("state.json"),
         ];
-        let fixture_guard = hold(backend, &paths)?;
-        let fixture = successor::load(backend, &storage.directory, target)?;
-        require_marker_model(target)?;
-        let (heads, proof, plan, source) = journal(stage, target)?;
-        fixture_guard.check()?;
-        plan.check()?;
+        let fixture_guard = Checkpoint::FixtureSuccessor.check(hold(backend, &paths))?;
+        let fixture = Checkpoint::FixtureSuccessor.check(successor::load(
+            backend,
+            &storage.directory,
+            target,
+        ))?;
+        Checkpoint::MarkerModel.check(require_marker_model(target))?;
+        let (heads, proof, plan, source) = Checkpoint::CopyProof.check(journal(stage, target))?;
+        Checkpoint::FixtureSuccessor.check(fixture_guard.check())?;
+        Checkpoint::FinalGuards.check(plan.check())?;
         let mut files = fixture.files.clone();
         files.extend(paths);
         files.extend([
             stage.ledger.join("events.ndjson"),
             stage.ledger.join("head.json"),
         ]);
-        let protected = hold(backend, &files)?;
-        if successor::load(backend, &storage.directory, target)? != fixture {
-            return Err("Redis 标记恢复固定代次期间夹具证据变化".into());
+        let protected = Checkpoint::FinalGuards.check(hold(backend, &files))?;
+        let current_fixture = Checkpoint::FixtureSuccessor.check(successor::load(
+            backend,
+            &storage.directory,
+            target,
+        ))?;
+        if current_fixture != fixture {
+            return Checkpoint::FixtureSuccessor
+                .check(Err("Redis 标记恢复固定代次期间夹具证据变化".into()));
         }
         let binding = json!({
             "run":stage.manifest_binding, "initialized":stage.manifest["initialized"],
@@ -243,7 +253,7 @@ impl<'a> Recovery<'a> {
             plan,
             source,
         };
-        recovered.check()?;
+        Checkpoint::FinalGuards.check(recovered.check())?;
         Ok(recovered)
     }
 
@@ -377,7 +387,7 @@ fn journal(stage: &Stage<'_>, target: &Target) -> Result<(Value, Proofs, Inputs,
         files.initialized,
         &target.initialized,
     )?;
-    let source = Source::load(stage, &export)?;
+    let source = Checkpoint::SourceGeneration.check(Source::load(stage, &export))?;
     let verified = super::super::super::issue(backend, &paths[1], &wrapper)?;
     let plan = &verified["plan"];
     let facts = Facts {
@@ -395,10 +405,15 @@ fn journal(stage: &Stage<'_>, target: &Target) -> Result<(Value, Proofs, Inputs,
     }
     let plan_hash = document::text(&saved["plan_sha256"], "原复制计划摘要")?;
     let generation = document::text(&saved["generation_sha256"], "原复制代次摘要")?;
-    let (head, steps) =
-        copy_ledger::marker_prefix(backend, &stage.ledger, plan_hash, generation, None)?;
+    let (head, steps) = Checkpoint::LedgerPrefix.check(copy_ledger::marker_prefix(
+        backend,
+        &stage.ledger,
+        plan_hash,
+        generation,
+        None,
+    ))?;
     let plan = Plan::from_verified(plan)?;
-    plan.validate_states(&steps, Mode::Resume)?;
+    Checkpoint::LedgerPrefix.check(plan.validate_states(&steps, Mode::Resume))?;
     if steps.len() >= plan.all().count()
         || plan.all().any(|step| {
             steps
@@ -406,7 +421,8 @@ fn journal(stage: &Stage<'_>, target: &Target) -> Result<(Value, Proofs, Inputs,
                 .is_some_and(|value| value["artifact_sha256"] != step.artifact)
         })
     {
-        return Err("原复制账本已完成或步骤不是原计划绑定的产物".into());
+        return Checkpoint::LedgerPrefix
+            .check(Err("原复制账本已完成或步骤不是原计划绑定的产物".into()));
     }
     plan_guard.check()?;
     guard.check()?;

@@ -14,6 +14,10 @@ use crate::{
     local_test_path::{LocalTestPathKind, validate_local_test_path},
 };
 
+#[path = "stage/marker_diagnostic.rs"]
+mod marker_diagnostic;
+pub(in crate::recovery::clone::native) use marker_diagnostic::MarkerCheckpoint;
+
 pub(crate) struct StageRequest<'a> {
     pub(crate) backend: &'a Path,
     pub(crate) run_dir: &'a Path,
@@ -331,6 +335,9 @@ fn stage_manifest(
 }
 
 pub(crate) fn failure_type(error: &(dyn std::error::Error + 'static)) -> String {
+    if let Some(category) = marker_diagnostic::category(error) {
+        return category.into();
+    }
     if let Some((category, _)) = super::super::post_process::diagnostic::diagnostic(error) {
         return category.into();
     }
@@ -365,6 +372,9 @@ pub(crate) fn failure_type(error: &(dyn std::error::Error + 'static)) -> String 
 }
 
 fn safe_diagnostic(error: &(dyn std::error::Error + 'static)) -> Option<String> {
+    if let Some(category) = marker_diagnostic::category(error) {
+        return Some(format!("Redis 标记恢复前置检查失败（{category}）"));
+    }
     if let Some((_, diagnostic)) = super::super::post_process::diagnostic::diagnostic(error) {
         return Some(diagnostic);
     }
