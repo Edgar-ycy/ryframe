@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 use super::super::{
     cache::handoff::locks::Storage,
-    copy_ledger::session::{self, Mode},
+    copy_ledger::session,
     copy_owner::Owner,
     export::transport::SystemTransport,
     json as document,
@@ -20,7 +20,7 @@ use super::{
     observe_source::{self, ObserveSource, Selection},
     proofs::Proofs,
     publication::Attempt,
-    record::{Facts, Files, Prepared},
+    record::{Continuation, Facts, Files, Prepared},
     steps,
     target_port::Target,
 };
@@ -35,7 +35,7 @@ impl StageRunner for Runner {
         if request.attempt.is_some() {
             return Err("复制只读预检必须在申请阶段序号之前执行".into());
         }
-        Stage::load(request)?.preflight()
+        Stage::load(request)?.preflight().map(|_| ())
     }
 
     fn execute(&self, request: &StageRequest<'_>) -> Result<Value> {
@@ -43,11 +43,11 @@ impl StageRunner for Runner {
             return Err("复制必须由持锁的正式阶段执行".into());
         }
         let stage = Stage::load(request)?;
-        stage.preflight()?;
+        let saved = stage.preflight()?;
         let storage = Storage::acquire(stage.backend, stage.run, &stage.manifest)?;
-        let result = match stage.mode {
-            Mode::New => start(&stage, &storage),
-            _ => continue_copy(&stage, &storage),
+        let result = match saved {
+            None => start(&stage, &storage),
+            Some(saved) => continue_copy(&stage, &storage, &saved),
         };
         storage.finish(result)
     }
@@ -69,11 +69,11 @@ fn start(stage: &Stage<'_>, storage: &Storage) -> Result<Value> {
     attempt.failure(stage.backend, &stage.copy, result, phase)
 }
 
-fn continue_copy(stage: &Stage<'_>, storage: &Storage) -> Result<Value> {
+fn continue_copy(stage: &Stage<'_>, storage: &Storage, saved: &Continuation) -> Result<Value> {
     let attempt = Attempt::new(stage.mode, &stage.copy);
     let result = (|| {
         let files = Files::bind(stage.backend, &stage.manifest, &stage.descriptor)?;
-        let saved = files.read_record()?;
+        saved.check()?;
         let owner = Generation::acquire_copy(Owner::register(
             stage.backend,
             &stage.copy,
@@ -81,8 +81,9 @@ fn continue_copy(stage: &Stage<'_>, storage: &Storage) -> Result<Value> {
             files.initialized,
         )?)?;
         let pre = (|| {
+            saved.check()?;
             let operation = Operation::load(stage, storage, Some(&owner))?;
-            let data = operation.prepare(Some(&saved), Some(&owner))?;
+            let data = operation.prepare(Some(saved), Some(&owner))?;
             Ok((operation, data))
         })();
         match pre {
@@ -167,10 +168,10 @@ impl<'a> Operation<'a> {
         )?)
     }
 
-    fn prepare(&self, saved: Option<&Value>, owner: Option<&Generation>) -> Result<Bound> {
+    fn prepare(&self, saved: Option<&Continuation>, owner: Option<&Generation>) -> Result<Bound> {
         self.checkpoint(owner)?;
         let proofs = self.proofs(saved)?;
-        let window = self.database_window(saved.map(|record| &record["source_observation"]));
+        let window = self.database_window(saved.map(|saved| &saved.record["source_observation"]));
         let check = || self.checkpoint(owner);
         let baseline =
             window.baseline(&self.output("source-inventory"), &SystemTransport, &check)?;
@@ -207,18 +208,12 @@ impl<'a> Operation<'a> {
         })
     }
 
-    fn proofs(&self, saved: Option<&Value>) -> Result<Proofs> {
+    fn proofs(&self, saved: Option<&Continuation>) -> Result<Proofs> {
         let source = &self.source.export["evidence"]["generation-after"];
-        if saved.is_some() {
-            let input = common::common_file(
-                self.stage.backend,
-                &self.stage.copy.join("input.json"),
-                "原复制输入",
-            )?;
-            let descriptors = document::read(&input)?["evidence"].clone();
+        if let Some(saved) = saved {
             return Proofs::open(
                 &self.source.root,
-                &descriptors,
+                &saved.declaration["evidence"],
                 source,
                 self.files.initialized,
                 &self.target.initialized,

@@ -23,6 +23,8 @@ use crate::{
     recovery::source::evidence::comparison,
 };
 
+use super::record::{Continuation, Files};
+
 pub(super) struct Stage<'a> {
     pub(super) backend: &'a Path,
     pub(super) run: &'a Path,
@@ -129,19 +131,24 @@ impl<'a> Stage<'a> {
         Ok(())
     }
 
-    pub(super) fn preflight(&self) -> Result<()> {
-        if self.mode != Mode::New {
-            let files = super::record::Files::bind(self.backend, &self.manifest, &self.descriptor)?;
-            let session = files.read_record()?;
-            super::super::copy_ledger::check_continuation(
-                self.backend,
-                &self.copy.join("ledger"),
-                document::text(&session["plan_sha256"], "原计划摘要")?,
-                document::text(&session["generation_sha256"], "原复制代次")?,
-                self.mode,
-            )?;
+    pub(super) fn preflight(&self) -> Result<Option<Continuation>> {
+        if self.mode == Mode::New {
+            self.check()?;
+            return Ok(None);
         }
-        self.check()
+        let files = Files::bind(self.backend, &self.manifest, &self.descriptor)?;
+        let saved =
+            files.continuation(document::text(&self.manifest["copy_stage"], "复制阶段")?)?;
+        super::super::copy_ledger::check_continuation(
+            self.backend,
+            &self.copy.join("ledger"),
+            document::text(&saved.record["plan_sha256"], "原计划摘要")?,
+            document::text(&saved.record["generation_sha256"], "原复制代次")?,
+            self.mode,
+        )?;
+        saved.check()?;
+        self.check()?;
+        Ok(Some(saved))
     }
 }
 

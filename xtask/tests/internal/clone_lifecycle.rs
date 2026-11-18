@@ -758,9 +758,7 @@ fn linked_manifest_is_rejected() {
     assert!(!run.exists());
 }
 
-#[test]
-fn native_copy_preflight_uses_registered_inputs_without_lock_or_attempt() {
-    let fixture = Fixture::new();
+fn initialize_native_copy_fixture(fixture: &Fixture) -> Value {
     let mut manifest = read_json(&fixture.manifest);
     for (field, name) in [
         ("source_export", "source-export.json"),
@@ -772,8 +770,20 @@ fn native_copy_preflight_uses_registered_inputs_without_lock_or_attempt() {
         fs::rename(fixture.local.join(name), &path).unwrap();
         manifest[field] = binding(&path);
     }
+    for field in ["source_environment", "target_environment"] {
+        let path = PathBuf::from(manifest[field]["path"].as_str().unwrap());
+        write_json(&path, &json!({"environment":{"APP_ENV":"test"}}));
+        manifest[field] = binding(&path);
+    }
     write_json(&fixture.manifest, &manifest);
     fixture.init().unwrap();
+    manifest
+}
+
+#[test]
+fn native_copy_preflight_uses_registered_inputs_without_lock_or_attempt() {
+    let fixture = Fixture::new();
+    initialize_native_copy_fixture(&fixture);
     let before = snapshot(&fixture.local);
     let runner = native::copy_transfer::Runner;
     let request = stage::StageRequest {
@@ -794,6 +804,55 @@ fn native_copy_preflight_uses_registered_inputs_without_lock_or_attempt() {
     assert_eq!(error.to_string(), "复制只读预检必须在申请阶段序号之前执行");
     assert_eq!(snapshot(&fixture.local), before);
     assert!(!fixture.copy.exists());
+    assert!(!fixture.run.join("run.lock").exists());
+    assert_eq!(fixture.state()["attempts"], json!([]));
+}
+
+#[test]
+fn native_copy_continuation_rejects_changed_plan_before_opening_resources() {
+    let fixture = Fixture::new();
+    let manifest = initialize_native_copy_fixture(&fixture);
+    fs::create_dir(&fixture.copy).unwrap();
+    let input = fixture.copy.join("input.json");
+    let declaration = json!({"copy_stage":"source_to_seed"});
+    write_json(&input, &declaration);
+    let descriptor = binding(&input);
+    let input_sha256 = native::digest::plan_hash(&declaration).unwrap();
+    let mut plan = json!({"copy_stage":"source_to_seed","input_sha256":input_sha256});
+    let original_plan = native::digest::plan_hash(&plan).unwrap();
+    plan["plan_sha256"] = json!(original_plan);
+    plan["copy_id"] = json!("changed");
+    write_json(
+        &fixture.copy.join("plan.json"),
+        &json!({"format_version":1,"input_path":input,
+            "input_file":{"bytes":descriptor["bytes"],"sha256":descriptor["sha256"]},
+            "plan":plan}),
+    );
+    write_json(
+        &fixture.copy.join("session.json"),
+        &json!({"source_export":manifest["source_export"],"initialized":manifest["initialized"],
+            "generation_sha256":"b".repeat(64),"plan_sha256":original_plan,
+            "source_observation":{"shared-control":{},"shared":{},"dedicated-a":{},"dedicated-b":{}},
+            "clone_verified":false,"restore_qualified":false}),
+    );
+    let before = snapshot(&fixture.local);
+    for mode in ["reconcile", "resume"] {
+        let request = stage::StageRequest {
+            backend: &fixture.backend,
+            run_dir: &fixture.run,
+            stage: "copy",
+            mode,
+            attempt: None,
+        };
+        let error =
+            stage::StageRunner::preflight(&native::copy_transfer::Runner, &request).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "原计划、固定输入或复制阶段与复制会话绑定不同"
+        );
+    }
+    assert_eq!(snapshot(&fixture.local), before);
+    assert!(!fixture.copy.join("ledger").exists());
     assert!(!fixture.run.join("run.lock").exists());
     assert_eq!(fixture.state()["attempts"], json!([]));
 }

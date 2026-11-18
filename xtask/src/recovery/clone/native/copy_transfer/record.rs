@@ -52,6 +52,21 @@ pub(in crate::recovery::clone::native) struct Prepared {
     protected: Inputs,
 }
 
+pub(super) struct Continuation {
+    pub(super) record: Value,
+    wrapper: Value,
+    pub(super) declaration: Value,
+    plan_files: Inputs,
+    session_file: Inputs,
+}
+
+impl Continuation {
+    pub(super) fn check(&self) -> Result<()> {
+        self.session_file.check()?;
+        self.plan_files.check()
+    }
+}
+
 impl<'a> Files<'a> {
     pub(in crate::recovery::clone::native) fn bind(
         backend: &'a Path,
@@ -124,6 +139,34 @@ impl<'a> Files<'a> {
         Ok(record)
     }
 
+    pub(super) fn continuation(&self, stage: &str) -> Result<Continuation> {
+        let session =
+            common::common_file(self.backend, &self.root.join("session.json"), "原复制会话")?;
+        let session_file = Inputs::open([session])?;
+        let record = self.read_record()?;
+        let (wrapper, declaration, plan_files) = self.load_plan()?;
+        let mut plan = document::object(&wrapper["plan"], "原完整计划投影")?.clone();
+        let recorded = plan.remove("plan_sha256").ok_or("原计划缺少摘要")?;
+        if recorded != record["plan_sha256"]
+            || digest_shape(&recorded)? != digest::plan_hash(&Value::Object(plan))?
+            || wrapper["plan"]["input_sha256"] != digest::plan_hash(&declaration)?
+            || wrapper["plan"]["copy_stage"] != stage
+            || declaration["copy_stage"] != stage
+        {
+            return Err("原计划、固定输入或复制阶段与复制会话绑定不同".into());
+        }
+        let continuation = Continuation {
+            record,
+            wrapper,
+            declaration,
+            plan_files,
+            session_file,
+        };
+        continuation.check()?;
+        self.check()?;
+        Ok(continuation)
+    }
+
     pub(in crate::recovery::clone::native) fn prepare(&self, facts: Facts<'_>) -> Result<Prepared> {
         self.check()?;
         let input = self.root.join("input.json");
@@ -152,26 +195,30 @@ impl<'a> Files<'a> {
         Ok(prepared)
     }
 
-    pub(in crate::recovery::clone::native) fn hydrate(
-        &self,
-        saved: &Value,
-        facts: Facts<'_>,
-    ) -> Result<Prepared> {
+    pub(super) fn hydrate(&self, saved: &Continuation, facts: Facts<'_>) -> Result<Prepared> {
         self.check()?;
-        if self.read_record()? != *saved {
-            return Err("复原期间原复制会话记录变化".into());
+        saved.check()?;
+        if self.read_record()? != saved.record || saved.declaration != *facts.declaration {
+            return Err("复原期间原复制会话记录或完整声明变化".into());
         }
-        let (wrapper, plan_guard) = self.read_plan(facts.declaration)?;
-        super::super::issue(self.backend, &self.root.join("plan.json"), &wrapper)?;
-        if self.value(&facts, &wrapper["plan"])? != *saved {
+        super::super::issue(self.backend, &self.root.join("plan.json"), &saved.wrapper)?;
+        if self.value(&facts, &saved.wrapper["plan"])? != saved.record {
             return Err("原复制代次、已登记环境、计划或当前来源库存变化".into());
         }
-        let prepared = self.prepared(wrapper, saved.clone())?;
-        plan_guard.check()?;
+        let prepared = self.prepared(saved.wrapper.clone(), saved.record.clone())?;
+        saved.check()?;
         Ok(prepared)
     }
 
-    pub(super) fn read_plan(&self, declaration: &Value) -> Result<(Value, Inputs)> {
+    pub(super) fn read_plan(&self, expected: &Value) -> Result<(Value, Inputs)> {
+        let (wrapper, declaration, guard) = self.load_plan()?;
+        if declaration != *expected {
+            return Err("原离线计划没有绑定完整当前声明".into());
+        }
+        Ok((wrapper, guard))
+    }
+
+    fn load_plan(&self) -> Result<(Value, Value, Inputs)> {
         let plan_path =
             common::common_file(self.backend, &self.root.join("plan.json"), "原完整计划")?;
         let input_path =
@@ -184,14 +231,16 @@ impl<'a> Files<'a> {
             "原离线计划",
         )?;
         let recorded = Path::new(document::text(&wrapper["input_path"], "原计划输入")?);
+        let binding = digest::file(&input_path)?;
         if wrapper["format_version"] != 1
             || !same_local_test_file(self.backend, recorded, &input_path)?
-            || document::read(&input_path)? != *declaration
+            || wrapper["input_file"] != json!({"bytes":binding.bytes,"sha256":binding.sha256})
         {
-            return Err("原离线计划没有绑定固定复制目录中的完整当前声明".into());
+            return Err("原离线计划没有绑定固定复制目录中的输入原字节".into());
         }
+        let declaration = document::read(&input_path)?;
         guard.check()?;
-        Ok((wrapper, guard))
+        Ok((wrapper, declaration, guard))
     }
 
     pub(super) fn value(&self, facts: &Facts<'_>, plan: &Value) -> Result<Value> {
