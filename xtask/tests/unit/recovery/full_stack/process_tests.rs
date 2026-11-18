@@ -301,10 +301,81 @@ fn capture_preserves_stdin_already_bound_to_the_role_command() {
         Duration::from_secs(5),
         None,
         true,
-        false,
+        CaptureOutput::Separate,
     )
     .unwrap();
     assert_eq!(output, "bound role request");
+    gone(root.path());
+}
+
+const API_RUNTIME_REJECTION: &str =
+    "API运行合同核验失败；核对冻结来源、配置与产物，保留现场且不启动或停止进程";
+
+fn api_rejection(message: &str) -> String {
+    json!({"ok":false,"error":"ProcessRejected","message":message}).to_string()
+}
+
+#[test]
+fn api_control_diagnostics_recognize_only_complete_safe_responses() {
+    let preparation = format!(
+        "API监督准备失败；阶段=member_spawn；原因=permission_denied；系统码=13；原因摘要={}；核对成员创建权限与系统资源；保留现场，显式核对，不重放",
+        "a".repeat(64)
+    );
+    for message in [API_RUNTIME_REJECTION, preparation.as_str()] {
+        let response = api_rejection(message);
+        assert_eq!(
+            worker::api_control_diagnostic(response.as_bytes()).as_deref(),
+            Some(message)
+        );
+        let changed = api_rejection(&format!("{message} private-password"));
+        assert!(worker::api_control_diagnostic(changed.as_bytes()).is_none());
+    }
+    let response = api_rejection(API_RUNTIME_REJECTION);
+    for invalid in [
+        api_rejection("API rejected with private-password"),
+        response.replace("ProcessRejected", "WorkerRejected"),
+        response.replace("false", "0"),
+        r#"{"ok":false,"error":"ProcessRejected","message":13}"#.to_owned(),
+        format!("{{\"extra\":true,{}", &response[1..]),
+        format!("{{\"message\":\"private-password\",{}", &response[1..]),
+        format!("{response} null"),
+    ] {
+        assert!(worker::api_control_diagnostic(invalid.as_bytes()).is_none());
+    }
+    assert!(worker::api_control_diagnostic(&[0xff]).is_none());
+    let mut oversized = response.into_bytes();
+    oversized.resize(1024 * 1024 + 1, b' ');
+    assert!(worker::api_control_diagnostic(&oversized).is_none());
+}
+
+#[test]
+fn capture_exposes_safe_diagnostics_only_from_failed_api_control() {
+    let root = directory();
+    let input = root.path().join("rejected-api-response");
+    let private = api_rejection(&format!("{API_RUNTIME_REJECTION} private-password"));
+    let safe = api_rejection(API_RUNTIME_REJECTION);
+    for (output_mode, response, expected) in [
+        (CaptureOutput::ApiControl, &safe, true),
+        (CaptureOutput::Separate, &safe, false),
+        (CaptureOutput::ApiControl, &private, false),
+    ] {
+        fs::write(&input, response).unwrap();
+        let mut command = command("echo-fail", root.path());
+        command.stdin(fs::File::open(&input).unwrap());
+        let error = capture_prebound(
+            command,
+            root.path(),
+            Duration::from_secs(5),
+            None,
+            true,
+            output_mode,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("退出状态") && error.contains("17"));
+        assert_eq!(error.contains(API_RUNTIME_REJECTION), expected);
+        assert!(!error.contains("private-password"));
+    }
     gone(root.path());
 }
 

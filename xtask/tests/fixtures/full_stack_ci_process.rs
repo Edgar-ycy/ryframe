@@ -72,4 +72,8 @@ fn main() {
     let mut input = Vec::new();
     std::io::stdin().read_to_end(&mut input).unwrap();
     std::io::stdout().write_all(&input).unwrap();
+    if mode == "echo-fail" {
+        std::io::stdout().flush().unwrap();
+        std::process::exit(17);
+    }
 }

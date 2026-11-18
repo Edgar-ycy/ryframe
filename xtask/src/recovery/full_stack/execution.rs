@@ -86,7 +86,18 @@ impl<'a> Native<'a> {
             Duration::from_secs(210)
         };
         // 持久 supervisor 继续脱离一次性调用者的 Job 生命周期。
-        let output = capture_prebound(command, &self.context.root, timeout, cancel, true, false)?;
+        let output = capture_prebound(
+            command,
+            &self.context.root,
+            timeout,
+            cancel,
+            true,
+            if role == Role::Api {
+                CaptureOutput::ApiControl
+            } else {
+                CaptureOutput::Separate
+            },
+        )?;
         let value = documents::parse_fragment(&output, "全栈角色原生控制响应")?;
         if value["ok"] != true
             || value
@@ -388,7 +399,19 @@ pub(in crate::recovery) fn capture(
     use std::io::{Seek, SeekFrom};
     file.seek(SeekFrom::Start(0))?;
     command.stdin(Stdio::from(file));
-    capture_prebound(command, cwd, timeout, cancel, persistent, merge_stderr)
+    let output_mode = if merge_stderr {
+        CaptureOutput::Merged
+    } else {
+        CaptureOutput::Separate
+    };
+    capture_prebound(command, cwd, timeout, cancel, persistent, output_mode)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CaptureOutput {
+    Separate,
+    Merged,
+    ApiControl,
 }
 
 fn capture_prebound(
@@ -397,7 +420,7 @@ fn capture_prebound(
     timeout: Duration,
     cancel: Option<&AtomicBool>,
     persistent: bool,
-    merge_stderr: bool,
+    output_mode: CaptureOutput,
 ) -> Result<String> {
     if command.get_current_dir().is_none() {
         command.current_dir(cwd);
@@ -418,23 +441,29 @@ fn capture_prebound(
         overflow.clone(),
     );
     let started = Instant::now();
-    let result: Result<()> = loop {
+    let (result, failed_exit): (Result<()>, bool) = loop {
         if overflow.load(Ordering::Acquire) {
-            break Err("全栈命令输出超过16MiB".into());
+            break (Err("全栈命令输出超过16MiB".into()), false);
         }
         if cancel.is_some_and(|v| v.load(Ordering::Acquire)) {
-            break Err("全栈命令取消；保留操作收据，核对未知写入".into());
+            break (
+                Err("全栈命令取消；保留操作收据，核对未知写入".into()),
+                false,
+            );
         }
         if started.elapsed() > timeout {
-            break Err("全栈命令超时；保留操作收据，不自动重放".into());
+            break (Err("全栈命令超时；保留操作收据，不自动重放".into()), false);
         }
         if let Some(status) = child.waiting()? {
             break if status.success() {
-                Ok(())
+                (Ok(()), false)
             } else {
-                Err(
-                    format!("全栈命令失败，退出状态 {status}；核对阶段收据，不回显子进程内容")
-                        .into(),
+                (
+                    Err(
+                        format!("全栈命令失败，退出状态 {status}；核对阶段收据，不回显子进程内容")
+                            .into(),
+                    ),
+                    true,
                 )
             };
         }
@@ -446,9 +475,16 @@ fn capture_prebound(
     let errors = errors.join().map_err(|_| "全栈错误输出线程失败")??;
     if let Err(error) = result {
         let reason = crate::process::exit_status::command_output_diagnostic(&bytes, &errors);
+        if output_mode == CaptureOutput::ApiControl
+            && failed_exit
+            && !overflow.load(Ordering::Acquire)
+            && let Some(diagnostic) = worker::api_control_diagnostic(&bytes)
+        {
+            return Err(format!("{error}{reason}；{diagnostic}").into());
+        }
         return Err(format!("{error}{reason}").into());
     }
-    if merge_stderr {
+    if output_mode == CaptureOutput::Merged {
         bytes.extend(errors);
     }
     if bytes.len() > 16 * 1024 * 1024 {

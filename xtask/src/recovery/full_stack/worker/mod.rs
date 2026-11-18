@@ -152,6 +152,39 @@ fn ci_api_action(role: role::Role, action: &str) -> Result<(&str, bool)> {
 }
 
 const LIMIT: usize = 1024 * 1024;
+
+pub(super) fn api_control_diagnostic(bytes: &[u8]) -> Option<String> {
+    if bytes.len() > LIMIT {
+        return None;
+    }
+    let label = "API 控制拒绝响应";
+    let response = strict::parse_fragment(std::str::from_utf8(bytes).ok()?, label).ok()?;
+    strict::exact(&response, &["ok", "error", "message"], label).ok()?;
+    if response["ok"] != false || response["error"] != "ProcessRejected" {
+        return None;
+    }
+    let message = response["message"].as_str()?;
+    // 准备旁证必须与严格重建的文本相同，其余只允许控制器现有的固定拒绝原因。
+    if preparation::safe_message(role::Role::Api, message)
+        || matches!(
+            message,
+            "API运行合同核验失败；核对冻结来源、配置与产物，保留现场且不启动或停止进程"
+                | "API start 的 owner/request 发布未确认；保留控制目录，不重放"
+                | "API成员监督器启动未确认"
+                | "API启动授权未确认；保留候选、成员关闭证明和控制锁"
+                | "API候选与实际监督进程不匹配"
+                | "API监督候选登记前成员监督器已退出"
+                | "API监督候选登记超过120秒期限"
+                | "API后台启动结果未知；使用status或reconcile核对，不自动重放"
+                | "API启动失败；已保留原始失败收据和完整成员关闭证明"
+                | "API状态或回收未确认；保留控制锁，不自动重放"
+        )
+    {
+        return Some(message.to_owned());
+    }
+    None
+}
+
 pub(in crate::recovery) const CONTROL_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(300);
 
