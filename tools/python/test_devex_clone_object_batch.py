@@ -44,7 +44,8 @@ class ObjectBatchTests(unittest.TestCase):
                 active -= 1
             return {"metadata": {"key": key}, "get_header_consistent": True}
 
-        def verify(tools, side, bucket, key, output, **kwargs):
+        def verify(tools, side, bucket, key, output, *, transport, **kwargs):
+            self.assertEqual(transport, "rust-s3-sigv4")
             self.assertEqual((output / "object.bin").read_bytes(), b"data")
             with guard:
                 verified.append((side, bucket, key, kwargs))
