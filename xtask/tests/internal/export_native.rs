@@ -32,6 +32,8 @@ const UUID: &str = "67cd8d4a-fe90-11ef-98fd-5847ca786499";
 mod inventory_tests;
 #[path = "export_native/recovery.rs"]
 mod recovery_tests;
+#[path = "export_native/saved_captures.rs"]
+mod saved_captures;
 #[path = "export_native/schema.rs"]
 mod schema_tests;
 
