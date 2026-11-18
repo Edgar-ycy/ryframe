@@ -56,7 +56,7 @@ impl StageRunner for Runner {
 fn start(stage: &Stage<'_>, storage: &Storage) -> Result<Value> {
     fs::create_dir(&stage.copy)?;
     common::local_directory(stage.backend, &stage.copy, "新复制目录")?;
-    let attempt = Attempt::new(stage);
+    let attempt = Attempt::new(stage.mode, &stage.copy);
     let mut phase = "prepare";
     let result = (|| {
         let operation = Operation::load(stage, storage, None)?;
@@ -66,11 +66,11 @@ fn start(stage: &Stage<'_>, storage: &Storage) -> Result<Value> {
         phase = "transfer";
         operation.transfer(owner, &data, &attempt)
     })();
-    attempt.failure(stage, result, phase)
+    attempt.failure(stage.backend, &stage.copy, result, phase)
 }
 
 fn continue_copy(stage: &Stage<'_>, storage: &Storage) -> Result<Value> {
-    let attempt = Attempt::new(stage);
+    let attempt = Attempt::new(stage.mode, &stage.copy);
     let result = (|| {
         let files = Files::bind(stage.backend, &stage.manifest, &stage.descriptor)?;
         let saved = files.read_record()?;
@@ -90,7 +90,7 @@ fn continue_copy(stage: &Stage<'_>, storage: &Storage) -> Result<Value> {
             Err(error) => owner.finish(Err(error)),
         }
     })();
-    attempt.failure(stage, result, "continuation")
+    attempt.failure(stage.backend, &stage.copy, result, "continuation")
 }
 
 struct Operation<'a> {

@@ -1,5 +1,5 @@
 //! 完整复制的结果在目标和账本目录锁释放后发布。
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use chrono::{SecondsFormat, Utc};
 use serde_json::{Value, json};
@@ -16,19 +16,16 @@ pub(super) struct Attempt {
 }
 
 impl Attempt {
-    pub(super) fn new(stage: &Stage<'_>) -> Self {
-        let file = if stage.mode == Mode::New {
-            stage.copy.join("failure.json")
+    pub(super) fn new(mode: Mode, copy: &Path) -> Self {
+        let file = if mode == Mode::New {
+            copy.join("failure.json")
         } else {
-            stage.copy.join(format!(
+            copy.join(format!(
                 "continuation-{}.json",
                 uuid::Uuid::new_v4().simple()
             ))
         };
-        Self {
-            mode: stage.mode,
-            file,
-        }
+        Self { mode, file }
     }
 
     pub(super) fn publish(
@@ -71,18 +68,18 @@ impl Attempt {
 
     pub(super) fn failure<T>(
         &self,
-        stage: &Stage<'_>,
+        backend: &Path,
+        copy: &Path,
         result: Result<T>,
         phase: &str,
     ) -> Result<T> {
         let Err(error) = result else {
             return result;
         };
-        if self.file.parent() != Some(stage.copy.as_path()) {
+        if self.file.parent() != Some(copy) {
             return Err(format!("{error}；失败收据目录不属于原复制窗口").into());
         }
-        if let Err(check) = common::local_directory(stage.backend, &stage.copy, "复制失败证据")
-        {
+        if let Err(check) = common::local_directory(backend, copy, "复制失败证据") {
             return Err(format!("{error}；失败证据目录核验失败：{check}").into());
         }
         let diagnostic = if self.mode == Mode::New {
@@ -159,3 +156,7 @@ fn completed_at() -> String {
     };
     now.to_rfc3339_opts(precision, false)
 }
+
+#[cfg(test)]
+#[path = "../../../../../tests/unit/recovery/clone/native/copy_transfer/publication.rs"]
+mod tests;

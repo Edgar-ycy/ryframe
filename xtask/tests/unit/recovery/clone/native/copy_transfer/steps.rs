@@ -1,5 +1,10 @@
 use super::*;
+use std::{fs::OpenOptions, io::Write, path::PathBuf};
+
 use crate::recovery::clone::native::copy_ledger::session::tests::{ARTIFACT, Fixture, images};
+
+#[path = "steps_database.rs"]
+mod database;
 
 fn declaration(object_count: usize) -> Value {
     json!({
@@ -16,9 +21,28 @@ struct FixtureIo {
     bases: Map<String, Value>,
     writes: Vec<String>,
     batch_sizes: Vec<usize>,
+    database_ids: Vec<String>,
+    database_events: Vec<DatabaseEvent>,
+    database_evidence: Map<String, Value>,
+    database_fault: Option<DatabaseFault>,
     stop_at: Option<String>,
+    failed_database_image: Option<Value>,
     resume_target_usable: bool,
     complete_checks: usize,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum DatabaseEvent {
+    Observe(Vec<String>),
+    Write(String),
+    VerifyComplete,
+}
+
+enum DatabaseFault {
+    Checkpoint,
+    Basis(String),
+    Ledger(PathBuf),
+    Evidence(String),
 }
 
 impl FixtureIo {
@@ -43,7 +67,12 @@ impl FixtureIo {
             bases,
             writes: Vec::new(),
             batch_sizes: Vec::new(),
+            database_ids: plan.databases.iter().map(|step| step.id.clone()).collect(),
+            database_events: Vec::new(),
+            database_evidence: Map::new(),
+            database_fault: None,
             stop_at: None,
+            failed_database_image: None,
             resume_target_usable: true,
             complete_checks: 0,
         }
@@ -67,6 +96,26 @@ impl CopyIo for FixtureIo {
     type Evidence = Map<String, Value>;
 
     fn checkpoint(&mut self, _: Option<&Step<'_>>) -> Result<()> {
+        if !matches!(self.database_events.last(), Some(DatabaseEvent::Observe(_))) {
+            return Ok(());
+        }
+        match self.database_fault.take() {
+            Some(DatabaseFault::Checkpoint) => return Err("测试：数据库观察后代次校验失败".into()),
+            Some(DatabaseFault::Basis(id)) => {
+                self.bases.get_mut(&id).unwrap()["after"]["tables_sha256"] = json!("9".repeat(64));
+            }
+            Some(DatabaseFault::Ledger(path)) => {
+                OpenOptions::new()
+                    .append(true)
+                    .open(path)?
+                    .write_all(b"\n")?;
+            }
+            Some(DatabaseFault::Evidence(id)) => {
+                self.database_evidence.get_mut(&id).unwrap()["tables_sha256"] =
+                    json!("9".repeat(64));
+            }
+            None => {}
+        }
         Ok(())
     }
 
@@ -85,8 +134,12 @@ impl CopyIo for FixtureIo {
     }
 
     fn observe_databases(&mut self, all: &[Step<'_>]) -> Result<Observation<Self::Evidence>> {
-        assert_eq!(all.len(), 1);
-        Ok(self.snapshot(all.iter()))
+        let ids = all.iter().map(|step| step.id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids, self.database_ids);
+        let observed = self.snapshot(all.iter());
+        self.database_evidence = observed.evidence.clone();
+        self.database_events.push(DatabaseEvent::Observe(ids));
+        Ok(observed)
     }
 
     fn observe_objects(&mut self, selected: &[&Step<'_>]) -> Result<Observation<Self::Evidence>> {
@@ -96,6 +149,14 @@ impl CopyIo for FixtureIo {
 
     fn check_observation(&mut self, observed: &Observation<Self::Evidence>) -> Result<()> {
         assert_eq!(observed.images, observed.evidence);
+        if observed
+            .images
+            .values()
+            .any(|image| image["kind"] == "database")
+            && observed.evidence != self.database_evidence
+        {
+            return Err("测试：数据库原观察证据变化".into());
+        }
         Ok(())
     }
 
@@ -108,7 +169,14 @@ impl CopyIo for FixtureIo {
             |check| {
                 check()?;
                 self.writes.push(step.id.clone());
+                if step.kind == Kind::Database {
+                    self.database_events
+                        .push(DatabaseEvent::Write(step.id.clone()));
+                }
                 if self.stop_at.as_ref() == Some(&step.id) {
+                    if let Some(image) = self.failed_database_image.take() {
+                        self.current.insert(step.id.clone(), image);
+                    }
                     return Err("复制进程结束，资源写入结果未知".into());
                 }
                 self.current.insert(step.id.clone(), basis.after.clone());
@@ -119,6 +187,7 @@ impl CopyIo for FixtureIo {
 
     fn verify_complete(&mut self) -> Result<()> {
         self.complete_checks += 1;
+        self.database_events.push(DatabaseEvent::VerifyComplete);
         Ok(())
     }
 }
