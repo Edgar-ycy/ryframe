@@ -4,6 +4,7 @@ use std::{
         Mutex,
         atomic::{AtomicUsize, Ordering},
     },
+    thread,
 };
 
 use sha2::{Digest, Sha256};
@@ -194,6 +195,7 @@ struct Mock {
     present: bool,
     source_error: bool,
     calls: Mutex<Vec<String>>,
+    requests: AtomicUsize,
     business_gets: AtomicUsize,
 }
 
@@ -203,6 +205,7 @@ impl Transport for Mock {
     }
 
     fn s3(&self, request: Request) -> Result<Value> {
+        self.requests.fetch_add(1, Ordering::SeqCst);
         match request.operation {
             Operation::Head {
                 key,
@@ -280,7 +283,6 @@ fn batch_completes_source_before_target_and_rechecks_unchanged_local_proofs() {
     let mock = Mock::default();
     let mut port = ObjectPort::new(fixture.inputs(), &mock).unwrap();
     let steps = [fixture.step(0), fixture.step(1)];
-    assert!(port.observe(&[&steps[0], &steps[0]], &|| Ok(())).is_err());
     let observation = port.observe(&[&steps[0], &steps[1]], &|| Ok(())).unwrap();
     {
         let calls = mock.calls.lock().unwrap();
@@ -301,6 +303,146 @@ fn batch_completes_source_before_target_and_rechecks_unchanged_local_proofs() {
             .is_err()
     );
     assert_eq!(mock.calls.lock().unwrap().len(), 14);
+}
+
+#[test]
+fn invalid_object_batches_fail_before_requests_or_observation_files() {
+    let fixture = Fixture::new(5);
+    let mock = Mock::default();
+    let mut port = ObjectPort::new(fixture.inputs(), &mock).unwrap();
+    let steps = [0, 1, 2, 3, 4].map(|index| fixture.step(index));
+    let oversized = steps.each_ref();
+    let mut foreign = steps[0].item.clone();
+    foreign["source_key"] = json!(format!("{SOURCE}/unregistered.bin"));
+    foreign["target_key"] = json!(format!("{TARGET}/unregistered.bin"));
+    let ids = copy_step_ids(
+        &json!({"databases":[],"objects":[{"bucket":BUCKET,"target_key":foreign["target_key"]}]}),
+    )
+    .unwrap();
+    let unregistered = Step {
+        id: ids["objects"][0].as_str().unwrap().to_owned(),
+        item: &foreign,
+        kind: Kind::Object,
+        artifact: steps[0].artifact,
+    };
+    let cases: &[(&[&Step<'_>], &str)] = &[
+        (&[], "对象观察批次须包含一至四个"),
+        (&[&steps[0], &steps[0]], "对象观察批次步骤重复"),
+        (&oversized, "对象观察批次须包含一至四个"),
+        (&[&unregistered], "原导出缺少本步骤对象"),
+    ];
+    for &(selected, expected) in cases {
+        let error = port.observe(selected, &|| Ok(())).err().unwrap();
+        assert!(error.to_string().contains(expected), "{error}");
+        assert_eq!(mock.requests.load(Ordering::SeqCst), 0);
+        assert!(mock.calls.lock().unwrap().is_empty());
+        assert_eq!(mock.business_gets.load(Ordering::SeqCst), 0);
+        assert!(fs::read_dir(&fixture.work).unwrap().next().is_none());
+        assert!(port.latest.is_empty());
+    }
+}
+
+fn require_complete_batch_requests(calls: &[String], steps: &[Step<'_>]) {
+    let source_count = steps.len() * 3;
+    let target_count = steps.len() * 4;
+    assert_eq!(calls.len(), source_count + target_count);
+    let (source, target) = calls.split_at(source_count);
+    assert!(source.iter().all(|key| key.starts_with(SOURCE)));
+    assert!(target.iter().all(|key| key.starts_with(TARGET)));
+    for (group, scope) in [(source, SOURCE), (target, TARGET)] {
+        let owner = format!("{scope}/.ryframe-owner");
+        assert_eq!(
+            group
+                .iter()
+                .filter(|key| key.as_str() == owner.as_str())
+                .count(),
+            steps.len() * 2
+        );
+    }
+    for step in steps {
+        assert_eq!(
+            source
+                .iter()
+                .filter(|key| key.as_str() == step.item["source_key"].as_str().unwrap())
+                .count(),
+            1
+        );
+        assert_eq!(
+            target
+                .iter()
+                .filter(|key| key.as_str() == step.item["target_key"].as_str().unwrap())
+                .count(),
+            2
+        );
+    }
+}
+
+#[test]
+fn source_proof_drift_after_target_batch_keeps_existing_latest_and_all_observation_evidence() {
+    let fixture = Fixture::new(4);
+    let mock = Mock::default();
+    let mut port = ObjectPort::new(fixture.inputs(), &mock).unwrap();
+    let steps = [0, 1, 2, 3].map(|index| fixture.step(index));
+    let original = port.observe(&[&steps[0]], &|| Ok(())).unwrap();
+    let before = tree::snapshot(fixture.root.path(), &fixture.work, false).unwrap();
+    let previous_requests = mock.requests.load(Ordering::SeqCst);
+    mock.calls.lock().unwrap().clear();
+
+    let proof = fixture
+        .export_root
+        .join("objects/item-1/head-before.diagnostic.json");
+    let digest = digest::file(&proof).unwrap();
+    let label = manifest::path_text(&proof, "原对象小型证据").unwrap();
+    assert_eq!(
+        fixture.proof_files[&label],
+        json!({"bytes":digest.bytes,"sha256":digest.sha256})
+    );
+    let changed = b"drift\n";
+    let controller = thread::current().id();
+    let checkpoints = AtomicUsize::new(0);
+    let completed_tree = Mutex::new(None);
+    let checkpoint = || {
+        if thread::current().id() == controller && checkpoints.fetch_add(1, Ordering::SeqCst) == 1 {
+            assert_eq!(
+                mock.requests.load(Ordering::SeqCst),
+                previous_requests + steps.len() * 7
+            );
+            require_complete_batch_requests(&mock.calls.lock().unwrap(), &steps);
+            let snapshot = tree::snapshot(fixture.root.path(), &fixture.work, false)?;
+            let entries = snapshot.as_array().unwrap();
+            for entry in before.as_array().unwrap() {
+                assert!(entries.contains(entry));
+            }
+            for prefix in ["source-object-", "target-object-"] {
+                let receipts = entries
+                    .iter()
+                    .filter_map(|entry| entry["path"].as_str())
+                    .filter(|path| path.starts_with(prefix) && path.ends_with("/observation.json"));
+                assert_eq!(receipts.count(), steps.len() + 1);
+            }
+            *completed_tree.lock().unwrap() = Some(snapshot);
+            fs::write(&proof, changed)?;
+        }
+        Ok(())
+    };
+
+    let error = port.observe(&steps.each_ref(), &checkpoint).err().unwrap();
+    assert_eq!(error.to_string(), "本对象原始小型证据发生变化");
+    assert_eq!(checkpoints.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        tree::snapshot(fixture.root.path(), &fixture.work, false).unwrap(),
+        completed_tree.into_inner().unwrap().unwrap()
+    );
+    assert_eq!(fs::read(proof).unwrap(), changed);
+    assert_eq!(port.latest.len(), 1);
+    port.check_observation(&original.images, &original.evidence)
+        .unwrap();
+    require_complete_batch_requests(&mock.calls.lock().unwrap(), &steps);
+    assert_eq!(
+        mock.requests.load(Ordering::SeqCst),
+        previous_requests + steps.len() * 7
+    );
+    assert_eq!(mock.business_gets.load(Ordering::SeqCst), 0);
 }
 
 #[test]

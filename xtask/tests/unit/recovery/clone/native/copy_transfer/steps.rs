@@ -22,7 +22,7 @@ struct FixtureIo {
     current: Map<String, Value>,
     bases: Map<String, Value>,
     writes: Vec<String>,
-    batch_sizes: Vec<usize>,
+    object_batches: Vec<Vec<String>>,
     database_ids: Vec<String>,
     database_events: Vec<DatabaseEvent>,
     database_evidence: Map<String, Value>,
@@ -71,7 +71,7 @@ impl FixtureIo {
             current,
             bases,
             writes: Vec::new(),
-            batch_sizes: Vec::new(),
+            object_batches: Vec::new(),
             database_ids: plan.databases.iter().map(|step| step.id.clone()).collect(),
             database_events: Vec::new(),
             database_evidence: Map::new(),
@@ -154,7 +154,8 @@ impl CopyIo for FixtureIo {
     }
 
     fn observe_objects(&mut self, selected: &[&Step<'_>]) -> Result<Observation<Self::Evidence>> {
-        self.batch_sizes.push(selected.len());
+        self.object_batches
+            .push(selected.iter().map(|step| step.id.clone()).collect());
         Ok(self.snapshot(selected.iter().copied()))
     }
 
@@ -212,10 +213,11 @@ impl CopyIo for FixtureIo {
 #[test]
 fn rejects_unregistered_drift_before_appending_a_reconcile_batch_and_resumes_only_known_before() {
     let fixture = Fixture::new();
-    let declaration = declaration(5);
+    let declaration = declaration(9);
     let plan = Plan::from_verified(&declaration).unwrap();
     let mut io = FixtureIo::new(&plan);
     let ids: Vec<_> = plan.objects.iter().map(|step| step.id.clone()).collect();
+    let expected_batches = ids.chunks(4).map(<[String]>::to_vec).collect::<Vec<_>>();
     let database = &plan.databases[0].id;
     io.stop_at = Some(ids[1].clone());
     assert!(
@@ -226,6 +228,7 @@ fn rejects_unregistered_drift_before_appending_a_reconcile_batch_and_resumes_onl
             .is_err()
     );
     assert_eq!(io.writes, ids[..2]);
+    let batches_before_resume = io.object_batches.len();
     assert!(
         fixture
             .run(Mode::Resume, |session, _| {
@@ -233,6 +236,8 @@ fn rejects_unregistered_drift_before_appending_a_reconcile_batch_and_resumes_onl
             })
             .is_err()
     );
+    assert_eq!(io.object_batches.len(), batches_before_resume);
+    assert_eq!(io.writes, ids[..2]);
 
     let drift = io.bases[&ids[2]]["after"].clone();
     let before = io.current.insert(ids[2].clone(), drift).unwrap();
@@ -245,6 +250,7 @@ fn rejects_unregistered_drift_before_appending_a_reconcile_batch_and_resumes_onl
     );
     io.current.insert(ids[2].clone(), before);
 
+    let batches_before_reconcile = io.object_batches.len();
     fixture
         .run(Mode::Reconcile, |session, _| {
             assert_eq!(session.steps()?[&ids[1]]["phase"], "unknown");
@@ -255,10 +261,15 @@ fn rejects_unregistered_drift_before_appending_a_reconcile_batch_and_resumes_onl
             assert_eq!(receipt["status"], "copy_reconciled");
             assert_eq!(receipt["steps"][&ids[0]], "confirmed");
             assert_eq!(receipt["steps"][&ids[1]], "reconciled_before");
+            assert_eq!(receipt["pending_steps"].as_array().unwrap().len(), 8);
             assert_eq!(receipt["remote_writes"], 0);
             Ok(())
         })
         .unwrap();
+    assert_eq!(
+        &io.object_batches[batches_before_reconcile..],
+        expected_batches.as_slice(),
+    );
     assert_eq!(io.writes, ids[..2]);
 
     io.stop_at = None;
@@ -278,7 +289,10 @@ fn rejects_unregistered_drift_before_appending_a_reconcile_batch_and_resumes_onl
     assert_eq!(receipt["status"], "ledger_evidence_complete");
     assert_eq!(io.writes, [ids[..2].to_vec(), ids[1..].to_vec()].concat());
     assert_eq!(io.complete_checks, 1);
-    assert_eq!(io.batch_sizes[io.batch_sizes.len() - 2..], [4, 1]);
+    assert_eq!(
+        &io.object_batches[io.object_batches.len() - expected_batches.len()..],
+        expected_batches.as_slice(),
+    );
 }
 
 #[test]
@@ -306,7 +320,7 @@ fn rejects_resume_without_target_redis_before_observing_or_writing_steps() {
             run(&plan, session, Mode::Reconcile, &mut io).map(|_| ())
         })
         .unwrap();
-    let previous_batches = io.batch_sizes.clone();
+    let previous_batches = io.object_batches.clone();
 
     let failure = fixture
         .run(Mode::Resume, |session, _| {
@@ -320,7 +334,7 @@ fn rejects_resume_without_target_redis_before_observing_or_writing_steps() {
         })
         .unwrap_err();
     assert_eq!(failure.to_string(), "目标 Redis 缺少初始化标记");
-    assert_eq!(io.batch_sizes, previous_batches);
+    assert_eq!(io.object_batches, previous_batches);
     assert_eq!(io.writes.as_slice(), [first.clone(), interrupted.clone()]);
     assert_eq!(io.complete_checks, 0);
 }
