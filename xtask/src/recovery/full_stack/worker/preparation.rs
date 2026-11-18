@@ -8,6 +8,7 @@ use crate::{Result, recovery::clone::native::json as strict};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::{fs, io::ErrorKind, process::ExitStatus};
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -17,6 +18,8 @@ pub(super) enum Stage {
     MemberSpawn,
     MemberIdentity,
     ReadyPublication,
+    CandidatePublication,
+    SupervisorBeforeCandidate,
 }
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -37,6 +40,54 @@ struct Detail {
     cause: Cause,
     os_code: Option<i32>,
     cause_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    supervisor_status: Option<SupervisorStatus>,
+}
+
+#[derive(Clone, Copy, Deserialize, Serialize)]
+#[serde(
+    tag = "kind",
+    content = "value",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+enum SupervisorStatus {
+    Code(i32),
+    Signal(i32),
+}
+
+impl SupervisorStatus {
+    fn observed(status: ExitStatus) -> Option<Self> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            if let Some(signal) = status.signal() {
+                return Some(Self::Signal(signal));
+            }
+        }
+        status.code().map(Self::Code)
+    }
+
+    fn text(self) -> String {
+        match self {
+            Self::Code(code) => format!("code={code}"),
+            Self::Signal(signal) => format!("signal={signal}"),
+        }
+    }
+
+    fn parse(text: &str) -> Option<Self> {
+        let (kind, value) = text.split_once('=')?;
+        match kind {
+            "code" => value.parse().ok().map(Self::Code),
+            "signal" => value.parse().ok().map(Self::Signal),
+            _ => None,
+        }
+    }
+
+    fn digest(status: Option<Self>) -> String {
+        let text = status.map_or_else(|| "unknown".to_owned(), Self::text);
+        hex::encode(Sha256::digest(text.as_bytes()))
+    }
 }
 
 pub(super) fn step<T>(
@@ -49,6 +100,32 @@ pub(super) fn step<T>(
         // 旁证发布失败不得替代原失败，也不得改变原回收路径。
         let _ = publish(op, monitor, stage, error.as_ref());
     })
+}
+
+pub(super) fn record_supervisor_exit(op: &Operation, monitor: &Value, status: ExitStatus) {
+    if op.role == Role::Frontend
+        || !["candidate.json", "supervisor.json"]
+            .into_iter()
+            .all(|name| {
+                fs::symlink_metadata(op.path.join(name))
+                    .is_err_and(|error| error.kind() == ErrorKind::NotFound)
+            })
+    {
+        return;
+    }
+    let status = SupervisorStatus::observed(status);
+    // 仅记录原子进程句柄的退出结果。初次失败旁证和控制锁继续保留。
+    let _ = publish_detail(
+        op,
+        monitor,
+        Detail {
+            stage: Stage::SupervisorBeforeCandidate,
+            cause: Cause::MemberExited,
+            os_code: None,
+            cause_sha256: SupervisorStatus::digest(status),
+            supervisor_status: status,
+        },
+    );
 }
 
 fn detail(stage: Stage, error: &(dyn std::error::Error + 'static)) -> Detail {
@@ -83,6 +160,7 @@ fn detail(stage: Stage, error: &(dyn std::error::Error + 'static)) -> Detail {
         cause,
         os_code: io.and_then(std::io::Error::raw_os_error),
         cause_sha256: hex::encode(Sha256::digest(text.as_bytes())),
+        supervisor_status: None,
     }
 }
 
@@ -92,6 +170,10 @@ fn publish(
     stage: Stage,
     error: &(dyn std::error::Error + 'static),
 ) -> Result<()> {
+    publish_detail(op, monitor, detail(stage, error))
+}
+
+fn publish_detail(op: &Operation, monitor: &Value, detail: Detail) -> Result<()> {
     if op.role == Role::Frontend || op.request["operation"] != "start" {
         return Ok(());
     }
@@ -100,7 +182,8 @@ fn publish(
     let mut value = op.bound(&op.role.kind("preparation-failed"))?;
     value["role"] = json!(op.role.name());
     value["monitor"] = monitor.clone();
-    value["detail"] = serde_json::to_value(detail(stage, error))?;
+    validate(&detail)?;
+    value["detail"] = serde_json::to_value(detail)?;
     op.publish("preparation-failed.json", &value, false)
 }
 
@@ -166,13 +249,32 @@ pub(in crate::recovery) fn validate_record(
 }
 fn validate(detail: &Detail) -> Result<()> {
     let matching = match detail.cause {
-        Cause::RuntimeChanged => matches!(detail.stage, Stage::RuntimeInput),
-        Cause::RequestMismatch => matches!(detail.stage, Stage::RequestContract),
-        Cause::MemberExited => matches!(detail.stage, Stage::MemberIdentity),
+        Cause::RuntimeChanged => matches!(
+            detail.stage,
+            Stage::RuntimeInput | Stage::CandidatePublication
+        ),
+        Cause::RequestMismatch => matches!(
+            detail.stage,
+            Stage::RequestContract | Stage::CandidatePublication
+        ),
+        Cause::MemberExited => matches!(
+            detail.stage,
+            Stage::MemberIdentity | Stage::SupervisorBeforeCandidate
+        ),
         _ => true,
     };
     if !matching {
         return Err("监督准备阶段与固定原因不一致".into());
+    }
+    if matches!(detail.stage, Stage::SupervisorBeforeCandidate) {
+        if !matches!(detail.cause, Cause::MemberExited)
+            || matches!(detail.supervisor_status, Some(SupervisorStatus::Signal(signal)) if !(1..=255).contains(&signal))
+            || detail.cause_sha256 != SupervisorStatus::digest(detail.supervisor_status)
+        {
+            return Err("监督子进程退出状态无效".into());
+        }
+    } else if detail.supervisor_status.is_some() {
+        return Err("监督准备阶段与子进程退出状态不一致".into());
     }
     if !documents::hex(&json!(detail.cause_sha256), 64)
         || (detail.os_code.is_some()
@@ -192,13 +294,22 @@ fn advice(stage: Stage) -> &'static str {
         Stage::MemberSpawn => "核对成员创建权限与系统资源；保留现场，显式核对，不重放",
         Stage::MemberIdentity => "核对成员创建身份与退出证据；保留现场，显式核对，不重放",
         Stage::ReadyPublication => "核对成员ready证据目录与权限；保留现场，显式核对，不重放",
+        Stage::CandidatePublication => {
+            "核对候选发布目录、控制锁和原成员登记；保留现场，显式核对，不重放"
+        }
+        Stage::SupervisorBeforeCandidate => {
+            "核对原监督子进程、已登记成员和候选证据；保留现场，显式核对，不重放"
+        }
     }
 }
 fn message(role: Role, detail: &Detail) -> String {
     let stage = serde_json::to_value(detail.stage).expect("固定阶段");
     let cause = serde_json::to_value(detail.cause).expect("固定原因");
+    let status = detail.supervisor_status.map_or_else(String::new, |status| {
+        format!("子进程退出={}；", status.text())
+    });
     format!(
-        "{}监督准备失败；阶段={}；原因={}；系统码={}；原因摘要={}；{}",
+        "{}监督准备失败；阶段={}；原因={}；系统码={}；原因摘要={}；{}{}",
         role.label(),
         stage.as_str().expect("固定阶段字符串"),
         cause.as_str().expect("固定原因字符串"),
@@ -206,6 +317,7 @@ fn message(role: Role, detail: &Detail) -> String {
             .os_code
             .map_or_else(|| "none".into(), |code| code.to_string()),
         detail.cause_sha256,
+        status,
         advice(detail.stage)
     )
 }
@@ -227,7 +339,7 @@ pub(in crate::recovery) fn safe_message(role: Role, text: &str) -> bool {
         return false;
     }
     let fields = text.split('；').collect::<Vec<_>>();
-    if fields.len() != 7 {
+    if !matches!(fields.len(), 7 | 8) {
         return false;
     }
     let parse = || -> Option<Detail> {
@@ -239,6 +351,13 @@ pub(in crate::recovery) fn safe_message(role: Role, text: &str) -> bool {
                 code => Some(code.parse().ok()?),
             },
             cause_sha256: fields[4].strip_prefix("原因摘要=")?.into(),
+            supervisor_status: if fields.len() == 8 {
+                Some(SupervisorStatus::parse(
+                    fields[5].strip_prefix("子进程退出=")?,
+                )?)
+            } else {
+                None
+            },
         })
     };
     parse().is_some_and(|detail| validate(&detail).is_ok() && message(role, &detail) == text)

@@ -25,6 +25,7 @@ fn preparation_failure_is_bound_redacted_and_never_authorizes_a_candidate() {
             Stage::MemberSpawn,
             Stage::MemberIdentity,
             Stage::ReadyPublication,
+            Stage::CandidatePublication,
         ] {
             let (_directory, op, monitor) = fixture(role);
             let owner = std::fs::read(op.path.join("owner.json")).unwrap();
@@ -66,6 +67,140 @@ fn preparation_failure_is_bound_redacted_and_never_authorizes_a_candidate() {
                     .join(format!("{}-tree.json", role.name()))
                     .exists()
             );
+        }
+    }
+}
+
+fn fixture_candidate(op: &Operation) -> Value {
+    let mut candidate = op.bound(&op.role.kind("candidate")).unwrap();
+    candidate["identity"] = op.owner["identity"].clone();
+    candidate["created_at_ns"] = json!(1);
+    candidate
+}
+
+#[cfg(any(unix, windows))]
+fn exit_status(code: u8) -> std::process::ExitStatus {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        std::process::ExitStatus::from_raw(i32::from(code) << 8)
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::ExitStatusExt;
+        std::process::ExitStatus::from_raw(u32::from(code))
+    }
+}
+
+#[test]
+fn candidate_publication_failure_preserves_the_existing_candidate_and_original_error() {
+    let (_directory, op, monitor) = fixture(Role::Worker);
+    let mut candidate = fixture_candidate(&op);
+    op.publish("candidate.json", &candidate, false).unwrap();
+    let candidate_path = op.path.join("candidate.json");
+    let original = std::fs::read(&candidate_path).unwrap();
+    candidate["created_at_ns"] = json!(2);
+
+    let error = step(&op, &monitor, Stage::CandidatePublication, || {
+        op.publish("candidate.json", &candidate, false)
+    })
+    .unwrap_err();
+
+    assert_eq!(error.to_string(), "角色控制收据已经存在");
+    let diagnostic = operation::read(&op.path.join("preparation-failed.json")).unwrap();
+    validate_record(&diagnostic, op.directory(), &op.owner, &op.request).unwrap();
+    assert_eq!(diagnostic["detail"]["stage"], "candidate_publication");
+    assert!(diagnostic["detail"].get("supervisor_status").is_none());
+    let safe = failure(&op, &monitor).unwrap();
+    assert!(safe_message(op.role, &safe));
+    assert!(safe.contains("阶段=candidate_publication"));
+    assert_eq!(std::fs::read(candidate_path).unwrap(), original);
+    assert!(!op.path.join("supervisor.json").exists());
+}
+
+#[cfg(any(unix, windows))]
+#[test]
+fn supervisor_exit_before_candidate_is_bound_redacted_and_recorded_once() {
+    for role in [Role::Api, Role::Worker] {
+        let (_directory, op, monitor) = fixture(role);
+        let status = exit_status(23);
+        assert_eq!(status.code(), Some(23));
+        record_supervisor_exit(&op, &monitor, status);
+
+        let path = op.path.join("preparation-failed.json");
+        let original = std::fs::read(&path).unwrap();
+        let value = operation::read(&path).unwrap();
+        validate_record(&value, op.directory(), &op.owner, &op.request).unwrap();
+        assert_eq!(value["monitor"], monitor);
+        assert_eq!(value["detail"]["stage"], "supervisor_before_candidate");
+        assert_eq!(value["detail"]["cause"], "member_exited");
+        assert_eq!(value["detail"]["os_code"], Value::Null);
+        assert_eq!(
+            value["detail"]["supervisor_status"],
+            json!({"kind":"code","value":23})
+        );
+        let safe = failure(&op, &monitor).unwrap();
+        assert!(safe_message(role, &safe));
+        assert!(safe.contains("阶段=supervisor_before_candidate"));
+        assert!(safe.contains("原因=member_exited"));
+        assert!(safe.contains("子进程退出=code=23"));
+        assert!(!safe_message(role, &safe.replace("code=23", "code=24")));
+        assert_eq!(
+            super::super::controller::authorize(&op, &monitor)
+                .unwrap_err()
+                .to_string(),
+            safe
+        );
+
+        record_supervisor_exit(&op, &monitor, exit_status(24));
+        assert_eq!(std::fs::read(path).unwrap(), original);
+        assert!(!op.path.join("candidate.json").exists());
+        assert!(!op.path.join("supervisor.json").exists());
+        assert_eq!(std::fs::read_dir(&op.path).unwrap().count(), 3);
+    }
+}
+
+#[cfg(any(unix, windows))]
+#[test]
+fn supervisor_exit_keeps_prior_diagnostic_candidate_and_authorization_unchanged() {
+    for existing in [
+        "preparation-failed.json",
+        "candidate.json",
+        "supervisor.json",
+    ] {
+        let (_directory, op, monitor) = fixture(Role::Worker);
+        match existing {
+            "preparation-failed.json" => {
+                let failure = std::io::Error::from_raw_os_error(5);
+                publish(&op, &monitor, Stage::ReadyPublication, &failure).unwrap();
+                assert!(super::failure(&op, &monitor).is_some());
+            }
+            "candidate.json" => {
+                op.publish(existing, &fixture_candidate(&op), false)
+                    .unwrap();
+                op.child(existing).unwrap();
+            }
+            "supervisor.json" => {
+                let candidate = fixture_candidate(&op);
+                let mut authorization = op.bound(&op.role.kind("supervisor")).unwrap();
+                authorization["identity"] = candidate["identity"].clone();
+                authorization["candidate_sha256"] =
+                    json!(super::documents::hash(&candidate).unwrap());
+                authorization["authorized_at_ns"] = json!(2);
+                // 即使只剩授权收据，也必须保留现场，不补造候选前失败。
+                op.publish(existing, &authorization, false).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let path = op.path.join(existing);
+        let original = std::fs::read(&path).unwrap();
+
+        record_supervisor_exit(&op, &monitor, exit_status(23));
+
+        assert_eq!(std::fs::read(path).unwrap(), original);
+        assert_eq!(std::fs::read_dir(&op.path).unwrap().count(), 3);
+        if existing != "preparation-failed.json" {
+            assert!(!op.path.join("preparation-failed.json").exists());
         }
     }
 }

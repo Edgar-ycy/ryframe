@@ -128,7 +128,8 @@ pub(super) fn monitor(args: &Value) -> Result<Value> {
                     members.push(identity);
                 }
             }
-            if child.try_wait()?.is_some() {
+            if let Some(status) = child.try_wait()? {
+                preparation::record_supervisor_exit(&op, &monitor, status);
                 break;
             }
             thread::sleep(Duration::from_millis(20));
@@ -176,10 +177,13 @@ pub(super) fn run(args: &Value) -> Result<Value> {
     {
         return Err("角色成员监督器归属无效".into());
     }
-    let mut candidate = op.bound(&op.role.kind("candidate"))?;
-    candidate["identity"] = identity.clone();
-    candidate["created_at_ns"] = json!(operation::now());
-    op.publish("candidate.json", &candidate, false)?;
+    let candidate = preparation::step(&op, &ready["monitor"], Stage::CandidatePublication, || {
+        let mut candidate = op.bound(&op.role.kind("candidate"))?;
+        candidate["identity"] = identity.clone();
+        candidate["created_at_ns"] = json!(operation::now());
+        op.publish("candidate.json", &candidate, false)?;
+        Ok(candidate)
+    })?;
     loop {
         if Instant::now() >= deadline || !op.path.exists() {
             return Err("角色未获得授权，未启动产品".into());
