@@ -16,7 +16,7 @@ from restore_build import ROLES, build_command, file_digest
 from full_stack_runtime import configuration_digest
 from source_inventory import build_source_domains, canonical_digest
 from restore_reference_io import DATA_HEADER
-from restore_reference_plan import BUCKETS, configuration_binding, plan_hash
+from restore_reference_plan import BUCKETS, configuration_binding
 
 
 class SourceFixture:
@@ -177,7 +177,12 @@ class SourceFixture:
             counts = dict.fromkeys(tables, 0)
             for table, _ in self.data[database["key"]]:
                 counts[table] += 1
-            digests = [{"table": table, "rows": count, "sha256": plan_hash({"fixture_table": table, "rows": count})} for table, count in sorted(counts.items())]
+            # 夹具只为表名与行数生成测试摘要，实际导出继续用原生工具核验。
+            digests = [
+                {"table": table, "rows": count,
+                 "sha256": canonical_digest({"fixture_table": table, "rows": count})}
+                for table, count in sorted(counts.items())
+            ]
             if self.omit_empty_table:
                 digests = [table for table in digests if table["rows"]]
             if self.inventory_change and self.inventory_count == 2:
