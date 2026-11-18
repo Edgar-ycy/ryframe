@@ -130,23 +130,34 @@ class OwnerScopeTests(unittest.TestCase):
         self.assertEqual(len(self.store.calls), 13)
         self.assertEqual(tuple(item['bucket'] for item in captured['ownership_before']), ALL)
         self.assertEqual(tuple(item['bucket'] for item in captured['ownership_after']), ALL)
+        self.assertNotIn('aws', self.plan['tools'])
         verified = self.verify()
+        self.assertEqual(verified['status'], 'capture_evidence_verified')
         self.assertEqual(verified['capture'], captured)
         self.assertEqual(len(self.store.calls), 13)
 
-    def test_default_source_verification_rejects_every_other_bucket_owner_proof_tamper(self):
+    def test_default_source_verification_rejects_object_and_owner_byte_tampering(self):
         self.side = 'source'
-        for stage in ('before', 'after'):
-            for bucket in sorted(BUCKETS - {'uploads'}):
-                with self.subTest(stage=stage, bucket=bucket):
-                    self.output = self.work / f'owner-{stage}-{bucket}'
-                    self.store.heads = 0
-                    self.capture()
-                    (self.output / f'owner-{stage}-{bucket}.bin').write_bytes(b'other-resource-owner')
-                    calls = len(self.store.calls)
-                    with self.assertRaises(ValueError): self.verify()
-                    with self.assertRaises(ValueError): self.verify(owner_buckets=ONE)
-                    self.assertEqual(len(self.store.calls), calls)
+        other_owners = [
+            f'owner-{stage}-{bucket}.bin'
+            for stage in ('before', 'after')
+            for bucket in ALL
+            if bucket != 'uploads'
+        ]
+        files = ['object.bin', 'owner-before-uploads.bin', *other_owners]
+        for filename in files:
+            with self.subTest(filename=filename):
+                self.output = self.work / Path(filename).stem
+                self.store.heads = 0
+                self.capture()
+                replacement = b'tampered-bytes' if filename == 'object.bin' else b'other-resource-owner'
+                (self.output / filename).write_bytes(replacement)
+                calls = len(self.store.calls)
+                with self.assertRaises(ValueError):
+                    self.verify()
+                with self.assertRaises(ValueError):
+                    self.verify(owner_buckets=ONE)
+                self.assertEqual(len(self.store.calls), calls)
 
     def test_one_bucket_receipt_cannot_choose_default_verification_scope(self):
         self.capture(owner_buckets=ONE)

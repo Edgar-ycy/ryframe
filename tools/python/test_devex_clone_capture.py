@@ -437,21 +437,6 @@ class CaptureTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.verify()
 
-    def test_verify_checks_actual_object_owner_bytes_without_object_cli(self):
-        for index, name in enumerate(("object.bin", "owner-before-uploads.bin", "owner-after-config-packages.bin")):
-            with self.subTest(file=name):
-                self.output = self.work / f"bytes-{index}"
-                self.store.heads = 0
-                self.capture()
-                (self.output / name).write_bytes(b"tampered-bytes")
-                with self.assertRaises(ValueError):
-                    self.verify()
-        self.output = self.work / "changed-tool"
-        self.store.heads = 0
-        self.capture()
-        self.assertNotIn("aws", self.plan["tools"])
-        self.assertEqual(self.verify()["status"], "capture_evidence_verified")
-
     def test_verify_requires_every_original_owner_response_and_complete_result(self):
         self.capture()
         owner = self.output / "owner-after-exports.json"
