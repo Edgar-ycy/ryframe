@@ -1,8 +1,4 @@
 """真实平台清理 SQL 的安全形状；ID 和时间改为固定测试值，不包含环境绑定。"""
-import copy
-
-from devex_clone_schedule import schedule_row_sha256
-
 
 CLEANUPS = (
     ("system.export_result_cleanup", "system.export.cleanup"),
@@ -28,15 +24,3 @@ def add_cleanup(case, index=0, *, trigger="scheduled", terminal="succeeded"):
                          schedule_id=schedule_id, background_job_id=job_id, outcome="enqueued",
                          trigger_kind=trigger, scheduled_for=SQL_TIME)
     return schedule, job, execution
-
-
-def bind_actions(case):
-    case.value["target_schedule_actions"] = [
-        {"action": "disable_schedule_via_api", "tenant_id": row["tenant_id"], "schedule_id": str(row["id"]),
-         "handler_key": row["handler_key"], "expected_version": row["version"],
-         "source_row_sha256": schedule_row_sha256(row)}
-        for table, row in case.data["shared-control"]
-        if table == "sys_job_schedule" and row["enabled"] == 1 and row["del_flag"] == "0"
-    ]
-    case.refresh()
-    return copy.deepcopy(case.value)

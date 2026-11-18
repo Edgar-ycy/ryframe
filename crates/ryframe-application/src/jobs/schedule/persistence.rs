@@ -210,3 +210,29 @@ pub(super) async fn rollback_with<T>(
     }
     Err(error)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn schedule_trigger_contract_preserves_the_three_recorded_kinds() {
+        for (trigger, expected) in [
+            (TRIGGER_SCHEDULED, "scheduled"),
+            (TRIGGER_MANUAL, "manual"),
+            (TRIGGER_MISFIRE, "misfire"),
+        ] {
+            assert_eq!(trigger, expected);
+            assert_eq!(
+                normalize_trigger_kind(Some(expected.to_owned()))
+                    .unwrap()
+                    .as_deref(),
+                Some(expected)
+            );
+        }
+        assert!(matches!(
+            normalize_trigger_kind(Some("unknown".to_owned())),
+            Err(AppError::Validation(_))
+        ));
+    }
+}
