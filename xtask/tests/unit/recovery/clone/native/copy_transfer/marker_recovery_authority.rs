@@ -1,5 +1,7 @@
 use super::*;
-use successor::{check_close, check_first, check_redis_successor, close_row, restarts};
+use successor::{
+    check_close, check_first, check_first_runtime_path, check_redis_successor, close_row, restarts,
+};
 
 #[test]
 fn active_fixture_successor_must_be_first_or_second_accepted_restart() {
@@ -151,6 +153,25 @@ fn second_restart_binds_the_first_generation_and_its_nonzero_exit_reconciliation
     assert!(
         check_redis_successor(&original, &second_redis, &first_runtime, &wrong_request).is_err()
     );
+}
+
+#[test]
+fn second_restart_requires_first_runtime_binding_path() {
+    let run = std::path::Path::new("fixture");
+    let output = run.join("lifecycle-0008").join("redis");
+    let runtime = json!({"output":output});
+    let binding = json!({"path":output.join("runtime.json"),"bytes":21,"sha256":"a".repeat(64)});
+    check_first_runtime_path(run, 8, &runtime, &binding).unwrap();
+    assert!(check_first_runtime_path(run, 12, &runtime, &binding).is_err());
+    let mut displaced = binding;
+    displaced["path"] = json!(
+        run.join("lifecycle-0012")
+            .join("redis")
+            .join("runtime.json")
+    );
+    assert!(check_first_runtime_path(run, 8, &runtime, &displaced).is_err());
+    displaced["path"] = Value::Null;
+    assert!(check_first_runtime_path(run, 8, &runtime, &displaced).is_err());
 }
 
 #[test]

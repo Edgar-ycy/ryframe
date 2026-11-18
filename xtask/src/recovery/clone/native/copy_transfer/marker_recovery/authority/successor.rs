@@ -191,19 +191,15 @@ fn second_link(
         (first.result, &first.generation),
         &second.generation,
     )?;
-    let output = PathBuf::from(document::text(
-        &previous["output"],
-        "第一次重启的 Redis 目录",
-    )?);
-    let expected = run.join(format!(
-        "lifecycle-{:04}/redis",
+    check_first_runtime_path(
+        run,
         first.generation["attempt"]
             .as_u64()
-            .ok_or("第一次重启缺少阶段序号")?
-    ));
-    if output != expected
-        || evidence.read(&candidate["request"], "第一次重启的原 Redis 请求")? != first.request
-        || Path::new(document::text(&candidate["runtime"], "path")?) != output.join("runtime.json")
+            .ok_or("第一次重启缺少阶段序号")?,
+        &previous,
+        &candidate["runtime"],
+    )?;
+    if evidence.read(&candidate["request"], "第一次重启的原 Redis 请求")? != first.request
         || row["number"] != reconciliation["attempt"]
     {
         return Err("原失败关闭未绑定第一次重启的登记目录、请求和运行收据".into());
@@ -227,6 +223,27 @@ fn second_link(
         "close_reconciliation_evidence":outer["reconciliation"],"close_recovery":reconciliation["evidence"]["close_recovery"],
         "second_request":second.generation["redis"]["request"],"second_runtime":second_runtime_binding}),
     )
+}
+
+pub(super) fn check_first_runtime_path(
+    run: &Path,
+    attempt: u64,
+    previous: &Value,
+    binding: &Value,
+) -> Result<()> {
+    let output = Path::new(document::text(
+        &previous["output"],
+        "第一次重启的 Redis 目录",
+    )?);
+    let expected = run.join(format!("lifecycle-{attempt:04}")).join("redis");
+    let path = Path::new(document::text(
+        &binding["path"],
+        "第一次重启的 Redis 运行收据路径",
+    )?);
+    if output != expected || path != output.join("runtime.json") {
+        return Err("原失败关闭未绑定第一次重启的登记目录和运行收据".into());
+    }
+    Ok(())
 }
 
 pub(super) fn close_row<'a>(attempts: &'a [Value], result: &Value) -> Result<&'a Value> {
