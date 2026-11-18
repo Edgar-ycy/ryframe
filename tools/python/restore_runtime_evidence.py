@@ -1,50 +1,18 @@
-"""恢复运行核验使用的稳定文件读取、摘要与权威上下文模型。"""
+"""恢复与导出核验共用的稳定文件读取、摘要和严格 JSON。"""
 
 from __future__ import annotations
 
 import hashlib
 import json
 import os
-import re
 import stat
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlsplit
 
-from process_sockets import endpoint
 from artifact_digests import filesystem_path
 
 MAX_JSON_BYTES = 16 * 1024 * 1024
-IDENTIFIER = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
-SCOPE_IDENTIFIER = re.compile(r"[a-z0-9][a-z0-9_-]{0,46}[a-z0-9]")
-HEX_40 = re.compile(r"[a-f0-9]{40}")
-HEX_64 = re.compile(r"[a-f0-9]{64}")
-AUTHORITY_FIELDS = {
-    "format_version",
-    "kind",
-    "restore_id",
-    "backup_id",
-    "plan_hash",
-    "scope_id",
-    "data_verified_at",
-    "backup_source_sha",
-    "backend_product_sha",
-    "backend_execution_sha",
-    "backend_adapter_contract",
-    "frontend_sha",
-    "api_endpoint",
-    "worker_endpoint",
-    "frontend_endpoint",
-}
-
-
-def valid_identifier(value: object) -> bool:
-    return isinstance(value, str) and bool(IDENTIFIER.fullmatch(value))
-
-
-def valid_scope_identifier(value: object) -> bool:
-    return isinstance(value, str) and bool(SCOPE_IDENTIFIER.fullmatch(value))
 
 
 def is_reparse(metadata: os.stat_result) -> bool:
@@ -142,10 +110,6 @@ def read_json_document(path: Path) -> JsonDocument:
     return JsonDocument(path, raw, decode_object(raw, f"恢复核验输入 {path}"), state)
 
 
-def read_json(path: Path) -> dict:
-    return read_json_document(path).value
-
-
 @dataclass(frozen=True)
 class ArtifactSnapshot:
     path: Path
@@ -184,14 +148,6 @@ def artifact_snapshot(path: Path) -> ArtifactSnapshot:
     return ArtifactSnapshot(path, before.st_size, digest.hexdigest(), state)
 
 
-def directory(path: Path, label: str) -> Path:
-    path = path.absolute()
-    reject_link_or_reparse(path)
-    if not Path(filesystem_path(path)).is_dir():
-        raise ValueError(f"{label}必须是普通目录")
-    return path
-
-
 def exact_fields(value: object, fields: set[str], label: str) -> dict:
     if not isinstance(value, dict) or set(value) != fields:
         raise ValueError(f"{label}字段必须精确匹配当前格式")
@@ -208,87 +164,3 @@ def timestamp(value: object, label: str) -> str:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError(f"{label}必须包含时区")
     return value
-
-
-def canonical_endpoint(url: object, path: str, label: str) -> str:
-    if not isinstance(url, str):
-        raise ValueError(f"{label}必须是字符串")
-    _family, host, port = endpoint(url)
-    parsed = urlsplit(url)
-    if parsed.port is None or parsed.path != path:
-        raise ValueError(f"{label}必须使用显式端口和精确路径 {path or '/'}")
-    authority = f"[{host}]" if ":" in host else host
-    canonical = f"{parsed.scheme}://{authority}:{port}{path}"
-    if url != canonical:
-        raise ValueError(f"{label}必须使用规范化 loopback 地址")
-    return canonical
-
-
-def validate_authority(value: object) -> dict:
-    authority = exact_fields(value, AUTHORITY_FIELDS, "权威恢复上下文")
-    if authority["format_version"] != 2 or authority["kind"] != "restore-runtime-authority":
-        raise ValueError("权威恢复上下文版本或类型不匹配")
-    for field in ("restore_id", "backup_id"):
-        if not valid_identifier(authority[field]):
-            raise ValueError(f"权威恢复上下文的 {field} 无效")
-    if not valid_scope_identifier(authority["scope_id"]):
-        raise ValueError("权威恢复上下文的 scope_id 无效")
-    for field, pattern in (
-        ("plan_hash", HEX_64),
-        ("backup_source_sha", HEX_40),
-        ("backend_product_sha", HEX_40),
-        ("backend_execution_sha", HEX_40),
-        ("frontend_sha", HEX_40),
-    ):
-        if not isinstance(authority[field], str) or not pattern.fullmatch(authority[field]):
-            raise ValueError(f"权威恢复上下文的 {field} 无效")
-    adapter = authority["backend_adapter_contract"]
-    same_backend = authority["backend_product_sha"] == authority["backend_execution_sha"]
-    if (same_backend and adapter is not None) or (
-        not same_backend and adapter != "legacy-stable-readiness-b0-v1"
-    ):
-        raise ValueError("权威恢复上下文的后端产品、执行来源与适配合同不一致")
-    timestamp = authority["data_verified_at"]
-    if not isinstance(timestamp, str):
-        raise ValueError("权威恢复上下文缺少 data_verified_at")
-    try:
-        parsed_time = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-    except ValueError as error:
-        raise ValueError("权威恢复上下文的 data_verified_at 无效") from error
-    if parsed_time.tzinfo is None or parsed_time.utcoffset() is None:
-        raise ValueError("权威恢复上下文的 data_verified_at 必须包含时区")
-    endpoints = {
-        "api": canonical_endpoint(authority["api_endpoint"], "/readyz", "API 端点"),
-        "worker": canonical_endpoint(authority["worker_endpoint"], "/readyz", "Worker 端点"),
-        "frontend": canonical_endpoint(authority["frontend_endpoint"], "", "前端端点"),
-    }
-    if len({urlsplit(url).port for url in endpoints.values()}) != 3:
-        raise ValueError("API、Worker 与前端必须使用三个互异的显式端口")
-    return authority
-
-
-def process_identity_record(value: object, label: str) -> dict:
-    identity = exact_fields(value, {"pid", "started", "executable"}, label)
-    if (
-        type(identity["pid"]) is not int
-        or identity["pid"] <= 1
-        or not isinstance(identity["started"], str)
-        or not identity["started"]
-        or not isinstance(identity["executable"], str)
-        or not Path(identity["executable"]).is_absolute()
-    ):
-        raise ValueError(f"{label}无效")
-    return identity
-
-
-def process_document(path: Path, role: str, scope: str) -> tuple[JsonDocument, dict]:
-    document = read_json_document(path)
-    receipt = exact_fields(document.value, {"format_version", "role", "scope_id", "identity"}, "进程收据")
-    if (
-        type(receipt["format_version"]) is not int
-        or receipt["format_version"] != 1
-        or receipt["role"] != role
-        or receipt["scope_id"] != scope
-    ):
-        raise ValueError("进程收据的版本、角色或隔离 scope 不匹配")
-    return document, process_identity_record(receipt["identity"], f"{role} 进程身份")
