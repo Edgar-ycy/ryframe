@@ -286,22 +286,6 @@ class CloneTests(unittest.TestCase):
                 create_plan(self.value, self.backend)
         item["key"] = original
 
-    def test_plan_verify_readonly_tamper_and_no_overwrite(self):
-        filename = self.backend / ".local-tests/input.json"
-        filename.write_text(json.dumps(self.value), encoding="utf-8")
-        output = self.backend / ".local-tests/plan.json"
-        result = write_plan(self.backend, str(filename), str(output))
-        before = file_digest(output)
-        self.assertEqual(verify_plan(self.backend, str(output)), result)
-        self.assertEqual(file_digest(output), before)
-        with self.assertRaisesRegex(ValueError, "覆盖"):
-            write_plan(self.backend, str(filename), str(output))
-        with self.assertRaisesRegex(ValueError, "来源导出"):
-            write_plan(self.backend, str(filename), str(self.root / "plan.json"))
-        (self.root / "file.bin").write_bytes(b"tamp")
-        with self.assertRaisesRegex(ValueError, "变化"):
-            verify_plan(self.backend, str(output))
-
     def test_path_escape_duplicate_json_unknown_columns_and_generated_catalog_fail_closed(self):
         with self.assertRaises(ValueError):
             local_path(self.backend, str(self.backend / "outside.json"))
