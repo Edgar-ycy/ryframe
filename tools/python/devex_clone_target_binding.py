@@ -5,14 +5,12 @@ from native_s3_client import (NativeS3InvocationError, _invoke as native_invoke,
                               _read_response as native_response, configuration as object_configuration)
 import subprocess
 
-from collections import Counter
 import hashlib
 import os
 from pathlib import Path
 import re
 
 from artifact_digests import filesystem_path
-from devex_clone import read_json
 from devex_clone_capture import read_bound_json
 from devex_clone_model import digest, exact, linked, local_path
 from devex_clone_inventory import configuration as inventory_configuration
@@ -22,15 +20,12 @@ from devex_clone_tools import verify as verify_tools
 from full_stack_runtime import configuration_digest, worker_ready_url
 from rate_limit_client import load_app_table
 from restore_build import file_digest
-from restore_reference_plan import BUCKETS, plan_hash, configuration_binding
+from restore_reference_plan import configuration_binding, plan_hash
 
 KEYS = {"shared-control": ("combined", "shared"), "shared": ("tenant", "shared"),
         "dedicated-a": ("tenant", "dedicated"), "dedicated-b": ("tenant", "dedicated")}
 EXCLUSIVE = {"mysql_exclusive", "redis_exclusive", "object_storage_exclusive"}
 REVIEW_FILE_TOOLS = ("mysql", "mysqldump", "rustfs")
-REVIEW_SUPERVISOR_TOOLS = ("redis_server", "wsl", "native_tool")
-REVIEW_TOOLS = (*REVIEW_FILE_TOOLS, *REVIEW_SUPERVISOR_TOOLS)
-_UUID = r"[a-f0-9]{32}"
 _REGISTRATION_FIELDS = {"format_version", "kind", "request", "environment", "storage_run",
                         "target_directory"}
 
@@ -178,235 +173,6 @@ def initialized_target_files(backend: Path, target: Path, *, locked_guard: bool 
                 ("registration", registration_path))):
         raise ValueError("fresh 目标 initialized 完整文件树或谱系在核验期间变化")
     return descriptors["initialized"]
-
-
-def _successful_receipt(target: Path, relative: str) -> dict:
-    value = read_json(target / relative)
-    exact(value, {"command", "returncode", "error_type", "stdout", "stderr"})
-    if (not isinstance(value["command"], list)
-            or any(not isinstance(item, str) or not item for item in value["command"])
-            or type(value["returncode"]) is not int or value["returncode"] != 0
-            or value["error_type"] is not None or not isinstance(value["stdout"], str)
-            or value["stderr"] != ""):
-        raise ValueError("fresh 初始化只读观察命令收据无效")
-    value["stdout"] = value["stdout"].replace("\r\n", "\n")
-    return value
-
-
-def _successful_object_receipt(target: Path, relative: str, operation: str,
-                               request: dict) -> dict:
-    value = read_json(target / relative)
-    exact(value, {"transport", "operation", "bucket", "returncode", "error_type",
-                  "response", "key", "destination", "remote_writes", "scope_id",
-                  "endpoint", "configuration_sha256", "prefix", "continuation"})
-    scope = request["target"]["scope_id"]
-    configuration = request["target"]["s3"]
-    if (value["transport"] != "rust-s3-sigv4" or value["operation"] != operation
-            or value["bucket"] not in BUCKETS or value["returncode"] != 0
-            or value["error_type"] is not None or not isinstance(value["response"], dict)
-            or value["scope_id"] != scope or value["endpoint"] != configuration["endpoint"]
-            or value["configuration_sha256"] != plan_hash(configuration)
-            or value["prefix"] != (scope + "/" if operation == "list-objects-v2" else None)
-            or value["continuation"] is not None
-            or value["remote_writes"] != 0):
-        raise ValueError("fresh 初始化原生对象只读观察收据无效")
-    return value
-
-
-def _stage_paths(values: set[str], stage: str) -> list[str]:
-    pattern = re.compile(re.escape(stage) + rf"-{_UUID}\.command\.json")
-    return sorted(path for path in values if pattern.fullmatch(path))
-
-
-def _static_observations(target: Path, remaining: set[str], prepared: dict,
-                         stage: str, repetitions: int, *, request: dict,
-                         initialized_scope: str | None) -> None:
-    operation = {"bucket-readiness": "head-bucket", "bucket-versioning": "get-bucket-versioning",
-                 "scoped-list": "list-objects-v2"}[stage]
-    baseline = [_successful_object_receipt(target, path, operation, request)
-                for path in _stage_paths(set(prepared), stage)]
-    current_paths = _stage_paths(remaining, stage)
-    current = [_successful_object_receipt(target, path, operation, request)
-               for path in current_paths]
-    signature = lambda item: (item["operation"], item["bucket"], plan_hash(item["response"]))
-    expected = Counter(signature(item) for item in baseline)
-    actual = Counter(signature(item) for item in current)
-    wanted = Counter({key: count * repetitions for key, count in expected.items()})
-    initialized_lists = stage == "scoped-list" and initialized_scope is not None
-    valid = len(baseline) == 5 and len(expected) == 5
-    if valid and initialized_lists:
-        responses = {item["bucket"]: item["response"] for item in baseline}
-        grouped = {bucket: [item["response"] for item in current if item["bucket"] == bucket]
-                   for bucket in responses}
-        owner = initialized_scope + "/.ryframe-owner"
-        for bucket, outputs in grouped.items():
-            final = [value for value in outputs if value != responses[bucket]]
-            page = final[0] if len(final) == 1 else None
-            valid = (valid and len(outputs) == repetitions
-                     and outputs.count(responses[bucket]) == repetitions - 1
-                     and isinstance(page, dict) and page.get("IsTruncated") is False
-                     and isinstance(page.get("Contents"), list) and len(page["Contents"]) == 1
-                     and isinstance(page["Contents"][0], dict)
-                     and page["Contents"][0].get("Key") == owner)
-    elif valid:
-        valid = actual == wanted
-    if not valid:
-        raise ValueError("fresh 初始化对象观察命令不是逐桶精确多重集："
-                         f"stage={stage}, baseline={len(baseline)}/{len(expected)}, "
-                         f"current={len(current)}/{len(actual)}, "
-                         f"counts={sorted(actual.values())}/{sorted(wanted.values())}")
-    remaining.difference_update(current_paths)
-
-
-def _owner_observations(target: Path, remaining: set[str], prepared: dict,
-                        request: dict, initialized_objects: dict) -> None:
-    """绑定逐桶 owner 读取命令、落盘字节与 initialized 结果。"""
-    baseline_paths = _stage_paths(set(prepared), "bucket-readiness")
-    baseline = [_successful_object_receipt(target, path, "head-bucket", request)
-                for path in baseline_paths]
-    if len(baseline) != len(BUCKETS) or {item["bucket"] for item in baseline} != set(BUCKETS):
-        raise ValueError("fresh 初始化对象基线未覆盖五桶")
-    receipts = _stage_paths(remaining, "owner-read")
-    if len(receipts) != len(BUCKETS) or not isinstance(initialized_objects, dict) \
-            or set(initialized_objects) != set(BUCKETS):
-        raise ValueError("fresh 初始化对象 owner 证据未完整覆盖五桶")
-    scope = request["target"]["scope_id"]
-    seen = set()
-    consumed = set(receipts)
-    for receipt_path in receipts:
-        receipt = _successful_object_receipt(target, receipt_path, "get-object", request)
-        bucket = receipt["bucket"]
-        pattern = re.compile(r"owner-" + re.escape(bucket) + rf"-{_UUID}\.bin")
-        body_name = receipt["destination"]
-        if not isinstance(body_name, str):
-            raise ValueError("fresh 初始化对象 owner 收据缺少输出文件")
-        body = target / body_name
-        owner_key = scope + "/.ryframe-owner"
-        expected_bytes = f"ryframe-owner:v1:{scope}:object-storage:{bucket}".encode()
-        expected_owner = {"bytes": len(expected_bytes),
-                          "sha256": hashlib.sha256(expected_bytes).hexdigest()}
-        if (bucket not in BUCKETS or bucket in seen or not pattern.fullmatch(body_name)
-                or receipt["key"] != owner_key or body.read_bytes() != expected_bytes
-                or initialized_objects[bucket] != {"keys": [owner_key], "owner": expected_owner}):
-            raise ValueError("fresh 初始化对象 owner 命令、字节或结果无效")
-        seen.add(bucket)
-        consumed.add(body_name)
-    if seen != set(BUCKETS):
-        raise ValueError("fresh 初始化对象 owner 证据未完整覆盖五桶")
-    remaining.difference_update(consumed)
-
-
-def _mysql_observations(target: Path, remaining: set[str], prepared: dict,
-                        request: dict) -> None:
-    databases = {item["key"]: item for item in request["target"]["databases"]}
-    for key, database in databases.items():
-        baseline_paths = _stage_paths(set(prepared), "mysql-" + key)
-        current_paths = _stage_paths(remaining, "mysql-" + key)
-        if len(baseline_paths) != 1 or len(current_paths) != 9:
-            raise ValueError("fresh 初始化 MySQL 观察收据数量无效")
-        baseline = _successful_receipt(target, baseline_paths[0])
-        current = [_successful_receipt(target, path) for path in current_paths]
-        identity = database["server_uuid"] + "\n"
-        exists = identity + database["database"] + "\n"
-        if (baseline["stdout"] != identity
-                or any(value["command"] != baseline["command"] for value in current)
-                or Counter(value["stdout"] for value in current)
-                != Counter({identity: 2, "": 4, exists: 3})):
-            raise ValueError("fresh 初始化 MySQL 前后像命令或输出多重集无效："
-                             + repr(Counter(value["stdout"] for value in current)))
-        remaining.difference_update(current_paths)
-
-
-def _process_stat_identity(value: str) -> tuple[str, str]:
-    head, marker, fields = value.strip().rpartition(")")
-    parts = fields.split()
-    if not marker or not head or len(parts) < 20 or not parts[19].isdigit():
-        raise ValueError("fresh 初始化 Redis 内核身份输出无效")
-    return head + marker, parts[19]
-
-
-def _redis_observations(target: Path, remaining: set[str], prepared: dict,
-                        repetitions: int) -> None:
-    baseline_paths = _stage_paths(set(prepared), "redis-kernel")
-    current_paths = _stage_paths(remaining, "redis-kernel")
-    baseline = [_successful_receipt(target, path) for path in baseline_paths]
-    current = [_successful_receipt(target, path) for path in current_paths]
-    commands = {tuple(value["command"]): value["stdout"] for value in baseline}
-    def signature(value):
-        stdout = (_process_stat_identity(value["stdout"])
-                  if "/proc/" in value["command"][-1]
-                  and value["command"][-1].endswith("/stat") else value["stdout"])
-        return tuple(value["command"]), stdout
-
-    baseline_signatures = Counter(signature(value) for value in baseline)
-    if (len(baseline) != 10 or len(commands) != 5
-            or set(baseline_signatures.values()) != {2}
-            or Counter(tuple(value["command"]) for value in current) \
-            != Counter({command: repetitions for command in commands})):
-        raise ValueError("fresh 初始化 Redis 内核观察不是逐轮精确多重集："
-                         f"baseline={len(baseline)}, current={len(current)}, rounds={repetitions}")
-    for value in current:
-        expected = commands[tuple(value["command"])]
-        if "/proc/" in value["command"][-1] and value["command"][-1].endswith("/stat"):
-            if _process_stat_identity(value["stdout"]) != _process_stat_identity(expected):
-                raise ValueError("fresh 初始化 Redis 进程创建身份发生变化")
-        elif value["stdout"] != expected:
-            raise ValueError("fresh 初始化 Redis 工具、配置或路径观察发生变化")
-    remaining.difference_update(current_paths)
-
-
-def validate_initialization_delta(backend: Path, target: Path, current: list[dict], prepared: list[dict],
-                                  request: dict,
-                                  required: set[str], *, observation_rounds: int,
-                                  inventory_failed: bool = False,
-                                  initialized_objects: dict | None = None) -> None:
-    """以可信 prepare 快照为基线，只接受固定初始化阶段产生的增量。"""
-    current_map, prepared_map = _file_map(current), _file_map(prepared)
-    if any(current_map.get(path) != value for path, value in prepared_map.items()):
-        raise ValueError("fresh 目标 prepare 基线文件缺失或摘要变化")
-    additions = {path: value for path, value in current_map.items() if path not in prepared_map}
-    guard = current_map.get("copy-target.guard")
-    expected_guard = {"path": "copy-target.guard", "type": "file", "bytes": 1,
-                      "sha256": hashlib.sha256(b"\0").hexdigest()}
-    if guard != expected_guard:
-        raise ValueError("fresh 初始化控制互斥文件无效")
-    missing = required - set(current_map) - {"copy-target.guard"}
-    if missing:
-        raise ValueError("fresh 初始化缺少固定阶段文件：" + ", ".join(sorted(missing)))
-    remaining = set(additions) - required - {"copy-target.guard"}
-    from devex_clone_target_prepared_files import active_observations
-
-    prepared_map = _file_map(active_observations(backend, target, prepared))
-    objects_initialized = initialized_objects is not None
-    for stage in ("bucket-readiness", "bucket-versioning", "scoped-list"):
-        _static_observations(
-            target, remaining, prepared_map, stage,
-            3 + int(objects_initialized),
-            request=request,
-            initialized_scope=request["target"]["scope_id"] if objects_initialized else None,
-        )
-    if objects_initialized:
-        _owner_observations(target, remaining, prepared_map, request, initialized_objects)
-    _mysql_observations(target, remaining, prepared_map, request)
-    _redis_observations(target, remaining, prepared_map, observation_rounds)
-    layout_pattern = re.compile(rf"storage-layout-{_UUID}\.json")
-    layouts = sorted(path for path in remaining if layout_pattern.fullmatch(path))
-    baseline_layouts = [read_json(target / path) for path in prepared_map
-                        if layout_pattern.fullmatch(path)]
-    if (len(layouts) != observation_rounds or len(baseline_layouts) != 2
-            or baseline_layouts[0] != baseline_layouts[1]
-            or any(read_json(target / path) != baseline_layouts[0] for path in layouts)):
-        raise ValueError("fresh 初始化存储代次观察收据无效")
-    remaining.difference_update(layouts)
-    if inventory_failed:
-        from devex_clone_inventory_failure import inventory_failure_files
-
-        inventory_paths = inventory_failure_files(target, "inventory-initial", request,
-                                                   remaining | {"inventory-initial"})
-        remaining.difference_update(inventory_paths)
-    if remaining:
-        raise ValueError("fresh 初始化包含未登记的普通文件或目录："
-                         + ", ".join(sorted(remaining)))
 
 
 def _native(operation: str, backend: Path, **arguments) -> dict:
