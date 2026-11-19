@@ -455,8 +455,10 @@ fn final_target_heads_and_source_snapshot_do_not_download_another_business_body(
     let mut port = ObjectPort::new(fixture.inputs(), &mock).unwrap();
     let step = fixture.step(0);
     let observation = port.observe(&[&step], &|| Ok(())).unwrap();
+    let requests = mock.requests.load(Ordering::SeqCst);
     port.check_observation(&observation.images, &observation.evidence)
         .unwrap();
+    assert_eq!(mock.requests.load(Ordering::SeqCst), requests);
     assert_eq!(mock.business_gets.load(Ordering::SeqCst), 1);
     assert_eq!(
         port.verify_source(&|| Ok(()), &|| Ok(())).unwrap()["whole_source"],

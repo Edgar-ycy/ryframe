@@ -10,6 +10,7 @@ use crate::recovery::clone::native::{
 };
 
 const SCOPE: &str = "fixture-target";
+const FOREIGN_SCOPE: &str = "foreign-target";
 const ENDPOINT: &str = "http://127.0.0.1:29600";
 const REGION: &str = "us-east-1";
 const BUCKET: &str = "uploads";
@@ -76,6 +77,19 @@ impl Fixture {
         document::read(&self.directory.join(name)).unwrap()
     }
 
+    fn files(&self) -> BTreeMap<String, Vec<u8>> {
+        fs::read_dir(&self.directory)
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                (
+                    entry.file_name().into_string().unwrap(),
+                    fs::read(entry.path()).unwrap(),
+                )
+            })
+            .collect()
+    }
+
     fn image(&self, observed: &Observed) -> Value {
         let item = json!({"bucket":BUCKET,"source_key":"fixture-source/file.txt","target_key":KEY,
             "artifact":{"file":"object.bin","bytes":4,"sha256":self.expected["sha256"]},"metadata":{}});
@@ -94,6 +108,7 @@ impl Fixture {
 
 enum Step {
     Owner,
+    OwnerWrongScope,
     Head {
         conditional: bool,
         raw: Option<Value>,
@@ -142,11 +157,15 @@ impl Transport for FakeS3 {
                     destination,
                     max_bytes,
                 },
-                Step::Owner,
+                step @ (Step::Owner | Step::OwnerWrongScope),
             ) => {
                 assert_eq!(key, format!("{SCOPE}/.ryframe-owner"));
                 assert_eq!((if_match, version, max_bytes), (None, None, 4096));
-                let owner = format!("ryframe-owner:v1:{SCOPE}:object-storage:{BUCKET}");
+                let owner = owner_marker(if matches!(step, Step::Owner) {
+                    SCOPE
+                } else {
+                    FOREIGN_SCOPE
+                });
                 fs::write(destination, &owner)?;
                 Ok(json!({"ContentLength":owner.len()}))
             }
@@ -195,6 +214,10 @@ fn absent() -> Value {
     json!({"status":"not_found","http_status":404,"remote_write_may_have_occurred":false})
 }
 
+fn owner_marker(scope: &str) -> String {
+    format!("ryframe-owner:v1:{scope}:object-storage:{BUCKET}")
+}
+
 fn metadata() -> Value {
     json!({"ContentType":"text/plain","ContentLength":4,"Metadata":{},"ETag":ETAG,
         "VersionId":VERSION,"LastModified":"2026-11-09T00:00:00+00:00"})
@@ -223,6 +246,8 @@ fn assert_failed(fixture: &Fixture, fake: &FakeS3, stage: &str) {
     fake.exhausted();
     let failure = fixture.proof("failure.json");
     assert_eq!(failure["stage"], stage);
+    assert_eq!(failure["remote_writes"], 0);
+    assert!(!fixture.directory.join("capture.json").exists());
     assert!(!fixture.directory.join("observation.json").exists());
     assert!(!error.contains("private-fixture-secret"));
     assert!(!failure.to_string().contains("private-fixture-secret"));
@@ -308,36 +333,33 @@ fn captures_exact_version_and_bytes_and_preserves_get_header_difference() {
     let fixture = Fixture::new();
     let mut get = metadata();
     get["ContentType"] = json!("application/octet-stream");
-    let fake = FakeS3::new([
-        Step::Owner,
-        head(metadata()),
-        Step::Get {
-            raw: Some(get.clone()),
-        },
-        Step::Head {
-            conditional: true,
-            raw: Some(metadata()),
-        },
-        Step::Owner,
-    ]);
+    let fake = FakeS3::new(captured_steps(get.clone(), metadata(), Step::Owner));
     let observed = observe(fixture.request(), &fake, &|| Ok(())).unwrap();
     fake.exhausted();
     assert_eq!(observed.receipt()["status"], "object_present");
+    assert_eq!(observed.receipt(), &fixture.proof("observation.json"));
+    assert_eq!(
+        observed.descriptor(),
+        &common::binding(&fixture.directory.join("observation.json")).unwrap()
+    );
     assert_eq!(
         observed.receipt()["capture"],
         common::binding(&fixture.directory.join("capture.json")).unwrap()
     );
+    assert_eq!(fixture.proof("head-before.json"), metadata());
     assert_eq!(fixture.proof("get.json"), get);
-    assert_eq!(
-        fs::read(fixture.directory.join("object.bin")).unwrap(),
-        b"data"
-    );
+    assert_eq!(fixture.proof("head-after.json"), metadata());
     let ObjectObservation::Captured(captured) = observed.image_evidence() else {
         panic!("存在对象必须返回完整采集");
     };
     assert_eq!(captured, &fixture.proof("capture.json"));
+    assert_eq!(captured["identity"]["ETag"], ETAG);
     assert_eq!(captured["identity"]["VersionId"], VERSION);
     assert_eq!(captured["artifact"]["sha256"], fixture.expected["sha256"]);
+    for phase in ["before", "after"] {
+        let field = format!("ownership_{phase}");
+        assert_eq!(observed.receipt()[&field], captured[&field]);
+    }
     let image = fixture.image(&observed);
     assert_eq!(image["exists"], true);
     assert_eq!(
@@ -356,6 +378,118 @@ fn captures_exact_version_and_bytes_and_preserves_get_header_difference() {
             .to_string()
             .contains("private-fixture-secret")
     );
+    let files = fixture.files();
+    assert_original_evidence(&files, observed.receipt());
+    assert!(observe(fixture.request(), &fake, &|| Ok(())).is_err());
+    fake.exhausted();
+    assert_eq!(fixture.files(), files);
+}
+
+fn assert_original_evidence(files: &BTreeMap<String, Vec<u8>>, receipt: &Value) {
+    let names = [
+        "intent.json",
+        "owner-before.json",
+        "owner-before.diagnostic.json",
+        "owner-before-uploads.bin",
+        "head-before.json",
+        "head-before.diagnostic.json",
+        "get.json",
+        "get.diagnostic.json",
+        "object.bin",
+        "head-after.json",
+        "head-after.diagnostic.json",
+        "owner-after.json",
+        "owner-after.diagnostic.json",
+        "owner-after-uploads.bin",
+        "capture.json",
+    ];
+    let evidence = receipt["evidence"].as_object().unwrap();
+    assert_eq!(evidence.len(), names.len());
+    assert_eq!(files.len(), names.len() + 1);
+    for name in names {
+        let raw = &files[name];
+        assert_eq!(
+            evidence[name],
+            json!({"bytes":raw.len(),"sha256":hex::encode(Sha256::digest(raw))}),
+            "{name}"
+        );
+    }
+    assert_eq!(files["object.bin"], b"data");
+    let owner = owner_marker(SCOPE);
+    for name in ["owner-before-uploads.bin", "owner-after-uploads.bin"] {
+        assert_eq!(files[name], owner.as_bytes());
+    }
+}
+
+#[test]
+fn rejects_preexisting_head_without_contacting_s3_or_overwriting_evidence() {
+    let fixture = Fixture::new();
+    fs::create_dir(&fixture.directory).unwrap();
+    let head_path = fixture.directory.join("head-before.json");
+    fs::write(head_path, b"original head\n").unwrap();
+    let files = fixture.files();
+    let fake = FakeS3::new([]);
+
+    assert!(observe(fixture.request(), &fake, &|| Ok(())).is_err());
+    fake.exhausted();
+    assert_eq!(fixture.files(), files);
+}
+
+#[test]
+fn rejects_unknown_metadata_and_changed_final_identity_or_owner() {
+    let mut unknown = metadata();
+    unknown["ObjectLockMode"] = json!("GOVERNANCE");
+    let mut changed_head = metadata();
+    changed_head["ETag"] = json!("\"changed-etag\"");
+    let owner_length = owner_marker(SCOPE).len();
+    assert_eq!(owner_marker(FOREIGN_SCOPE).len(), owner_length);
+    for (steps, failure_stage, retained_stage, raw) in [
+        (
+            vec![Step::Owner, head(unknown.clone())],
+            "head-before",
+            "head-before",
+            unknown,
+        ),
+        (
+            captured_steps(metadata(), changed_head.clone(), Step::Owner),
+            "capture",
+            "head-after",
+            changed_head,
+        ),
+        (
+            captured_steps(metadata(), metadata(), Step::OwnerWrongScope),
+            "owner-after",
+            "owner-after",
+            json!({"ContentLength":owner_length}),
+        ),
+    ] {
+        let fixture = Fixture::new();
+        let fake = FakeS3::new(steps);
+        assert_failed(&fixture, &fake, failure_stage);
+        assert_eq!(fixture.proof(&format!("{retained_stage}.json")), raw);
+        let diagnostic = fixture.proof(&format!("{retained_stage}.diagnostic.json"));
+        assert_eq!(diagnostic["returned"], true);
+        assert_eq!(diagnostic["checkpoint_passed"], true);
+        if failure_stage == "owner-after" {
+            assert_eq!(
+                fs::read(fixture.directory.join("owner-after-uploads.bin")).unwrap(),
+                owner_marker(FOREIGN_SCOPE).as_bytes()
+            );
+        }
+    }
+}
+
+fn captured_steps(get: Value, repeated: Value, owner: Step) -> Vec<Step> {
+    vec![
+        Step::Owner,
+        head(metadata()),
+        Step::Get { raw: Some(get) },
+        Step::Head {
+            conditional: true,
+            raw: Some(repeated),
+        },
+        owner,
+    ]
 }
 
 #[test]
@@ -418,18 +552,7 @@ fn retains_download_but_blocks_capture_of_drifted_initial_evidence() {
     let changed = fixture.directory.join("owner-before.diagnostic.json");
     let fake = FakeS3 {
         drift_during_get: Some(changed.clone()),
-        ..FakeS3::new([
-            Step::Owner,
-            head(metadata()),
-            Step::Get {
-                raw: Some(metadata()),
-            },
-            Step::Head {
-                conditional: true,
-                raw: Some(metadata()),
-            },
-            Step::Owner,
-        ])
+        ..FakeS3::new(captured_steps(metadata(), metadata(), Step::Owner))
     };
 
     assert_failed(&fixture, &fake, "binding-after");
@@ -440,8 +563,6 @@ fn retains_download_but_blocks_capture_of_drifted_initial_evidence() {
     assert_eq!(fixture.proof("get.json"), metadata());
     assert_eq!(fixture.proof("get.diagnostic.json")["returned"], true);
     assert!(fs::read(changed).unwrap().starts_with(b"["));
-    assert_eq!(fixture.proof("failure.json")["remote_writes"], 0);
-    assert!(!fixture.directory.join("capture.json").exists());
 }
 
 #[test]
