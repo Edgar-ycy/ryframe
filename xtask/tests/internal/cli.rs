@@ -204,10 +204,23 @@ fn parses_check_task_graph_and_internal_groups() {
                 frontend_ref: Some("cccccccccccccccccccccccccccccccccccccccc".to_owned()),
                 profile: Some("windows-smoke".to_owned()),
                 test_jobs: Some(4),
+                ..Default::default()
             }
         )))
     );
-    assert!(parse_command(&["check", "ci", "rust-gate", "--test-jobs", "0"]).is_err());
+    for arguments in [
+        ["--test-jobs", "0"].as_slice(),
+        ["--jobs", "1"].as_slice(),
+        ["--jobs", "0"].as_slice(),
+        ["--jobs", "65"].as_slice(),
+        ["--target-dir", "relative-target"].as_slice(),
+        ["--jobs", "6", "--jobs", "4"].as_slice(),
+        ["--plan", "--plan"].as_slice(),
+        ["--profile", "windows-smoke", "--plan"].as_slice(),
+    ] {
+        let command = [&["check", "ci", "rust-gate"], arguments].concat();
+        assert!(parse_command(&command).is_err(), "{arguments:?}");
+    }
     let candidate = std::env::current_dir()
         .unwrap()
         .join("candidate-openapi.json");

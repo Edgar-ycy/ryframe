@@ -90,20 +90,48 @@ fn parse_rust_gate(args: &[String]) -> Result<RustGateOptions, CliError> {
                 }
                 index += 2;
             }
-            "--test-jobs" => {
-                let value = required_argument(args.get(index + 1), "--test-jobs")?;
+            name @ ("--jobs" | "--test-jobs") => {
+                let value = required_argument(args.get(index + 1), name)?;
+                let (slot, minimum) = if name == "--jobs" {
+                    (&mut options.jobs, 2)
+                } else {
+                    (&mut options.test_jobs, 1)
+                };
                 let jobs = value
                     .parse::<usize>()
                     .ok()
-                    .filter(|jobs| (1..=64).contains(jobs))
-                    .ok_or_else(|| CliError::new("--test-jobs 必须是 1 到 64 的整数"))?;
-                if options.test_jobs.replace(jobs).is_some() {
-                    return Err(CliError::new("--test-jobs 不能重复"));
+                    .filter(|jobs| (minimum..=64).contains(jobs))
+                    .ok_or_else(|| {
+                        CliError::new(format!("{name} 必须是 {minimum} 到 64 的整数"))
+                    })?;
+                if slot.replace(jobs).is_some() {
+                    return Err(CliError::new(format!("{name} 不能重复")));
                 }
                 index += 2;
             }
+            "--target-dir" => {
+                let path = PathBuf::from(required_argument(args.get(index + 1), "--target-dir")?);
+                if !path.is_absolute() {
+                    return Err(CliError::new("--target-dir 必须是绝对目录"));
+                }
+                if options.target_dir.replace(path).is_some() {
+                    return Err(CliError::new("--target-dir 不能重复"));
+                }
+                index += 2;
+            }
+            "--plan" => {
+                super::set_once(&mut options.plan, "--plan")?;
+                index += 1;
+            }
             unknown => return Err(CliError::new(format!("未知参数：{unknown}"))),
         }
+    }
+    if options.profile.as_deref() == Some("windows-smoke")
+        && (options.jobs.is_some() || options.target_dir.is_some() || options.plan)
+    {
+        return Err(CliError::new(
+            "--jobs、--target-dir 和 --plan 只适用于 standard Rust gate",
+        ));
     }
     if let Some(frontend_ref) = options.frontend_ref.as_deref() {
         if !valid_git_sha(frontend_ref) {

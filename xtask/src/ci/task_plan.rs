@@ -1,10 +1,14 @@
 use std::path::Path;
 
+use serde_json::{Value, json};
+
 use crate::{
     Result,
     check::{
         BackendSnapshotProfile, CheckExecutionState, TaskExecutionMode, TaskExecutor, TaskPlan,
-        VerifyExecutionContext, VerifySelection, execute_registered_task,
+        VerifyExecutionContext, VerifyJobBudget, VerifySelection, ci_target_policy_from,
+        ci_test_jobs_from, execute_registered_task, minimal_workspace_check_args,
+        verify_job_budget_from, worker_lib_test_args, workspace_clippy_args, workspace_test_args,
     },
     cli::{CiCommand, SecurityCommand},
 };
@@ -223,7 +227,7 @@ pub(super) fn execute_ci_job(
     command: &CiCommand,
     plan: &TaskPlan,
     frontend_dir: &Path,
-    job_budget: Option<crate::check::VerifyJobBudget>,
+    job_budget: Option<VerifyJobBudget>,
 ) -> Result<()> {
     if let CiCommand::Required(options) = command {
         println!("开始 CI job：required（cargo xtask check ci required）");
@@ -249,25 +253,64 @@ pub(super) fn execute_ci_job(
         job.definition().output_name,
         job.definition().command_name
     );
-    let mut context = VerifyExecutionContext::new_ci(frontend_dir)?;
-    if let Some(jobs) = job_budget {
-        context.jobs = jobs;
-    }
-    context.base_sha = match command {
-        CiCommand::Preflight(base) => base.clone(),
-        CiCommand::ResourceGate(options) => options.base_sha.clone(),
-        _ => None,
-    };
-    context.test_jobs = match command {
-        CiCommand::RustGate(options) => options.test_jobs,
-        _ => None,
-    };
+    let context = execution_context(command, frontend_dir, job_budget)?;
     let mut state = CheckExecutionState::default();
     for task in &plan.tasks {
         println!("开始 CI 原子任务：{}", task.id);
         execute_ci_task(task.executor, command, &context, &mut state)?;
     }
     Ok(())
+}
+
+fn execution_context(
+    command: &CiCommand,
+    frontend_dir: &Path,
+    job_budget: Option<VerifyJobBudget>,
+) -> Result<VerifyExecutionContext> {
+    let mut context = VerifyExecutionContext::new_ci(frontend_dir)?;
+    match command {
+        CiCommand::Preflight(base) => context.base_sha = base.clone(),
+        CiCommand::ResourceGate(options) => context.base_sha = options.base_sha.clone(),
+        CiCommand::RustGate(options) => {
+            context.test_jobs = options.test_jobs;
+            if let Some(target) = options.target_dir.as_deref() {
+                context.targets = ci_target_policy_from(Some(target));
+            }
+            if job_budget.is_none()
+                && let Some(jobs) = options.jobs
+            {
+                let available = std::thread::available_parallelism().map_or(4, usize::from);
+                context.jobs = verify_job_budget_from(Some(&jobs.to_string()), available)?;
+            }
+        }
+        _ => {}
+    }
+    if let Some(jobs) = job_budget {
+        context.jobs = jobs;
+    }
+    Ok(context)
+}
+
+pub(super) fn rust_gate_preview(command: &CiCommand, frontend_dir: &Path) -> Result<Value> {
+    let context = execution_context(command, frontend_dir, None)?;
+    let VerifyJobBudget {
+        total,
+        backend,
+        resource,
+    } = context.jobs;
+    let test = ci_test_jobs_from(context.test_jobs, cfg!(windows), total)?;
+    let target = &context.targets.backend;
+    Ok(json!({
+        "profile": "standard",
+        "jobs": {"total": total, "backend": backend, "resource": resource, "test": test},
+        "targets": {"backend": target, "resource": context.targets.resource},
+        "workspace_commands": {
+            "clippy": workspace_clippy_args(target, backend),
+            "minimal": minimal_workspace_check_args(target, backend),
+            "test": workspace_test_args(target, test),
+            "worker_lib": worker_lib_test_args(target, test)
+        }
+    }))
 }
 
 fn execute_required_plan(options: &crate::cli::RequiredOptions, plan: &TaskPlan) -> Result<()> {

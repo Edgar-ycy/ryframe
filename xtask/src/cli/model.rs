@@ -265,7 +265,10 @@ pub(crate) enum CiCommand {
 pub(crate) struct RustGateOptions {
     pub(crate) frontend_ref: Option<String>,
     pub(crate) profile: Option<String>,
+    pub(crate) jobs: Option<usize>,
     pub(crate) test_jobs: Option<usize>,
+    pub(crate) target_dir: Option<PathBuf>,
+    pub(crate) plan: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

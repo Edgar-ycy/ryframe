@@ -93,6 +93,10 @@ pub(crate) fn run(command: CiCommand, frontend_dir: &Path) -> Result<()> {
 
 fn execute_ci_command(command: &CiCommand, frontend_dir: &Path) -> Result<()> {
     let plan = ci_execution_plan_for(command)?;
+    if matches!(command, CiCommand::RustGate(options) if options.plan) {
+        println!("{}", task_plan::rust_gate_preview(command, frontend_dir)?);
+        return Ok(());
+    }
     task_plan::execute_ci_job(command, &plan, frontend_dir, None)
 }
 

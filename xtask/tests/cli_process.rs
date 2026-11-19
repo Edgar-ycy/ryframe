@@ -112,6 +112,60 @@ fn full_plan_lists_the_rust_python_environment_without_spawning_it() {
     assert!(!text.contains("无法执行一次性子进程输出协议"), "{text}");
 }
 
+#[test]
+fn rust_gate_plan_reports_exact_workspace_commands_without_running_the_gate() {
+    let fixture = temporary_directory();
+    let target = fixture.path().join("new cargo target");
+    let frontend = fixture.path().join("absent frontend");
+    let output = xtask_command()
+        .args([
+            "check",
+            "ci",
+            "rust-gate",
+            "--jobs",
+            "6",
+            "--test-jobs",
+            "4",
+            "--target-dir",
+            target.to_str().unwrap(),
+            "--frontend-dir",
+            frontend.to_str().unwrap(),
+            "--plan",
+        ])
+        .env("PATH", "")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let plan: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let backend = target.join("backend");
+    let resource = target.join("resource");
+    let backend = backend.to_str().unwrap();
+    assert_eq!(
+        plan,
+        serde_json::json!({
+            "profile":"standard",
+            "jobs":{"total":6,"backend":4,"resource":2,"test":4},
+            "targets":{"backend":backend,"resource":resource},
+            "workspace_commands":{
+                "clippy":["clippy","--locked","--target-dir",backend,"--workspace","--all-targets",
+                    "--all-features","--jobs","4","--","-D","warnings","-D","clippy::redundant_clone"],
+                "minimal":["check","--locked","--target-dir",backend,"--workspace","--no-default-features",
+                    "--all-targets","--jobs","4"],
+                "test":["test","--locked","--target-dir",backend,"--workspace","--all-features","--jobs","4"],
+                "worker_lib":["test","--locked","--target-dir",backend,"-p","ryframe","--no-default-features",
+                    "--features","bin-worker","--lib","--jobs","4"]
+            }
+        })
+    );
+    assert!(!target.exists());
+    assert!(!frontend.exists());
+}
+
 fn invoke_with_environment(arguments: &[&str], environment: &[(&str, &str)]) -> Output {
     xtask_command()
         .args(arguments)
