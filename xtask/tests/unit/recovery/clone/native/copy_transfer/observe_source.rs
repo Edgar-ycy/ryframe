@@ -16,6 +16,8 @@ const SCOPE: &str = "fixture-source";
 const ENDPOINT: &str = "http://127.0.0.1:29600";
 const REGION: &str = "us-east-1";
 const BUCKET: &str = "uploads";
+const EMPTY_BUCKET: &str = "config-packages";
+const WRONG_SCOPE: &str = "fixture-remote";
 const ETAG: &str = "\"fixture-etag\"";
 const VERSION: &str = "fixture-version";
 
@@ -97,6 +99,10 @@ fn metadata() -> Value {
         "VersionId":VERSION,"LastModified":"2026-11-09T00:00:00+00:00"})
 }
 
+fn owner_body(scope: &str, bucket: &str) -> String {
+    format!("ryframe-owner:v1:{scope}:object-storage:{bucket}")
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum Call {
     Owner(String),
@@ -107,6 +113,7 @@ enum Call {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Fault {
     None,
+    WrongOwner(usize),
     Head404,
     HeadRawChanged,
     RepeatedCursor,
@@ -208,6 +215,21 @@ impl<'a> FakeS3<'a> {
         self.calls.lock().unwrap().push(call);
     }
 
+    fn owner(&self, bucket: &str) -> String {
+        let mut calls = self.calls.lock().unwrap();
+        calls.push(Call::Owner(bucket.to_owned()));
+        let read = calls
+            .iter()
+            .filter(|call| matches!(call, Call::Owner(name) if name.as_str() == bucket))
+            .count();
+        let scope = if bucket == EMPTY_BUCKET && self.fault == Fault::WrongOwner(read) {
+            WRONG_SCOPE
+        } else {
+            SCOPE
+        };
+        owner_body(scope, bucket)
+    }
+
     fn list(&self, bucket: String, continuation: Option<String>) -> Value {
         self.record(Call::List(bucket.clone(), continuation.clone()));
         let owner = json!({"Key":format!("{SCOPE}/.ryframe-owner")});
@@ -251,8 +273,7 @@ impl Transport for FakeS3<'_> {
                 assert_eq!(key, format!("{SCOPE}/.ryframe-owner"), "禁止业务 GET");
                 assert_eq!((if_match, version, max_bytes), (None, None, 4096));
                 assert_eq!(destination.parent(), Some(self.fixture.directory.as_path()));
-                self.record(Call::Owner(request.bucket.clone()));
-                let owner = format!("ryframe-owner:v1:{SCOPE}:object-storage:{}", request.bucket);
+                let owner = self.owner(&request.bucket);
                 fs::write(destination, &owner)?;
                 Ok(json!({"ContentLength":owner.len()}))
             }
@@ -435,6 +456,87 @@ fn all_five_buckets_are_paginated_before_and_after_sorted_heads() {
             .join("owner-after-config-packages.bin")
             .exists()
     );
+}
+
+#[test]
+fn wrong_owner_in_bucket_without_business_objects_blocks_whole_source_observation() {
+    let expected = owner_body(SCOPE, EMPTY_BUCKET);
+    let wrong = owner_body(WRONG_SCOPE, EMPTY_BUCKET);
+    assert_eq!(wrong.len(), expected.len());
+    assert_ne!(wrong, expected);
+    for (read, phase, list_rounds) in [(1, "before", 0), (2, "after", 2)] {
+        let objects = HEAD_BATCH_SIZE + 1;
+        let fixture = Fixture::new(objects);
+        assert!(fixture.captures[EMPTY_BUCKET].is_empty());
+        let fake = FakeS3::new(&fixture, Fault::WrongOwner(read));
+        observe(
+            fixture.request(),
+            Selection::All {
+                verify_proofs: &|| Ok(()),
+            },
+            &fake,
+            &|| Ok(()),
+        )
+        .unwrap_err();
+        let failure = fixture.proof("failure.json");
+        assert_eq!(failure["stage"], format!("owners_{phase}"));
+        assert_eq!(failure["remote_writes"], 0);
+        assert!(!fixture.directory.join("observation.json").exists());
+
+        let calls = fake.calls.lock().unwrap();
+        let owner_call = Call::Owner(EMPTY_BUCKET.into());
+        assert_eq!(
+            calls.iter().filter(|call| **call == owner_call).count(),
+            read
+        );
+        assert_eq!(calls.last(), Some(&owner_call));
+        let lists = calls
+            .iter()
+            .filter(|call| matches!(call, Call::List(..)))
+            .count();
+        assert_eq!(lists, list_rounds * (BUCKETS.len() + 1));
+        let heads = calls
+            .iter()
+            .filter(|call| matches!(call, Call::Head(_)))
+            .count();
+        assert_eq!(heads, if list_rounds == 0 { 0 } else { objects });
+        assert_eq!(fake.active_heads.load(Ordering::SeqCst), 0);
+
+        let receipt = format!("owner-{phase}-{EMPTY_BUCKET}");
+        let raw_body =
+            |name: &str| fs::read(fixture.directory.join(format!("{name}.bin"))).unwrap();
+        assert_eq!(raw_body(&receipt).as_slice(), wrong.as_bytes());
+        assert_eq!(
+            fixture.proof(&format!("{receipt}.json")),
+            json!({"ContentLength":wrong.len()})
+        );
+        assert_eq!(
+            fixture.proof(&format!("{receipt}.diagnostic.json")),
+            json!({"operation":"get-object","returned":true,"checkpoint_passed":true})
+        );
+        if list_rounds == 2 {
+            assert_eq!(
+                raw_body(&format!("owner-before-{EMPTY_BUCKET}")).as_slice(),
+                expected.as_bytes()
+            );
+            for index in 0..objects {
+                assert_eq!(fixture.proof(&format!("head-{index}.json")), metadata());
+                assert_eq!(
+                    fixture.proof(&format!("head-{index}.diagnostic.json")),
+                    json!({"operation":"head-object","returned":true,"checkpoint_passed":true})
+                );
+            }
+            for list_phase in ["before", "after"] {
+                for &bucket in BUCKETS {
+                    let last_page = usize::from(bucket == BUCKET);
+                    assert_eq!(
+                        fixture.proof(&format!("list-{list_phase}-{bucket}-{last_page}.json"))["IsTruncated"],
+                        false
+                    );
+                }
+            }
+        }
+    }
 }
 
 #[test]

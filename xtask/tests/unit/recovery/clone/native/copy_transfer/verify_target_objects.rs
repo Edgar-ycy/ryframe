@@ -14,6 +14,7 @@ const SCOPE: &str = "fixture-target";
 const ENDPOINT: &str = "http://127.0.0.1:29600";
 const REGION: &str = "us-east-1";
 const BUCKET: &str = "uploads";
+const NON_BUSINESS_BUCKET: &str = "config-packages";
 const ETAG: &str = "\"fixture-etag\"";
 const PLAN: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const GENERATION: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -105,6 +106,26 @@ impl Fixture {
     fn result(&self, name: &str) -> Value {
         document::read(&self.directory.join(name)).unwrap()
     }
+
+    fn assert_head_evidence(&self, count: usize, checkpoint_passed: bool) {
+        let mut expected = BTreeSet::new();
+        for index in 0..count {
+            let head = format!("head-{index}.json");
+            let diagnostic = format!("head-{index}.diagnostic.json");
+            assert_eq!(self.result(&head), raw());
+            assert_eq!(
+                self.result(&diagnostic),
+                json!({"operation":"head-object","returned":true,"checkpoint_passed":checkpoint_passed})
+            );
+            expected.extend([head, diagnostic]);
+        }
+        let actual = fs::read_dir(&self.directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .filter(|name| name.starts_with("head-"))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(actual, expected);
+    }
 }
 
 fn key(index: usize) -> String {
@@ -116,12 +137,17 @@ fn raw() -> Value {
         "LastModified":"2026-11-09T00:00:00+00:00"})
 }
 
+fn owner_body(bucket: &str) -> String {
+    format!("ryframe-owner:v1:{SCOPE}:object-storage:{bucket}")
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Fault {
     None,
     RawHead,
     HeadError,
     ExtraKey,
+    OwnerBoundary(&'static str),
     FinalOwner,
 }
 
@@ -130,11 +156,13 @@ struct Fake {
     fault: Fault,
     finalizing: bool,
     heads: Mutex<Vec<usize>>,
+    finished: Mutex<Vec<usize>>,
     lists: Mutex<Vec<String>>,
     owners: Mutex<Vec<String>>,
     gate: Condvar,
     active: AtomicUsize,
     peak: AtomicUsize,
+    configuration_change: Option<(PathBuf, Vec<u8>)>,
 }
 
 impl Fake {
@@ -144,12 +172,24 @@ impl Fake {
             fault,
             finalizing,
             heads: Mutex::new(Vec::new()),
+            finished: Mutex::new(Vec::new()),
             lists: Mutex::new(Vec::new()),
             owners: Mutex::new(Vec::new()),
             gate: Condvar::new(),
             active: AtomicUsize::new(0),
             peak: AtomicUsize::new(0),
+            configuration_change: None,
         }
+    }
+
+    fn assert_head_calls(&self, count: usize) {
+        let expected = (0..count).collect::<Vec<_>>();
+        for calls in [&self.heads, &self.finished] {
+            let mut actual = calls.lock().unwrap().clone();
+            actual.sort_unstable();
+            assert_eq!(actual, expected);
+        }
+        assert_eq!(self.active.load(Ordering::SeqCst), 0);
     }
 }
 
@@ -172,11 +212,21 @@ impl Transport for Fake {
                 assert_eq!(if_match.as_deref(), Some(ETAG));
                 assert!(version.is_none());
                 let index = target.rsplit_once('-').unwrap().1.parse::<usize>().unwrap();
+                assert_eq!(target, key(index));
                 let mut heads = self.heads.lock().unwrap();
                 heads.push(index);
                 let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
                 self.peak.fetch_max(active, Ordering::SeqCst);
-                let end = (index / 4 + 1) * 4;
+                let end = (index / HEAD_WORKERS + 1) * HEAD_WORKERS;
+                // 第四次调用进入传输后才改写，随后释放整批。
+                let configuration_write = match &self.configuration_change {
+                    Some((path, replacement))
+                        if end == HEAD_WORKERS && heads.len() == HEAD_WORKERS =>
+                    {
+                        fs::write(path, replacement)
+                    }
+                    _ => Ok(()),
+                };
                 if end <= self.objects {
                     self.gate.notify_all();
                     let (_guard, timeout) = self
@@ -187,7 +237,9 @@ impl Transport for Fake {
                         .unwrap();
                     assert!(!timeout.timed_out(), "目标同批四路 HEAD 未到达");
                 }
+                self.finished.lock().unwrap().push(index);
                 self.active.fetch_sub(1, Ordering::SeqCst);
+                configuration_write?;
                 if index == 0 && self.fault == Fault::HeadError {
                     return Err("private-fixture-secret upstream error".into());
                 }
@@ -224,18 +276,18 @@ impl Transport for Fake {
                 if target == format!("{SCOPE}/.ryframe-owner") {
                     assert_eq!(max_bytes, 4096);
                     let name = destination.file_name().unwrap().to_string_lossy();
+                    let corrupt = match self.fault {
+                        Fault::OwnerBoundary(phase) => {
+                            request.bucket == NON_BUSINESS_BUCKET && name.starts_with(phase)
+                        }
+                        Fault::FinalOwner => name.starts_with("owner-final"),
+                        _ => false,
+                    };
                     if self.finalizing {
                         self.owners.lock().unwrap().push(name.into_owned());
                     }
-                    let mut body =
-                        format!("ryframe-owner:v1:{SCOPE}:object-storage:{}", request.bucket);
-                    if self.fault == Fault::FinalOwner
-                        && destination
-                            .file_name()
-                            .unwrap()
-                            .to_string_lossy()
-                            .starts_with("owner-final")
-                    {
+                    let mut body = owner_body(&request.bucket);
+                    if corrupt {
                         body.replace_range(..1, "x");
                     }
                     fs::write(destination, body.as_bytes())?;
@@ -256,7 +308,7 @@ fn final_heads_keep_four_way_batches_plan_order_and_five_exact_scopes() {
     let fake = Fake::new(9, Fault::None, true);
     let receipt = verify(fixture.request(), &fake, &|| Ok(())).unwrap();
     assert_eq!(fake.peak.load(Ordering::SeqCst), 4);
-    assert_eq!(fake.active.load(Ordering::SeqCst), 0);
+    fake.assert_head_calls(9);
     assert_eq!(
         receipt["objects"]
             .as_array()
@@ -274,7 +326,7 @@ fn final_heads_keep_four_way_batches_plan_order_and_five_exact_scopes() {
     assert_eq!(receipt["business_downloads"], 0);
     assert_eq!(receipt["remote_writes"], 0);
     assert_eq!(fixture.result("verified.json"), receipt);
-    assert_eq!(fixture.result("head-8.json"), raw());
+    fixture.assert_head_evidence(9, true);
 }
 
 #[test]
@@ -283,16 +335,7 @@ fn changed_raw_response_or_request_failure_drains_batch_without_retries() {
         let fixture = Fixture::new(5);
         let fake = Fake::new(5, fault, true);
         assert!(verify(fixture.request(), &fake, &|| Ok(())).is_err());
-        assert_eq!(fake.active.load(Ordering::SeqCst), 0);
-        assert_eq!(
-            fake.heads
-                .lock()
-                .unwrap()
-                .iter()
-                .copied()
-                .collect::<BTreeSet<_>>(),
-            BTreeSet::from([0, 1, 2, 3])
-        );
+        fake.assert_head_calls(HEAD_WORKERS);
         assert!(fake.lists.lock().unwrap().is_empty());
         assert!(!fixture.directory.join("verified.json").exists());
         assert_eq!(fixture.result("failure.json")["stage"], "heads");
@@ -303,6 +346,86 @@ fn changed_raw_response_or_request_failure_drains_batch_without_retries() {
         } else {
             assert_eq!(diagnostic["returned"], false);
         }
+    }
+}
+
+#[test]
+fn changed_configuration_while_heads_are_in_flight_drains_without_publication() {
+    let fixture = Fixture::new(5);
+    let path = fixture
+        .temp
+        .path()
+        .join(".local-tests/config/app.test.toml");
+    let original = fs::read_to_string(&path).unwrap();
+    let replacement = original.replace("fixture-private-secret", "fixture-private-rotate");
+    assert_eq!(original.len(), replacement.len());
+    assert!(original != replacement);
+    let check_bound_config =
+        || app_configuration::public_configuration(fixture.temp.path(), &fixture.configuration);
+    assert!(check_bound_config().is_ok());
+    let fake = Fake {
+        configuration_change: Some((path, replacement.into_bytes())),
+        ..Fake::new(5, Fault::None, true)
+    };
+
+    assert!(verify(fixture.request(), &fake, &|| Ok(())).is_err());
+
+    let (path, changed) = fake.configuration_change.as_ref().unwrap();
+    assert!(fs::read(path).unwrap().as_slice() == changed.as_slice());
+    assert!(check_bound_config().is_err());
+    assert_eq!(fake.peak.load(Ordering::SeqCst), HEAD_WORKERS);
+    fake.assert_head_calls(HEAD_WORKERS);
+    let owners = fake.owners.lock().unwrap();
+    assert_eq!(owners.len(), BUCKETS.len());
+    assert!(owners.iter().all(|name| name.starts_with("owner-before-")));
+    assert!(fake.lists.lock().unwrap().is_empty());
+    fixture.assert_head_evidence(HEAD_WORKERS, false);
+    let failure = fixture.result("failure.json");
+    assert_eq!(failure["stage"], "heads");
+    assert_eq!(failure["remote_writes"], 0);
+    assert!(!fixture.directory.join("verified.json").exists());
+}
+
+#[test]
+fn rejects_other_bucket_owner_drift_at_both_head_boundaries() {
+    for (phase, stage, head_count, owner_reads) in [
+        ("owner-before", "owners_before", 0, 1),
+        ("owner-after", "owners_after", 5, 2),
+    ] {
+        let fixture = Fixture::new(5);
+        let fake = Fake::new(5, Fault::OwnerBoundary(phase), true);
+        assert!(verify(fixture.request(), &fake, &|| Ok(())).is_err());
+        fake.assert_head_calls(head_count);
+        let owner = fake.owners.lock().unwrap();
+        let suffix = format!("-{NON_BUSINESS_BUCKET}.bin");
+        assert_eq!(
+            owner
+                .iter()
+                .filter(|name| name.ends_with(suffix.as_str()))
+                .count(),
+            owner_reads
+        );
+        assert!(fake.lists.lock().unwrap().is_empty());
+        fixture.assert_head_evidence(head_count, true);
+        let stage_file = format!("{phase}-{NON_BUSINESS_BUCKET}");
+        let expected = owner_body(NON_BUSINESS_BUCKET);
+        let changed = format!("x{}", &expected[1..]);
+        assert_eq!(
+            fs::read(fixture.directory.join(format!("{stage_file}.bin"))).unwrap(),
+            changed.as_bytes()
+        );
+        assert_eq!(
+            fixture.result(&format!("{stage_file}.json")),
+            json!({"ContentLength":expected.len()})
+        );
+        assert_eq!(
+            fixture.result(&format!("{stage_file}.diagnostic.json")),
+            json!({"operation":"get-object","returned":true,"checkpoint_passed":true})
+        );
+        let failure = fixture.result("failure.json");
+        assert_eq!(failure["stage"], stage);
+        assert_eq!(failure["remote_writes"], 0);
+        assert!(!fixture.directory.join("verified.json").exists());
     }
 }
 
