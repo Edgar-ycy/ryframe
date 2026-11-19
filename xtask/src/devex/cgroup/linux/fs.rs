@@ -1,12 +1,14 @@
 use std::{
     collections::BTreeMap,
     fs::{self, OpenOptions},
-    io::Write,
+    io::{self, Write},
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     thread,
     time::{Duration, Instant},
 };
+
+use rustix::io::Errno;
 
 use super::super::{
     error::{GateError, GateResult},
@@ -147,17 +149,11 @@ pub(super) fn processes(root: &Path) -> GateResult<ProcessSnapshot> {
 
 pub(super) fn process_fact(pid: u32) -> GateResult<Option<ProcessFact>> {
     let base = Path::new("/proc").join(pid.to_string());
-    let stat = match fs::read_to_string(base.join("stat")) {
-        Ok(stat) => stat,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(GateError::io(
-                "process",
-                "读取进程 stat",
-                &base.join("stat"),
-                &error,
-            ));
-        }
+    let Some(stat) = read_process_file(&base.join("stat"), "读取进程 stat", |path| {
+        fs::read_to_string(path)
+    })?
+    else {
+        return Ok(None);
     };
     let end = stat
         .rfind(')')
@@ -177,17 +173,11 @@ pub(super) fn process_fact(pid: u32) -> GateResult<Option<ProcessFact>> {
         .get(19)
         .ok_or_else(|| GateError::new("process", format!("进程 {pid} 的 stat 缺少启动时刻")))?
         .to_string();
-    let status = match fs::read_to_string(base.join("status")) {
-        Ok(status) => status,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(GateError::io(
-                "process",
-                "读取进程 status",
-                &base.join("status"),
-                &error,
-            ));
-        }
+    let Some(status) = read_process_file(&base.join("status"), "读取进程 status", |path| {
+        fs::read_to_string(path)
+    })?
+    else {
+        return Ok(None);
     };
     let uid = status
         .lines()
@@ -202,6 +192,24 @@ pub(super) fn process_fact(pid: u32) -> GateResult<Option<ProcessFact>> {
         parent,
         uid,
     }))
+}
+
+fn read_process_file(
+    path: &Path,
+    action: &str,
+    read: impl FnOnce(&Path) -> io::Result<String>,
+) -> GateResult<Option<String>> {
+    match read(path) {
+        Ok(text) => Ok(Some(text)),
+        // 进程可在读 /proc 期间消失，只记为本次快照缺席。
+        Err(error)
+            if error.kind() == io::ErrorKind::NotFound
+                || error.raw_os_error() == Some(Errno::SRCH.raw_os_error()) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(GateError::io("process", action, path, &error)),
+    }
 }
 
 pub(super) fn freeze(root: &Path) -> GateResult<BTreeMap<String, String>> {
@@ -277,4 +285,29 @@ pub(super) fn remove_directories(root: &Path) -> GateResult<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn process_snapshot_skips_only_vanished_proc_reads() {
+        let base = Path::new("/proc/12345");
+        for (name, action) in [("stat", "读取进程 stat"), ("status", "读取进程 status")] {
+            let path = base.join(name);
+            for errno in [Errno::SRCH, Errno::NOENT] {
+                let observed = read_process_file(&path, action, |_| Err(errno.into())).unwrap();
+                assert!(observed.is_none());
+            }
+            for errno in [Errno::ACCESS, Errno::IO] {
+                let observed = read_process_file(&path, action, |_| Err(errno.into())).unwrap_err();
+                assert_eq!(observed.kind(), "process");
+                assert_eq!(
+                    observed.to_string(),
+                    GateError::io("process", action, &path, &errno.into()).to_string()
+                );
+            }
+        }
+    }
 }
