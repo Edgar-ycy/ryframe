@@ -216,10 +216,10 @@ pub(crate) fn stopped_runtime(directory: &Path, port: u16) -> Result<(Value, Val
     operation::write_new(&env, &json!({"environment":{"APP_ENV":"test"}}))?;
     let environment = common::binding(&env)?;
     let identity = |pid| json!({"pid":pid,"started":"1","executable":executable});
-    let product = identity(u32::MAX - 11);
-    let supervisor = identity(u32::MAX - 12);
-    let monitor = identity(u32::MAX - 13);
-    let executor = identity(u32::MAX - 14);
+    let product = identity(i32::MAX - 11);
+    let supervisor = identity(i32::MAX - 12);
+    let monitor = identity(i32::MAX - 13);
+    let executor = identity(i32::MAX - 14);
     let tree = json!({"format_version":2,"kind":"full-stack-process-tree",
         "runtime_directory":directory,"role":"worker","scope_id":runtime["scope_id"],
         "operation_id":STOP_ID_START,"supervisor":supervisor,"monitor":monitor,

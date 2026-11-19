@@ -21,6 +21,22 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(target_os = "linux")]
+#[path = "supervisor/linux_members.rs"]
+mod linux_members;
+
+#[cfg(not(target_os = "linux"))]
+fn sample_members(child: &crate::process::ManagedChild, members: &mut Vec<Value>) -> Result<()> {
+    for pid in child.member_pids()? {
+        if let Some(identity) = common::process_identity(pid)?
+            && !members.contains(&identity)
+        {
+            members.push(identity);
+        }
+    }
+    Ok(())
+}
+
 fn inputs(args: &Value) -> Result<(Role, PathBuf, PathBuf, String)> {
     json::exact(
         args,
@@ -114,6 +130,10 @@ pub(super) fn monitor(args: &Value) -> Result<Value> {
     let supervisor = preparation::step(&op, &monitor, Stage::MemberIdentity, || {
         common::process_identity(child.id())?.ok_or_else(|| "角色监督进程登记前退出".into())
     })?;
+    #[cfg(target_os = "linux")]
+    let mut held = preparation::step(&op, &monitor, Stage::MemberIdentity, || {
+        linux_members::Members::new(child.id(), &supervisor)
+    })?;
     let ready = json!({"format_version":1,"operation_id":id,"directory":directory,"role":role.name(),"scope_id":op.request["scope_id"],"supervisor":supervisor,"monitor":monitor});
     let mut members = vec![supervisor.clone()];
     let result: Result<()> = (|| {
@@ -121,13 +141,12 @@ pub(super) fn monitor(args: &Value) -> Result<Value> {
             operation::write_new(&tree::path(&directory, role, &id, "ready"), &ready)
         })?;
         loop {
-            for pid in child.member_pids()? {
-                if let Some(identity) = common::process_identity(pid)?
-                    && !members.contains(&identity)
-                {
-                    members.push(identity);
-                }
-            }
+            #[cfg(target_os = "linux")]
+            preparation::step(&op, &monitor, Stage::MemberObservation, || {
+                held.sample(&child, &mut members)
+            })?;
+            #[cfg(not(target_os = "linux"))]
+            sample_members(&child, &mut members)?;
             if let Some(status) = child.try_wait()? {
                 preparation::record_supervisor_exit(&op, &monitor, status);
                 break;
@@ -140,16 +159,12 @@ pub(super) fn monitor(args: &Value) -> Result<Value> {
     let cleanup = stop_child(&mut child);
     drop(child);
     let mut error = result.err().or_else(|| cleanup.err());
-    let until = Instant::now() + Duration::from_secs(5);
-    for identity in &members {
-        while process::alive(identity)? {
-            if Instant::now() >= until {
-                error = Some("角色完整成员尚未退出".into());
-                break;
-            }
-            thread::sleep(Duration::from_millis(20));
-        }
+    #[cfg(target_os = "linux")]
+    if let Err(wait_error) = held.wait_for_exit() {
+        error.get_or_insert(wait_error);
     }
+    #[cfg(not(target_os = "linux"))]
+    wait_for_members(&members, &mut error)?;
     let proof = json!({"format_version":1,"operation_id":id,"directory":directory,"role":role.name(),"scope_id":op.request["scope_id"],"supervisor":supervisor,"monitor":monitor,"status":if error.is_none(){"stopped"}else{"failed"},"members":members,"error_type":error.as_ref().map(|_|"MemberCleanupFailed")});
     operation::write_new(&tree::path(&directory, role, &id, "stopped"), &proof)?;
     if let Some(error) = error {
@@ -157,6 +172,25 @@ pub(super) fn monitor(args: &Value) -> Result<Value> {
     }
     Ok(Value::Null)
 }
+
+#[cfg(not(target_os = "linux"))]
+fn wait_for_members(
+    members: &[Value],
+    error: &mut Option<Box<dyn std::error::Error>>,
+) -> Result<()> {
+    let until = Instant::now() + Duration::from_secs(5);
+    for identity in members {
+        while process::alive(identity)? {
+            if Instant::now() >= until {
+                *error = Some("角色完整成员尚未退出".into());
+                break;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn run(args: &Value) -> Result<Value> {
     let (role, backend, directory, id) = inputs(args)?;
     let op = operation(role, &backend, &directory, &id)?;

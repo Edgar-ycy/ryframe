@@ -17,6 +17,7 @@ pub(super) enum Stage {
     RequestContract,
     MemberSpawn,
     MemberIdentity,
+    MemberObservation,
     ReadyPublication,
     CandidatePublication,
     SupervisorBeforeCandidate,
@@ -259,7 +260,7 @@ fn validate(detail: &Detail) -> Result<()> {
         ),
         Cause::MemberExited => matches!(
             detail.stage,
-            Stage::MemberIdentity | Stage::SupervisorBeforeCandidate
+            Stage::MemberIdentity | Stage::MemberObservation | Stage::SupervisorBeforeCandidate
         ),
         _ => true,
     };
@@ -293,6 +294,9 @@ fn advice(stage: Stage) -> &'static str {
         Stage::RequestContract => "核对原owner/request与运行合同；保留现场，显式核对，不重放",
         Stage::MemberSpawn => "核对成员创建权限与系统资源；保留现场，显式核对，不重放",
         Stage::MemberIdentity => "核对成员创建身份与退出证据；保留现场，显式核对，不重放",
+        Stage::MemberObservation => {
+            "核对原成员进程组、创建身份和内核退出；保留现场，显式核对，不重放"
+        }
         Stage::ReadyPublication => "核对成员ready证据目录与权限；保留现场，显式核对，不重放",
         Stage::CandidatePublication => {
             "核对候选发布目录、控制锁和原成员登记；保留现场，显式核对，不重放"

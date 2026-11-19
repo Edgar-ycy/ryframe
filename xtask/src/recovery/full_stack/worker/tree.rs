@@ -116,7 +116,7 @@ pub(super) fn closure(tree: &Value, timeout: Duration, external: bool) -> Result
             validate_proof(tree, &value)?;
             if !monitor_alive {
                 for field in ["supervisor", "process"] {
-                    if process::alive(&tree[field])? {
+                    if proof_member_alive(tree, &tree[field])? {
                         return Err("完整成员关闭证明存在但登记进程仍存活".into());
                     }
                 }
@@ -167,12 +167,35 @@ fn validate_proof(tree: &Value, value: &Value) -> Result<()> {
     }
     for member in members {
         documents::identity(member)?;
-        if process::alive(member)? {
+        if proof_member_alive(tree, member)? {
             return Err("登记成员尚未退出".into());
         }
     }
     Ok(())
 }
+
+fn proof_member_alive(tree: &Value, member: &Value) -> Result<bool> {
+    #[cfg(target_os = "linux")]
+    {
+        use crate::recovery::process_tree::observe_process_group_member;
+
+        let (Some(pid), Some(group)) = (member["pid"].as_u64(), tree["group_id"].as_u64()) else {
+            return Err("整组关闭证明缺少成员 PID 或进程组".into());
+        };
+        let observed = observe_process_group_member(u32::try_from(pid)?, u32::try_from(group)?)?;
+        match observed {
+            None => Ok(false),
+            Some(actual) if actual.identity() == member => Ok(!actual.exited()?),
+            Some(_) => Err("进程PID已复用，拒绝操作其他创建身份".into()),
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = tree;
+        process::alive(member)
+    }
+}
+
 fn external_termination(tree: &Value) -> Result<Value> {
     for field in ["supervisor", "monitor", "process"] {
         if process::alive(&tree[field])? {

@@ -11,7 +11,7 @@ mod platform;
 
 pub(in crate::recovery) use platform::{Group, supported};
 #[cfg(target_os = "linux")]
-pub(in crate::recovery) use platform::{exited, signal};
+pub(in crate::recovery) use platform::{Member, exited, observe_process_group_member, signal};
 
 #[derive(Debug)]
 struct Rejected(&'static str);

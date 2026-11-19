@@ -24,6 +24,7 @@ fn preparation_failure_is_bound_redacted_and_never_authorizes_a_candidate() {
             Stage::RequestContract,
             Stage::MemberSpawn,
             Stage::MemberIdentity,
+            Stage::MemberObservation,
             Stage::ReadyPublication,
             Stage::CandidatePublication,
         ] {

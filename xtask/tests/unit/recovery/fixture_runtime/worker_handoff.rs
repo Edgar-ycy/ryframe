@@ -88,6 +88,7 @@ fn preparation_diagnostic_handoff_requires_exact_safe_fields_and_advice() {
             ("request_contract", "核对原owner/request与运行合同"),
             ("member_spawn", "核对成员创建权限与系统资源"),
             ("member_identity", "核对成员创建身份与退出证据"),
+            ("member_observation", "核对原成员进程组、创建身份和内核退出"),
             ("ready_publication", "核对成员ready证据目录与权限"),
         ] {
             let message = format!(
