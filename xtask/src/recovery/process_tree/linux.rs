@@ -218,6 +218,8 @@ struct Snapshot {
     started: u64,
 }
 
+const IMAGE_EXIT_WAIT: Duration = Duration::from_millis(20);
+
 fn observed_member(
     fd: &OwnedFd,
     pid: u32,
@@ -233,10 +235,10 @@ fn observed_member(
     };
     check(before.group == group, "角色成员不属于原进程组")?;
     let image_path = root.join("exe");
-    let Some(executable) = held_read(fd, image(&image_path).map_err(Into::into))? else {
+    let Some(executable) = held_image_read(fd, image(&image_path), IMAGE_EXIT_WAIT)? else {
         return Ok(None);
     };
-    let Some(sample) = held_read(fd, image(&image_path).map_err(Into::into))? else {
+    let Some(sample) = held_image_read(fd, image(&image_path), IMAGE_EXIT_WAIT)? else {
         return Ok(None);
     };
     check(sample == executable, "角色成员采集期间映像变化")?;
@@ -267,11 +269,44 @@ fn held_read<T>(fd: &OwnedFd, result: Result<T>) -> Result<Option<T>> {
     result.map(Some)
 }
 
+fn held_image_read(
+    fd: &OwnedFd,
+    result: io::Result<PathBuf>,
+    wait: Duration,
+) -> Result<Option<PathBuf>> {
+    if exited(fd)? {
+        return Ok(None);
+    }
+    if result
+        .as_ref()
+        .is_err_and(|error| error.raw_os_error() == Some(rustix::io::Errno::NOENT.raw_os_error()))
+        && poll_exit(fd, Some(Instant::now() + wait))?
+    {
+        // 内核可能先撤下退出进程的 exe，再使原 pidfd 可读。
+        return Ok(None);
+    }
+    Ok(Some(result?))
+}
+
 pub(in crate::recovery) fn exited(fd: &OwnedFd) -> Result<bool> {
-    let zero = Timespec::try_from(Duration::ZERO)?;
+    poll_exit(fd, None)
+}
+
+fn poll_exit(fd: &OwnedFd, deadline: Option<Instant>) -> Result<bool> {
     let mut descriptors = [PollFd::new(fd, PollFlags::IN)];
     loop {
-        match poll(&mut descriptors, Some(&zero)) {
+        let remaining = match deadline {
+            Some(deadline) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return Ok(false);
+                }
+                remaining
+            }
+            None => Duration::ZERO,
+        };
+        let timeout = Timespec::try_from(remaining)?;
+        match poll(&mut descriptors, Some(&timeout)) {
             Ok(0) => return Ok(false),
             Ok(_) if descriptors[0].revents().contains(PollFlags::IN) => return Ok(true),
             Err(rustix::io::Errno::INTR) => continue,

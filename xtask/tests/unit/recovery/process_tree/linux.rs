@@ -1,6 +1,6 @@
 use super::*;
 use crate::process::{ChildGroup, ManagedChild};
-use std::{io::Write, process::Stdio};
+use std::{io::Write, process::Stdio, sync::Barrier, thread};
 
 fn controlled_member() -> (ManagedChild, Box<dyn Write + Send>, OwnedFd) {
     let mut command = Command::new("/bin/cat");
@@ -74,6 +74,48 @@ fn linux_full_stack_member_skips_a_child_exiting_during_the_image_read() {
     })
     .unwrap();
     assert!(observation.is_none());
+    assert!(child.wait().unwrap().success());
+}
+
+#[test]
+fn linux_full_stack_image_enoent_waits_for_the_original_member_to_exit() {
+    let (mut child, input, fd) = controlled_member();
+    let missing = io::Error::from_raw_os_error(rustix::io::Errno::NOENT.raw_os_error());
+    assert!(!exited(&fd).unwrap());
+
+    let release = Barrier::new(2);
+    let observation = thread::scope(|scope| {
+        scope.spawn(|| {
+            release.wait();
+            thread::sleep(Duration::from_millis(50));
+            drop(input);
+        });
+        release.wait();
+        held_image_read(&fd, Err(missing), Duration::from_secs(5)).unwrap()
+    });
+
+    assert!(observation.is_none());
+    assert!(exited(&fd).unwrap());
+    assert!(child.wait().unwrap().success());
+}
+
+#[test]
+fn linux_full_stack_image_enoent_fails_when_the_original_member_stays_alive() {
+    let (mut child, input, fd) = controlled_member();
+    let errno = rustix::io::Errno::NOENT.raw_os_error();
+    let error = held_image_read(
+        &fd,
+        Err(io::Error::from_raw_os_error(errno)),
+        IMAGE_EXIT_WAIT,
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error.downcast_ref::<io::Error>().unwrap().raw_os_error(),
+        Some(errno)
+    );
+    assert!(!exited(&fd).unwrap());
+    drop(input);
     assert!(child.wait().unwrap().success());
 }
 
