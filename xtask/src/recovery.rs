@@ -120,6 +120,10 @@ fn run_clone(command: &CloneCommand) -> Result<()> {
 }
 
 pub(crate) fn run_clone_exec_if_requested() -> Option<i32> {
+    #[cfg(windows)]
+    if let Some(code) = clone::native::resources::run_hidden_if_requested() {
+        return Some(code);
+    }
     use clone::native::lifecycle::runtime_spawn;
     let mut arguments = std::env::args().skip(1);
     if arguments.next()?.as_str() != runtime_spawn::EXEC_ENTRY {

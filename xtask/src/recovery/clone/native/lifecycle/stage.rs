@@ -335,6 +335,9 @@ fn stage_manifest(
 }
 
 pub(crate) fn failure_type(error: &(dyn std::error::Error + 'static)) -> String {
+    if let Some((category, _)) = super::super::resources::storage::diagnostic(error) {
+        return category.into();
+    }
     if let Some(category) = marker_diagnostic::category(error) {
         return category.into();
     }
@@ -372,6 +375,9 @@ pub(crate) fn failure_type(error: &(dyn std::error::Error + 'static)) -> String 
 }
 
 fn safe_diagnostic(error: &(dyn std::error::Error + 'static)) -> Option<String> {
+    if let Some((_, diagnostic)) = super::super::resources::storage::diagnostic(error) {
+        return Some(diagnostic);
+    }
     if let Some(category) = marker_diagnostic::category(error) {
         return Some(format!("Redis 标记恢复前置检查失败（{category}）"));
     }

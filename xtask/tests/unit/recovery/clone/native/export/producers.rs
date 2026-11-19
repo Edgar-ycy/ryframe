@@ -6,14 +6,18 @@ fn runtime_stop_proof_accepts_ready_path_only_after_both_ports_are_released() {
     let worker = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let api_url = format!("http://{}", api.local_addr().unwrap());
     let worker_url = format!("http://{}/readyz", worker.local_addr().unwrap());
-    assert!(require_closed_runtime_ports(&api_url, &worker_url).is_err());
+    assert!(common::require_closed_runtime_ports(&api_url, &worker_url).is_err());
     drop(api);
-    assert!(require_closed_runtime_ports(&api_url, &worker_url).is_err());
+    assert!(common::require_closed_runtime_ports(&api_url, &worker_url).is_err());
     drop(worker);
-    require_closed_runtime_ports(&api_url, &worker_url).unwrap();
+    common::require_closed_runtime_ports(&api_url, &worker_url).unwrap();
+    let api_ready = format!("{api_url}/readyz");
+    assert!(common::require_closed_runtime_ports(&api_ready, &worker_url).is_err());
+    let worker_host_name = worker_url.replace("127.0.0.1", "localhost");
+    assert!(common::require_closed_runtime_ports(&api_url, &worker_host_name).is_err());
     for suffix in ["/readyz?token=hidden", "/other", ""] {
         let invalid = worker_url.replace("/readyz", suffix);
-        assert!(require_closed_runtime_ports(&api_url, &invalid).is_err());
+        assert!(common::require_closed_runtime_ports(&api_url, &invalid).is_err());
     }
 }
 

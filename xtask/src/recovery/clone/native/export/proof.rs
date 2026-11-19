@@ -25,7 +25,7 @@ pub(crate) fn generation(context: &Context) -> Result<Value> {
 }
 
 pub(crate) fn generation_in(context: &Context, scope: &bridge::scope::Scope) -> Result<Value> {
-    generation_observed(context, scope, require_closed_runtime_ports, false)
+    generation_observed(context, scope, common::require_closed_runtime_ports, false)
 }
 
 fn generation_observed(
@@ -99,14 +99,6 @@ fn generation_observed(
     });
     scope.assert_unchanged()?;
     Ok(proof)
-}
-
-fn require_closed_runtime_ports(api: &str, worker: &str) -> Result<()> {
-    common::require_closed_port(api)?;
-    let worker = worker
-        .strip_suffix("/readyz")
-        .ok_or("Worker 就绪地址必须以 /readyz 结尾")?;
-    common::require_closed_port(worker)
 }
 
 fn verify_runtime_contract(context: &Context, path: &Path, expected: &Value) -> Result<()> {

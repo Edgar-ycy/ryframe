@@ -35,7 +35,19 @@ pub(crate) fn controller_binding(run_dir: &Path, attempt: &Value) -> Result<Valu
         .get("number")
         .and_then(Value::as_u64)
         .ok_or("存储阶段序号无效")?;
-    let (binding, owner) = state::controller_record(run_dir, number, attempt)?;
+    let mut started = attempt.clone();
+    match attempt["status"].as_str() {
+        Some("running") => {}
+        Some("passed" | "failed") => {
+            // 控制器发布时只绑定原 running 记录；收尾只能改变这四个字段。
+            started["status"] = json!("running");
+            for key in ["finished_at", "result", "error_type"] {
+                started[key] = Value::Null;
+            }
+        }
+        _ => return Err("存储阶段没有可核对的原控制器状态".into()),
+    }
+    let (binding, owner) = state::controller_record(run_dir, number, &started)?;
     identity::validate(&owner, run_dir)?;
     if owner.get("manifest_sha256")
         != Some(&json!(
@@ -68,13 +80,49 @@ pub(crate) fn active(
     let binding = controller_binding(run_dir, attempt)?;
     let controller = common::read_bound(backend, &binding, "存储控制器")?;
     let owner = controller.get("owner").ok_or("存储控制器缺少 owner")?;
-    if owner != &identity::current()?
+    if owner["identity"] != identity::current()?
         || json_io::read(&run_dir.join("run.lock/owner.json"))? != *owner
     {
         return Err("存储动作必须由原登记控制器持有统一运行锁".into());
     }
     let _ = lock::owner_observation(run_dir)?;
     Ok(binding)
+}
+
+#[cfg(test)]
+#[test]
+fn storage_controller_matches_the_live_process_inside_the_exact_owner() {
+    let backend = crate::workspace::root_dir();
+    let local = backend.join(".local-tests");
+    std::fs::create_dir_all(&local).unwrap();
+    let fixture = tempfile::tempdir_in(local).unwrap();
+    let run = fixture.path();
+    json_io::write_new(&run.join("manifest.json"), &json!({"isolated": true})).unwrap();
+    state::initialize(run).unwrap();
+    let claimed = lock::RunLock::claim(run).unwrap();
+    let (number, attempt) = state::begin(run, "storage-source", "restart", &json!({})).unwrap();
+    state::bind_controller(run, number, &claimed.owner, &attempt).unwrap();
+    let controller = controller_binding(run, &attempt).unwrap();
+    assert_eq!(
+        active(&backend, run, "restart", number, CloneSide::Source).unwrap(),
+        controller
+    );
+    let owner_file = run.join("run.lock/owner.json");
+    let mut different = claimed.owner.clone();
+    different["identity"]["started"] = json!("0");
+    json_io::write_replace(&owner_file, &different).unwrap();
+    assert!(active(&backend, run, "restart", number, CloneSide::Source).is_err());
+    json_io::write_replace(&owner_file, &claimed.owner).unwrap();
+    claimed.release().unwrap();
+    state::finish(run, number, None, Some("PreLaunchRejected")).unwrap();
+    let settled = state::load(run, true).unwrap();
+    assert_eq!(
+        controller_binding(run, &settled["attempts"][0]).unwrap(),
+        controller
+    );
+    let mut altered = settled["attempts"][0].clone();
+    altered["sources"]["changed"] = json!(true);
+    assert!(controller_binding(run, &altered).is_err());
 }
 
 pub(crate) fn root(backend: &Path, run_dir: &Path, side: CloneSide) -> Result<PathBuf> {
@@ -249,7 +297,7 @@ pub(crate) fn registered(
         return Err("存储有后续失败或未完成观察，不能回退旧成功".into());
     }
     let manifest = json_io::read(&run_dir.join("manifest.json"))?;
-    model::validate(backend, run_dir, &manifest, side, &request)?;
+    let validated = model::validate(backend, run_dir, &manifest, side, &request)?;
     let output = root.join(format!("a{number:04}"));
     let controller = controller_binding(run_dir, attempt)?;
     let observed = process::inspect_attempt(backend, &output, &descriptor, &controller, number)?
@@ -282,6 +330,10 @@ pub(crate) fn registered(
         attempt.get("result").ok_or("存储成功阶段缺少结果")?,
         "存储阶段结果",
     )?;
+    let source = validated.source_fixture.map(|source| source.binding());
+    if source.as_ref() != result.get("source_fixture") {
+        return Err("来源存储后继与原夹具停止收据绑定不同".into());
+    }
     if let Some(recorded) = result.get("fixture_handoff") {
         let handoff = super::transferred(backend, run_dir, &manifest, side, &request, false)?;
         if handoff.as_ref().map(|handoff| &handoff.binding) != Some(recorded) {
@@ -304,7 +356,7 @@ pub(crate) fn registered(
             return Err("存储启动尚未取得同一外层发布结果".into());
         }
     }
-    Ok(Some(json!({
+    let mut projection = json!({
         "request": descriptor,
         "storage": storage,
         "attempt": number,
@@ -312,7 +364,11 @@ pub(crate) fn registered(
         "api_url": request["api_url"],
         "console_url": request["console_url"],
         "restart_result": attempt["result"],
-    })))
+    });
+    if let Some(source) = source {
+        projection["source_fixture"] = source;
+    }
+    Ok(Some(projection))
 }
 
 #[allow(dead_code)]
@@ -323,6 +379,9 @@ pub(crate) fn current(backend: &Path, run_dir: &Path, side: CloneSide) -> Result
     let request = common::read_bound(backend, &result["request"], "存储固定请求")?;
     if !process::running(&result["storage"]["identity"], &request, true)? {
         return Err("已登记存储进程已退出，必须显式同目录重启".into());
+    }
+    if result.get("source_fixture").is_some() {
+        process::require_owned_listeners(&result["storage"]["identity"], &request)?;
     }
     Ok(Some(result))
 }

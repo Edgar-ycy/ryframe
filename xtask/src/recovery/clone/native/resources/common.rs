@@ -116,6 +116,14 @@ pub(crate) fn require_closed_port(value: &str) -> Result<()> {
     }
 }
 
+pub(crate) fn require_closed_runtime_ports(api: &str, worker: &str) -> Result<()> {
+    require_closed_port(api)?;
+    let worker = worker
+        .strip_suffix("/readyz")
+        .ok_or("Worker 就绪地址必须以 /readyz 结尾")?;
+    require_closed_port(worker)
+}
+
 pub(crate) fn port_ready(value: &str, timeout: Duration) -> bool {
     let Ok((port, _)) = endpoint(value) else {
         return false;

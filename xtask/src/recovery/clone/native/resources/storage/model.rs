@@ -8,6 +8,8 @@ use super::super::{
 };
 use crate::{Result, cli::CloneSide, local_test_path::validate_external_existing_file};
 
+use super::source_fixture;
+
 const FIELDS: &[&str] = &[
     "format_version",
     "kind",
@@ -27,6 +29,7 @@ const FIELDS: &[&str] = &[
 
 pub(crate) struct Validated {
     pub(crate) private: BTreeMap<String, String>,
+    pub(super) source_fixture: Option<source_fixture::Proof>,
 }
 
 pub(crate) fn validate(
@@ -117,14 +120,13 @@ pub(crate) fn validate(
         common::bound_file(backend, descriptor, "RustFS 凭据文件")?;
     }
     let private = common::environment(backend, object.get("environment").unwrap())?;
-    let selected = original_inputs(backend, manifest, request, side)?;
+    let (selected, source_fixture) = original_inputs(backend, manifest, request, side)?;
     for key in ["access_key", "secret_key"] {
         let descriptor = credentials.get(key).unwrap();
         let path = common::bound_file(backend, descriptor, "RustFS 凭据文件")?;
         let contents = fs::read_to_string(path)?.trim().to_owned();
-        let configured = selected
-            .pointer(&format!("/s3/{key}"))
-            .and_then(Value::as_str)
+        let configured = selected[key]
+            .as_str()
             .filter(|value| !value.is_empty())
             .ok_or("原业务对象存储缺少明文凭据")?;
         if contents.is_empty() || configured != contents {
@@ -132,7 +134,10 @@ pub(crate) fn validate(
         }
     }
     let _ = timeout;
-    Ok(Validated { private })
+    Ok(Validated {
+        private,
+        source_fixture,
+    })
 }
 
 pub(crate) fn arguments(request: &Value) -> Result<Vec<String>> {
@@ -196,7 +201,7 @@ fn original_inputs(
     manifest: &Value,
     request: &Value,
     side: CloneSide,
-) -> Result<Value> {
+) -> Result<(Value, Option<source_fixture::Proof>)> {
     let original = common::read_bound(
         backend,
         request.get("original").ok_or("存储请求缺少原始输入")?,
@@ -242,24 +247,44 @@ fn original_inputs(
             return Err("原存储进程不属于明确 scope、数据目录及创建代次".into());
         }
     }
-    let selected = match side {
-        CloneSide::Source => source_inputs(
-            backend, request, &original, &process, &launch, &ready, &identity,
-        )?,
-        CloneSide::Target => target_inputs(
-            backend, manifest, request, &process, &launch, &ready, &identity,
-        )?,
+    let (objects, fixture) = match side {
+        CloneSide::Source if original["source"]["s3"].get("configuration").is_some() => {
+            if !cfg!(windows) || manifest["copy_stage"] != "source_to_seed" {
+                return Err("绑定配置的来源夹具单独重启仅支持 Windows 原 source_to_seed".into());
+            }
+            let selected = &original["source"]["s3"];
+            json_io::exact(selected, &["configuration"], "原来源对象配置绑定")?;
+            let objects =
+                crate::recovery::clone::native::s3::app_configuration::private_configuration(
+                    backend,
+                    &selected["configuration"],
+                )?;
+            (
+                objects,
+                Some(source_fixture::load(backend, request, &original)?),
+            )
+        }
+        CloneSide::Source => (
+            source_inputs(request, &original, &process, &launch, &ready, &identity)?["s3"].clone(),
+            None,
+        ),
+        CloneSide::Target => (
+            target_inputs(
+                backend, manifest, request, &process, &launch, &ready, &identity,
+            )?["s3"]
+                .clone(),
+            None,
+        ),
     };
-    if selected.pointer("/s3/endpoint").and_then(Value::as_str)
+    if objects.get("endpoint").and_then(Value::as_str)
         != request.get("api_url").and_then(Value::as_str)
     {
         return Err("存储端口不是原业务侧对象端点".into());
     }
-    Ok(selected)
+    Ok((objects, fixture))
 }
 
 fn source_inputs(
-    backend: &Path,
     request: &Value,
     original: &Value,
     process: &Value,
@@ -313,7 +338,6 @@ fn source_inputs(
             return Err("来源凭据不是原实际启动文件".into());
         }
     }
-    let _ = backend;
     Ok(selected)
 }
 

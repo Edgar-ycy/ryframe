@@ -65,9 +65,10 @@ fn source_stopped(backend: &Path, run: &Path, source: &Value) -> Result<()> {
         )?;
     }
     let runtime = common::read_bound(backend, &source["runtime"], "源 runtime")?;
-    for value in [&source["source"]["api_url"], &runtime["worker_ready_url"]] {
-        common::require_closed_port(document::text(value, "源角色端口")?)?;
-    }
+    common::require_closed_runtime_ports(
+        document::text(&source["source"]["api_url"], "源 API 地址")?,
+        document::text(&runtime["worker_ready_url"], "源 Worker 就绪地址")?,
+    )?;
     common::bound_file(
         backend,
         &source["producers_registry"],
@@ -103,8 +104,8 @@ fn target_stopped(backend: &Path, request: &Value, selected: &Value) -> Result<(
             common::bound_file(backend, &descriptor, "目标角色收据后像")?;
         }
     }
-    for field in ["api_url", "worker_ready_url"] {
-        common::require_closed_port(document::text(&selected[field], "目标角色端口")?)?;
-    }
-    Ok(())
+    common::require_closed_runtime_ports(
+        document::text(&selected["api_url"], "目标 API 地址")?,
+        document::text(&selected["worker_ready_url"], "目标 Worker 就绪地址")?,
+    )
 }

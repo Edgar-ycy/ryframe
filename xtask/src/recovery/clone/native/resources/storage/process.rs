@@ -36,6 +36,18 @@ pub(crate) fn running(expected: &Value, request: &Value, listeners: bool) -> Res
     Ok(true)
 }
 
+pub(super) fn require_owned_listeners(identity: &Value, request: &Value) -> Result<()> {
+    use crate::recovery::fixture_control::services::lifecycle::readonly::process;
+    for key in ["api_url", "console_url"] {
+        let url = json_io::text(&request[key], "来源 RustFS 端点")?;
+        let (port, _) = common::endpoint(url)?;
+        if !process::start_listener_at(identity, std::net::Ipv4Addr::LOCALHOST.into(), port)? {
+            return Err("来源 RustFS 尚未独占登记监听".into());
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn inspect_attempt(
     backend: &Path,
     output: &Path,
@@ -231,15 +243,26 @@ pub(crate) fn stop_record(request: &Value, observed: &Value, output: &Path) -> R
     Ok(result)
 }
 
-pub(crate) fn start(
+pub(super) struct StartAuthority<'a> {
+    pub(super) registration: &'a Value,
+    pub(super) controller: &'a Value,
+    pub(super) number: u64,
+    pub(super) require_owned_ports: bool,
+}
+
+pub(super) fn start(
     request: &Value,
     environment: &std::collections::BTreeMap<String, String>,
     output: &Path,
-    registration: &Value,
-    controller: &Value,
-    number: u64,
+    authority: StartAuthority<'_>,
     mut guard: impl FnMut() -> Result<()>,
 ) -> Result<Value> {
+    let StartAuthority {
+        registration,
+        controller,
+        number,
+        require_owned_ports,
+    } = authority;
     let args = super::model::arguments(request)?;
     let intent_path = output.join("intent.json");
     common::write_new(
@@ -253,11 +276,7 @@ pub(crate) fn start(
             "arguments": args,
         }),
     )?;
-    let executable = request
-        .pointer("/executable/path")
-        .and_then(Value::as_str)
-        .ok_or("存储请求缺少可执行文件")?;
-    let mut command = common::command_line(executable, &args, environment, output)?;
+    let mut command = launch_command(&args, environment, output)?;
     super::model::clear_overrides(&mut command);
     common::pipe_to_file(
         &mut command,
@@ -351,6 +370,9 @@ pub(crate) fn start(
         if !running(&identity, request, true)? {
             return Err("存储最终就绪观察已退出".into());
         }
+        if require_owned_ports {
+            require_owned_listeners(&identity, request)?;
+        }
         let storage = json!({
             "identity": identity,
             "sha256": request["executable"]["sha256"],
@@ -377,6 +399,41 @@ pub(crate) fn start(
         };
     }
     result
+}
+
+fn launch_command(
+    args: &[String],
+    environment: &std::collections::BTreeMap<String, String>,
+    output: &Path,
+) -> Result<std::process::Command> {
+    let [executable, child_args @ ..] = args else {
+        return Err("存储请求缺少可执行文件".into());
+    };
+    common::command_line(executable, child_args, environment, output)
+}
+
+#[cfg(test)]
+#[test]
+fn source_rustfs_launch_has_server_as_the_first_product_argument() {
+    let recorded = [
+        "D:/fixture binaries/rustfs.exe",
+        "server",
+        "--access-key-file",
+        "D:/fixture files/access",
+        "D:/fixture data",
+    ]
+    .map(str::to_owned);
+    let command = launch_command(&recorded, &Default::default(), Path::new(".")).unwrap();
+    assert_eq!(command.get_program(), "D:/fixture binaries/rustfs.exe");
+    assert_eq!(
+        command.get_args().collect::<Vec<_>>(),
+        [
+            "server",
+            "--access-key-file",
+            "D:/fixture files/access",
+            "D:/fixture data"
+        ]
+    );
 }
 
 fn cleanup_child(
