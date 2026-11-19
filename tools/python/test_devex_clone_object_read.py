@@ -69,35 +69,6 @@ class SharedCaptureStagesTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             stages.complete(self.output / "another")
 
-    def test_changed_initial_evidence_is_rejected_before_get_and_retained(self):
-        original = capture.CaptureStages.complete
-
-        def changed(stages, output):
-            (stages.reader.output / "head-before.json").write_text("{}", encoding="utf-8")
-            return original(stages, output)
-
-        with patch.object(capture.CaptureStages, "complete", changed), self.assertRaises(ObjectObservationError):
-            self.observe()
-        self.assertEqual(len(self.store.calls), 2)
-        self.assertTrue((self.output / "failure.json").is_file())
-        self.assertTrue((self.output / "capture/failure.json").is_file())
-        self.assertEqual((self.output / "head-before.json").read_text(), "{}")
-
-    def test_mutation_during_download_cannot_publish_or_adopt_initial_evidence(self):
-        def changed(command, **kwargs):
-            result = self.store(command, **kwargs)
-            request = json.loads(kwargs["input"])
-            if request["operation"] == "get-object" and not request["key"].endswith("/.ryframe-owner"):
-                (self.output / "owner-before-uploads.diagnostic.json").write_text("{}", encoding="utf-8")
-            return result
-
-        self.tools.run = changed
-        with self.assertRaises(ObjectObservationError):
-            self.observe()
-        self.assertEqual(len(self.store.calls), 5)
-        self.assertTrue((self.output / "capture/failure.json").is_file())
-        self.assertFalse((self.output / "observation.json").exists())
-
     def test_unknown_metadata_and_after_identity_still_fail_with_original_evidence(self):
         for name, modify in (("metadata", lambda: self.store.head.update(ObjectLockMode="GOVERNANCE")),
                              ("identity", lambda: self.store.after.update(ETag='"changed"')),

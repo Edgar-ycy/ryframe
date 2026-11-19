@@ -183,6 +183,7 @@ impl<T: Transport> Observation<'_, T> {
         self.configuration()?;
         let capture_descriptor = match &capture {
             Some(value) => {
+                self.evidence.check()?;
                 self.evidence.write(self.transport, "capture.json", value)?;
                 self.evidence.descriptor("capture.json")?
             }
@@ -320,6 +321,9 @@ impl<T: Transport> Observation<'_, T> {
         let configuration = self.configuration()?;
         let head = matches!(operation, Operation::Head { .. });
         let operation_name = if head { "head-object" } else { "get-object" };
+        if matches!(&operation, Operation::Get { key, .. } if key.as_str() == self.request.key) {
+            self.evidence.check()?;
+        }
         let response = self.transport.s3(Request {
             configuration,
             bucket: self.request.bucket.to_owned(),

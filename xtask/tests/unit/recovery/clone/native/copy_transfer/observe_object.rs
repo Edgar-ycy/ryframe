@@ -103,15 +103,21 @@ enum Step {
     },
 }
 
-struct FakeS3(RefCell<VecDeque<Step>>);
+struct FakeS3 {
+    steps: RefCell<VecDeque<Step>>,
+    drift_during_get: Option<PathBuf>,
+}
 
 impl FakeS3 {
     fn new(steps: impl IntoIterator<Item = Step>) -> Self {
-        Self(RefCell::new(steps.into_iter().collect()))
+        Self {
+            steps: RefCell::new(steps.into_iter().collect()),
+            drift_during_get: None,
+        }
     }
 
     fn exhausted(&self) {
-        assert!(self.0.borrow().is_empty());
+        assert!(self.steps.borrow().is_empty());
     }
 }
 
@@ -122,7 +128,11 @@ impl Transport for FakeS3 {
 
     fn s3(&self, request: Request) -> Result<Value> {
         assert_eq!(request.bucket, BUCKET);
-        let step = self.0.borrow_mut().pop_front().expect("对象观察不得重试");
+        let step = self
+            .steps
+            .borrow_mut()
+            .pop_front()
+            .expect("对象观察不得重试");
         match (request.operation, step) {
             (
                 Operation::Get {
@@ -170,6 +180,9 @@ impl Transport for FakeS3 {
                 let raw = raw.ok_or("HTTP 404 private-fixture-secret")?;
                 if raw.get("status").is_none() {
                     fs::write(destination, b"data")?;
+                    if let Some(path) = &self.drift_during_get {
+                        alter_evidence(path)?;
+                    }
                 }
                 Ok(raw)
             }
@@ -192,6 +205,14 @@ fn head(raw: Value) -> Step {
         conditional: false,
         raw: Some(raw),
     }
+}
+
+fn alter_evidence(path: &Path) -> Result<()> {
+    let mut bytes = fs::read(path)?;
+    assert_eq!(bytes.first(), Some(&b'{'));
+    bytes[0] = b'[';
+    fs::write(path, bytes)?;
+    Ok(())
 }
 
 fn assert_failed(fixture: &Fixture, fake: &FakeS3, stage: &str) {
@@ -358,6 +379,69 @@ fn checkpoint_failure_retains_raw_response_and_prevents_later_requests() {
     );
     assert_eq!(fixture.proof("failure.json")["stage"], "head-before");
     assert!(!fixture.directory.join("observation.json").exists());
+}
+
+#[test]
+fn rejects_initial_evidence_drift_before_business_get() {
+    let fixture = Fixture::new();
+    let fake = FakeS3::new([Step::Owner, head(metadata())]);
+    let changed = fixture.directory.join("head-before.json");
+    let diagnostic = fixture.directory.join("head-before.diagnostic.json");
+    let altered = Cell::new(false);
+    let outcome = observe(fixture.request(), &fake, &|| {
+        if diagnostic.is_file() && !altered.replace(true) {
+            assert_eq!(fixture.proof("head-before.json"), metadata());
+            alter_evidence(&changed)?;
+        }
+        Ok(())
+    });
+
+    assert!(outcome.is_err());
+    fake.exhausted();
+    assert!(altered.get());
+    assert!(fs::read(changed).unwrap().starts_with(b"["));
+    assert_eq!(
+        fixture.proof("head-before.diagnostic.json")["returned"],
+        true
+    );
+    let failure = fixture.proof("failure.json");
+    assert_eq!(failure["stage"], "get");
+    assert_eq!(failure["remote_writes"], 0);
+    for name in ["get.json", "object.bin", "capture.json", "observation.json"] {
+        assert!(!fixture.directory.join(name).exists());
+    }
+}
+
+#[test]
+fn retains_download_but_blocks_capture_of_drifted_initial_evidence() {
+    let fixture = Fixture::new();
+    let changed = fixture.directory.join("owner-before.diagnostic.json");
+    let fake = FakeS3 {
+        drift_during_get: Some(changed.clone()),
+        ..FakeS3::new([
+            Step::Owner,
+            head(metadata()),
+            Step::Get {
+                raw: Some(metadata()),
+            },
+            Step::Head {
+                conditional: true,
+                raw: Some(metadata()),
+            },
+            Step::Owner,
+        ])
+    };
+
+    assert_failed(&fixture, &fake, "binding-after");
+    assert_eq!(
+        fs::read(fixture.directory.join("object.bin")).unwrap(),
+        b"data"
+    );
+    assert_eq!(fixture.proof("get.json"), metadata());
+    assert_eq!(fixture.proof("get.diagnostic.json")["returned"], true);
+    assert!(fs::read(changed).unwrap().starts_with(b"["));
+    assert_eq!(fixture.proof("failure.json")["remote_writes"], 0);
+    assert!(!fixture.directory.join("capture.json").exists());
 }
 
 #[test]
