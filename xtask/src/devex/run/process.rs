@@ -240,6 +240,16 @@ fn configure_command(
     }
     if step.program == "cargo" {
         command.env("CARGO_TARGET_DIR", target.as_ref());
+        if cfg!(windows)
+            && matches!(step.args.first().copied(), Some("build" | "check"))
+            && step.args.contains(&"--workspace")
+            && step.args.contains(&"--jobs")
+        {
+            // Cargo 接入外部 jobserver 时会忽略显式作业数。
+            for name in ["CARGO_MAKEFLAGS", "MAKEFLAGS", "MFLAGS"] {
+                command.env_remove(name);
+            }
+        }
     }
     command
         .env_remove("RYFRAME_DEVEX_TARGET_ROOT")

@@ -3,7 +3,10 @@ use std::collections::BTreeSet;
 use crate::Result;
 
 use super::{
-    super::{metadata::RunMetadata, model::DevexSuite},
+    super::{
+        metadata::RunMetadata,
+        model::{BaselineContract, DevexSuite},
+    },
     SampleKind, SampleRecord, SampleStatus,
 };
 
@@ -44,6 +47,46 @@ pub(super) fn validate_execution_contract(metadata: &RunMetadata) -> Result<()> 
             .any(|command| command.args.iter().any(|arg| arg == "--targeted"))
     {
         return Err("resource-gate metadata 缺少显式 --targeted 参数".into());
+    }
+    validate_windows_workspace_jobs(metadata)
+}
+
+fn validate_windows_workspace_jobs(metadata: &RunMetadata) -> Result<()> {
+    if metadata.variant != "workspace"
+        || !metadata.target.contains("-windows-")
+        || !metadata
+            .pairing
+            .as_ref()
+            .and_then(|pairing| pairing.baseline_contract)
+            .is_some_and(BaselineContract::uses_common_toolchain)
+    {
+        return Ok(());
+    }
+    let operation = match metadata.suite {
+        DevexSuite::RustColdBuild => "build",
+        DevexSuite::RustIncremental | DevexSuite::RustSccache => "check",
+        _ => return Ok(()),
+    };
+    if metadata.jobs != 4 {
+        return Err("共同 DevEx Windows 工作区报告的 metadata.jobs 必须为 4".into());
+    }
+    let [command] = metadata.commands.as_slice() else {
+        return Err("共同 DevEx Windows 工作区报告必须记录唯一的 Cargo 命令".into());
+    };
+    if command.program != "cargo"
+        || command.working_directory != "$BACKEND"
+        || !command.args.iter().map(String::as_str).eq([
+            operation,
+            "--locked",
+            "--workspace",
+            "--jobs",
+            "4",
+        ])
+    {
+        return Err(format!(
+            "共同 DevEx Windows 工作区报告要求实际 Cargo 命令为 $BACKEND 下的 cargo {operation} --locked --workspace --jobs 4"
+        )
+        .into());
     }
     Ok(())
 }

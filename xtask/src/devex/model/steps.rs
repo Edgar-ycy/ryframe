@@ -1,14 +1,36 @@
 use super::{StepDefinition, WorkingDirectory};
 
+const WINDOWS_WORKSPACE_JOBS: &str = "4";
+
 pub(super) const RUST_BUILD_WORKSPACE: &[StepDefinition] = &[StepDefinition {
     working_directory: WorkingDirectory::Backend,
     program: "cargo",
-    args: &["build", "--locked", "--workspace"],
+    args: if cfg!(windows) {
+        &[
+            "build",
+            "--locked",
+            "--workspace",
+            "--jobs",
+            WINDOWS_WORKSPACE_JOBS,
+        ]
+    } else {
+        &["build", "--locked", "--workspace"]
+    },
 }];
 pub(super) const RUST_CHECK_WORKSPACE: &[StepDefinition] = &[StepDefinition {
     working_directory: WorkingDirectory::Backend,
     program: "cargo",
-    args: &["check", "--locked", "--workspace"],
+    args: if cfg!(windows) {
+        &[
+            "check",
+            "--locked",
+            "--workspace",
+            "--jobs",
+            WINDOWS_WORKSPACE_JOBS,
+        ]
+    } else {
+        &["check", "--locked", "--workspace"]
+    },
 }];
 pub(super) const RUST_CHECK_APPLICATION: &[StepDefinition] = &[StepDefinition {
     working_directory: WorkingDirectory::Backend,

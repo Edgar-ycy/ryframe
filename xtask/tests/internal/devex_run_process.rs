@@ -1,6 +1,72 @@
 use super::*;
 
 #[test]
+fn explicit_windows_workspace_jobs_exclude_external_jobserver_only_for_direct_cargo() {
+    use crate::devex::DevexSuite;
+    use std::ffi::OsStr;
+
+    let definition = DevexSuite::RustColdBuild.definition("workspace").unwrap();
+    let roots = StepRoots {
+        backend: Path::new("measured-source"),
+        frontend: Path::new("frontend"),
+        runner_frontend: Path::new("runner-frontend"),
+        target: Path::new("sample-target"),
+    };
+    let invocation = StepInvocation {
+        variant: "workspace",
+        label: "sample-001",
+        runtime_input: None,
+        pairing: None,
+    };
+    let jobserver_variables = ["CARGO_MAKEFLAGS", "MAKEFLAGS", "MFLAGS"];
+    let mut environment = BTreeMap::from([("CARGO_BUILD_JOBS".into(), "9".into())]);
+    for name in jobserver_variables {
+        environment.insert(name.into(), "fixture-jobserver".into());
+    }
+    let cases: &[(&'static [&'static str], bool)] = &[
+        (&["build", "--locked", "--workspace", "--jobs", "4"], true),
+        (&["check", "--locked", "--workspace", "--jobs", "4"], true),
+        (&["build", "--locked", "--workspace"], false),
+        (
+            &["check", "--locked", "-p", "ryframe", "--jobs", "4"],
+            false,
+        ),
+        (&["test", "--locked", "--workspace", "--jobs", "4"], false),
+        (
+            &["run", "--", "check", "ci", "rust-gate", "--jobs", "4"],
+            false,
+        ),
+        (
+            &["run", "--", "check", "ci", "resource-gate", "--jobs", "4"],
+            false,
+        ),
+    ];
+    for &(args, direct_workspace_with_jobs) in cases {
+        let step = StepDefinition {
+            working_directory: WorkingDirectory::Backend,
+            program: "cargo",
+            args,
+        };
+        let command = step_command(&step, roots, definition, &environment, &invocation).unwrap();
+        assert!(command.get_args().eq(args.iter().map(OsStr::new)));
+        let configured = |name: &str| {
+            command
+                .get_envs()
+                .find_map(|(key, value)| (key == name).then_some(value))
+        };
+        let expected = if cfg!(windows) && direct_workspace_with_jobs {
+            None
+        } else {
+            Some(OsStr::new("fixture-jobserver"))
+        };
+        for name in jobserver_variables {
+            assert_eq!(configured(name), Some(expected), "{args:?} {name}");
+        }
+        assert_eq!(configured("CARGO_BUILD_JOBS"), Some(Some(OsStr::new("9"))));
+    }
+}
+
+#[test]
 fn common_save_binds_each_arm_to_its_protocol_and_preserves_sample_results() {
     use crate::devex::{BaselineContract, DevexSuite, PairedArm};
 

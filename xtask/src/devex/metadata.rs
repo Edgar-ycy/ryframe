@@ -94,7 +94,11 @@ pub(super) fn collect(context: MetadataContext<'_>) -> Result<RunMetadata> {
         context.pairing.as_ref(),
     )?;
     let target = rust_host(&toolchain.rustc).unwrap_or_else(|| env::consts::ARCH.to_owned());
-    let jobs = effective_jobs(context.options.suite, context.effective_environment);
+    let jobs = effective_jobs(
+        context.options.suite,
+        &commands,
+        context.effective_environment,
+    );
     let compile_surface_fingerprint = compile_surface_fingerprint(
         context.options.suite,
         &context.options.variant,
@@ -471,12 +475,33 @@ fn default_jobs() -> usize {
     std::thread::available_parallelism().map_or(1, usize::from)
 }
 
-fn effective_jobs(suite: DevexSuite, environment: &BTreeMap<String, String>) -> usize {
+fn effective_jobs(
+    suite: DevexSuite,
+    commands: &[CommandMetadata],
+    environment: &BTreeMap<String, String>,
+) -> usize {
     if suite == DevexSuite::ResourceGate {
         return 12;
     }
     if suite == DevexSuite::RustGate {
         return default_jobs().saturating_sub(2).clamp(4, 12);
+    }
+    if matches!(
+        suite,
+        DevexSuite::RustColdBuild | DevexSuite::RustIncremental | DevexSuite::RustSccache
+    ) && let [command] = commands
+        && command.program == "cargo"
+        && command
+            .args
+            .iter()
+            .any(|argument| argument == "--workspace")
+        && let Some(jobs) = command
+            .args
+            .windows(2)
+            .find(|pair| pair[0] == "--jobs")
+            .and_then(|pair| pair[1].parse().ok())
+    {
+        return jobs;
     }
     environment
         .get("CARGO_BUILD_JOBS")
@@ -509,7 +534,45 @@ fn format_digest(digest: impl AsRef<[u8]>) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::model::{BaselineContract, PairedArm};
     use super::*;
+
+    #[test]
+    fn paired_workspace_measurements_record_the_jobs_in_the_cargo_arguments() {
+        let inherited_jobs = BTreeMap::from([("CARGO_BUILD_JOBS".into(), "9".into())]);
+        let contract = Some(BaselineContract::StableReadinessB0CommonToolchainV1);
+        for (suite, operation) in [
+            (DevexSuite::RustColdBuild, "build"),
+            (DevexSuite::RustIncremental, "check"),
+            (DevexSuite::RustSccache, "check"),
+        ] {
+            for arm in [PairedArm::Baseline, PairedArm::Candidate] {
+                let definition = suite.paired_definition("workspace", contract, arm).unwrap();
+                let commands = command_metadata(definition.steps, "workspace", None).unwrap();
+                let mut args = vec![operation, "--locked", "--workspace"];
+                if cfg!(windows) {
+                    args.extend(["--jobs", "4"]);
+                }
+                assert_eq!(commands.len(), 1);
+                assert_eq!(commands[0].program, "cargo");
+                assert_eq!(commands[0].args, args);
+                assert_eq!(
+                    effective_jobs(suite, &commands, &inherited_jobs),
+                    if cfg!(windows) { 4 } else { 9 }
+                );
+                assert_eq!(
+                    effective_jobs(suite, &commands, &BTreeMap::new()),
+                    if cfg!(windows) { 4 } else { default_jobs() }
+                );
+            }
+            for variant in ["api", "worker", "migrate"] {
+                let definition = suite.definition(variant).unwrap();
+                let commands = command_metadata(definition.steps, variant, None).unwrap();
+                assert!(!commands[0].args.iter().any(|arg| arg == "--jobs"));
+                assert_eq!(effective_jobs(suite, &commands, &inherited_jobs), 9);
+            }
+        }
+    }
 
     #[test]
     fn save_metadata_distinguishes_source_workspace_and_sample_target() {

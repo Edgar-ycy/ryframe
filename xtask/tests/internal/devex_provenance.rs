@@ -1,10 +1,13 @@
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    devex::{BaselineContract, DevexSuite, PairedArm, compare},
+    devex::{BaselineContract, DevexSuite, PairedArm, compare, summarize},
     devex_tests::{clean_source_fingerprint, fake_stable_frontend_fast_run},
 };
 
@@ -115,6 +118,151 @@ fn common_toolchain_report_binds_frontend_adaptation_and_exact_runner() {
     for path in [baseline, candidate] {
         fs::remove_dir_all(path).unwrap();
     }
+}
+
+#[test]
+fn common_toolchain_windows_workspace_reports_require_four_actual_cargo_jobs() {
+    for (suite, operation, cache) in [
+        (DevexSuite::RustColdBuild, "build", "cold"),
+        (DevexSuite::RustIncremental, "check", "warm"),
+        (DevexSuite::RustSccache, "check", "warm"),
+    ] {
+        for arm in [PairedArm::Baseline, PairedArm::Candidate] {
+            let (directory, metadata) = common_workspace_run(suite, operation, cache, arm);
+            let path = directory.join("metadata.json");
+            write_json(&path, &metadata);
+            assert_eq!(summarize(&directory).unwrap().passed, 6);
+
+            let mut changed = metadata.clone();
+            changed["jobs"] = json!(8);
+            write_json(&path, &changed);
+            assert!(
+                summarize(&directory)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("metadata.jobs 必须为 4")
+            );
+
+            for (field, value) in [
+                (
+                    "args",
+                    json!([operation, "--locked", "--workspace", "--jobs", "8"]),
+                ),
+                ("args", json!([operation, "--locked", "--workspace"])),
+                (
+                    "args",
+                    json!([
+                        if operation == "build" {
+                            "check"
+                        } else {
+                            "build"
+                        },
+                        "--locked",
+                        "--workspace",
+                        "--jobs",
+                        "4"
+                    ]),
+                ),
+                ("program", json!("rustup")),
+                ("working_directory", json!("$FRONTEND")),
+            ] {
+                let mut changed = metadata.clone();
+                changed["commands"][0][field] = value;
+                write_json(&path, &changed);
+                let error = summarize(&directory).unwrap_err().to_string();
+                assert!(
+                    error.contains("要求实际 Cargo 命令"),
+                    "{suite:?} {arm:?} {field}: {error}"
+                );
+            }
+            let mut changed = metadata.clone();
+            changed["commands"] = json!([metadata["commands"][0], metadata["commands"][0]]);
+            write_json(&path, &changed);
+            assert!(
+                summarize(&directory)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("唯一的 Cargo 命令")
+            );
+            fs::remove_dir_all(directory).unwrap();
+        }
+    }
+}
+
+#[test]
+fn workspace_report_jobs_rule_keeps_other_targets_variants_and_contracts() {
+    let (directory, metadata) = common_workspace_run(
+        DevexSuite::RustColdBuild,
+        "build",
+        "cold",
+        PairedArm::Baseline,
+    );
+    let path = directory.join("metadata.json");
+    let mut legacy = metadata["pairing"].clone();
+    legacy["baseline_contract"] = json!(BaselineContract::LegacyStableReadinessB0V1.as_str());
+    legacy["baseline_provenance"]["frontend_adaptation"] = Value::Null;
+    for (field, value) in [
+        ("target", json!("x86_64-unknown-linux-gnu")),
+        ("variant", json!("api")),
+        ("pairing", legacy),
+        ("pairing", Value::Null),
+    ] {
+        let mut changed = metadata.clone();
+        changed["jobs"] = json!(8);
+        changed["commands"] = json!([]);
+        changed[field] = value;
+        write_json(&path, &changed);
+        assert_eq!(summarize(&directory).unwrap().passed, 6);
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+fn common_workspace_run(
+    suite: DevexSuite,
+    operation: &str,
+    cache: &str,
+    arm: PairedArm,
+) -> (PathBuf, Value) {
+    let directory = fake_stable_frontend_fast_run(suite.as_str(), arm);
+    let mut metadata = json_file(&directory.join("metadata.json"));
+    let contract = BaselineContract::StableReadinessB0CommonToolchainV1;
+    metadata["suite"] = json!(suite);
+    metadata["variant"] = json!("workspace");
+    metadata["cache_state"] = json!(cache);
+    metadata["features"] = json!(["workspace-default"]);
+    metadata["frontend"] = Value::Null;
+    metadata["pairing"]["baseline_contract"] = json!(contract.as_str());
+    metadata["pairing"]["baseline_provenance"]["frontend_adaptation"] =
+        json!(contract.registered_frontend_adaptation().unwrap());
+    metadata["pairing"]["workload_contract"] = Value::Null;
+    metadata["toolchain"]["common"] = common_toolchain_fixture();
+    metadata["commands"] = json!([{
+        "program": "cargo", "working_directory": "$BACKEND",
+        "args": [operation, "--locked", "--workspace", "--jobs", "4"],
+    }]);
+    let samples = directory.join("samples.jsonl");
+    let original = fs::read_to_string(&samples).unwrap();
+    let mut updated = String::new();
+    for line in original.lines() {
+        let mut sample: Value = serde_json::from_str(line).unwrap();
+        sample["cache_state"] = json!(cache);
+        sample["source_fingerprints"]["frontend"] = Value::Null;
+        updated.push_str(&sample.to_string());
+        updated.push('\n');
+    }
+    fs::write(samples, updated).unwrap();
+    if suite == DevexSuite::RustSccache {
+        let snapshot = json!({"stats": {
+            "compile_requests": 0, "requests_not_cacheable": 0, "not_cached": {},
+            "cache_hits": {"counts": {}}, "cache_misses": {"counts": {}},
+            "cache_errors": {"counts": {}}, "cache_timeouts": 0, "cache_read_errors": 0,
+            "cache_write_errors": 0, "dist_errors": 0,
+        }});
+        for name in ["sccache-before.json", "sccache-after.json"] {
+            write_json(&directory.join(name), &snapshot);
+        }
+    }
+    (directory, metadata)
 }
 
 fn reject_changed_b0_frontend(baseline: &Path, candidate: &Path, metadata: &Value) {
