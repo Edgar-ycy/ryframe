@@ -459,7 +459,7 @@ fn final_target_heads_and_source_snapshot_do_not_download_another_business_body(
         .unwrap();
     assert_eq!(mock.business_gets.load(Ordering::SeqCst), 1);
     assert_eq!(
-        port.verify_source(&|| Ok(())).unwrap()["whole_source"],
+        port.verify_source(&|| Ok(()), &|| Ok(())).unwrap()["whole_source"],
         true
     );
     let target = port.verify_target(&fixture.items, &|| Ok(())).unwrap();

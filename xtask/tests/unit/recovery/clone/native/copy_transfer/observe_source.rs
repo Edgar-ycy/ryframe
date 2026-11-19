@@ -7,7 +7,10 @@ use std::{
 };
 
 use super::*;
-use crate::recovery::clone::native::export::transport::{CommandOutput, CommandSpec};
+use crate::recovery::clone::native::export::{
+    frozen::FrozenExport,
+    transport::{CommandOutput, CommandSpec},
+};
 
 const SCOPE: &str = "fixture-source";
 const ENDPOINT: &str = "http://127.0.0.1:29600";
@@ -113,9 +116,10 @@ enum Fault {
 const HEAD_BATCH_SIZE: usize = 4;
 
 #[derive(Default)]
-struct HeadBatches {
+struct HeadBatches<'a> {
     progress: Mutex<HeadProgress>,
     arrivals: Condvar,
+    on_first_batch: Option<&'a (dyn Fn() -> Result<()> + Sync)>,
 }
 
 #[derive(Default)]
@@ -126,7 +130,7 @@ struct HeadProgress {
     failed: bool,
 }
 
-impl HeadBatches {
+impl HeadBatches<'_> {
     fn rendezvous(&self, fixture: &Fixture, key: &str) -> Result<()> {
         let keys = &fixture.captures[BUCKET];
         let index = keys.keys().position(|expected| expected.as_str() == key);
@@ -149,6 +153,14 @@ impl HeadBatches {
             return Err("HEAD 与本批登记键不同、重复或前批证据尚未完成".into());
         }
         if progress.started.len() == end {
+            if start == 0
+                && let Some(on_first_batch) = self.on_first_batch
+                && let Err(error) = on_first_batch()
+            {
+                progress.failed = true;
+                self.arrivals.notify_all();
+                return Err(error);
+            }
             let active = end - progress.completed;
             progress.simultaneous.push(active);
             self.arrivals.notify_all();
@@ -176,7 +188,7 @@ struct FakeS3<'a> {
     uploads_pass: AtomicUsize,
     active_heads: AtomicUsize,
     maximum_heads: AtomicUsize,
-    head_batches: Option<HeadBatches>,
+    head_batches: Option<HeadBatches<'a>>,
 }
 
 impl<'a> FakeS3<'a> {
@@ -340,7 +352,15 @@ fn all_five_buckets_are_paginated_before_and_after_sorted_heads() {
         head_batches: Some(HeadBatches::default()),
         ..FakeS3::new(&fixture, Fault::None)
     };
-    let result = observe(fixture.request(), Selection::All, &fake, &|| Ok(())).unwrap();
+    let result = observe(
+        fixture.request(),
+        Selection::All {
+            verify_proofs: &|| Ok(()),
+        },
+        &fake,
+        &|| Ok(()),
+    )
+    .unwrap();
     let calls = fake.calls.lock().unwrap();
     let names = fixture.captures.keys().cloned().collect::<Vec<_>>();
     let owners = names.iter().cloned().map(Call::Owner).collect::<Vec<_>>();
@@ -443,7 +463,17 @@ fn unexpected_head_status_or_raw_change_fails_without_retry() {
 fn failed_head_batch_drains_and_never_launches_the_next_batch() {
     let fixture = Fixture::new(6);
     let fake = FakeS3::new(&fixture, Fault::Head404);
-    assert!(observe(fixture.request(), Selection::All, &fake, &|| Ok(())).is_err());
+    assert!(
+        observe(
+            fixture.request(),
+            Selection::All {
+                verify_proofs: &|| Ok(()),
+            },
+            &fake,
+            &|| Ok(()),
+        )
+        .is_err()
+    );
     let calls = fake.calls.lock().unwrap();
     assert_eq!(calls.len(), 11 + HEAD_WORKERS);
     assert_eq!(fake.active_heads.load(Ordering::SeqCst), 0);
@@ -456,6 +486,67 @@ fn failed_head_batch_drains_and_never_launches_the_next_batch() {
         );
     }
     assert_eq!(fixture.proof("failure.json")["stage"], "heads");
+}
+
+#[test]
+fn changed_source_proof_during_parallel_heads_blocks_publication() {
+    let fixture = Fixture::new(9);
+    let schema = fixture.work.join("schema-after.json");
+    fs::write(&schema, b"{}\n").unwrap();
+    let original = digest::file(&schema).unwrap();
+    let frozen = FrozenExport {
+        request: Value::Null,
+        generation: Value::Null,
+        inventory: Value::Null,
+        captures: BTreeMap::new(),
+        proof_files: json!({
+            (manifest::path_text(&schema, "测试源证明").unwrap()):
+                {"bytes":original.bytes,"sha256":original.sha256}
+        }),
+    };
+    let verify_proofs = || frozen.check_proofs(fixture.root.path(), &fixture.export);
+    verify_proofs().unwrap();
+    let changed = b"{\"schema\":\"private-proof-marker\"}\n";
+    let drift = || {
+        fs::write(&schema, changed)?;
+        Ok(())
+    };
+    let fake = FakeS3 {
+        head_batches: Some(HeadBatches {
+            on_first_batch: Some(&drift),
+            ..HeadBatches::default()
+        }),
+        ..FakeS3::new(&fixture, Fault::None)
+    };
+
+    let error = observe(
+        fixture.request(),
+        Selection::All {
+            verify_proofs: &verify_proofs,
+        },
+        &fake,
+        &|| Ok(()),
+    )
+    .unwrap_err();
+
+    let progress = fake.head_batches.as_ref().unwrap().progress.lock().unwrap();
+    assert_eq!(progress.simultaneous.first(), Some(&HEAD_BATCH_SIZE));
+    assert!(progress.completed >= HEAD_BATCH_SIZE);
+    assert_eq!(fake.active_heads.load(Ordering::SeqCst), 0);
+    for index in 0..HEAD_BATCH_SIZE {
+        assert_eq!(fixture.proof(&format!("head-{index}.json")), metadata());
+        assert_eq!(
+            fixture.proof(&format!("head-{index}.diagnostic.json")),
+            json!({"operation":"head-object","returned":true,"checkpoint_passed":true})
+        );
+    }
+    assert_eq!(fs::read(&schema).unwrap().as_slice(), changed);
+    let failure = fixture.proof("failure.json");
+    assert_eq!(failure["stage"], "binding_after");
+    assert_eq!(failure["remote_writes"], 0);
+    assert!(!fixture.directory.join("observation.json").exists());
+    assert!(!error.to_string().contains("private-proof-marker"));
+    assert!(!failure.to_string().contains("private-proof-marker"));
 }
 
 #[test]
@@ -474,7 +565,17 @@ fn duplicate_cursor_and_changed_final_key_set_fail_with_raw_proofs() {
     ] {
         let fixture = Fixture::new(1);
         let fake = FakeS3::new(&fixture, fault);
-        assert!(observe(fixture.request(), Selection::All, &fake, &|| Ok(())).is_err());
+        assert!(
+            observe(
+                fixture.request(),
+                Selection::All {
+                    verify_proofs: &|| Ok(()),
+                },
+                &fake,
+                &|| Ok(()),
+            )
+            .is_err()
+        );
         assert_eq!(fixture.proof("failure.json")["stage"], stage);
         assert!(fixture.directory.join(name).exists());
         assert!(!fixture.directory.join("observation.json").exists());

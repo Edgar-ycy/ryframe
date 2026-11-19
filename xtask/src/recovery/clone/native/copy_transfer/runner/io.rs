@@ -185,7 +185,8 @@ impl CopyIo for Live<'_> {
         self.checks.complete()?;
         let check = || self.checks.request();
         self.database.verify_source(&check)?;
-        self.object.verify_source(&check)?;
+        self.object
+            .verify_source(&check, &|| self.checks.operation.check_source_proofs())?;
         self.database.verify_source(&check)?;
         let items = document::array(
             &self.checks.bound.prepared.plan["objects"],

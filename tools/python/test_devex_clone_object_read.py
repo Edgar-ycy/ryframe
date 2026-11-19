@@ -1,16 +1,10 @@
-"""对象读取阶段复用与源 HEAD 分批；离线功能检查，不声明真实协议或性能达标。"""
-import copy
+"""目标对象读取阶段复用的离线功能检查。"""
 import json
-import subprocess
-import threading
 import unittest
 from unittest.mock import patch
 
 import devex_clone_capture as capture
-import devex_clone_export_verify as export_verify
 from devex_clone_live_object import ObjectObservationError, observe_target_object
-from devex_clone_source import export_source
-from devex_clone_source_fixture import SourceFixture
 from restore_build import file_digest
 from restore_reference import work_directory
 from restore_reference_fixture import environment
@@ -126,83 +120,6 @@ class SharedCaptureStagesTests(unittest.TestCase):
                 self.assertTrue((self.output / "capture/head-before.json").is_file())
                 self.assertTrue((self.output / "capture/failure.json").is_file())
                 self.assertFalse((self.output / "observation.json").exists())
-
-
-class ConcurrentSourceHeadTests(unittest.TestCase):
-    def setUp(self):
-        self.f = SourceFixture(self)
-        original = self.f.inventory
-
-        def inventory(command):
-            result = original(command)
-            entries = next(row["entries"] for row in result["objects"] if row["bucket"] == "uploads")
-            template = entries[0]
-            entries.extend({**template, "key": self.f.scope + f"/system/file-{index}.txt"} for index in range(8))
-            return result
-
-        self.f.inventory = inventory
-        export_source(self.f.backend, self.f.request_path, self.f.output, self.f)
-        bound = {"path": str(self.f.output / "export.json"), **file_digest(self.f.output / "export.json")}
-        self.verified = export_verify.verify_source_export(self.f.backend, bound)
-        self.environment = dict(self.f.environment)
-        self.tools = ExternalTools({"source": copy.deepcopy(self.f.request["source"]), "tools": self.f.request["tools"]},
-                                   self.f.local, self.read)
-        self.output = self.f.local / "head-observation"
-        self.keys = sorted(self.verified["captures"]["uploads"])
-        self.events, self.started, self.finished = [], [], []
-        self.lock, self.on_head = threading.Lock(), None
-
-    def read(self, command, **kwargs):
-        self.assertTrue("__s3-read" in command or "__s3-inspect" in command)
-        request = json.loads(kwargs["input"])
-        self.assertEqual(request["configuration_binding"], self.f.object_configuration)
-        self.assertFalse(any(name.upper().startswith(("APP_", "AWS_")) for name in kwargs["env"]))
-        operation, bucket = request["operation"], request["bucket"]
-        if operation == "list-objects-v2":
-            with self.lock:
-                self.events.append("list")
-            keys = [self.f.scope + "/.ryframe-owner"] + (self.keys if bucket == "uploads" else [])
-            return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "result": {
-                "IsTruncated": False, "Contents": [{"Key": key} for key in keys]}}).encode(), b"")
-        key = request["key"]
-        if operation == "get-object":
-            self.assertTrue(key.endswith("/.ryframe-owner"))
-            with self.lock:
-                self.events.append("owner")
-            return self.f.native_read(command, kwargs)
-        self.assertEqual(operation, "head-object")
-        index = self.keys.index(key)
-        with self.lock:
-            self.events.append("head")
-            self.started.append(index)
-        try:
-            if self.on_head:
-                self.on_head(index)
-            return self.f.native_read(command, kwargs)
-        finally:
-            with self.lock:
-                self.finished.append(index)
-
-    def observe(self):
-        return export_verify.observe_source_objects(self.f.backend, self.tools, self.verified, self.output,
-                                                    environment=self.environment)
-
-    def test_changed_proof_during_parallel_heads_fails_after_all_reads_before_publication(self):
-        rendezvous = threading.Barrier(4)
-        path = self.f.output / "schema-after.json"
-
-        def changed(index):
-            if index < 4:
-                rendezvous.wait(timeout=10)
-                if index == 0:
-                    path.write_text("{}", encoding="utf-8")
-
-        self.on_head = changed
-        with self.assertRaises(export_verify.SourceObjectObservationError):
-            self.observe()
-        self.assertCountEqual(self.finished, range(9))
-        self.assertTrue((self.output / "failure.json").is_file())
-        self.assertFalse((self.output / "observation.json").exists())
 
 
 if __name__ == "__main__":

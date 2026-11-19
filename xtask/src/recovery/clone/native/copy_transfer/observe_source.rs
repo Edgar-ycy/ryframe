@@ -42,8 +42,13 @@ pub(crate) struct ObserveSource<'a> {
 
 #[derive(Clone, Copy)]
 pub(crate) enum Selection<'a> {
-    One { bucket: &'a str, key: &'a str },
-    All,
+    One {
+        bucket: &'a str,
+        key: &'a str,
+    },
+    All {
+        verify_proofs: &'a dyn Fn() -> Result<()>,
+    },
 }
 
 /// 外层检查须能从各个 HEAD 工作线程调用并复核同一原导出、代次与配置绑定。
@@ -139,10 +144,10 @@ struct Observation<'a, T> {
 impl<T: Transport + Sync> Observation<'_, T> {
     fn run(&self, selection: Selection<'_>, stage: &mut &'static str) -> Result<Value> {
         self.reads.configuration()?;
-        let whole = matches!(selection, Selection::All);
+        let whole = matches!(selection, Selection::All { .. });
         let selected = match selection {
             Selection::One { bucket, key } => json!([bucket, key]),
-            Selection::All => Value::Null,
+            Selection::All { .. } => Value::Null,
         };
         self.reads.write("intent.json", &json!({
             "export_binding":self.request.export,"selected":selected,"business_get_permitted":false,
@@ -152,7 +157,7 @@ impl<T: Transport + Sync> Observation<'_, T> {
         }))?;
         let (buckets, entries) = match selection {
             Selection::One { bucket, key } => (vec![bucket], vec![(bucket, key)]),
-            Selection::All => {
+            Selection::All { .. } => {
                 let buckets = self.request.captures.keys().map(String::as_str).collect();
                 let entries = self
                     .request
@@ -186,6 +191,9 @@ impl<T: Transport + Sync> Observation<'_, T> {
         self.reads.owners(&buckets, "owner-after")?;
         *stage = "binding_after";
         self.reads.configuration()?;
+        if let Selection::All { verify_proofs } = selection {
+            verify_proofs()?;
+        }
         let identity_sha256 = digest::plan_hash(&json!(observed))?;
         let result = json!({"status":"source_object_identities_observed","whole_source":whole,
             "export_binding":self.request.export,"observed":observed,"identity_sha256":identity_sha256,

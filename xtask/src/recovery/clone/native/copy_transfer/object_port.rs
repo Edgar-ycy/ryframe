@@ -238,12 +238,19 @@ impl<'a, T: Transport + Sync> ObjectPort<'a, T> {
     pub(in crate::recovery::clone::native) fn verify_source(
         &self,
         checkpoint: &(dyn Fn() -> Result<()> + Sync),
+        verify_proofs: &dyn Fn() -> Result<()>,
     ) -> Result<Value> {
         self.check_all_source()?;
+        let verify_all_proofs = || {
+            verify_proofs()?;
+            self.check_all_source()
+        };
         let directory = self.directory("source-objects-final");
         let result = observe_source::observe(
             self.source_request(&directory),
-            Selection::All,
+            Selection::All {
+                verify_proofs: &verify_all_proofs,
+            },
             self.transport,
             checkpoint,
         )?;

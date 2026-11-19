@@ -230,9 +230,14 @@ impl<'a> Operation<'a> {
         )
     }
 
+    fn check_source_proofs(&self) -> Result<()> {
+        self.source
+            .frozen
+            .check_proofs(self.stage.backend, self.files.source_export)
+    }
+
     fn observe_source(&self, check: &(dyn Fn() -> Result<()> + Sync)) -> Result<()> {
-        let source = &self.source.frozen;
-        source.check_proofs(self.stage.backend, self.files.source_export)?;
+        self.check_source_proofs()?;
         observe_source::observe(
             ObserveSource {
                 backend: self.stage.backend,
@@ -245,11 +250,13 @@ impl<'a> Operation<'a> {
                 region: &self.source.region,
                 configuration: &self.source.configuration,
             },
-            Selection::All,
+            Selection::All {
+                verify_proofs: &|| self.check_source_proofs(),
+            },
             &SystemTransport,
             check,
         )?;
-        source.check_proofs(self.stage.backend, self.files.source_export)
+        self.check_source_proofs()
     }
 
     fn database_window<'s>(&'s self, frozen: Option<&'s Value>) -> Window<'s> {
