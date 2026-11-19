@@ -1,6 +1,9 @@
-use std::sync::{
-    Mutex,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    sync::{
+        Condvar, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
 };
 
 use super::*;
@@ -107,6 +110,65 @@ enum Fault {
     ExtraAfter,
 }
 
+const HEAD_BATCH_SIZE: usize = 4;
+
+#[derive(Default)]
+struct HeadBatches {
+    progress: Mutex<HeadProgress>,
+    arrivals: Condvar,
+}
+
+#[derive(Default)]
+struct HeadProgress {
+    started: BTreeSet<usize>,
+    completed: usize,
+    simultaneous: Vec<usize>,
+    failed: bool,
+}
+
+impl HeadBatches {
+    fn rendezvous(&self, fixture: &Fixture, key: &str) -> Result<()> {
+        let keys = &fixture.captures[BUCKET];
+        let index = keys.keys().position(|expected| expected.as_str() == key);
+        let mut progress = self.progress.lock().unwrap();
+        let start = progress.completed / HEAD_BATCH_SIZE * HEAD_BATCH_SIZE;
+        let end = (start + HEAD_BATCH_SIZE).min(keys.len());
+        let selected = index.filter(|index| (start..end).contains(index));
+        let previous_batch_recorded = (0..start).all(|index| {
+            fixture
+                .directory
+                .join(format!("head-{index}.diagnostic.json"))
+                .is_file()
+        });
+        if progress.failed
+            || !previous_batch_recorded
+            || !selected.is_some_and(|index| progress.started.insert(index))
+        {
+            progress.failed = true;
+            self.arrivals.notify_all();
+            return Err("HEAD 与本批登记键不同、重复或前批证据尚未完成".into());
+        }
+        if progress.started.len() == end {
+            let active = end - progress.completed;
+            progress.simultaneous.push(active);
+            self.arrivals.notify_all();
+        }
+        let (mut progress, _) = self
+            .arrivals
+            .wait_timeout_while(progress, Duration::from_secs(10), |progress| {
+                !progress.failed && progress.started.len() < end
+            })
+            .unwrap();
+        if progress.failed || progress.started.len() < end {
+            progress.failed = true;
+            self.arrivals.notify_all();
+            return Err("本批 HEAD 未在时限内同时到达".into());
+        }
+        progress.completed += 1;
+        Ok(())
+    }
+}
+
 struct FakeS3<'a> {
     fixture: &'a Fixture,
     fault: Fault,
@@ -114,6 +176,7 @@ struct FakeS3<'a> {
     uploads_pass: AtomicUsize,
     active_heads: AtomicUsize,
     maximum_heads: AtomicUsize,
+    head_batches: Option<HeadBatches>,
 }
 
 impl<'a> FakeS3<'a> {
@@ -125,6 +188,7 @@ impl<'a> FakeS3<'a> {
             uploads_pass: AtomicUsize::new(0),
             active_heads: AtomicUsize::new(0),
             maximum_heads: AtomicUsize::new(0),
+            head_batches: None,
         }
     }
 
@@ -191,7 +255,12 @@ impl Transport for FakeS3<'_> {
                 let active = self.active_heads.fetch_add(1, Ordering::SeqCst) + 1;
                 self.maximum_heads.fetch_max(active, Ordering::SeqCst);
                 self.record(Call::Head(key.clone()));
+                let checked = self
+                    .head_batches
+                    .as_ref()
+                    .map_or(Ok(()), |batches| batches.rendezvous(self.fixture, &key));
                 self.active_heads.fetch_sub(1, Ordering::SeqCst);
+                checked?;
                 if self.fault == Fault::Head404 && key == self::key(0) {
                     return Ok(json!({"status":"not_found","http_status":404,
                         "remote_write_may_have_occurred":false}));
@@ -266,8 +335,11 @@ fn single_object_uses_owner_head_owner_and_keeps_legacy_digest() {
 
 #[test]
 fn all_five_buckets_are_paginated_before_and_after_sorted_heads() {
-    let fixture = Fixture::new(6);
-    let fake = FakeS3::new(&fixture, Fault::None);
+    let fixture = Fixture::new(9);
+    let fake = FakeS3 {
+        head_batches: Some(HeadBatches::default()),
+        ..FakeS3::new(&fixture, Fault::None)
+    };
     let result = observe(fixture.request(), Selection::All, &fake, &|| Ok(())).unwrap();
     let calls = fake.calls.lock().unwrap();
     let names = fixture.captures.keys().cloned().collect::<Vec<_>>();
@@ -280,14 +352,26 @@ fn all_five_buckets_are_paginated_before_and_after_sorted_heads() {
         .collect::<Vec<_>>();
     assert_eq!(&calls[..5], owners.as_slice());
     assert_eq!(&calls[5..11], lists.as_slice());
-    assert!(
-        calls[11..17]
+    let keys = fixture.captures[BUCKET].keys().collect::<Vec<_>>();
+    for (actual, expected) in calls[11..20]
+        .chunks(HEAD_BATCH_SIZE)
+        .zip(keys.chunks(HEAD_BATCH_SIZE))
+    {
+        let actual = actual
             .iter()
-            .all(|call| matches!(call, Call::Head(_)))
-    );
-    assert_eq!(&calls[17..23], lists.as_slice());
-    assert_eq!(&calls[23..], owners.as_slice());
-    assert!(fake.maximum_heads.load(Ordering::SeqCst) <= HEAD_WORKERS);
+            .map(|call| match call {
+                Call::Head(key) => key,
+                _ => panic!("HEAD 批次中出现其他请求"),
+            })
+            .collect::<BTreeSet<_>>();
+        assert_eq!(actual, expected.iter().copied().collect::<BTreeSet<_>>());
+    }
+    assert_eq!(&calls[20..26], lists.as_slice());
+    assert_eq!(&calls[26..], owners.as_slice());
+    let progress = fake.head_batches.as_ref().unwrap().progress.lock().unwrap();
+    assert_eq!(progress.simultaneous, [4, 4, 1]);
+    assert_eq!(progress.completed, keys.len());
+    assert_eq!(fake.maximum_heads.load(Ordering::SeqCst), HEAD_BATCH_SIZE);
     assert_eq!(result["whole_source"], true);
     assert_eq!(
         result["observed"]
@@ -296,11 +380,31 @@ fn all_five_buckets_are_paginated_before_and_after_sorted_heads() {
             .iter()
             .map(|row| row["key"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        fixture.captures[BUCKET]
-            .keys()
-            .map(String::as_str)
-            .collect::<Vec<_>>()
+        keys.iter().map(|key| key.as_str()).collect::<Vec<_>>()
     );
+    for index in 0..keys.len() {
+        assert_eq!(fixture.proof(&format!("head-{index}.json")), metadata());
+        assert_eq!(
+            fixture.proof(&format!("head-{index}.diagnostic.json")),
+            json!({"operation":"head-object","returned":true,"checkpoint_passed":true})
+        );
+    }
+    let head_receipts = fs::read_dir(&fixture.directory)
+        .unwrap()
+        .filter(|entry| {
+            entry
+                .as_ref()
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("head-")
+        })
+        .count();
+    assert_eq!(head_receipts, 18);
+    assert_eq!(result["business_get_requests"], 0);
+    assert_eq!(result["business_bytes_downloaded"], 0);
+    assert_eq!(result["source_body_sha_recomputed"], false);
+    assert_eq!(result["remote_writes"], 0);
     assert_eq!(
         fixture.proof("list-before-uploads-0.json")["NextContinuationToken"],
         "page+2"

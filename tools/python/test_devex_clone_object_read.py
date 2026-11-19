@@ -187,18 +187,6 @@ class ConcurrentSourceHeadTests(unittest.TestCase):
         return export_verify.observe_source_objects(self.f.backend, self.tools, self.verified, self.output,
                                                     environment=self.environment)
 
-    def test_source_head_batches_keep_complete_listing_owner_barriers_and_sorted_results(self):
-        rendezvous = threading.Barrier(4)
-        self.on_head = lambda index: rendezvous.wait(timeout=10) if index < 8 else None
-        result = self.observe()
-        self.assertEqual([item["key"] for item in result["observed"]], self.keys)
-        self.assertEqual(self.events[:10], ["owner"] * 5 + ["list"] * 5)
-        self.assertEqual(self.events[10:19], ["head"] * 9)
-        self.assertEqual(self.events[19:], ["list"] * 5 + ["owner"] * 5)
-        self.assertEqual(len(list(self.output.glob("head-*.json"))), 18)
-        self.assertEqual(len(list(self.output.glob("head-*.diagnostic.json"))), 9)
-        self.assertFalse(result["source_body_sha_recomputed"])
-
     def test_changed_proof_during_parallel_heads_fails_after_all_reads_before_publication(self):
         rendezvous = threading.Barrier(4)
         path = self.f.output / "schema-after.json"
