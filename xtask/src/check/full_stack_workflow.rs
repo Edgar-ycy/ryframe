@@ -9,6 +9,7 @@ const FRONTEND_ROOT: &str = r#""$GITHUB_WORKSPACE/frontend""#;
 const FIXTURE_OUTPUT: &str = r#""$GITHUB_WORKSPACE/backend/.local-tests/business-fixture""#;
 const FIXTURE_RECEIPT: &str = "backend/.local-tests/business-fixture/fixture.json";
 const DIAGNOSTICS: &str = "保存全栈诊断产物";
+const TOOL_TARGET: &str = "$RUNNER_TEMP/ryframe-full-stack-tool";
 
 pub(super) fn run(root: &Path) -> Result<()> {
     let path = root.join(WORKFLOW);
@@ -61,9 +62,16 @@ fn validate_stages(steps: &[YamlValue], upload: usize) -> YamlResult<()> {
     )?;
     required_argument(fixture_step, "--write", None, "业务夹具")?;
 
-    let configure = matrix_backend_step(steps, "cargo xtask check ci full-stack-config")?;
-    let prepare = matrix_backend_step(steps, "cargo xtask check recovery full-stack prepare")?;
-    let start = matrix_backend_step(steps, "cargo xtask check recovery full-stack start")?;
+    let (configure, _) = matrix_backend_step(steps, "cargo xtask check ci full-stack-config")?;
+    let tool_build = matrix_tool_step(
+        steps,
+        &format!(r#"cargo build --locked -p xtask --bin xtask --target-dir "{TOOL_TARGET}""#),
+        None,
+    )?;
+    let tool = format!(r#""{TOOL_TARGET}/debug/xtask" check recovery full-stack"#);
+    let prepare = matrix_tool_step(steps, &format!("{tool} prepare"), None)?;
+    let start = matrix_tool_step(steps, &format!("{tool} start"), None)?;
+    let collect = matrix_tool_step(steps, &format!("{tool} collect"), Some("${{ always() }}"))?;
     let (build, step) = command(steps, "corepack pnpm build")?;
     required_text(
         step,
@@ -79,22 +87,36 @@ fn validate_stages(steps: &[YamlValue], upload: usize) -> YamlResult<()> {
     }
 
     if ![
-        record, fixture, configure, prepare, start, build, verify, upload,
+        record, fixture, configure, tool_build, prepare, start, build, verify, collect, upload,
     ]
     .windows(2)
     .all(|pair| pair[0] < pair[1])
     {
         return Err(
-            "全栈步骤顺序必须为来源登记、业务夹具、配置、准备、启动、前端构建、来源复核、诊断上传"
+            "全栈步骤顺序必须为来源登记、业务夹具、配置、工具构建、准备、启动、前端构建、来源复核、收集、诊断上传"
                 .into(),
         );
     }
     Ok(())
 }
 
-fn matrix_backend_step(steps: &[YamlValue], name: &str) -> YamlResult<usize> {
+fn matrix_backend_step<'a>(
+    steps: &'a [YamlValue],
+    name: &str,
+) -> YamlResult<(usize, &'a YamlValue)> {
     let (index, step) = command(steps, name)?;
     required_text(step, "working-directory", "${{ matrix.backend }}", name)?;
+    Ok((index, step))
+}
+
+fn matrix_tool_step(steps: &[YamlValue], run: &str, condition: Option<&str>) -> YamlResult<usize> {
+    let (index, step) = matrix_backend_step(steps, run)?;
+    required_text(step, "run", run, run)?;
+    if let Some(condition) = condition {
+        required_text(step, "if", condition, run)?;
+    } else if step.get("if").is_some() {
+        return Err(format!("全栈 {run} 必须无条件执行"));
+    }
     Ok(index)
 }
 

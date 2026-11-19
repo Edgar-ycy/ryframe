@@ -58,6 +58,31 @@ fn rejects_drift_in_source_pair_and_stage_ownership() {
             "full-stack-config",
         ),
         (
+            "--target-dir \"$RUNNER_TEMP/ryframe-full-stack-tool\"",
+            "--target-dir target/xtask-run",
+            "cargo build --locked",
+        ),
+        (
+            "/debug/xtask\" check recovery full-stack collect",
+            "/release/xtask\" check recovery full-stack collect",
+            "full-stack collect",
+        ),
+        (
+            "full-stack prepare'",
+            "full-stack prepare && cargo xtask check recovery full-stack prepare'",
+            "的 run",
+        ),
+        (
+            "- name: 启动真实 API、Worker 并等待就绪\n",
+            "- name: 启动真实 API、Worker 并等待就绪\n        if: ${{ false }}\n",
+            "无条件",
+        ),
+        (
+            "收集进程与基础设施日志\n        if: ${{ always() }}",
+            "收集进程与基础设施日志\n        if: ${{ success() }}",
+            "full-stack collect 的 if",
+        ),
+        (
             "working-directory: ${{ matrix.frontend }}",
             "working-directory: frontend",
             "前端生产构建",
@@ -113,6 +138,25 @@ fn rejects_fixture_generation_before_source_record() {
         &CURRENT[end..],
     );
     assert_rejected(changed, "步骤顺序", "记录来源前生成夹具");
+}
+
+#[test]
+fn rejects_collection_before_source_verification() {
+    let verify = CURRENT
+        .find("      - name: 复核全栈源码组合未变化")
+        .unwrap();
+    let collect = CURRENT
+        .find("      - name: 收集进程与基础设施日志")
+        .unwrap();
+    let upload = CURRENT.find("      - name: 保存全栈诊断产物").unwrap();
+    let changed = format!(
+        "{}{}{}{}",
+        &CURRENT[..verify],
+        &CURRENT[collect..upload],
+        &CURRENT[verify..collect],
+        &CURRENT[upload..],
+    );
+    assert_rejected(changed, "步骤顺序", "来源复核前收集");
 }
 
 #[test]

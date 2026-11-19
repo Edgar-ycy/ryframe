@@ -238,13 +238,17 @@ jobs:
           --redis-container "${{ job.services.redis.id }}"
           --s3-container "${{ job.services.rustfs.id }}" --write
 
+      - name: 构建全栈协调工具
+        working-directory: ${{ matrix.backend }}
+        run: cargo build --locked -p xtask --bin xtask --target-dir "$RUNNER_TEMP/ryframe-full-stack-tool"
+
       - name: 构建并安全初始化临时全栈环境
         working-directory: ${{ matrix.backend }}
-        run: cargo xtask check recovery full-stack prepare
+        run: '"$RUNNER_TEMP/ryframe-full-stack-tool/debug/xtask" check recovery full-stack prepare'
 
       - name: 启动真实 API、Worker 并等待就绪
         working-directory: ${{ matrix.backend }}
-        run: cargo xtask check recovery full-stack start
+        run: '"$RUNNER_TEMP/ryframe-full-stack-tool/debug/xtask" check recovery full-stack start'
 
       - name: 构建前端生产产物
         working-directory: ${{ matrix.frontend }}
@@ -260,7 +264,7 @@ jobs:
       - name: 收集进程与基础设施日志
         if: ${{ always() }}
         working-directory: ${{ matrix.backend }}
-        run: cargo xtask check recovery full-stack collect
+        run: '"$RUNNER_TEMP/ryframe-full-stack-tool/debug/xtask" check recovery full-stack collect'
 
       - name: 保存全栈诊断产物
         if: ${{ always() }}
