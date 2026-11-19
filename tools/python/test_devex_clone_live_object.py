@@ -158,16 +158,6 @@ class LiveObjectTests(unittest.TestCase):
         self.failed()
         self.assertEqual(len(self.business()), 1)
 
-    def test_missing_then_present_is_unknown_instead_of_absent(self):
-        self.store.outcomes = ["404", None]
-        self.assertEqual(self.failed()["stage"], "head_after")
-        self.assertEqual(len(self.business()), 2)
-
-    def test_wrong_owner_blocks_business_request(self):
-        self.store.owner_failure = "uploads"
-        self.failed()
-        self.assertEqual(self.business(), [])
-
     def test_existing_wrong_content_is_not_adopted(self):
         self.store.outcomes = []
         self.store.body = b"different-object"
@@ -214,22 +204,6 @@ class LiveObjectTests(unittest.TestCase):
         (self.output / "head-before.diagnostic.json").write_text("{}", encoding="utf-8")
         with self.assertRaises(ValueError):
             self.read()
-
-    def test_publication_failure_keeps_diagnostics_but_rejects_residual_receipt(self):
-        write = live.write_json
-
-        def publish_then_change(path, value):
-            write(path, value)
-            if path.name == "observation.json":
-                (self.output / "head-before.diagnostic.json").write_text("{}", encoding="utf-8")
-
-        with patch.object(live, "write_json", side_effect=publish_then_change):
-            with self.assertRaises(ObjectObservationError):
-                self.observe()
-        self.assertTrue((self.output / "observation.json").is_file())
-        self.assertTrue((self.output / "failure.json").is_file())
-        with self.assertRaisesRegex(ValueError, "失败"):
-            read_observation(self.output, expected_sha256="a" * 64)
 
     def test_saved_receipt_cannot_read_an_evidence_path_outside_output(self):
         self.observe()

@@ -3,7 +3,7 @@
 use serde_json::{Value, json};
 
 use super::{
-    business_binding::{self, ObjectRead},
+    business_binding::{self, Completion, ObjectRead},
     context::Context,
     live::Live,
     producer::{self, Session},
@@ -18,11 +18,11 @@ use crate::{
     },
 };
 
-pub(super) fn run(context: &Context<'_>) -> Result<Value> {
+pub(super) fn run(context: &Context<'_>) -> Result<(Value, Option<Completion>)> {
     let live = Live::load(context)?;
     let base = context.run.join("post-copy");
     let mode = match context.mode {
-        "verify" => return verify(&live),
+        "verify" => return verify(&live).map(|(value, completion)| (value, Some(completion))),
         "schedules" => schedules::Mode::Apply,
         "reconcile" => schedules::Mode::Reconcile,
         _ => return Err("未知复制后执行模式".into()),
@@ -38,6 +38,7 @@ pub(super) fn run(context: &Context<'_>) -> Result<Value> {
         },
         || live.check(),
     )
+    .map(|value| (value, None))
 }
 
 fn settings<'a>(live: &'a Live<'_, '_>, base: &'a std::path::Path) -> Result<Settings<'a>> {
@@ -61,7 +62,7 @@ pub(super) fn verified_schedules(live: &Live<'_, '_>) -> Result<Vec<Value>> {
     Ok(confirmed)
 }
 
-fn verify(live: &Live<'_, '_>) -> Result<Value> {
+fn verify(live: &Live<'_, '_>) -> Result<(Value, Completion)> {
     let context = live.context;
     verified_schedules(live)?;
     live.check()?;
@@ -77,7 +78,7 @@ fn verify(live: &Live<'_, '_>) -> Result<Value> {
     business.check()?;
     live.check()?;
     let public = app_configuration::public_configuration(&live.execution, &live.configuration)?;
-    let objects = business.finish(
+    let completion = business.finish(
         &observed,
         ObjectRead {
             configuration_root: &live.execution,
@@ -91,11 +92,10 @@ fn verify(live: &Live<'_, '_>) -> Result<Value> {
     verified_schedules(live)?;
     business.check()?;
     live.check()?;
-    Ok(
-        json!({"status":"post_copy_existing_data_verified","evidence":objects.evidence,
-        "objects":objects.objects,"registration":context.post.descriptor,
-        "worker_must_remain_stopped":true,"restore_qualified":false}),
-    )
+    let result = json!({"status":"post_copy_existing_data_verified","evidence":completion.evidence,
+        "objects":completion.objects,"registration":context.post.descriptor,
+        "worker_must_remain_stopped":true,"restore_qualified":false});
+    Ok((result, completion))
 }
 
 pub(super) fn require_schedule_stage(context: &Context<'_>, confirmed: &[Value]) -> Result<()> {

@@ -227,6 +227,7 @@ fn verified_producer_and_full_scope_download_only_the_object_complement() {
     let result = business
         .finish(&producer, fixture.access(), &mock, &|| Ok(()))
         .unwrap();
+    result.check(&fixture.backend).unwrap();
     assert_eq!(
         result.objects,
         json!({"business_objects":1,"additional_objects":2,
@@ -241,6 +242,46 @@ fn verified_producer_and_full_scope_download_only_the_object_complement() {
         ["avatar", "config-packages", "exports", "imports", "uploads"]
     );
     assert_eq!(*mock.downloads.lock().unwrap(), [EXPORT, EXTRA]);
+}
+
+#[test]
+fn completion_rejects_late_failure_in_the_scope_or_a_captured_object() {
+    for (name, success, raw) in [
+        (
+            "object-scope",
+            "verified.json",
+            "list-business-uploads-0.json",
+        ),
+        (
+            "remaining-object-0000",
+            "observation.json",
+            "head-before.json",
+        ),
+    ] {
+        let fixture = Fixture::new();
+        let business = fixture.prepare().unwrap();
+        let producer = observed(&business);
+        let mock = Mock::default();
+        let result = business
+            .finish(&producer, fixture.access(), &mock, &|| Ok(()))
+            .unwrap();
+        result.check(&fixture.backend).unwrap();
+        let directory = fixture.output.join(name);
+        let original = [success, raw].map(|name| {
+            let path = directory.join(name);
+            let bytes = fs::read(&path).unwrap();
+            (path, bytes)
+        });
+        let marker = directory.join("failure.json");
+        let failure = json!({"status":"test_observation_failed","remote_writes":0});
+        document::write_new(&marker, &failure).unwrap();
+
+        assert!(result.check(&fixture.backend).is_err(), "{name}");
+        for (path, bytes) in original {
+            assert_eq!(fs::read(path).unwrap(), bytes);
+        }
+        assert_eq!(document::read(&marker).unwrap(), failure);
+    }
 }
 
 #[test]

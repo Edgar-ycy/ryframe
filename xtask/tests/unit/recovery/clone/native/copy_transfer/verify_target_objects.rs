@@ -141,6 +141,10 @@ fn owner_body(bucket: &str) -> String {
     format!("ryframe-owner:v1:{SCOPE}:object-storage:{bucket}")
 }
 
+fn record_observation_failure(path: &Path) -> Result<()> {
+    document::write_new(path, &json!({"status":"object_observation_failed"}))
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Fault {
     None,
@@ -163,6 +167,7 @@ struct Fake {
     active: AtomicUsize,
     peak: AtomicUsize,
     configuration_change: Option<(PathBuf, Vec<u8>)>,
+    observation_failure_in_listing: Option<PathBuf>,
 }
 
 impl Fake {
@@ -179,6 +184,7 @@ impl Fake {
             active: AtomicUsize::new(0),
             peak: AtomicUsize::new(0),
             configuration_change: None,
+            observation_failure_in_listing: None,
         }
     }
 
@@ -260,6 +266,10 @@ impl Transport for Fake {
                 self.lists.lock().unwrap().push(request.bucket.clone());
                 let mut entries = vec![json!({"Key":format!("{SCOPE}/.ryframe-owner")})];
                 if request.bucket == BUCKET {
+                    if let Some(marker) = &self.observation_failure_in_listing {
+                        self.assert_head_calls(self.objects);
+                        record_observation_failure(marker)?;
+                    }
                     entries.extend((0..self.objects).map(|index| json!({"Key":key(index)})));
                     if self.fault == Fault::ExtraKey {
                         entries.push(json!({"Key":format!("{SCOPE}/extra")}));
@@ -447,4 +457,55 @@ fn listing_owner_and_prior_capture_drift_fail_closed() {
     assert!(verify(fixture.request(), &fake, &|| Ok(())).is_err());
     assert!(fake.heads.lock().unwrap().is_empty());
     assert!(!fixture.directory.join("verified.json").exists());
+}
+
+#[test]
+fn late_observation_failure_blocks_success_before_and_after_publication() {
+    for during_publication in [false, true] {
+        let fixture = Fixture::new(5);
+        let captured = fixture.work.join("capture-0");
+        let marker = captured.join("failure.json");
+        let original = ["observation.json", "capture.json", "object.bin"].map(|name| {
+            let path = captured.join(name);
+            let bytes = fs::read(&path).unwrap();
+            (path, bytes)
+        });
+        let verified = fixture.directory.join("verified.json");
+        let fake = Fake {
+            observation_failure_in_listing: (!during_publication).then(|| marker.clone()),
+            ..Fake::new(5, Fault::None, true)
+        };
+        let result = verify(fixture.request(), &fake, &|| {
+            if during_publication && verified.is_file() {
+                record_observation_failure(&marker)?;
+            }
+            Ok(())
+        });
+
+        assert!(result.is_err());
+        fake.assert_head_calls(5);
+        fixture.assert_head_evidence(5, true);
+        assert_eq!(fake.lists.lock().unwrap().len(), BUCKETS.len());
+        assert_eq!(fake.owners.lock().unwrap().len(), 3 * BUCKETS.len());
+        for (path, bytes) in original {
+            assert_eq!(fs::read(path).unwrap(), bytes);
+        }
+        assert_eq!(
+            document::read(&marker).unwrap()["status"],
+            "object_observation_failed"
+        );
+        let failure = fixture.result("failure.json");
+        assert_eq!(failure["status"], "target_heads_failed");
+        assert_eq!(failure["remote_writes"], 0);
+        if during_publication {
+            assert_eq!(failure["stage"], "publish");
+            assert_eq!(
+                fixture.result("verified.json")["status"],
+                "target_object_heads_verified"
+            );
+        } else {
+            assert_eq!(failure["stage"], "binding_after");
+            assert!(!verified.exists());
+        }
+    }
 }

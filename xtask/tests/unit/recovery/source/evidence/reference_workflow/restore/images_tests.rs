@@ -260,6 +260,11 @@ fn mismatched_before_image_prevents_writes_and_finishes_with_original_evidence()
     assert!(!fixture.work.join("restore-base-failure-after").exists());
 }
 
+const OBJECT_PROOFS: [(&str, &str); 2] = [
+    ("object-uploads-0/observation.json", "object_present"),
+    ("object-heads/verified.json", "target_object_heads_verified"),
+];
+
 struct JointFixture {
     restore: Fixture,
     target: document::Document,
@@ -328,7 +333,7 @@ impl JointFixture {
         expected: &Value,
         actual: &Value,
         evidence: &mut Map<String, Value>,
-        during_redis: impl FnOnce(&Path) -> Result<()>,
+        (during_redis, checkpoint): (impl FnOnce(&Path) -> Result<()>, &dyn Fn() -> Result<()>),
     ) -> Result<()> {
         let backend = &self.restore.backend;
         let directory = self.directory(phase);
@@ -354,13 +359,19 @@ impl JointFixture {
                 captured,
             )?;
             let object_proofs = if phase == Phase::After {
-                let proof = directory.join("object-heads.json");
-                native::json::write_new(
-                    &proof,
-                    &json!({"status":"object_head_verified","bucket":"uploads",
-                        "key":"target/tenant/file.txt","sha256":"c".repeat(64)}),
-                )?;
-                vec![common::binding(&proof)?]
+                OBJECT_PROOFS
+                    .into_iter()
+                    .map(|(name, status)| {
+                        let proof = directory.join(name);
+                        fs::create_dir(proof.parent().unwrap())?;
+                        native::json::write_new(
+                            &proof,
+                            &json!({"status":status,"bucket":"uploads",
+                                "key":"target/tenant/file.txt","sha256":"c".repeat(64)}),
+                        )?;
+                        common::binding(&proof)
+                    })
+                    .collect::<Result<Vec<_>>>()?
             } else {
                 Vec::new()
             };
@@ -381,7 +392,7 @@ impl JointFixture {
                     during_redis(&inventory.join("inventory.json"))?;
                     Ok(actual["redis"].clone())
                 },
-                &|| Ok(()),
+                checkpoint,
             )
         })
     }
@@ -483,10 +494,20 @@ fn complete_joint_before_and_after_bind_four_databases_five_buckets_and_redis() 
         |phase, evidence| {
             assert!(phase != Phase::FailureAfter);
             let expected = resource_image(phase);
-            fixture.capture(&scope, phase, &expected, &expected, evidence, |_| {
-                assert_eq!(writes.get(), usize::from(phase == Phase::After));
-                Ok(())
-            })
+            fixture.capture(
+                &scope,
+                phase,
+                &expected,
+                &expected,
+                evidence,
+                (
+                    |_: &Path| {
+                        assert_eq!(writes.get(), usize::from(phase == Phase::After));
+                        Ok(())
+                    },
+                    &|| Ok(()),
+                ),
+            )
         },
         || {
             writes.set(writes.get() + 1);
@@ -515,9 +536,14 @@ fn complete_joint_before_and_after_bind_four_databases_five_buckets_and_redis() 
             document::bound_file(backend, &image.value["inventory"], "原库存收据").unwrap();
         assert_eq!(inventory.value["inventories"].as_object().unwrap().len(), 8);
         let proofs = image.value["object_observations"].as_array().unwrap();
-        assert_eq!(proofs.len(), usize::from(phase == Phase::After));
-        for proof in proofs {
+        assert_eq!(
+            proofs.len(),
+            OBJECT_PROOFS.len() * usize::from(phase == Phase::After)
+        );
+        for ((name, status), proof) in OBJECT_PROOFS.into_iter().zip(proofs) {
             let (_, object) = document::bound_file(backend, proof, "对象证明").unwrap();
+            assert_eq!(object.path, fixture.directory(phase).join(name));
+            assert_eq!(object.value["status"], status);
             assert_eq!(object.value["key"], "target/tenant/file.txt");
         }
     }
@@ -579,7 +605,14 @@ fn joint_resource_drift_is_recorded_and_blocks_the_affected_phase() {
             |stage, evidence| {
                 let fresh = resource_image(stage);
                 let observed = if stage == phase { &actual } else { &fresh };
-                fixture.capture(&scope, stage, &fresh, observed, evidence, |_| Ok(()))
+                fixture.capture(
+                    &scope,
+                    stage,
+                    &fresh,
+                    observed,
+                    evidence,
+                    (|_: &Path| Ok(()), &|| Ok(())),
+                )
             },
             || {
                 writes.set(writes.get() + 1);
@@ -618,35 +651,38 @@ fn inventory_drift_after_object_observation_keeps_only_the_failure_binding() {
             &expected,
             &expected,
             &mut evidence,
-            |receipt| {
-                assert!(
-                    fixture
-                        .directory(Phase::After)
-                        .join("object-heads.json")
-                        .is_file()
-                );
-                let original = fs::read(receipt)?;
-                let mut edited = original.clone();
-                let version = b"\"format_version\": 1";
-                let offset = edited
-                    .windows(version.len())
-                    .position(|bytes| bytes == version)
-                    .unwrap();
-                edited[offset + version.len() - 1] = b'2';
-                let changed = fs::write(receipt, &edited);
-                #[cfg(windows)]
-                {
-                    assert_eq!(changed.unwrap_err().raw_os_error(), Some(32));
-                    assert_eq!(fs::read(receipt)?, original);
-                    fs::write(receipt.with_file_name("late.json"), b"{}")?;
-                }
-                #[cfg(not(windows))]
-                {
-                    changed?;
-                    assert_eq!(fs::read(receipt)?, edited);
-                }
-                Ok(())
-            },
+            (
+                |receipt: &Path| {
+                    assert!(
+                        fixture
+                            .directory(Phase::After)
+                            .join("object-heads/verified.json")
+                            .is_file()
+                    );
+                    let original = fs::read(receipt)?;
+                    let mut edited = original.clone();
+                    let version = b"\"format_version\": 1";
+                    let offset = edited
+                        .windows(version.len())
+                        .position(|bytes| bytes == version)
+                        .unwrap();
+                    edited[offset + version.len() - 1] = b'2';
+                    let changed = fs::write(receipt, &edited);
+                    #[cfg(windows)]
+                    {
+                        assert_eq!(changed.unwrap_err().raw_os_error(), Some(32));
+                        assert_eq!(fs::read(receipt)?, original);
+                        fs::write(receipt.with_file_name("late.json"), b"{}")?;
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        changed?;
+                        assert_eq!(fs::read(receipt)?, edited);
+                    }
+                    Ok(())
+                },
+                &|| Ok(()),
+            ),
         )
         .unwrap_err();
     assert!(
@@ -662,4 +698,61 @@ fn inventory_drift_after_object_observation_keeps_only_the_failure_binding() {
     )
     .unwrap();
     assert_eq!(failure.value["error_type"], "ReferenceResourceImageFailure");
+}
+
+#[test]
+fn object_failure_markers_prevent_acceptance_of_the_parent_image() {
+    let scope = Scope::load(&crate::workspace::root_dir(), &[], &[]).unwrap();
+    let phase = Phase::After;
+    let expected = resource_image(phase);
+    for (failed_proof, after_publication) in [(0, false), (1, false), (1, true)] {
+        let fixture = JointFixture::new();
+        let directory = fixture.directory(phase);
+        let image = directory.join("image.json");
+        let proofs = OBJECT_PROOFS.map(|(name, _)| directory.join(name));
+        let child_failure = proofs[failed_proof].with_file_name("failure.json");
+        let marker = json!({"status":"object_observation_failed"});
+        let original = Cell::new(None);
+        let during_redis = |_: &Path| {
+            original.set(Some([fs::read(&proofs[0])?, fs::read(&proofs[1])?]));
+            if !after_publication {
+                native::json::write_new(&child_failure, &marker)?;
+            }
+            Ok(())
+        };
+        let checkpoint = || {
+            if after_publication && image.is_file() {
+                native::json::write_new(&child_failure, &marker)?;
+            }
+            Ok(())
+        };
+        let mut evidence = Map::new();
+        fixture
+            .capture(
+                &scope,
+                phase,
+                &expected,
+                &expected,
+                &mut evidence,
+                (during_redis, &checkpoint),
+            )
+            .unwrap_err();
+        assert_eq!(image.is_file(), after_publication);
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(
+            evidence["after-failure"],
+            common::binding(&directory.join("failure.json")).unwrap()
+        );
+        let (_, failure) = document::bound_file(
+            &fixture.restore.backend,
+            &evidence["after-failure"],
+            "失败收据",
+        )
+        .unwrap();
+        assert_eq!(failure.value["error_type"], "ReferenceResourceImageFailure");
+        assert_eq!(native::json::read(&child_failure).unwrap(), marker);
+        for (proof, bytes) in proofs.iter().zip(original.into_inner().unwrap()) {
+            assert_eq!(fs::read(proof).unwrap(), bytes);
+        }
+    }
 }

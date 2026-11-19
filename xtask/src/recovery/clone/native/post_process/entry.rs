@@ -1,5 +1,6 @@
 //! 复制后阶段在统一入口内持有真实存储、目标代次和完整复制账本保护。
 use super::{
+    business_binding::Completion,
     context::Context,
     diagnostic::{self, Phase},
 };
@@ -125,7 +126,7 @@ impl Runner<'_> {
             request.run_dir,
             &manifest.value,
         )?;
-        diagnostic::context(
+        let (value, completion) = diagnostic::context(
             request,
             Phase::Cleanup,
             super::ownership::with_target(request, &manifest.value, storage, |owner, storage| {
@@ -140,14 +141,32 @@ impl Runner<'_> {
                 let result = self.execute_stage(request, &context);
                 super::files::combine(result, context.check())
             }),
-        )
+        )?;
+        if let Some(completion) = completion {
+            diagnostic::context(request, Phase::Business, completion.check(request.backend))?;
+        }
+        Ok(value)
     }
 
-    fn execute_stage(&self, request: &StageRequest<'_>, context: &Context<'_>) -> Result<Value> {
+    fn execute_stage(
+        &self,
+        request: &StageRequest<'_>,
+        context: &Context<'_>,
+    ) -> Result<(Value, Option<Completion>)> {
+        let without_completion = |value| (value, None);
         let (phase, result) = match self.options.operation {
-            PostCopyOperation::Register => (Phase::Registration, context.register()),
-            PostCopyOperation::Prepare => (Phase::Preparation, super::prepare::run(context)),
-            PostCopyOperation::Amend => (Phase::Amendment, super::amend::run(context)),
+            PostCopyOperation::Register => (
+                Phase::Registration,
+                context.register().map(without_completion),
+            ),
+            PostCopyOperation::Prepare => (
+                Phase::Preparation,
+                super::prepare::run(context).map(without_completion),
+            ),
+            PostCopyOperation::Amend => (
+                Phase::Amendment,
+                super::amend::run(context).map(without_completion),
+            ),
             PostCopyOperation::Schedules | PostCopyOperation::Reconcile => {
                 (Phase::Schedules, super::execution::run(context))
             }

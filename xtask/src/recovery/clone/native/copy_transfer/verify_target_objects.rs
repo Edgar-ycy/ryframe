@@ -175,13 +175,22 @@ impl<T: Transport + Sync> Window<'_, T> {
             "ownership_before":before,"ownership_after":after,"ownership_final":final_owners,
             "keys":keys,"business_downloads":0,"remote_writes":0,"restore_qualified":false,
         });
+        self.check_observation_failures()?;
         *stage = "publish";
         self.reads.write("verified.json", &receipt)?;
         self.reads.configuration()?;
         if document::read(&self.request.directory.join("verified.json"))? != receipt {
             return Err("目标对象收尾收据在发布后变化".into());
         }
+        self.check_observation_failures()?;
         Ok(receipt)
+    }
+
+    fn check_observation_failures(&self) -> Result<()> {
+        self.request
+            .observations
+            .values()
+            .try_for_each(Observed::check_failure)
     }
 
     fn check_outputs<'a>(

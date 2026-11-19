@@ -64,6 +64,23 @@ pub(super) struct ObjectRead<'a> {
 pub(super) struct Completion {
     pub(super) evidence: Value,
     pub(super) objects: Value,
+    directories: Vec<Value>,
+}
+
+impl Completion {
+    pub(super) fn check(&self, backend: &Path) -> Result<()> {
+        for identity in &self.directories {
+            let directory = common::directory_identity(backend, identity)?;
+            observe_object::reject_failure(&directory)?;
+        }
+        Ok(())
+    }
+}
+
+fn observation_directory_identity(backend: &Path, path: &Path) -> Result<Value> {
+    let directory = common::local_directory(backend, path, "复制后对象观察目录")?;
+    let (device, inode) = common::device_inode_for(&directory, &fs::symlink_metadata(&directory)?)?;
+    Ok(json!({"path":directory,"device":device,"inode":inode}))
 }
 
 pub(super) fn prepare<'a>(
@@ -205,7 +222,7 @@ impl Business<'_> {
         {
             return Err("复制后业务结果在发布期间变化".into());
         }
-        self.verify_objects(access, transport, checkpoint)?;
+        let directories = self.verify_objects(access, transport, checkpoint)?;
         checkpoint()?;
         self.check()?;
         result_input.check()?;
@@ -216,6 +233,7 @@ impl Business<'_> {
                 "additional_objects":self.objects.plan.len()-self.objects.covered.len(),
                 "all_scoped_keys_verified":true,"additional_objects_downloaded":true,
             }),
+            directories,
         })
     }
 
@@ -268,7 +286,7 @@ impl Business<'_> {
         access: ObjectRead<'_>,
         transport: &T,
         checkpoint: &(dyn Fn() -> Result<()> + Sync),
-    ) -> Result<()> {
+    ) -> Result<Vec<Value>> {
         let scope = document::text(&self.target["target"]["scope_id"], "复制业务目标 scope")?;
         if access.configuration["app_env"] != "test"
             || app_configuration::public_configuration(
@@ -280,6 +298,7 @@ impl Business<'_> {
         }
         let directory = self.output.join("object-scope");
         common::ensure_new_directory(self.backend, &directory, "复制后五桶观察目录")?;
+        let mut directories = vec![observation_directory_identity(self.backend, &directory)?];
         let reads = ReadWindow::new(
             self.backend,
             access.configuration_root,
@@ -306,12 +325,13 @@ impl Business<'_> {
             .enumerate()
         {
             let artifact = &item["artifact"];
+            let directory = self.output.join(format!("remaining-object-{index:04}"));
             let observed = observe_object::observe(
                 ObserveTarget {
                     backend: self.backend,
                     configuration_root: access.configuration_root,
                     work: self.output,
-                    directory: &self.output.join(format!("remaining-object-{index:04}")),
+                    directory: &directory,
                     plan_sha256,
                     scope,
                     endpoint: access.endpoint,
@@ -328,8 +348,9 @@ impl Business<'_> {
             if !matches!(observed.image_evidence(), ObjectObservation::Captured(_)) {
                 return Err("补集对象在完整范围观察后缺失，保留原响应，不发布成功".into());
             }
+            directories.push(observation_directory_identity(self.backend, &directory)?);
         }
-        Ok(())
+        Ok(directories)
     }
 
     fn verify_scope<T: Transport>(&self, reads: &ReadWindow<'_, T>, scope: &str) -> Result<()> {

@@ -73,6 +73,19 @@ impl Observed {
     pub(crate) fn descriptor(&self) -> &Value {
         &self.descriptor
     }
+
+    pub(crate) fn check_failure(&self) -> Result<()> {
+        let saved = binding::binding_shape(&self.descriptor, "目标对象观察收据")?;
+        reject_failure(saved.path.parent().ok_or("目标对象观察收据缺少目录")?)
+    }
+}
+
+pub(crate) fn reject_failure(directory: &Path) -> Result<()> {
+    match fs::symlink_metadata(directory.join("failure.json")) {
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+        Ok(_) => Err("对象证据目录含失败标记".into()),
+    }
 }
 
 pub(crate) fn observe<T: Transport>(
@@ -449,11 +462,7 @@ impl<'a> Evidence<'a> {
             }
         }
         self.check_directory()?;
-        match fs::symlink_metadata(self.path.join("failure.json")) {
-            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error.into()),
-            Ok(_) => Err("目标对象观察已有失败标记".into()),
-        }
+        reject_failure(self.path)
     }
 }
 

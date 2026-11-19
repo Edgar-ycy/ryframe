@@ -1,5 +1,5 @@
 //! 在同一目标窗口采集、复核并发布数据库、对象和 Redis 的整体像。
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
 
@@ -9,8 +9,8 @@ use crate::{
     recovery::inputs::document::{self, Document},
 };
 use native::{
-    digest::plan_hash, export::transport::SystemTransport, resources::common,
-    target_verify::guard::Inputs,
+    copy_transfer::observe_object::reject_failure, digest::plan_hash,
+    export::transport::SystemTransport, resources::common, target_verify::guard::Inputs,
 };
 
 pub(super) fn capture(
@@ -155,7 +155,7 @@ impl Publication<'_> {
             .iter()
             .map(|proof| document::binding_shape(proof, "参考恢复对象证明").map(|file| file.path))
             .collect::<Result<Vec<_>>>()?;
-        let protected = Inputs::open(proof_paths)?;
+        let protected = Inputs::open(proof_paths.iter().cloned())?;
         let redis = redis()?;
         database.check(checkpoint)?;
         for proof in &object_proofs {
@@ -171,11 +171,21 @@ impl Publication<'_> {
             "object_observations":object_proofs,"image":actual,"expected_sha256":plan_hash(self.expected)?,
             "matches_expected":matches,
         });
+        reject_object_failures(&proof_paths)?;
         let binding = publish(self.backend, &self.directory.join("image.json"), &image)?;
         protected.check()?;
         checkpoint()?;
+        reject_object_failures(&proof_paths)?;
         Ok((matches, binding))
     }
+}
+
+fn reject_object_failures(proofs: &[PathBuf]) -> Result<()> {
+    for proof in proofs {
+        let directory = proof.parent().ok_or("参考恢复对象证明缺少父目录")?;
+        reject_failure(directory)?;
+    }
+    Ok(())
 }
 
 fn publish(backend: &Path, path: &Path, value: &Value) -> Result<Value> {

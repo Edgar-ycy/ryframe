@@ -277,8 +277,9 @@ fn requires_two_explicit_head_404_responses_and_owner_bracket() {
 }
 
 #[test]
-fn get_404_transport_and_imprecise_head_fail_without_retry() {
+fn rejection_does_not_retry_or_start_later_requests() {
     for (steps, stage) in [
+        (vec![Step::OwnerWrongScope], "owner-before"),
         (
             vec![Step::Owner, head(metadata()), Step::Get { raw: None }],
             "get",
@@ -567,20 +568,36 @@ fn retains_download_but_blocks_capture_of_drifted_initial_evidence() {
 
 #[test]
 fn publication_rejects_changes_to_original_evidence_and_preserves_it() {
-    let fixture = Fixture::new();
-    let fake = FakeS3::new([Step::Owner, head(absent()), Step::Owner, head(absent())]);
-    let checkpoints = Cell::new(0);
-    let changed = fixture.directory.join("head-before.json");
-    let outcome = observe(fixture.request(), &fake, &|| {
-        checkpoints.set(checkpoints.get() + 1);
-        if checkpoints.get() == 9 {
-            fs::write(&changed, b"changed")?;
+    for after_publication in [false, true] {
+        let fixture = Fixture::new();
+        let fake = FakeS3::new([Step::Owner, head(absent()), Step::Owner, head(absent())]);
+        let checkpoints = Cell::new(0);
+        let changed = fixture.directory.join("head-before.diagnostic.json");
+        let receipt = fixture.directory.join("observation.json");
+        let raw_receipt = RefCell::new(None);
+        let outcome = observe(fixture.request(), &fake, &|| {
+            checkpoints.set(checkpoints.get() + 1);
+            if after_publication && receipt.is_file() {
+                raw_receipt.replace(Some(fs::read(&receipt)?));
+                fs::write(&changed, b"{}")?;
+            } else if !after_publication && checkpoints.get() == 9 {
+                fs::write(&changed, b"{}")?;
+            }
+            Ok(())
+        });
+        assert!(outcome.is_err());
+        fake.exhausted();
+        assert_eq!(fixture.proof("failure.json")["stage"], "publish");
+        assert_eq!(fs::read(changed).unwrap(), b"{}");
+        if after_publication {
+            assert_eq!(
+                fs::read(&receipt).unwrap(),
+                raw_receipt.into_inner().unwrap()
+            );
+            assert_eq!(fixture.proof("observation.json")["status"], "object_absent");
+            assert!(reject_failure(&fixture.directory).is_err());
+        } else {
+            assert!(!receipt.exists());
         }
-        Ok(())
-    });
-    assert!(outcome.is_err());
-    fake.exhausted();
-    assert_eq!(fixture.proof("failure.json")["stage"], "publish");
-    assert_eq!(fs::read(changed).unwrap(), b"changed");
-    assert!(!fixture.directory.join("observation.json").exists());
+    }
 }

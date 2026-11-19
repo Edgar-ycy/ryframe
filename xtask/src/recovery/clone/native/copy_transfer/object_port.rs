@@ -21,7 +21,7 @@ use super::{
     },
     images::{self, TargetObject},
     object_write,
-    observe_object::{self, ObserveTarget, Observed},
+    observe_object::{self, ObserveTarget, Observed, reject_failure},
     observe_source::{self, ObserveSource, ReadWindow, Selection},
     steps::{Basis, Kind, Observation, Step},
     verify_target_objects::{self, VerifyTarget},
@@ -32,7 +32,7 @@ use crate::{
 };
 
 mod proofs;
-use proofs::{reject_failure, source_index};
+use proofs::source_index;
 
 const WORKERS: usize = 4;
 type Key = (String, String);

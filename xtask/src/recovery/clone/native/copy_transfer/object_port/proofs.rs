@@ -1,7 +1,5 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
-    io::ErrorKind,
     path::Path,
 };
 
@@ -20,7 +18,7 @@ use super::{
         },
         images::ObjectObservation,
     },
-    Key, ObjectInputs, ObjectPort, Observed, Sample, Step, item_key,
+    Key, ObjectInputs, ObjectPort, Observed, Sample, Step, item_key, reject_failure,
 };
 use crate::{
     Result, local_test_path::strip_local_test_prefix, recovery::inputs::document as proof,
@@ -204,12 +202,4 @@ fn sample_directory<'a>(path: &'a Path, work: &Path) -> Result<&'a Path> {
     }
     reject_failure(parent)?;
     Ok(parent)
-}
-
-pub(super) fn reject_failure(directory: &Path) -> Result<()> {
-    match fs::symlink_metadata(directory.join("failure.json")) {
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error.into()),
-        Ok(_) => Err("对象证据目录含失败标记".into()),
-    }
 }
