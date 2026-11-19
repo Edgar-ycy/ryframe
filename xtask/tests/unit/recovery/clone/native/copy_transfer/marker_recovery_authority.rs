@@ -4,27 +4,46 @@ use successor::{
 };
 
 #[test]
-fn active_fixture_successor_must_be_first_or_second_accepted_restart() {
+fn active_fixture_successor_must_be_one_of_the_first_three_accepted_restarts() {
     let first = json!({"stage":"fixture-services","mode":"restart","status":"passed",
         "result":{"path":"original-restart"}});
     let second = json!({"stage":"fixture-services","mode":"restart","status":"passed",
         "result":{"path":"second-restart"}});
+    let third = json!({"stage":"fixture-services","mode":"restart","status":"passed",
+        "result":{"path":"third-restart"}});
+    let fourth = json!({"stage":"fixture-services","mode":"restart","status":"passed",
+        "result":{"path":"fourth-restart"}});
     let failed = json!({"stage":"fixture-services","mode":"restart","status":"failed"});
     let mut history = json!({"active_generation":first["result"],"closed":false,
         "external_recovery":null,"rustfs_handoff":null});
     assert_eq!(
         restarts(&history, &[failed, first.clone()]).unwrap(),
-        (&first, None)
+        (&first, None, None)
     );
     assert!(restarts(&history, &[first.clone(), second.clone()]).is_err());
     history["active_generation"] = second["result"].clone();
     assert_eq!(
         restarts(&history, &[first.clone(), second.clone()]).unwrap(),
-        (&first, Some(&second))
+        (&first, Some(&second), None)
     );
     assert!(restarts(&history, &[first.clone(), second.clone(), second.clone()]).is_err());
+    assert!(restarts(&history, &[first.clone(), second.clone(), third.clone()]).is_err());
+    history["active_generation"] = third["result"].clone();
+    assert_eq!(
+        restarts(&history, &[first.clone(), second.clone(), third.clone()]).unwrap(),
+        (&first, Some(&second), Some(&third))
+    );
+    history["active_generation"] = fourth["result"].clone();
+    assert!(
+        restarts(
+            &history,
+            &[first.clone(), second.clone(), third.clone(), fourth]
+        )
+        .is_err()
+    );
+    history["active_generation"] = third["result"].clone();
     history["external_recovery"] = json!({"path":"newer-external-termination"});
-    assert!(restarts(&history, &[first, second]).is_err());
+    assert!(restarts(&history, &[first, second, third]).is_err());
 }
 
 #[test]

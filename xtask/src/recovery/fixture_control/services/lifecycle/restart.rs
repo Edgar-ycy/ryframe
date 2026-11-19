@@ -18,7 +18,8 @@ pub(super) fn run(
         "服务重启前仍存在控制器",
     )?;
     let previous = registered(runtime, context, true)?;
-    let stopped = observe(runtime, &previous)?;
+    let recorded = incident::recorded(context, &history)?;
+    let stopped = incident::observe_registered(runtime, context, &previous, recorded.as_ref())?;
     if history["closed"] == true {
         check(
             stopped == expected_stopped(),
@@ -30,7 +31,13 @@ pub(super) fn run(
     let _guard = ProcessGuard::acquire(&context.run)?;
     owned(context, |owner| {
         context.guard(None)?;
-        check_observation(runtime, &previous, &stopped, "重启前原服务状态变化")?;
+        incident::check_registered(
+            runtime,
+            context,
+            &previous,
+            &stopped,
+            "重启前原服务状态变化",
+        )?;
         let mut sources = context.sources();
         sources["restart_predecessor"] = history["restart_predecessor"].clone();
         let expected = state::attempts(&context.value["state"])?.len() as u64 + 1;
@@ -67,7 +74,16 @@ fn check_external_predecessor(context: &Context, history: &Value, stopped: &Valu
     )?;
     let recovered = history::evidence::bound(&context.run, &history["external_recovery"])?;
     let proof = history::evidence::bound(&context.run, &recovered["evidence"])?;
-    if proof["format_version"] == 2 || termination["evidence"].get("redis_external").is_some() {
+    if proof["format_version"] == incident::VERSION
+        || termination["evidence"].get("host_reboot").is_some()
+    {
+        check(
+            proof["format_version"] == incident::VERSION && proof["observation"] == *termination,
+            "重启前主机重启证据与已核对的原服务事故不同",
+        )?;
+    } else if proof["format_version"] == 2
+        || termination["evidence"].get("redis_external").is_some()
+    {
         check(
             proof["format_version"] == 2 && proof["observation"] == *termination,
             "重启前 Windows Redis 外部终止证据与已核对的原代次不同",
@@ -98,8 +114,9 @@ fn restart_generation(
     let attempt = (|| {
         requests = restart_requests(attempt.previous, output)?;
         context.guard(Some(running))?;
-        check_observation(
+        incident::check_registered(
             runtime,
+            context,
             attempt.previous,
             attempt.stopped,
             "RustFS 重启前原服务状态变化",

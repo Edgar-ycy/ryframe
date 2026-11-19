@@ -54,6 +54,8 @@ pub(in crate::recovery) use images::saved_object_captures;
 pub(in crate::recovery) use images::{inspect_object, object_capture_result};
 pub(crate) use ready::policy::cache_transaction::cleanup as cleanup_source_cache;
 pub(crate) use running::history::cache_port::dispatch as cache_history;
+#[cfg(windows)]
+pub(in crate::recovery) use running::history::reboot::{host_boot_proof, verify_host_boot_proof};
 pub(in crate::recovery) use running::history::reboot::{
     reboot_close, reboot_process_exited, reboot_status,
 };

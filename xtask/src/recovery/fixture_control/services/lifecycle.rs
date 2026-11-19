@@ -26,6 +26,8 @@ mod context;
 mod controller_recovery;
 #[path = "lifecycle/handoff.rs"]
 mod handoff;
+#[path = "lifecycle/incident.rs"]
+pub(super) mod incident;
 #[path = "lifecycle/ledger.rs"]
 mod ledger;
 #[path = "lifecycle/model.rs"]

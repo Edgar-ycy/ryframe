@@ -5,6 +5,9 @@ use serde_json::{Value, json};
 use super::{Target, common, document, state};
 use crate::{Result, recovery::fixture_control::services::history};
 
+#[path = "successor/incident.rs"]
+mod incident;
+
 #[derive(PartialEq)]
 pub(super) struct Fixture {
     pub(super) value: Value,
@@ -54,7 +57,7 @@ pub(super) fn load(backend: &Path, run: &Path, target: &Target) -> Result<Fixtur
     let saved = state::load(run, true)?;
     let ledger = history::validate(run, &saved, true, true)?;
     let attempts = state::attempts(&saved)?;
-    let (first, second) = restarts(&ledger, attempts)?;
+    let (first, second, third) = restarts(&ledger, attempts)?;
     let mut evidence = Evidence {
         backend,
         files: Vec::new(),
@@ -67,7 +70,21 @@ pub(super) fn load(backend: &Path, run: &Path, target: &Target) -> Result<Fixtur
     };
     let second = Restart::read(&mut evidence, second)?;
     let lineage = second_link(&mut evidence, run, attempts, initial, &first, &second)?;
-    fixture(evidence, target, manifest, &second, external, Some(lineage))
+    let Some(third) = third else {
+        return fixture(evidence, target, manifest, &second, external, Some(lineage));
+    };
+    let third = Restart::read(&mut evidence, third)?;
+    let incident = incident::link(
+        &mut evidence,
+        attempts,
+        initial,
+        &second,
+        &third,
+        &lineage["second_runtime"],
+    )?;
+    let mut fixture = fixture(evidence, target, manifest, &third, external, Some(lineage))?;
+    fixture.value["lineage"]["reboot_incident"] = incident;
+    Ok(fixture)
 }
 
 fn fixture(
@@ -98,24 +115,27 @@ fn fixture(
     })
 }
 
-pub(super) fn restarts<'a>(
-    ledger: &Value,
-    attempts: &'a [Value],
-) -> Result<(&'a Value, Option<&'a Value>)> {
+pub(super) type RestartRows<'a> = (&'a Value, Option<&'a Value>, Option<&'a Value>);
+
+pub(super) fn restarts<'a>(ledger: &Value, attempts: &'a [Value]) -> Result<RestartRows<'a>> {
     let mut restarts = attempts.iter().filter(|row| {
         row["stage"] == "fixture-services" && row["mode"] == "restart" && row["status"] == "passed"
     });
     let first = restarts.next().ok_or("原夹具尚未发布成功重启")?;
     let second = restarts.next();
+    let third = restarts.next();
     if restarts.next().is_some()
-        || ledger["active_generation"] != second.unwrap_or(first)["result"]
+        || ledger["active_generation"] != third.or(second).unwrap_or(first)["result"]
+        || third.is_some_and(|row| {
+            row["result"] == first["result"] || row["result"] == second.unwrap_or(first)["result"]
+        })
         || ledger["closed"] != false
         || !ledger["external_recovery"].is_null()
         || !ledger["rustfs_handoff"].is_null()
     {
-        return Err("Redis 标记恢复只接受原夹具当前活跃的首次或第二次重启代次".into());
+        return Err("Redis 标记恢复只接受原夹具当前活跃且唯一的前三次重启代次".into());
     }
-    Ok((first, second))
+    Ok((first, second, third))
 }
 
 fn first_link(evidence: &mut Evidence<'_>, initial: &Value, first: &Restart<'_>) -> Result<Value> {

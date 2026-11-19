@@ -30,6 +30,16 @@ pub(in crate::recovery) fn reboot_process_exited(identity: &Value, boot: u64) ->
     host::exited(identity, boot)
 }
 
+#[cfg(windows)]
+pub(in crate::recovery) fn host_boot_proof() -> Result<Value> {
+    host::proof()
+}
+
+#[cfg(windows)]
+pub(in crate::recovery) fn verify_host_boot_proof(proof: &Value) -> Result<u64> {
+    host::verify_recorded(proof)
+}
+
 const CLOSE: &str = "source-generation-reboot-close";
 
 pub(super) fn cache_restart(

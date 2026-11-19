@@ -19,6 +19,7 @@ pub(super) struct Receipts {
     controller: Value,
     run: PathBuf,
     protected: Inputs,
+    reboot_marker_root: Option<Inputs>,
 }
 
 impl Receipts {
@@ -31,7 +32,15 @@ impl Receipts {
         let directory = root.join(digest);
         common::ensure_directory(backend, &directory, "当前 Redis 代次的标记恢复目录")?;
         let protected = Inputs::directory(&directory)?;
-        Ok(Self {
+        let reboot_marker_root = if recovery.binding["fixture"]["lineage"]
+            .get("reboot_incident")
+            .is_some()
+        {
+            Some(Inputs::directory(&root)?)
+        } else {
+            None
+        };
+        let receipts = Self {
             backend: backend.to_owned(),
             intent: directory.join("intent.json"),
             directory,
@@ -42,11 +51,24 @@ impl Receipts {
             controller: stage.controller.clone(),
             run: stage.request.run_dir.to_owned(),
             protected,
-        })
+            reboot_marker_root,
+        };
+        receipts.check()?;
+        Ok(receipts)
     }
 
     pub(super) fn check(&self) -> Result<()> {
-        self.protected.check()
+        self.protected.check()?;
+        if let Some(guard) = &self.reboot_marker_root {
+            guard.check()?;
+            let root = self.directory.parent().ok_or("缺少标记逻辑运行目录")?;
+            reject_prior_intents(root, &self.directory, |path| {
+                common::local_directory(&self.backend, path, "先前 Redis 标记代次目录")?;
+                Ok(())
+            })?;
+            guard.check()?;
+        }
+        Ok(())
     }
 
     pub(super) fn require_unattempted(&self) -> Result<()> {
@@ -235,6 +257,50 @@ fn classify(observed: &Value, after: &Value) -> &'static str {
     } else {
         "mismatch"
     }
+}
+
+fn reject_prior_intents(
+    root: &std::path::Path,
+    current: &std::path::Path,
+    verify_directory: impl Fn(&std::path::Path) -> Result<()>,
+) -> Result<()> {
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        if entry.path() == current {
+            continue;
+        }
+        let file_name = entry.file_name();
+        let name = file_name.to_str().ok_or("Redis 标记目录名无效")?;
+        if name.len() != 64
+            || !name
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            || !entry.file_type()?.is_dir()
+        {
+            return Err("Redis 标记根目录含未登记代次或链接".into());
+        }
+        verify_directory(&entry.path())?;
+        match fs::symlink_metadata(entry.path().join("intent.json")) {
+            Ok(_) => return Err("先前 Redis 代次存在原写入意图，禁止跨代次发送标记写入".into()),
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[test]
+fn reboot_marker_does_not_bypass_an_original_intent_in_another_generation() {
+    let root = tempfile::tempdir().unwrap();
+    let prior = root.path().join("a".repeat(64));
+    let current = root.path().join("b".repeat(64));
+    fs::create_dir(&prior).unwrap();
+    fs::create_dir(&current).unwrap();
+    fs::write(current.join("intent.json"), b"current attempt").unwrap();
+    reject_prior_intents(root.path(), &current, |_| Ok(())).unwrap();
+    fs::write(prior.join("intent.json"), b"unreadable previous intent").unwrap();
+    assert!(reject_prior_intents(root.path(), &current, |_| Ok(())).is_err());
 }
 
 #[cfg(test)]

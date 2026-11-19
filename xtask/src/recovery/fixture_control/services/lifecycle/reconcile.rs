@@ -39,10 +39,12 @@ pub(super) fn proof(
             &context.sources(),
             &history["external_recovery"],
         )?;
-        let observations = observe(runtime, services)?;
-        check(
-            observations
-                == json!({"redis":"stopped","rustfs":"external-termination-unreconciled","termination":recorded["observation"]}),
+        let observations = json!({"redis":"stopped","rustfs":"external-termination-unreconciled","termination":recorded["observation"]});
+        incident::check_registered(
+            runtime,
+            context,
+            services,
+            &observations,
             "失败 restart 和解时服务未回到已核对的外部终止现场",
         )?;
         Ok((observations, sources))

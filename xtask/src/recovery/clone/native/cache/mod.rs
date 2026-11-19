@@ -34,6 +34,8 @@ mod stage;
 mod start_deadline;
 #[cfg(windows)]
 mod windows;
+#[cfg(windows)]
+pub(in crate::recovery) use windows::{redis_reboot_evidence, redis_reboot_incident};
 pub(in crate::recovery) mod windows_tool;
 
 pub(crate) use runner::run;

@@ -46,6 +46,19 @@ pub(super) fn external(proof: &Value, run: &Path, owner: &Value, generation: &Va
     let observation = &proof["observation"];
     let evidence = &observation["evidence"];
     let (rustfs, redis) = paths(run, generation)?;
+    use super::super::lifecycle::incident;
+    if proof["format_version"] == incident::VERSION {
+        check(
+            proof["kind"] == "reference-fixture-external-termination"
+                && super::evidence::path_is(&proof["run"], run)
+                && &proof["owner"] == owner
+                && proof["normal_shutdown_proof"].is_null()
+                && proof["remote_writes"] == 0
+                && proof["resources_deleted"] == false,
+            "主机重启证据未绑定原服务账本或错误记录正常关闭",
+        )?;
+        return incident::verify_historical(run, &rustfs, &redis, observation);
+    }
     let external_redis = proof["format_version"] == 2;
     let mut fields = vec!["rustfs_tree", "redis_runtime", "rustfs_monitor_ready"];
     if external_redis {

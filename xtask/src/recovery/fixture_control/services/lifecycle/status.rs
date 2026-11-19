@@ -42,7 +42,9 @@ pub(super) fn run(runtime: &mut dyn Runtime, context: &Context) -> Result<Value>
         }
     } else {
         let services = registered(runtime, context, true)?;
-        observations = observe(runtime, &services)?;
+        let recorded = incident::recorded(context, &history)?;
+        observations =
+            incident::observe_registered(runtime, context, &services, recorded.as_ref())?;
         let mut next = "close";
         if !observations["termination"].is_null() {
             let reconciled = &history["external_recovery"];

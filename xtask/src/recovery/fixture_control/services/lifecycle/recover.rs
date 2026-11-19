@@ -76,7 +76,7 @@ fn external(runtime: &mut dyn Runtime, context: &Context, owner_file: &Path) -> 
     )?;
     context.no_unknown()?;
     let services = registered(runtime, context, true)?;
-    let observed = observe(runtime, &services)?;
+    let observed = incident::observe_registered(runtime, context, &services, None)?;
     check(
         !observed["termination"].is_null(),
         "只有全部登记服务明确外部终止时才能执行该恢复",
@@ -87,7 +87,13 @@ fn external(runtime: &mut dyn Runtime, context: &Context, owner_file: &Path) -> 
         controller(runtime, context)?.is_null(),
         "核对外部终止前出现其他控制器",
     )?;
-    check_observation(runtime, &services, &observed, "核对外部终止前服务状态变化")?;
+    incident::check_registered(
+        runtime,
+        context,
+        &services,
+        &observed,
+        "核对外部终止前服务状态变化",
+    )?;
     owned(context, |owner| {
         let mut sources = context.sources();
         sources["external_owner"] = context.value["sources"]["state_before"].clone();
@@ -99,17 +105,18 @@ fn external(runtime: &mut dyn Runtime, context: &Context, owner_file: &Path) -> 
             |_, controller, running, output| {
                 new_output(context, output)?;
                 context.guard(Some(running))?;
-                check_observation(
+                incident::check_registered(
                     runtime,
+                    context,
                     &services,
                     &observed,
                     "发布外部终止证据前服务状态变化",
                 )?;
                 let file = output.join("external-termination.json");
-                let version = if observed["termination"]["evidence"]
-                    .get("redis_external")
-                    .is_some()
-                {
+                let evidence = &observed["termination"]["evidence"];
+                let version = if evidence.get("host_reboot").is_some() {
+                    incident::VERSION
+                } else if evidence.get("redis_external").is_some() {
                     2
                 } else {
                     1
@@ -121,8 +128,9 @@ fn external(runtime: &mut dyn Runtime, context: &Context, owner_file: &Path) -> 
                 "remote_writes":0,"resources_deleted":false}),
                 )?;
                 context.guard(Some(running))?;
-                check_observation(
+                incident::check_registered(
                     runtime,
+                    context,
                     &services,
                     &observed,
                     "保存外部终止证据后服务状态变化",

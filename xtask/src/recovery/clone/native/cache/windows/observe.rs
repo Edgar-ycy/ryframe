@@ -15,6 +15,8 @@ use std::{io::ErrorKind, path::Path};
 
 #[path = "observe/handoff.rs"]
 pub(super) mod handoff;
+#[path = "observe/incident.rs"]
+pub(super) mod incident;
 
 const RUNTIME_FIELDS: &[&str] = &[
     "format_version",
@@ -39,17 +41,17 @@ pub(in crate::recovery::clone::native::cache) fn inspect(
     request: &Value,
     output: &Path,
 ) -> Result<Value> {
-    inspect_generation(request, output, false)
+    inspect_generation(request, output, Generation::Current)
 }
 
 pub(in crate::recovery::clone::native::cache) fn inspect_reboot(
     request: &Value,
     output: &Path,
 ) -> Result<Value> {
-    inspect_generation(request, output, true)
+    inspect_generation(request, output, Generation::SourceReboot)
 }
 
-fn inspect_generation(request: &Value, output: &Path, reboot: bool) -> Result<Value> {
+fn inspect_generation(request: &Value, output: &Path, generation: Generation) -> Result<Value> {
     let backend = crate::workspace::root_dir();
     common::local_directory(&backend, output, "Windows Redis 运行目录")?;
     model::shape(request)?;
@@ -60,7 +62,7 @@ fn inspect_generation(request: &Value, output: &Path, reboot: bool) -> Result<Va
         return failure_runtime(request, output, false);
     }
     let runtime = document::read(&output.join("runtime.json"))?;
-    let registered = Registered::open_generation(&backend, Some(request), &runtime, reboot)?;
+    let registered = Registered::open_registered(&backend, Some(request), &runtime, generation)?;
     if registered.launch.output != output {
         return Err("Windows Redis 运行收据不属于原观察目录".into());
     }
@@ -72,7 +74,7 @@ pub(in crate::recovery::clone::native::cache) fn predecessor_request(
     runtime_path: &Path,
     runtime: &Value,
 ) -> Result<Value> {
-    predecessor_generation(backend, runtime_path, runtime, false)
+    predecessor_generation(backend, runtime_path, runtime, Generation::Current)
 }
 
 pub(in crate::recovery::clone::native::cache) fn predecessor_reboot(
@@ -80,19 +82,19 @@ pub(in crate::recovery::clone::native::cache) fn predecessor_reboot(
     runtime_path: &Path,
     runtime: &Value,
 ) -> Result<Value> {
-    predecessor_generation(backend, runtime_path, runtime, true)
+    predecessor_generation(backend, runtime_path, runtime, Generation::SourceReboot)
 }
 
 fn predecessor_generation(
     backend: &Path,
     runtime_path: &Path,
     runtime: &Value,
-    reboot: bool,
+    generation: Generation,
 ) -> Result<Value> {
     if runtime_path != bound_path(runtime, "output")?.join("runtime.json") {
         return Err("Windows Redis 前驱收据不属于登记的运行目录".into());
     }
-    let registered = Registered::open_generation(backend, None, runtime, reboot)?;
+    let registered = Registered::open_registered(backend, None, runtime, generation)?;
     registered.finish(Ok(registered.launch.request.clone()))
 }
 
@@ -193,7 +195,8 @@ pub(in crate::recovery::clone::native::cache) fn reboot_exit(
     request: &Value,
     runtime: &Value,
 ) -> Result<Value> {
-    let registered = Registered::open_generation(backend, Some(request), runtime, true)?;
+    let registered =
+        Registered::open_registered(backend, Some(request), runtime, Generation::SourceReboot)?;
     let observed = if registered.exited {
         (|| {
             if present(&runtime["supervisor"])? || present(&runtime["process"])? {
@@ -215,18 +218,25 @@ struct Registered<'a> {
     launch_inputs: ProtectedInputs,
     receipt_inputs: ProtectedInputs,
     exited: bool,
+    incident_failure: Option<Value>,
+}
+
+enum Generation {
+    Current,
+    SourceReboot,
+    IncidentReboot,
 }
 
 impl<'a> Registered<'a> {
     fn open(backend: &Path, request: Option<&Value>, runtime: &'a Value) -> Result<Self> {
-        Self::open_generation(backend, request, runtime, false)
+        Self::open_registered(backend, request, runtime, Generation::Current)
     }
 
-    fn open_generation(
+    fn open_registered(
         backend: &Path,
         request: Option<&Value>,
         runtime: &'a Value,
-        reboot: bool,
+        generation: Generation,
     ) -> Result<Self> {
         document::exact(runtime, RUNTIME_FIELDS, "Windows Redis 运行收据")?;
         if runtime["format_version"] != 3 {
@@ -236,10 +246,11 @@ impl<'a> Registered<'a> {
         common::local_directory(backend, &output, "Windows Redis 运行目录")?;
         let sha = document::text(&runtime["launch"]["sha256"], "Windows Redis 启动摘要")?;
         let path = output.join(LAUNCH);
-        let launch = if reboot {
-            BoundLaunch::load_reboot(&path, sha)?
-        } else {
-            BoundLaunch::load(&path, sha)?
+        let launch = match generation {
+            Generation::Current => BoundLaunch::load(&path, sha)?,
+            Generation::SourceReboot | Generation::IncidentReboot => {
+                BoundLaunch::load_reboot(&path, sha)?
+            }
         };
         if launch.output != output
             || std::fs::canonicalize(&launch.backend)? != std::fs::canonicalize(backend)?
@@ -258,12 +269,22 @@ impl<'a> Registered<'a> {
         if exited {
             paths.push(output.join("exited.json"));
         }
+        let incident_failure = if matches!(generation, Generation::IncidentReboot) {
+            let failure = output.join("failed.json");
+            common::common_file(backend, &failure, "Windows Redis 原事故失败收据")?;
+            let binding = common::binding(&failure)?;
+            paths.push(failure);
+            Some(binding)
+        } else {
+            None
+        };
         let registered = Self {
             launch,
             runtime,
             launch_inputs,
             receipt_inputs: ProtectedInputs::open(paths)?,
             exited,
+            incident_failure,
         };
         registered.check_evidence()?;
         Ok(registered)
@@ -331,35 +352,6 @@ impl<'a> Registered<'a> {
         }
         if self.exited {
             self.check_exit()?;
-        }
-        Ok(())
-    }
-
-    fn check_terminal(&self) -> Result<()> {
-        let output = &self.launch.output;
-        for name in ["cancel.json", "failed.json"] {
-            if entry_exists(&output.join(name))? {
-                return Err("Windows Redis 含取消或失败收据，禁止按正常代次处理".into());
-            }
-        }
-        let files = directory_files(output)?;
-        if files.iter().any(|name| {
-            let name = name.as_str();
-            !RECEIPTS.contains(&name)
-                && ![
-                    LAUNCH,
-                    "request.json",
-                    "intent.json",
-                    "exited.json",
-                    "redis.stdout.log",
-                    "redis.stderr.log",
-                ]
-                .contains(&name)
-        }) {
-            return Err("Windows Redis 登记目录含未知文件".into());
-        }
-        if files.iter().any(|name| name == "exited.json") != self.exited {
-            return Err("Windows Redis 退出收据在观察窗口内变化".into());
         }
         Ok(())
     }

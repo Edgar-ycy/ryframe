@@ -30,6 +30,7 @@ fn setup() -> (PathBuf, tempfile::TempDir, Receipts) {
         controller,
         run,
         protected: Inputs::directory(&evidence).unwrap(),
+        reboot_marker_root: None,
     };
     (backend, directory, receipts)
 }
