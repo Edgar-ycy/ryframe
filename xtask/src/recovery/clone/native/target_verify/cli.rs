@@ -62,14 +62,6 @@ pub(super) fn execute(
         }
         "cli-storage-append" => storage_append(args),
         "cli-status" => status::project(args),
-        "prepared-observations" => {
-            json_io::exact(args, &["files"], "prepare 观察基线")?;
-            let prepared = read(backend, &target.join("prepare.json"))?;
-            let request = read(backend, &bound(backend, &prepared["request"])?)?;
-            Ok(
-                json!({"files":super::resume_baseline::active(backend,target,&args["files"],&request)?}),
-            )
-        }
         "validate-prepared-tree" => {
             json_io::exact(
                 args,
