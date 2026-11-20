@@ -10,8 +10,12 @@ use std::{
 };
 fn main() {
     let args = env::args().skip(1).collect::<Vec<_>>();
-    if args[0] == "descendant" {
-        fs::write(&args[1], std::process::id().to_string()).unwrap();
+    if matches!(args[0].as_str(), "descendant" | "descendant-tree") {
+        let marker = Path::new(&args[1]);
+        if args[0] == "descendant-tree" {
+            spawn_descendant("descendant", &marker.with_file_name("grandchild.pid"));
+        }
+        fs::write(marker, std::process::id().to_string()).unwrap();
         thread::sleep(Duration::from_secs(120));
         return;
     }
@@ -41,20 +45,16 @@ fn main() {
     };
     fs::write(root.join(started_marker), std::process::id().to_string()).unwrap();
     if mode.starts_with("tree") {
-        let mut child = Command::new(env::current_exe().unwrap());
-        child
-            .arg("descendant")
-            .arg(root.join("descendant.pid"))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            child.creation_flags(0x0800_0000);
-        }
-        child.spawn().unwrap();
-        while !root.join("descendant.pid").exists() {
+        let deep = mode == "tree-deep";
+        let descendant = root.join("descendant.pid");
+        let grandchild = root.join("grandchild.pid");
+        let action = if deep {
+            "descendant-tree"
+        } else {
+            "descendant"
+        };
+        spawn_descendant(action, &descendant);
+        while !descendant.exists() || (deep && !grandchild.exists()) {
             thread::sleep(Duration::from_millis(10));
         }
     }
@@ -104,6 +104,22 @@ fn main() {
             Err(error) => panic!("{error}"),
         }
     }
+}
+
+fn spawn_descendant(action: &str, marker: &Path) {
+    let mut child = Command::new(env::current_exe().unwrap());
+    child
+        .arg(action)
+        .arg(marker)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        child.creation_flags(0x0800_0000);
+    }
+    child.spawn().unwrap();
 }
 
 fn listener(config: &Path) -> (&'static str, String, u16) {

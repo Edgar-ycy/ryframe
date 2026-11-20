@@ -7,6 +7,8 @@ mod legacy_stop;
 mod process_liveness;
 #[path = "full_stack_worker/support.rs"]
 mod support;
+#[path = "full_stack_worker/tree_identity.rs"]
+mod tree_identity;
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
