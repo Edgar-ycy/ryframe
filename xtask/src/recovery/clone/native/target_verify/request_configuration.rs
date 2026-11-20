@@ -159,8 +159,9 @@ pub(crate) fn canonical_path(path: &Path) -> Result<PathBuf> {
 fn reset_configuration(request: &Value, selected: &Value, table: &Value) -> Result<()> {
     let declared = &request["reset"];
     for key in EXCLUSIVE {
-        if table["reset"][format!("legacy_{key}")].as_bool() != Some(true) {
-            return Err("配置文件中的 reset 独占声明与请求不同".into());
+        let field = format!("legacy_{key}");
+        if table["reset"][field.as_str()].as_bool() != Some(true) {
+            return Err(format!("所选配置文件的 reset.{field} 必须为 true，与请求保持一致").into());
         }
     }
     for (field, expected) in [

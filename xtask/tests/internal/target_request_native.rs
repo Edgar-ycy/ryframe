@@ -15,6 +15,7 @@ use crate::{
     recovery::clone::native::{
         digest, input as native_input,
         lifecycle::{manifest, stage::StageRequest},
+        target_verify::authority::generation,
     },
 };
 
@@ -281,6 +282,28 @@ fn request_rejects_review_digest_and_readiness_drift() {
 }
 
 #[test]
+fn generation_rejects_review_without_redis_before_probes() {
+    let mut fixture = Fixture::new();
+    fixture.validate().unwrap();
+    fixture.review["services"]
+        .as_object_mut()
+        .unwrap()
+        .remove("redis")
+        .unwrap();
+    fixture.seal_review();
+
+    let error = generation::observe(
+        &fixture.backend,
+        &fixture.request,
+        &fixture.environment,
+        &mut |_, _, _| panic!("缺少 Redis 服务的审阅不得观察维护构建"),
+        &mut |_| panic!("缺少 Redis 服务的审阅不得探测端口"),
+    )
+    .unwrap_err();
+    assert_eq!(error.to_string(), "审阅 Redis 服务缺失");
+}
+
+#[test]
 fn request_requires_exact_keys_modes_and_three_sides() {
     let mut fixture = Fixture::new();
     let original = fixture.request.clone();
@@ -450,6 +473,9 @@ fn configuration_binds_file_credentials_and_ignores_retired_environment_override
         .unwrap_err()
         .to_string();
         assert!(!error.contains("wrong-secret"));
+        if pointer == "/reset/legacy_mysql_exclusive" {
+            assert!(error.contains("reset.legacy_mysql_exclusive"), "{error}");
+        }
     }
     fixture.write_configuration();
     fixture.set_configuration(

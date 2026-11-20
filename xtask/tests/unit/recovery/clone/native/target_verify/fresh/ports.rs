@@ -2,11 +2,13 @@ use crate::{
     Result,
     recovery::clone::native::{
         export::transport::Transport,
-        json as document,
+        json as document, maintenance,
         target_verify::{
+            authority,
             fresh::{initialized_objects, objects, resources::database_absence},
-            input::request_physical,
+            input::{request, request_physical},
             storage::StorageInputs,
+            tree,
         },
     },
 };
@@ -19,7 +21,11 @@ use crate::{
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::cell::RefCell;
+use std::{
+    cell::{Cell, RefCell},
+    fs,
+    path::Path,
+};
 
 struct ReadOnly {
     mysql: String,
@@ -27,6 +33,82 @@ struct ReadOnly {
     object_case: &'static str,
     calls: RefCell<Vec<String>>,
 }
+
+#[test]
+fn fresh_generation_accepts_empty_runtime_and_rejects_history_before_observation() {
+    let fixture = Fixture::new();
+    let selected = request::validate(&fixture.backend, &fixture.request)
+        .unwrap()
+        .selected;
+    let runtime = Path::new(selected["runtime_dir"].as_str().unwrap());
+    assert!(runtime.starts_with(&fixture.local));
+    fs::create_dir(runtime).unwrap();
+
+    let maintenance_calls = Cell::new(0);
+    let ports = RefCell::new(Vec::new());
+    let observe = || {
+        authority::generation::observe(
+            &fixture.backend,
+            &fixture.request,
+            &fixture.environment,
+            &mut |root, path, receipt| {
+                maintenance_calls.set(maintenance_calls.get() + 1);
+                maintenance::verify_evidence(root, path, Some(receipt))?;
+                Ok(receipt.clone())
+            },
+            &mut |url| {
+                ports.borrow_mut().push(url.to_owned());
+                Ok(())
+            },
+        )
+    };
+    let empty = tree::snapshot(&fixture.backend, &fixture.local, false).unwrap();
+    let generation = observe().unwrap();
+    assert_eq!(generation["selected"], selected);
+    assert_eq!(
+        generation["operator_declared_controlled_generation_only"],
+        true
+    );
+    assert_eq!(maintenance_calls.replace(0), 2);
+    assert_eq!(
+        ports.take(),
+        [
+            "http://127.0.0.1:28080",
+            "http://127.0.0.1:28081/readyz",
+            "http://127.0.0.1:28082",
+        ]
+    );
+    assert!(runtime.is_dir());
+    assert!(fs::read_dir(runtime).unwrap().next().is_none());
+    assert_eq!(
+        tree::snapshot(&fixture.backend, &fixture.local, false).unwrap(),
+        empty
+    );
+
+    for (filename, contents, reason) in [
+        (
+            "producer-history.json",
+            &b"{\"events\":[{\"event\":\"start-intent\",\"role\":\"worker\"}]}\n"[..],
+            "生产者启动意图",
+        ),
+        ("unknown.json", &b"{}\n"[..], "运行或身份准备历史"),
+    ] {
+        let path = runtime.join(filename);
+        fs::write(&path, contents).unwrap();
+        let before = tree::snapshot(&fixture.backend, &fixture.local, false).unwrap();
+        let error = observe().unwrap_err().to_string();
+        assert!(error.contains(reason), "{filename}: {error}");
+        assert_eq!(maintenance_calls.get(), 0, "{filename}");
+        assert!(ports.borrow().is_empty(), "{filename}");
+        assert_eq!(fs::read(&path).unwrap(), contents);
+        assert_eq!(
+            tree::snapshot(&fixture.backend, &fixture.local, false).unwrap(),
+            before
+        );
+        fs::remove_file(path).unwrap();
+    }
+}
+
 impl Transport for ReadOnly {
     fn run(&self, spec: CommandSpec) -> Result<CommandOutput> {
         let defaults = spec.args[0].strip_prefix("--defaults-file=").unwrap();

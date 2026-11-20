@@ -13,7 +13,6 @@ import devex_clone_target_runtime_evidence as runtime_evidence
 from devex_clone_capture import write_json
 from devex_clone_run_state import binding as receipt_binding
 from devex_clone_target_resources import Resources
-from devex_clone_target_state import generation_lock
 from devex_clone_target_fixture import Fixture
 from restore_build import file_digest
 from restore_reference_plan import plan_hash
@@ -235,41 +234,6 @@ class TargetTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "不属于审阅版本"):
             binding.execution_binary_bindings(self.f.root, self.f.request)
 
-    def test_unready_review_prevents_prepare(self):
-        f = self.f
-        f.review["ready_for_execution"] = False
-        f.request["review"] = {
-            **f.bound(f.local / "review.json", f.review),
-            "canonical_sha256": plan_hash(f.review),
-        }
-        f.save_request()
-        with self.assertRaisesRegex(ValueError, "尚未就绪"):
-            self.prepare()
-        self.assertFalse(f.calls)
-
-    def test_incomplete_review_prevents_resource_operations(self):
-        f = self.f
-        f.review["services"].pop("redis")
-        f.request["review"] = {
-            **f.bound(f.local / "review.json", f.review),
-            "canonical_sha256": plan_hash(f.review),
-        }
-        f.save_request()
-        with self.assertRaisesRegex(ValueError, "服务定义无效"):
-            self.prepare()
-        self.assertFalse(f.calls)
-
-    def test_failed_producer_launch_intent_without_pid_blocks_fresh_prepare(self):
-        runtime = Path(self.f.review["scopes"]["seed"]["runtime_dir"])
-        runtime.mkdir()
-        history = runtime / "producer-history.json"
-        history.write_text(json.dumps({"events": [{"event": "start-intent", "role": "worker"}]}), encoding="utf-8")
-        with self.assertRaisesRegex(ValueError, "启动意图"):
-            self.prepare()
-        self.assertFalse(self.f.calls)
-        self.assertFalse((runtime / "worker.json").exists())
-        self.assertTrue(history.exists())
-
 
     def test_database_collision_with_reference_rejected(self):
         f = self.f
@@ -321,41 +285,7 @@ class TargetTests(unittest.TestCase):
         self.assertFalse(f.calls)
 
 
-    def test_explicit_exclusive_must_match_actual_configuration(self):
-        path = self.f.configuration / "app.test.toml"
-        path.write_text('[reset]\nlegacy_mysql_exclusive=false\n', encoding="utf-8")
-        self.f.request["configuration_sha256"] = binding.configuration_digest(self.f.root, self.f.root / "config")
-        self.f.save_request()
-        with self.assertRaisesRegex(ValueError, "reset.legacy_mysql_exclusive"): self.prepare()
-        self.assertFalse(self.f.databases)
 
-
-    def test_empty_runtime_directory_does_not_count_as_start_history(self):
-        runtime = Path(self.f.review["scopes"]["seed"]["runtime_dir"])
-        runtime.mkdir()
-        self.prepare()
-        self.assertTrue(runtime.is_dir())
-        self.assertFalse(any(runtime.iterdir()))
-
-    def test_runtime_history_or_unclosed_port_fails(self):
-        f = self.f
-        runtime = Path(f.review["scopes"]["seed"]["runtime_dir"])
-        runtime.mkdir()
-        (runtime / "unknown.json").write_text("{}", encoding="utf-8")
-        with self.assertRaises(ValueError): self.prepare()
-        self.assertFalse(f.databases)
-
-
-    def test_locked_target_scan_checks_guard_before_and_after_walk(self):
-        self.prepare()
-        with generation_lock(self.f.output):
-            with patch("devex_clone_target_state.generation_checkpoint") as checkpoint:
-                files = binding.target_files(
-                    self.f.output, ignored={"initialize.lock"}, locked_guard=True
-                )
-
-        self.assertTrue(files)
-        self.assertEqual(checkpoint.call_count, 2)
 
     def test_resource_command_rejects_lost_generation_before_runner(self):
         f = self.f
