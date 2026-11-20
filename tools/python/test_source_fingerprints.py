@@ -230,8 +230,27 @@ class SourceFingerprintsTests(unittest.TestCase):
         self.current = execution(value)
 
     def bridge(self):
-        sources.write_bridge(self.root, self.build_path, self.inventory_path, self.bridge_path)
-        return sources.file_binding(self.bridge_path)
+        return self.bridge_fixture(
+            self.bridge_path.name, self.build_path, self.inventory_path, self.receipt, self.original,
+        )
+
+    def bridge_fixture(self, name, build_path, inventory_path, receipt, original):
+        return sources.file_binding(self.write(name, {
+            "format_version": 1,
+            "kind": "devex-artifact-source-bridge",
+            "backend_root": str(self.root),
+            "build": sources.file_binding(build_path),
+            "inventory": sources.file_binding(inventory_path),
+            "original_fingerprints": sources.fingerprints(original),
+            "audited_source": self.current,
+            "audited_inventory": self.current_inventory,
+            "product_inputs": {
+                "build": sources.bridge_product_inputs(receipt, original),
+                "audited": sources.bridge_product_inputs(receipt, self.current_inventory),
+            },
+            "restore_qualified": False,
+            "compiled": False,
+        }))
 
     def initialize_repository(self):
         (self.root / ".gitignore").write_text(".local-tests/\ntarget/\n", encoding="utf-8")
@@ -284,9 +303,7 @@ class SourceFingerprintsTests(unittest.TestCase):
         build.write_text(json.dumps(receipt), encoding="utf-8")
         inventory_path = directory / "inventory.json"
         inventory_path.write_text(json.dumps(actual), encoding="utf-8")
-        bridge_path = self.local / "maintenance-bridge.json"
-        sources.write_bridge(self.root, build, inventory_path, bridge_path)
-        return sources.file_binding(bridge_path), receipt
+        return self.bridge_fixture("maintenance-bridge.json", build, inventory_path, receipt, actual), receipt
 
     def test_tool_only_change_keeps_product_and_full_source_is_still_recorded(self):
         changed = inventory(tool="d")
@@ -351,15 +368,6 @@ class SourceFingerprintsTests(unittest.TestCase):
             self.assertEqual(sources.reusable_artifact_source(self.root, self.receipt),
                              self.original["source"])
 
-    def test_bridge_rejects_changed_product_or_forged_original_snapshot(self):
-        self.set_current(inventory(product="e"))
-        with self.assertRaisesRegex(ValueError, "重新编译"):
-            self.bridge()
-        self.set_current(inventory(tool="d"))
-        self.write("inventory.json", inventory(head="e"))
-        with self.assertRaisesRegex(ValueError, "构建时"):
-            self.bridge()
-
     def test_historical_product_requires_explicit_inherited_bridge(self):
         binding = self.bridge()
         self.set_current(inventory(tool="e", product="e"))
@@ -404,20 +412,7 @@ class SourceFingerprintsTests(unittest.TestCase):
                         self.root, ordinary, inherited_bridge_bindings=inherited):
                 pass
 
-    def test_bridge_rejects_noncanonical_v2_artifact_fields(self):
-        changed = copy.deepcopy(self.receipt)
-        artifact = changed["artifacts"]["api"]
-        artifact["cargo_executable"] = artifact["executable"]
-        build_path = self.write("build-copy.json", changed)
-        with self.assertRaisesRegex(ValueError, "产物字段无效"):
-            sources.write_bridge(self.root, build_path, self.inventory_path, self.bridge_path)
-
-    def test_bridge_checks_artifact_bytes_and_every_bound_evidence_file(self):
-        binary = Path(self.receipt["artifacts"]["api"]["executable"])
-        binary.write_bytes(b"changed")
-        with self.assertRaisesRegex(ValueError, "构建收据不一致"):
-            self.bridge()
-        binary.write_bytes(b"fixed api")
+    def test_published_bridge_rejects_changed_original_inventory(self):
         binding = self.bridge()
         self.inventory_path.write_text("{}")
         with self.assertRaisesRegex(ValueError, "摘要变化"), sources.artifact_sources(self.root, [binding]):
@@ -511,7 +506,9 @@ class SourceFingerprintsTests(unittest.TestCase):
         self.inventory_path.write_text(json.dumps(actual), encoding="utf-8")
         # SHA、完整来源和上下文均真实匹配，必须由 dirty 条件拒绝；桥接不能替代正式验收。
         with patch.object(restore_build, "build_context", return_value=context):
-            binding = self.bridge()
+            binding = self.bridge_fixture(
+                self.bridge_path.name, self.build_path, self.inventory_path, self.receipt, actual,
+            )
             with sources.artifact_sources(self.root, [binding]), self.assertRaisesRegex(ValueError, "精确干净SHA"):
                 restore_build.verify_build(self.root, self.receipt, head)
 

@@ -7,6 +7,7 @@ use std::{
 };
 
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use super::{
     recovery::clone::native::{bridge, digest, maintenance, source},
@@ -328,37 +329,105 @@ fn source_path_inventory(path: &str) -> Value {
 }
 
 #[test]
-fn bridge_output_matches_python_and_rejects_drift_and_existing_output() {
+fn bridge_preserves_receipt_and_rejects_product_drift_and_overwrite() {
     let fixture = Fixture::new();
     let (build, inventory) = fixture.restore_inputs();
-    let rust_output = fixture.local.join("rust-bridge.json");
-    let result = bridge::write(&fixture.root, &build, &inventory, &rust_output).unwrap();
-    assert_eq!(result["status"], "artifact_reuse_audited");
-    assert_eq!(result["compiled"], false);
-    assert_eq!(result["restore_qualified"], false);
+    let build_bytes = fs::read(&build).unwrap();
+    let inventory_bytes = fs::read(&inventory).unwrap();
+    let build_receipt: Value = serde_json::from_slice(&build_bytes).unwrap();
+    let original_inventory =
+        source::validate_inventory(&serde_json::from_slice(&inventory_bytes).unwrap()).unwrap();
+    let original_fingerprints = source::fingerprints(&original_inventory.files).unwrap();
 
-    let python_output = fixture.local.join("python-bridge.json");
-    python(
-        &fixture.root,
-        r#"
-import sys
-from pathlib import Path
-from source_fingerprints import write_bridge
-write_bridge(Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]), Path(sys.argv[4]))
-"#,
-        &[&fixture.root, &build, &inventory, &python_output],
+    write(
+        &fixture.root.join("tools/python/check.py"),
+        "# 工具文件变更\n",
     );
-    assert_eq!(read_json(&rust_output), read_json(&python_output));
+    let audited_inventory = source::capture(&fixture.root).unwrap();
+    let audited_source = source::execution_source(&audited_inventory).unwrap();
+    assert!(!audited_inventory.source.snapshot.clean);
+    assert_ne!(
+        original_fingerprints["test_tools"],
+        audited_source["fingerprints"]["test_tools"]
+    );
 
-    let before = fs::read(&rust_output).unwrap();
-    assert!(bridge::write(&fixture.root, &build, &inventory, &rust_output).is_err());
-    assert_eq!(fs::read(&rust_output).unwrap(), before);
+    let output = fixture.local.join("bridge.json");
+    assert_eq!(
+        bridge::write(&fixture.root, &build, &inventory, &output).unwrap(),
+        json!({
+            "status": "artifact_reuse_audited",
+            "receipt": output,
+            "compiled": false,
+            "restore_qualified": false,
+        })
+    );
+    assert_eq!(
+        read_json(&output),
+        json!({
+            "format_version": 1,
+            "kind": "devex-artifact-source-bridge",
+            "backend_root": fixture.root,
+            "build": {"path": build, "sha256": hex::encode(Sha256::digest(&build_bytes))},
+            "inventory": {"path": inventory, "sha256": hex::encode(Sha256::digest(&inventory_bytes))},
+            "original_fingerprints": original_fingerprints,
+            "audited_source": audited_source,
+            "audited_inventory": source::inventory_value(&audited_inventory),
+            "product_inputs": {
+                "build": build_receipt["sources"]["product"],
+                "audited": build_receipt["sources"]["product"],
+            },
+            "restore_qualified": false,
+            "compiled": false,
+        })
+    );
+
+    let before = fs::read(&output).unwrap();
+    let error = bridge::write(&fixture.root, &build, &inventory, &output).unwrap_err();
+    assert!(error.to_string().contains("拒绝覆盖"), "{error}");
+    assert_eq!(fs::read(&output).unwrap(), before);
 
     write(&fixture.root.join("product/input.txt"), "changed\n");
     let changed = fixture.local.join("changed-bridge.json");
     let error = bridge::write(&fixture.root, &build, &inventory, &changed).unwrap_err();
     assert!(error.to_string().contains("重新编译"), "{error}");
     assert!(!changed.exists());
+    assert_eq!(fs::read(&build).unwrap(), build_bytes);
+    assert_eq!(fs::read(&inventory).unwrap(), inventory_bytes);
+}
+
+#[test]
+fn bridge_rejects_noncanonical_v2_api_artifact_fields() {
+    let fixture = Fixture::new();
+    let (build, inventory) = fixture.restore_inputs();
+    let mut receipt = read_json(&build);
+    let executable = receipt["artifacts"]["api"]["executable"].clone();
+    receipt["artifacts"]["api"]["cargo_executable"] = executable;
+    write_json(&build, &receipt);
+
+    let output = fixture.local.join("bridge.json");
+    let error = bridge::write(&fixture.root, &build, &inventory, &output).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("API/Worker 构建产物字段缺失或包含未知字段"),
+        "{error}"
+    );
+    assert!(!output.exists());
+}
+
+#[test]
+fn bridge_rejects_same_length_api_artifact_change() {
+    let fixture = Fixture::new();
+    let (build, inventory) = fixture.restore_inputs();
+    let receipt = read_json(&build);
+    let executable = Path::new(receipt["artifacts"]["api"]["executable"].as_str().unwrap());
+    assert_eq!(fs::read(executable).unwrap(), b"fixed api");
+    fs::write(executable, b"other api").unwrap();
+
+    let output = fixture.local.join("bridge.json");
+    let error = bridge::write(&fixture.root, &build, &inventory, &output).unwrap_err();
+    assert!(error.to_string().contains("构建收据不一致"), "{error}");
+    assert!(!output.exists());
 }
 
 #[test]
@@ -733,16 +802,6 @@ fn maintenance_rejects_nonlocal_and_linked_output_before_running_commands() {
             .unwrap_err();
     assert!(error.to_string().contains("链接"), "{error}");
     assert_eq!(runner.calls.get(), 0);
-}
-
-fn python(root: &Path, script: &str, arguments: &[&Path]) {
-    let result = python_output(root, script, arguments);
-    assert!(
-        result.status.success(),
-        "python failed:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&result.stdout),
-        String::from_utf8_lossy(&result.stderr)
-    );
 }
 
 fn python_json(root: &Path, script: &str, arguments: &[&Path]) -> Value {

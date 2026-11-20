@@ -117,38 +117,6 @@ def verify_execution_source(value: dict, label: str) -> None:
             raise ValueError(f"{label}分域指纹格式无效")
 
 
-def write_bridge(root: Path, build_path: Path, inventory_path: Path, output_path: Path) -> dict:
-    """仅登记明确核验过的历史构建清单；不改旧收据、不构建、不取得恢复资格。"""
-    from devex_clone_model import local_path
-
-    build_binding, inventory_binding = file_binding(build_path), file_binding(inventory_path)
-    receipt, inventory = read_binding(root, build_binding), read_binding(root, inventory_binding)
-    if receipt.get("kind") not in {"restore-backend-build", "devex-clone-tool-build"}:
-        raise ValueError("来源桥接只接受 API/Worker 或维护 CLI 构建收据")
-    _verify_bridge_build(root, build_path, receipt)
-    verify_inventory_source(inventory, receipt)
-    if (receipt.get("kind") == "restore-backend-build"
-            and receipt["sources"]["full"] != inventory):
-        raise ValueError("API/Worker 构建收据与构建时 inventory 不一致")
-    current_inventory = capture_inventory(root)
-    current, original = execution_source(current_inventory), fingerprints(inventory)
-    product_inputs = {"build": bridge_product_inputs(receipt, inventory),
-                      "audited": bridge_product_inputs(receipt, current_inventory)}
-    if product_inputs["build"] != product_inputs["audited"]:
-        raise ValueError("产品构建输入已经变化，必须重新编译")
-    value = {"format_version": 1, "kind": "devex-artifact-source-bridge", "backend_root": str(root),
-             "build": build_binding, "inventory": inventory_binding, "original_fingerprints": original,
-             "audited_source": current, "audited_inventory": current_inventory,
-             "product_inputs": product_inputs, "restore_qualified": False, "compiled": False}
-    output = local_path(root, str(output_path), new=True)
-    if current_execution_source(root) != current:
-        raise ValueError("桥接核验期间源码发生变化")
-    with output.open("x", encoding="utf-8", newline="\n") as stream:
-        json.dump(value, stream, ensure_ascii=False, indent=2)
-        stream.write("\n")
-    return value
-
-
 def _bridge_build_identity(receipt: dict) -> str:
     artifacts = receipt.get("artifacts")
     if not isinstance(artifacts, dict):
