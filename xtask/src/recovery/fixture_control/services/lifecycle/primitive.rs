@@ -6,6 +6,7 @@ pub(super) fn validate(backend: &Path, operation: &str, args: &Value) -> Result<
     let fields: &[&str] = match operation {
         "review-successor" => &["previous", "review"],
         "cache-status" | "cache-external-termination" => &["request", "runtime", "effective"],
+        "cache-accepted-failure" => &["request", "runtime", "live"],
         "cache-handoff-markers" => &["request", "runtime", "markers"],
         "storage-running" => &["identity", "request"],
         "storage-closed" => &["request"],
@@ -68,7 +69,7 @@ pub(super) fn validate(backend: &Path, operation: &str, args: &Value) -> Result<
             "进程 PID 必须为有效正整数",
         )?;
     }
-    for key in ["settled", "crash"] {
+    for key in ["settled", "crash", "live"] {
         if let Some(value) = args.get(key) {
             check(value.is_boolean(), "服务原语标志必须为布尔值")?;
         }
@@ -84,6 +85,10 @@ fn unknown_fields_escaped_paths_and_invalid_pid_fail_before_process_launch() {
         ("context", json!({})),
         ("registered", json!({"context":{},"settled":true})),
         ("observe", json!({"services":{}})),
+        (
+            "cache-accepted-failure",
+            json!({"request":{},"runtime":{},"live":"false"}),
+        ),
         ("identity", json!({"pid":true})),
         ("identity", json!({"pid":0})),
         ("identity", json!({"pid":12,"secret":"private-marker"})),

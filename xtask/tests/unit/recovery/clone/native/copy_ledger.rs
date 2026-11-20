@@ -185,3 +185,96 @@ fn forged_completion_cannot_skip_the_original_finish_eligibility_checks() {
     fixture.write("complete-session-later.json", &receipt);
     fixture.assert_ineligible_completion("complete-session-later.json");
 }
+
+#[test]
+fn redis_only_marker_preserves_the_original_open_intent_after_a_failed_reconcile() {
+    let mut fixture = Fixture::new();
+    fs::remove_file(fixture.root.join("complete-session-example.json")).unwrap();
+    let failed = json!({"type":"closed","outcome":"failed","completed_at":null});
+    let partial = json!({"type":"closed","outcome":"partial","completed_at":null});
+    fixture.events[4] = partial.clone();
+    fixture.publish(false);
+    let original = document::read(&fixture.root.join("head.json")).unwrap();
+    let ordinary = |fixture: &Fixture| {
+        marker_prefix(
+            &fixture.backend,
+            &fixture.root,
+            &fixture.plan,
+            &fixture.generation,
+            None,
+        )
+    };
+    let redis_only = |fixture: &Fixture| {
+        FailedMarkerJournal::load(
+            &fixture.backend,
+            &fixture.root,
+            &fixture.plan,
+            &fixture.generation,
+        )
+    };
+    assert!(ordinary(&fixture).is_ok());
+    assert!(redis_only(&fixture).is_err());
+
+    let intent = |id: &str, resource: &str| {
+        let mut event = fixture.events[2].clone();
+        event["step_id"] = json!(id);
+        event["before"]["resource_sha256"] = json!(resource.repeat(64));
+        event["after"]["resource_sha256"] = json!(resource.repeat(64));
+        event
+    };
+    let added = intent("step-002", "1");
+    let open = intent("step-003", "2");
+    let first_before = fixture.events[2]["before"].clone();
+    let first_after = fixture.events[2]["after"].clone();
+    fixture.events.extend([
+        json!({"type":"opened","session":"session-more","mode":"resume"}),
+        added.clone(),
+        json!({"type":"confirmed","step_id":"step-002","observed":added["after"]}),
+        open.clone(),
+        failed.clone(),
+        json!({"type":"opened","session":"session-reconcile","mode":"reconcile"}),
+        json!({"type":"reconciled","step_id":"step-001","observed":first_after}),
+        failed.clone(),
+    ]);
+    fixture.publish(false);
+    let accepted = redis_only(&fixture).unwrap();
+    accepted.verify_previous(&original).unwrap();
+    assert_eq!(accepted.steps()["step-003"]["phase"], "unknown");
+    assert_eq!(accepted.steps()["step-003"]["before"], open["before"]);
+    assert_eq!(accepted.steps()["step-003"]["after"], open["after"]);
+    assert!(ordinary(&fixture).is_err());
+    let mut wrong_prefix = original.clone();
+    wrong_prefix["sha256"] = json!("9".repeat(64));
+    assert!(accepted.verify_previous(&wrong_prefix).is_err());
+
+    fixture.write("complete-extra.json", &json!({}));
+    assert!(redis_only(&fixture).is_err());
+    fs::remove_file(fixture.root.join("complete-extra.json")).unwrap();
+    fixture.events[11]["observed"] = first_before.clone();
+    fixture.publish(false);
+    assert!(redis_only(&fixture).is_err());
+    fixture.events.truncate(10);
+    fixture.publish(false);
+    assert!(redis_only(&fixture).is_err());
+
+    fixture.events.truncate(5);
+    fixture.events.extend([
+        json!({"type":"opened","session":"session-first-reconcile","mode":"reconcile"}),
+        json!({"type":"reconciled","step_id":"step-001","observed":first_before}),
+        partial,
+        json!({"type":"opened","session":"session-replayed-step","mode":"resume"}),
+        json!({"type":"resumed","step_id":"step-001","observed":first_before}),
+        json!({"type":"confirmed","step_id":"step-001","observed":first_after}),
+        open,
+        failed.clone(),
+        json!({"type":"opened","session":"session-final-reconcile","mode":"reconcile"}),
+        failed,
+    ]);
+    fixture.publish(false);
+    assert!(
+        redis_only(&fixture)
+            .unwrap()
+            .verify_previous(&original)
+            .is_err()
+    );
+}

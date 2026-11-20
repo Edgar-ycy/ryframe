@@ -20,6 +20,7 @@ mod start;
 mod stop;
 mod supervisor;
 
+pub(super) use failure::accepted_failure;
 pub(super) use observe::handoff::handoff_markers;
 pub(in crate::recovery) use observe::incident::{redis_reboot_evidence, redis_reboot_incident};
 pub(super) use observe::{

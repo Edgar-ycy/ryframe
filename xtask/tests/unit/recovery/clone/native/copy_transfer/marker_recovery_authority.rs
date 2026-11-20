@@ -18,20 +18,20 @@ fn active_fixture_successor_must_be_one_of_the_first_three_accepted_restarts() {
         "external_recovery":null,"rustfs_handoff":null});
     assert_eq!(
         restarts(&history, &[failed, first.clone()]).unwrap(),
-        (&first, None, None)
+        (&first, None, None, None)
     );
     assert!(restarts(&history, &[first.clone(), second.clone()]).is_err());
     history["active_generation"] = second["result"].clone();
     assert_eq!(
         restarts(&history, &[first.clone(), second.clone()]).unwrap(),
-        (&first, Some(&second), None)
+        (&first, Some(&second), None, None)
     );
     assert!(restarts(&history, &[first.clone(), second.clone(), second.clone()]).is_err());
     assert!(restarts(&history, &[first.clone(), second.clone(), third.clone()]).is_err());
     history["active_generation"] = third["result"].clone();
     assert_eq!(
         restarts(&history, &[first.clone(), second.clone(), third.clone()]).unwrap(),
-        (&first, Some(&second), Some(&third))
+        (&first, Some(&second), Some(&third), None)
     );
     history["active_generation"] = fourth["result"].clone();
     assert!(
@@ -44,6 +44,34 @@ fn active_fixture_successor_must_be_one_of_the_first_three_accepted_restarts() {
     history["active_generation"] = third["result"].clone();
     history["external_recovery"] = json!({"path":"newer-external-termination"});
     assert!(restarts(&history, &[first, second, third]).is_err());
+}
+
+#[test]
+fn active_redis_only_restart_requires_three_previous_complete_restarts_and_uniqueness() {
+    let [first, second, third] = [2, 5, 8].map(|number| {
+        json!({
+            "number":number,"stage":"fixture-services","mode":"restart","status":"passed",
+            "result":{"path":format!("restart-{number}")},
+        })
+    });
+    let redis = json!({"number":11,"stage":"fixture-services","mode":"restart-redis",
+        "status":"passed","result":{"path":"redis-only-restart"}});
+    let rows = [first.clone(), second.clone(), third.clone(), redis.clone()];
+    let mut history = json!({"active_generation":redis["result"],"closed":false,
+        "external_recovery":null,"rustfs_handoff":null});
+    assert_eq!(
+        restarts(&history, &rows).unwrap(),
+        (&first, Some(&second), Some(&third), Some(&redis))
+    );
+    assert!(restarts(&history, &[first.clone(), second.clone(), redis.clone()]).is_err());
+    let mut earlier = rows.clone();
+    earlier[3]["number"] = json!(7);
+    assert!(restarts(&history, &earlier).is_err());
+    let mut duplicate = rows.to_vec();
+    duplicate.push(redis);
+    assert!(restarts(&history, &duplicate).is_err());
+    history["active_generation"] = third["result"].clone();
+    assert!(restarts(&history, &rows).is_err());
 }
 
 #[test]
@@ -238,14 +266,37 @@ fn copy_stage_allows_the_interrupted_prefix_and_its_successful_read_only_reconci
     let verification = json!({"number":1,"stage":"target-verify","mode":"run","status":"passed"});
     let interrupted = json!({"number":2,"stage":"copy","mode":"run","status":"failed","error_type":"ControllerInterrupted"});
     let reconcile = json!({"number":3,"stage":"copy","mode":"reconcile","status":"passed"});
-    assert!(eligible_attempts(&[verification.clone(), interrupted.clone()]).is_ok());
+    assert!(eligible_attempts(&[verification.clone(), interrupted.clone()], false).is_ok());
     assert!(
-        eligible_attempts(&[verification.clone(), interrupted.clone(), reconcile.clone()]).is_ok()
+        eligible_attempts(
+            &[verification.clone(), interrupted.clone(), reconcile.clone()],
+            false
+        )
+        .is_ok()
     );
     let mut failed = reconcile.clone();
     failed["status"] = json!("failed");
-    assert!(eligible_attempts(&[verification.clone(), interrupted.clone(), failed]).is_err());
+    assert!(
+        eligible_attempts(&[verification.clone(), interrupted.clone(), failed], false).is_err()
+    );
     let mut completed = reconcile;
     completed["mode"] = json!("resume");
-    assert!(eligible_attempts(&[verification, interrupted, completed]).is_err());
+    assert!(eligible_attempts(&[verification, interrupted, completed], false).is_err());
+}
+
+#[test]
+fn failed_copy_reconcile_is_only_a_candidate_after_verified_original_write_history() {
+    let verified = json!({"number":2,"stage":"target-verify","status":"passed"});
+    let writing = json!({"number":14,"stage":"copy","mode":"resume","status":"failed"});
+    let mut reconcile = json!({"number":16,"stage":"copy","mode":"reconcile","status":"failed",
+        "finished_at":"recorded","result":null,"error_type":"StageError"});
+    let history = [verified.clone(), writing.clone(), reconcile.clone()];
+    assert!(eligible_attempts(&history, false).is_err());
+    assert_eq!(
+        eligible_attempts(&history, true).unwrap(),
+        (&reconcile, &verified)
+    );
+    assert!(eligible_attempts(&[verified.clone(), reconcile.clone()], true).is_err());
+    reconcile["error_type"] = json!("ControllerInterrupted");
+    assert!(eligible_attempts(&[verified, writing, reconcile], true).is_err());
 }

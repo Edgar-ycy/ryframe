@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use super::{
     super::{
         super::{
-            copy_ledger::{self, session::Mode},
+            copy_ledger::{self, FailedMarkerJournal, session::Mode},
             digest, export, json as document,
             lifecycle::state,
             resources::common,
@@ -20,7 +20,10 @@ use super::{
 };
 use crate::Result;
 
+#[path = "authority/failed_copy.rs"]
+mod failed_copy;
 mod successor;
+use failed_copy::{FailedCopy, is_failed_reconcile};
 
 pub(super) fn preflight(request: &StageRequest<'_>, manifest: &Value) -> Result<()> {
     if !cfg!(windows)
@@ -43,6 +46,7 @@ pub(super) struct Stage<'a> {
     manifest_binding: Value,
     saved: Value,
     protected: Inputs,
+    failed_reconcile: Option<Value>,
 }
 
 impl<'a> Stage<'a> {
@@ -63,7 +67,8 @@ impl<'a> Stage<'a> {
         }
         let (controller, _) =
             current_controller(run, &saved, attempt, request.stage, request.mode)?;
-        let (prior, target_verified) = eligible_attempts(state::attempts(&saved)?)?;
+        // 失败核对的候选只读预检到此，真实 Redis 单独后继须由 Recovery::load 证明。
+        let (prior, target_verified) = eligible_attempts(state::attempts(&saved)?, true)?;
         if prior["mode"] == "reconcile" && prior["status"] == "passed" {
             let result = common::read_bound(backend, &prior["result"], "原复制只读核对")?;
             if result["status"] != "copy_reconciled" || result["target_ready"] != false {
@@ -90,6 +95,7 @@ impl<'a> Stage<'a> {
         let ledger = common::local_directory(backend, &copy.join("ledger"), "原复制账本")?;
         protected.check()?;
         let manifest_binding = common::binding(&paths[0])?;
+        let failed_reconcile = is_failed_reconcile(prior).then(|| prior.clone());
         Ok(Self {
             request,
             manifest,
@@ -100,6 +106,7 @@ impl<'a> Stage<'a> {
             manifest_binding,
             saved,
             protected,
+            failed_reconcile,
         })
     }
 
@@ -155,13 +162,17 @@ impl<'a> Stage<'a> {
     }
 }
 
-fn eligible_attempts(attempts: &[Value]) -> Result<(&Value, &Value)> {
+fn eligible_attempts(
+    attempts: &[Value],
+    consider_failed_reconcile: bool,
+) -> Result<(&Value, &Value)> {
     let copy = attempts.iter().rfind(|row| row["stage"] == "copy");
     let Some(copy) = copy.filter(|row| {
         (row["mode"] == "run"
             && row["status"] == "failed"
             && row["error_type"] == "ControllerInterrupted")
             || (row["mode"] == "reconcile" && row["status"] == "passed")
+            || (consider_failed_reconcile && is_failed_reconcile(row))
     }) else {
         return Err("Redis 标记恢复要求原复制中断或只读核对已发布".into());
     };
@@ -169,6 +180,17 @@ fn eligible_attempts(attempts: &[Value]) -> Result<(&Value, &Value)> {
         row["stage"] == "target-verify" && row["status"] == "passed"
             && matches!((row["number"].as_u64(), copy["number"].as_u64()), (Some(a), Some(b)) if a < b)
     }).ok_or("Redis 标记恢复缺少早于原复制的目标复验")?;
+    if is_failed_reconcile(copy) && !attempts.iter().any(|row| {
+        row["stage"] == "copy"
+            && matches!(row["mode"].as_str(), Some("run" | "resume"))
+            && row["status"] == "failed"
+            && matches!(
+                (verified["number"].as_u64(), row["number"].as_u64(), copy["number"].as_u64()),
+                (Some(verified), Some(write), Some(reconcile)) if verified < write && write < reconcile
+            )
+    }) {
+        return Err("失败只读核对缺少原目标复验之后的复制写入阶段".into());
+    }
     if attempts.iter().any(|row| {
         matches!(
             row["stage"].as_str(),
@@ -193,6 +215,7 @@ pub(super) struct Recovery<'a> {
     proof: Proofs,
     plan: Inputs,
     source: Source,
+    failed_copy: Option<FailedCopy>,
 }
 
 impl<'a> Recovery<'a> {
@@ -214,10 +237,16 @@ impl<'a> Recovery<'a> {
             &storage.directory,
             target,
         ))?;
+        let redis_only = fixture.value["lineage"]
+            .get("accepted_redis_failure")
+            .is_some();
+        if stage.failed_reconcile.is_some() && !redis_only {
+            return Checkpoint::FixtureSuccessor.check(Err(
+                "原失败复制核对只允许已验证的 Redis 单独后继恢复标记".into(),
+            ));
+        }
         Checkpoint::MarkerModel.check(require_marker_model(target))?;
-        let (heads, proof, plan, source) = Checkpoint::CopyProof.check(journal(stage, target))?;
         Checkpoint::FixtureSuccessor.check(fixture_guard.check())?;
-        Checkpoint::FinalGuards.check(plan.check())?;
         let mut files = fixture.files.clone();
         files.extend(paths);
         files.extend([
@@ -234,15 +263,23 @@ impl<'a> Recovery<'a> {
             return Checkpoint::FixtureSuccessor
                 .check(Err("Redis 标记恢复固定代次期间夹具证据变化".into()));
         }
+        let CopyJournal {
+            head,
+            failed,
+            proof,
+            inputs: plan,
+            source,
+        } = Checkpoint::CopyProof.check(journal(stage, target))?;
+        Checkpoint::FinalGuards.check(plan.check())?;
         let binding = json!({
             "run":stage.manifest_binding, "initialized":stage.manifest["initialized"],
-            "fixture":fixture.value, "plan_sha256":heads["plan_sha256"],
-            "generation_sha256":heads["generation_sha256"],
+            "fixture":fixture.value, "plan_sha256":head["plan_sha256"],
+            "generation_sha256":head["generation_sha256"],
         });
         let recovered = Self {
             stage,
             binding,
-            head: heads,
+            head,
             after: target.initialized["redis"].clone(),
             storage,
             owner,
@@ -252,6 +289,7 @@ impl<'a> Recovery<'a> {
             proof,
             plan,
             source,
+            failed_copy: failed,
         };
         Checkpoint::FinalGuards.check(recovered.check())?;
         Ok(recovered)
@@ -263,6 +301,9 @@ impl<'a> Recovery<'a> {
         self.owner.check_initialization_lock()?;
         self.fence.check()?;
         self.protected.check()?;
+        if let Some(failed) = &self.failed_copy {
+            failed.bound.check()?;
+        }
         self.proof.checkpoint()?;
         self.plan.check()?;
         self.source.check(self.stage)?;
@@ -270,6 +311,12 @@ impl<'a> Recovery<'a> {
     }
 
     pub(super) fn check_prefix(&self, head: &Value) -> Result<()> {
+        if self.failed_copy.is_some() {
+            if *head != self.head {
+                return Err("本代标记意图未绑定同一失败核对账本 head".into());
+            }
+            return Ok(());
+        }
         let backend = self.stage.request.backend;
         let plan = document::text(&self.binding["plan_sha256"], "原复制计划摘要")?;
         let generation = document::text(&self.binding["generation_sha256"], "原复制代次摘要")?;
@@ -279,6 +326,14 @@ impl<'a> Recovery<'a> {
             return Err("标记恢复期间复制账本发生追加".into());
         }
         Ok(())
+    }
+
+    pub(super) fn check_previous_prefix(&self, head: &Value) -> Result<()> {
+        if let Some(failed) = &self.failed_copy {
+            failed.journal.verify_previous(head)
+        } else {
+            self.check_prefix(head)
+        }
     }
 }
 
@@ -367,7 +422,15 @@ impl Source {
     }
 }
 
-fn journal(stage: &Stage<'_>, target: &Target) -> Result<(Value, Proofs, Inputs, Source)> {
+struct CopyJournal {
+    head: Value,
+    failed: Option<FailedCopy>,
+    proof: Proofs,
+    inputs: Inputs,
+    source: Source,
+}
+
+fn journal(stage: &Stage<'_>, target: &Target) -> Result<CopyJournal> {
     let backend = stage.request.backend;
     let descriptor =
         export_descriptor(backend, stage.request.run_dir, stage.manifest, &stage.saved)?;
@@ -405,15 +468,41 @@ fn journal(stage: &Stage<'_>, target: &Target) -> Result<(Value, Proofs, Inputs,
     }
     let plan_hash = document::text(&saved["plan_sha256"], "原复制计划摘要")?;
     let generation = document::text(&saved["generation_sha256"], "原复制代次摘要")?;
-    let (head, steps) = Checkpoint::LedgerPrefix.check(copy_ledger::marker_prefix(
-        backend,
-        &stage.ledger,
-        plan_hash,
-        generation,
-        None,
-    ))?;
     let plan = Plan::from_verified(plan)?;
-    Checkpoint::LedgerPrefix.check(plan.validate_states(&steps, Mode::Resume))?;
+    let failed = stage.failed_reconcile.as_ref();
+    let (head, failed) = Checkpoint::LedgerPrefix.check(if let Some(row) = failed {
+        FailedMarkerJournal::load(backend, &stage.ledger, plan_hash, generation).and_then(
+            |journal| {
+                validate_plan_steps(&plan, journal.steps(), Mode::Reconcile)?;
+                let head = journal.head().clone();
+                Ok((head, Some(FailedCopy::bind(stage, row, &files, journal)?)))
+            },
+        )
+    } else {
+        copy_ledger::marker_prefix(backend, &stage.ledger, plan_hash, generation, None).and_then(
+            |(head, steps)| {
+                validate_plan_steps(&plan, &steps, Mode::Resume)?;
+                Ok((head, None))
+            },
+        )
+    })?;
+    plan_guard.check()?;
+    guard.check()?;
+    Ok(CopyJournal {
+        head,
+        failed,
+        proof,
+        inputs: guard,
+        source,
+    })
+}
+
+fn validate_plan_steps(
+    plan: &Plan<'_>,
+    steps: &serde_json::Map<String, Value>,
+    mode: Mode,
+) -> Result<()> {
+    plan.validate_states(steps, mode)?;
     if steps.len() >= plan.all().count()
         || plan.all().any(|step| {
             steps
@@ -421,12 +510,9 @@ fn journal(stage: &Stage<'_>, target: &Target) -> Result<(Value, Proofs, Inputs,
                 .is_some_and(|value| value["artifact_sha256"] != step.artifact)
         })
     {
-        return Checkpoint::LedgerPrefix
-            .check(Err("原复制账本已完成或步骤不是原计划绑定的产物".into()));
+        return Err("原复制账本已完成或步骤不是原计划绑定的产物".into());
     }
-    plan_guard.check()?;
-    guard.check()?;
-    Ok((head, proof, guard, source))
+    Ok(())
 }
 
 fn require_marker_model(target: &Target) -> Result<()> {

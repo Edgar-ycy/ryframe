@@ -149,6 +149,22 @@ pub(crate) fn observe(backend: &Path, request: &Value, runtime: &Value) -> Resul
     }
 }
 
+pub(crate) fn accepted_failure(
+    backend: &Path,
+    request: &Value,
+    runtime: &Value,
+    live: bool,
+) -> Result<Value> {
+    super::require_windows(request)?;
+    #[cfg(windows)]
+    return super::windows::accepted_failure(backend, request, runtime, live);
+    #[cfg(not(windows))]
+    {
+        let _ = (backend, runtime, live);
+        Err("Windows Redis 已发布失败收据只支持原 Windows 主机核验".into())
+    }
+}
+
 pub(crate) fn stop(
     backend: &Path,
     request: &Value,

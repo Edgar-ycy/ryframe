@@ -254,6 +254,7 @@ mod tests {
             "supervisor":{"pid":112},"redis":previous_redis});
         let second = Restart {
             result: &second_result,
+            outer: Value::Null,
             generation: json!({"attempt":12,"redis":{"runtime":previous}}),
             receipt: Value::Null,
             request: json!({"format_version":3,"previous_run_id":"first",
@@ -265,6 +266,7 @@ mod tests {
         selected["run_id"] = json!("third");
         let mut third = Restart {
             result: &third_result,
+            outer: Value::Null,
             generation: json!({"attempt":14,"previous_generation":second_result,
                 "redis":{"runtime":{"redis":selected}}}),
             receipt: Value::Null,

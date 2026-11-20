@@ -3,10 +3,15 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use super::{Target, common, document, state};
-use crate::{Result, recovery::fixture_control::services::history};
+use crate::{
+    Result,
+    recovery::{clone::native::digest, fixture_control::services::history},
+};
 
 #[path = "successor/incident.rs"]
 mod incident;
+#[path = "successor/redis_incident.rs"]
+mod redis_incident;
 
 #[derive(PartialEq)]
 pub(super) struct Fixture {
@@ -29,6 +34,7 @@ impl Evidence<'_> {
 
 struct Restart<'a> {
     result: &'a Value,
+    outer: Value,
     generation: Value,
     receipt: Value,
     request: Value,
@@ -44,6 +50,7 @@ impl<'a> Restart<'a> {
         let request = evidence.read(&generation["redis"]["request"], "原 Redis 重启请求")?;
         Ok(Self {
             result,
+            outer,
             generation,
             receipt,
             request,
@@ -57,7 +64,7 @@ pub(super) fn load(backend: &Path, run: &Path, target: &Target) -> Result<Fixtur
     let saved = state::load(run, true)?;
     let ledger = history::validate(run, &saved, true, true)?;
     let attempts = state::attempts(&saved)?;
-    let (first, second, third) = restarts(&ledger, attempts)?;
+    let (first, second, third, redis) = restarts(&ledger, attempts)?;
     let mut evidence = Evidence {
         backend,
         files: Vec::new(),
@@ -82,30 +89,44 @@ pub(super) fn load(backend: &Path, run: &Path, target: &Target) -> Result<Fixtur
         &third,
         &lineage["second_runtime"],
     )?;
-    let mut fixture = fixture(evidence, target, manifest, &third, external, Some(lineage))?;
-    fixture.value["lineage"]["reboot_incident"] = incident;
-    Ok(fixture)
+    let mut prior = fixture_binding(&manifest, &third, &external, Some(lineage));
+    prior["lineage"]["reboot_incident"] = incident;
+    let Some(redis_row) = redis else {
+        return finish_fixture(evidence, target, &third, prior);
+    };
+    let redis = Restart::read(&mut evidence, redis_row)?;
+    let mut accepted =
+        redis_incident::link(&mut evidence, run, initial, &third, redis_row, &redis)?;
+    accepted["previous_fixture_sha256"] = json!(digest::plan_hash(&prior)?);
+    let mut lineage = prior["lineage"].clone();
+    lineage["accepted_redis_failure"] = accepted;
+    let current = fixture_binding(&manifest, &redis, &external, Some(lineage));
+    finish_fixture(evidence, target, &redis, current)
 }
 
 fn fixture(
-    mut evidence: Evidence<'_>,
+    evidence: Evidence<'_>,
     target: &Target,
     manifest: Value,
     active: &Restart<'_>,
     external: Value,
     lineage: Option<Value>,
 ) -> Result<Fixture> {
+    let value = fixture_binding(&manifest, active, &external, lineage);
+    finish_fixture(evidence, target, active, value)
+}
+
+fn finish_fixture(
+    mut evidence: Evidence<'_>,
+    target: &Target,
+    active: &Restart<'_>,
+    value: Value,
+) -> Result<Fixture> {
     let selected = &target.storage.value["redis"];
-    if selected != &active.generation["redis"]["runtime"]["redis"]
+    if *selected != value["redis"]
         || target.cache.as_ref() != Some(&json!({"redis":selected,"generation":active.result}))
     {
         return Err("目标 Redis 选择不属于同一原夹具后继".into());
-    }
-    let mut value = json!({"manifest":manifest,"restart":active.result,"generation":active.receipt,
-        "termination":external["result"],"termination_evidence":external["proof"],"redis":selected});
-    if let Some(mut lineage) = lineage {
-        lineage["initial_external_runtime"] = external["runtime"].clone();
-        value["lineage"] = lineage;
     }
     evidence.files.sort_unstable();
     evidence.files.dedup();
@@ -115,7 +136,28 @@ fn fixture(
     })
 }
 
-pub(super) type RestartRows<'a> = (&'a Value, Option<&'a Value>, Option<&'a Value>);
+fn fixture_binding(
+    manifest: &Value,
+    active: &Restart<'_>,
+    external: &Value,
+    lineage: Option<Value>,
+) -> Value {
+    let selected = &active.generation["redis"]["runtime"]["redis"];
+    let mut value = json!({"manifest":manifest,"restart":active.result,"generation":active.receipt,
+        "termination":external["result"],"termination_evidence":external["proof"],"redis":selected});
+    if let Some(mut lineage) = lineage {
+        lineage["initial_external_runtime"] = external["runtime"].clone();
+        value["lineage"] = lineage;
+    }
+    value
+}
+
+pub(super) type RestartRows<'a> = (
+    &'a Value,
+    Option<&'a Value>,
+    Option<&'a Value>,
+    Option<&'a Value>,
+);
 
 pub(super) fn restarts<'a>(ledger: &Value, attempts: &'a [Value]) -> Result<RestartRows<'a>> {
     let mut restarts = attempts.iter().filter(|row| {
@@ -124,8 +166,9 @@ pub(super) fn restarts<'a>(ledger: &Value, attempts: &'a [Value]) -> Result<Rest
     let first = restarts.next().ok_or("原夹具尚未发布成功重启")?;
     let second = restarts.next();
     let third = restarts.next();
+    let redis = redis_incident::select(attempts, third)?;
     if restarts.next().is_some()
-        || ledger["active_generation"] != third.or(second).unwrap_or(first)["result"]
+        || ledger["active_generation"] != redis.or(third).or(second).unwrap_or(first)["result"]
         || third.is_some_and(|row| {
             row["result"] == first["result"] || row["result"] == second.unwrap_or(first)["result"]
         })
@@ -133,9 +176,14 @@ pub(super) fn restarts<'a>(ledger: &Value, attempts: &'a [Value]) -> Result<Rest
         || !ledger["external_recovery"].is_null()
         || !ledger["rustfs_handoff"].is_null()
     {
-        return Err("Redis 标记恢复只接受原夹具当前活跃且唯一的前三次重启代次".into());
+        return Err(if redis.is_some() {
+            "Redis 标记恢复要求登记的 Redis 单独后继是唯一当前活跃代次"
+        } else {
+            "Redis 标记恢复只接受原夹具当前活跃且唯一的前三次重启代次"
+        }
+        .into());
     }
-    Ok((first, second, third))
+    Ok((first, second, third, redis))
 }
 
 fn first_link(evidence: &mut Evidence<'_>, initial: &Value, first: &Restart<'_>) -> Result<Value> {

@@ -11,6 +11,7 @@ pub(crate) enum FixtureServiceOperation {
     Reconcile,
     Recover,
     Restart,
+    RestartRedis,
 }
 
 impl FixtureServiceOperation {
@@ -25,6 +26,7 @@ impl FixtureServiceOperation {
             Self::Reconcile => "reconcile",
             Self::Recover => "recover",
             Self::Restart => "restart",
+            Self::RestartRedis => "restart-redis",
         }
     }
 }

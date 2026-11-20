@@ -184,6 +184,158 @@ pub(super) fn marker_prefix(
     generation: &str,
     expected_prefix: Option<&Value>,
 ) -> Result<(Value, serde_json::Map<String, Value>)> {
+    read_marker_journal(backend, root, plan, generation, |current, verified| {
+        require_confirmed_marker_state(&verified.projection, &verified.events)?;
+        let steps = verified.projection.steps;
+        if let Some(prefix) = expected_prefix {
+            let sequence = marker_sequence(&verified.frames, plan, generation, prefix)?;
+            let prefix_state = model::project(&verified.events[..=sequence])?;
+            let appended = &verified.events[(sequence + 1)..];
+            if !confirmed_prefix(&prefix_state.steps, &steps, appended) {
+                return Err("复制账本已偏离标记意图所绑定的原前缀".into());
+            }
+        }
+        Ok((current, steps))
+    })
+}
+
+pub(super) struct FailedMarkerJournal {
+    head: Value,
+    verified: VerifiedJournal,
+}
+
+impl FailedMarkerJournal {
+    /// 仅供已验证 Redis 单独接续使用。原未知意图维持原样，供后续正式复制核对。
+    pub(super) fn load(backend: &Path, root: &Path, plan: &str, generation: &str) -> Result<Self> {
+        read_marker_journal(backend, root, plan, generation, |head, verified| {
+            require_failed_reconcile(&verified)?;
+            for entry in fs::read_dir(root)? {
+                let name = entry?.file_name();
+                if name
+                    .to_str()
+                    .is_some_and(|name| name.starts_with("complete-") && name.ends_with(".json"))
+                {
+                    return Err("复制账本已有完成收据，拒绝接续标记".into());
+                }
+            }
+            Ok(Self { head, verified })
+        })
+    }
+
+    pub(super) fn head(&self) -> &Value {
+        &self.head
+    }
+
+    pub(super) fn steps(&self) -> &serde_json::Map<String, Value> {
+        &self.verified.projection.steps
+    }
+
+    pub(super) fn session_id(&self) -> Result<&str> {
+        self.verified
+            .projection
+            .session
+            .as_ref()
+            .map(|session| session.id.as_str())
+            .ok_or_else(|| "原失败复制核对缺少会话".into())
+    }
+
+    pub(super) fn verify_previous(&self, prefix: &Value) -> Result<()> {
+        let plan = document::text(&self.head["plan_sha256"], "原复制计划摘要")?;
+        let generation = document::text(&self.head["generation_sha256"], "原复制代次摘要")?;
+        let sequence = marker_sequence(&self.verified.frames, plan, generation, prefix)?;
+        let events = &self.verified.events[..=sequence];
+        let previous = model::project(events)?;
+        require_confirmed_marker_state(&previous, events)?;
+        if !same_confirmed_steps(&previous.steps, self.steps()) {
+            return Err("已确认的原复制步骤在续跑账本中发生变化".into());
+        }
+        Ok(())
+    }
+}
+
+fn require_failed_reconcile(verified: &VerifiedJournal) -> Result<()> {
+    let projection = &verified.projection;
+    if projection
+        .session
+        .as_ref()
+        .is_none_or(|session| session.mode != "reconcile" || session.outcome != "failed")
+        || verified.events.last()
+            != Some(&json!({
+                "type":"closed","outcome":"failed","completed_at":null,
+            }))
+        || has_publication(&verified.events)
+    {
+        return Err("原复制账本最新会话不是已关闭的失败只读核对，或已有完成发布".into());
+    }
+    let mut unknown = projection
+        .steps
+        .values()
+        .filter(|step| step["phase"] != "confirmed");
+    let open = unknown
+        .next()
+        .ok_or("原复制账本没有待显式核对的开放对象意图")?;
+    if unknown.next().is_some()
+        || projection.steps.len() < 2
+        || open["type"] != "intent"
+        || open["phase"] != "unknown"
+        || open["attempt"] != 1
+        || open["before"]["kind"] != "object"
+        || open["after"]["kind"] != "object"
+    {
+        return Err("原复制账本只能保留一份未确认的原始对象写入意图".into());
+    }
+    model::image_pair(&open["before"], &open["after"])
+}
+
+fn require_confirmed_marker_state(projection: &model::Projection, events: &[Value]) -> Result<()> {
+    if projection
+        .session
+        .as_ref()
+        .is_none_or(|session| !matches!(session.outcome.as_str(), "open" | "partial"))
+        || has_publication(events)
+        || projection.steps.is_empty()
+        || projection
+            .steps
+            .values()
+            .any(|step| step["phase"] != "confirmed")
+    {
+        return Err("Redis 标记恢复只接受有完整确认且无未知写入的未完成复制前缀".into());
+    }
+    Ok(())
+}
+
+fn has_publication(events: &[Value]) -> bool {
+    events
+        .iter()
+        .any(|event| event["type"] == "closed" && event["outcome"] == "publishing")
+}
+
+fn marker_sequence(
+    frames: &[Value],
+    plan: &str,
+    generation: &str,
+    prefix: &Value,
+) -> Result<usize> {
+    let sequence = prefix["sequence"]
+        .as_u64()
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or("原标记意图缺少复制前缀序号")?;
+    let prior = frames
+        .get(sequence)
+        .ok_or("复制账本缺少标记意图所绑定的原前缀")?;
+    if *prefix != head(plan, generation, sequence, &prior["sha256"]) {
+        return Err("复制账本已偏离标记意图所绑定的原前缀".into());
+    }
+    Ok(sequence)
+}
+
+fn read_marker_journal<T>(
+    backend: &Path,
+    root: &Path,
+    plan: &str,
+    generation: &str,
+    inspect: impl FnOnce(Value, VerifiedJournal) -> Result<T>,
+) -> Result<T> {
     let root = common::local_directory(backend, root, "原复制账本")?;
     if lock_identity(&root)?.is_some() {
         return Err("Redis 标记恢复要求原复制账本没有写入持有人".into());
@@ -195,43 +347,12 @@ pub(super) fn marker_prefix(
     let raw = reads.bytes(&root.join("events.ndjson"), document::MAX_JSON_BYTES)?;
     let head_raw = reads.bytes(&root.join("head.json"), HEAD_LIMIT)?;
     let verified = verify_journal(&raw, &head_raw, plan, generation)?;
-    let steps = verified.projection.steps;
-    if verified
-        .projection
-        .session
-        .as_ref()
-        .is_none_or(|session| !matches!(session.outcome.as_str(), "open" | "partial"))
-        || verified
-            .events
-            .iter()
-            .any(|event| event["type"] == "closed" && event["outcome"] == "publishing")
-        || steps.is_empty()
-        || steps.values().any(|step| step["phase"] != "confirmed")
-    {
-        return Err("Redis 标记恢复只接受有完整确认且无未知写入的未完成复制前缀".into());
-    }
-    if let Some(prefix) = expected_prefix {
-        let sequence = prefix["sequence"]
-            .as_u64()
-            .and_then(|value| usize::try_from(value).ok())
-            .ok_or("原标记意图缺少复制前缀序号")?;
-        let prior = verified
-            .frames
-            .get(sequence)
-            .ok_or("复制账本缺少标记意图所绑定的原前缀")?;
-        let prefix_state = model::project(&verified.events[..=sequence])?;
-        let appended = &verified.events[(sequence + 1)..];
-        if *prefix != head(plan, generation, sequence, &prior["sha256"])
-            || !confirmed_prefix(&prefix_state.steps, &steps, appended)
-        {
-            return Err("复制账本已偏离标记意图所绑定的原前缀".into());
-        }
-    }
+    let result = inspect(checked(&head_raw)?, verified)?;
     reads.unchanged()?;
     if lock_identity(&root)?.is_some() {
         return Err("Redis 标记核验期间出现新的复制账本持有人".into());
     }
-    Ok((checked(&head_raw)?, steps))
+    Ok(result)
 }
 
 fn confirmed_prefix(
@@ -251,6 +372,13 @@ fn confirmed_prefix(
     {
         return false;
     }
+    same_confirmed_steps(before, current)
+}
+
+fn same_confirmed_steps(
+    before: &serde_json::Map<String, Value>,
+    current: &serde_json::Map<String, Value>,
+) -> bool {
     before.iter().all(|(id, previous)| {
         previous["phase"] == "confirmed"
             && current.get(id).is_some_and(|now| {

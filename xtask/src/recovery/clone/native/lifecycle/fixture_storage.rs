@@ -340,10 +340,7 @@ fn select(
         let generation = &fields["generation"];
         if generation != &registered
             && !tail.iter().any(|attempt| {
-                attempt["stage"] == "fixture-services"
-                    && attempt["mode"] == "restart"
-                    && attempt["status"] == "passed"
-                    && attempt["result"] == *generation
+                history::is_published_generation(attempt) && attempt["result"] == *generation
             })
         {
             return Err("arm 夹具代次不是登记首选代次或合法后继".into());

@@ -8,6 +8,9 @@ use super::{
 };
 use crate::Result;
 
+#[path = "receipts/confirmed.rs"]
+mod confirmed;
+
 pub(super) struct Receipts {
     backend: PathBuf,
     pub(super) directory: PathBuf,
@@ -19,7 +22,8 @@ pub(super) struct Receipts {
     controller: Value,
     run: PathBuf,
     protected: Inputs,
-    reboot_marker_root: Option<Inputs>,
+    prior_marker_root: Option<Inputs>,
+    prior: Option<confirmed::Prior>,
 }
 
 impl Receipts {
@@ -32,15 +36,15 @@ impl Receipts {
         let directory = root.join(digest);
         common::ensure_directory(backend, &directory, "当前 Redis 代次的标记恢复目录")?;
         let protected = Inputs::directory(&directory)?;
-        let reboot_marker_root = if recovery.binding["fixture"]["lineage"]
-            .get("reboot_incident")
-            .is_some()
+        let lineage = &recovery.binding["fixture"]["lineage"];
+        let prior_marker_root = if lineage.get("reboot_incident").is_some()
+            || lineage.get("accepted_redis_failure").is_some()
         {
             Some(Inputs::directory(&root)?)
         } else {
             None
         };
-        let receipts = Self {
+        let mut receipts = Self {
             backend: backend.to_owned(),
             intent: directory.join("intent.json"),
             directory,
@@ -51,18 +55,32 @@ impl Receipts {
             controller: stage.controller.clone(),
             run: stage.request.run_dir.to_owned(),
             protected,
-            reboot_marker_root,
+            prior_marker_root,
+            prior: None,
         };
+        if let Some(incident) = lineage.get("accepted_redis_failure") {
+            let (prior, proof) = confirmed::Prior::load(
+                &receipts,
+                &incident["previous_fixture_sha256"],
+                |prefix| recovery.check_previous_prefix(prefix),
+            )?;
+            receipts.binding["previous_confirmed_markers"] = proof;
+            receipts.prior = Some(prior);
+        }
         receipts.check()?;
         Ok(receipts)
     }
 
     pub(super) fn check(&self) -> Result<()> {
         self.protected.check()?;
-        if let Some(guard) = &self.reboot_marker_root {
+        if let Some(prior) = &self.prior {
+            prior.check()?;
+        }
+        if let Some(guard) = &self.prior_marker_root {
             guard.check()?;
             let root = self.directory.parent().ok_or("缺少标记逻辑运行目录")?;
-            reject_prior_intents(root, &self.directory, |path| {
+            let allowed = self.prior.as_ref().map(confirmed::Prior::intent);
+            reject_prior_intents(root, &self.directory, allowed, |path| {
                 common::local_directory(&self.backend, path, "先前 Redis 标记代次目录")?;
                 Ok(())
             })?;
@@ -262,6 +280,7 @@ fn classify(observed: &Value, after: &Value) -> &'static str {
 fn reject_prior_intents(
     root: &std::path::Path,
     current: &std::path::Path,
+    allowed: Option<&std::path::Path>,
     verify_directory: impl Fn(&std::path::Path) -> Result<()>,
 ) -> Result<()> {
     for entry in fs::read_dir(root)? {
@@ -280,7 +299,9 @@ fn reject_prior_intents(
             return Err("Redis 标记根目录含未登记代次或链接".into());
         }
         verify_directory(&entry.path())?;
-        match fs::symlink_metadata(entry.path().join("intent.json")) {
+        let intent = entry.path().join("intent.json");
+        match fs::symlink_metadata(&intent) {
+            Ok(_) if allowed == Some(intent.as_path()) => {}
             Ok(_) => return Err("先前 Redis 代次存在原写入意图，禁止跨代次发送标记写入".into()),
             Err(error) if error.kind() == ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
@@ -298,9 +319,9 @@ fn reboot_marker_does_not_bypass_an_original_intent_in_another_generation() {
     fs::create_dir(&prior).unwrap();
     fs::create_dir(&current).unwrap();
     fs::write(current.join("intent.json"), b"current attempt").unwrap();
-    reject_prior_intents(root.path(), &current, |_| Ok(())).unwrap();
+    reject_prior_intents(root.path(), &current, None, |_| Ok(())).unwrap();
     fs::write(prior.join("intent.json"), b"unreadable previous intent").unwrap();
-    assert!(reject_prior_intents(root.path(), &current, |_| Ok(())).is_err());
+    assert!(reject_prior_intents(root.path(), &current, None, |_| Ok(())).is_err());
 }
 
 #[cfg(test)]

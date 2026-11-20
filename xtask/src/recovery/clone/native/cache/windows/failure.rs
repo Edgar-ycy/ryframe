@@ -1,4 +1,4 @@
-//! 失败首代只采纳已签发的原 Job 清空事实，不发送停止或重放启动。
+//! 复核 Windows Redis 失败收据与原 Job 清空事实。
 use super::*;
 use crate::recovery::clone::native::{cache::host_control, target_verify::authority};
 
@@ -19,8 +19,27 @@ pub(in crate::recovery::clone::native::cache) fn read(
     output: &Path,
     live: bool,
 ) -> Result<Value> {
-    let backend = crate::workspace::root_dir();
-    common::local_directory(&backend, output, "Windows Redis 失败目录")?;
+    read_failure(&crate::workspace::root_dir(), request, output, live, None)
+}
+
+pub(in crate::recovery::clone::native::cache) fn accepted_failure(
+    backend: &Path,
+    request: &Value,
+    runtime: &Value,
+    live: bool,
+) -> Result<Value> {
+    let output = bound_path(runtime, "output")?;
+    read_failure(backend, request, &output, live, Some(runtime))
+}
+
+fn read_failure(
+    backend: &Path,
+    request: &Value,
+    output: &Path,
+    live: bool,
+    published: Option<&Value>,
+) -> Result<Value> {
+    common::local_directory(backend, output, "Windows Redis 失败目录")?;
     let bindings = files(output)?;
     let protected = ProtectedInputs::open(
         bindings
@@ -36,6 +55,11 @@ pub(in crate::recovery::clone::native::cache) fn read(
                 "原启动摘要",
             )?,
         )?;
+        if published.is_some()
+            && std::fs::canonicalize(backend)? != std::fs::canonicalize(&launch.backend)?
+        {
+            return Err("Windows Redis 已发布失败收据属于其他协调工作区".into());
+        }
         let records = Records {
             output,
             bindings: &bindings,
@@ -50,6 +74,9 @@ pub(in crate::recovery::clone::native::cache) fn read(
             return Err("Windows Redis 失败收据不属于原请求、启动意图或取消".into());
         }
         let proof = evidence(&launch, &records)?;
+        let runtime = published
+            .map(|runtime| require_published(&launch, &records, runtime))
+            .transpose()?;
         if live {
             let launch_inputs = launch.protect()?;
             launch_inputs.finish(observe_closed(request, &proof))?;
@@ -57,9 +84,63 @@ pub(in crate::recovery::clone::native::cache) fn read(
         if files(output)? != bindings {
             return Err("Windows Redis 失败目录证据在核验期间变化".into());
         }
+        if let Some(runtime) = runtime {
+            return Ok(json!({"kind":"windows-redis-accepted-failure",
+                "runtime":runtime,"bindings":bindings,"windows_closed":proof}));
+        }
         Ok(json!({"runtime":null,"bindings":bindings,"windows_closed":proof}))
     })();
     protected.finish(result)
+}
+
+fn require_published<'a>(
+    launch: &BoundLaunch,
+    records: &'a Records<'_>,
+    runtime: &Value,
+) -> Result<&'a Value> {
+    document::exact(
+        runtime,
+        &[
+            "format_version",
+            "request_sha256",
+            "output",
+            "launch",
+            "supervisor",
+            "process",
+            "process_receipt",
+            "facts",
+            "redis",
+        ],
+        "Windows Redis 已发布运行收据",
+    )?;
+    document::exact(
+        &runtime["facts"],
+        &[
+            "process_id",
+            "run_id",
+            "config_file",
+            "configuration_sha256",
+        ],
+        "Windows Redis 已发布认证事实",
+    )?;
+    let request = &launch.request;
+    let process = &runtime["process"];
+    if runtime["format_version"] != 3
+        || records.binding("cancel.json").is_some()
+        || records.required("runtime.json")? != *runtime
+        || runtime["redis"]
+            != json!({
+                "platform":"windows","port":request["port"],"pid":process["pid"],
+                "started":process["started"],"executable":request["tool"]["path"],
+                "sha256":request["tool"]["sha256"],"configuration":request["configuration"],
+                "run_id":runtime["facts"]["run_id"],"tool":request["tool"],
+            })
+    {
+        return Err("Windows Redis 失败收据不属于原非取消的已发布运行代次".into());
+    }
+    records
+        .binding("runtime.json")
+        .ok_or_else(|| "Windows Redis 缺少已发布运行收据绑定".into())
 }
 
 fn evidence(launch: &BoundLaunch, records: &Records<'_>) -> Result<Value> {
@@ -325,7 +406,48 @@ fn first_failure_binds_original_windows_job_and_never_accepts_unknown_spawn() {
     assert!(confirmed["runtime"].is_null());
     assert_eq!(confirmed["windows_closed"]["process"], process);
 
+    let known_failure =
+        |runtime: &Value| host_control::accepted_failure(&backend, &request, runtime, false);
+    let run_id = "b".repeat(40);
+    let confirmation = json!({"process":original,"run_id":run_id});
+    let runtime = json!({
+        "format_version":3,"request_sha256":digest::plan_hash(&request).unwrap(),
+        "output":output,"launch":launch,"supervisor":supervisor,"process":process,
+        "process_receipt":original,"facts":{
+            "process_id":"216","run_id":run_id,"config_file":model::configuration_file(&request).unwrap(),
+            "configuration_sha256":digest::plan_hash(&model::configuration(&request).unwrap()).unwrap(),
+        },
+        "redis":{
+            "platform":"windows","port":request["port"],"pid":process["pid"],
+            "started":process["started"],"executable":request["tool"]["path"],
+            "sha256":request["tool"]["sha256"],"configuration":request["configuration"],
+            "run_id":run_id,"tool":request["tool"],
+        },
+    });
+    // 只有历史首代的清空收据时，不能作为已接受、已发布代次的失败证明。
+    assert!(known_failure(&runtime).is_err());
+    record("acknowledged.json", &confirmation);
+    record("runtime.json", &runtime);
+    assert!(known_failure(&runtime).is_err());
+    record("accepted.json", &confirmation);
+    let accepted = known_failure(&runtime).unwrap();
+    let verified = read(&request, output, false).unwrap();
+    assert_eq!(
+        accepted,
+        json!({"kind":"windows-redis-accepted-failure",
+            "runtime":common::binding(&output.join("runtime.json")).unwrap(),
+            "bindings":verified["bindings"],"windows_closed":verified["windows_closed"]})
+    );
+    let mut different = runtime.clone();
+    different["redis"]["pid"] = json!(33);
+    assert!(known_failure(&different).is_err());
+    record("cancel.json", &launch);
+    assert!(known_failure(&runtime).is_err());
+    assert!(read(&request, output, false).is_ok());
+    std::fs::remove_file(output.join("cancel.json")).unwrap();
+
     failure["cleanup_completed"] = json!(false);
     record("failed.json", &failure);
     assert!(read(&request, output, false).is_err());
+    assert!(known_failure(&runtime).is_err());
 }

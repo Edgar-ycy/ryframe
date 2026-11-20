@@ -40,6 +40,7 @@ pub(super) fn handles(operation: &str) -> bool {
             | "cache-status"
             | "cache-handoff-markers"
             | "cache-external-termination"
+            | "cache-accepted-failure"
             | "storage-running"
             | "storage-closed"
             | "members-wait"
@@ -96,6 +97,12 @@ impl NativeRuntime {
                     (!args["effective"].is_null()).then_some(&args["effective"]),
                 )
                 .map_err(|_| model::error("Windows Redis 外部终止证据核对失败。核对冻结收据、原进程身份和独占回环端口，保留现场，禁止自动重放")),
+            "cache-accepted-failure" =>
+                crate::recovery::clone::native::cache::host_control::accepted_failure(
+                    &self.backend, &args["request"], &args["runtime"],
+                    args["live"].as_bool().ok_or("Redis 事故观察模式无效")?,
+                )
+                .map_err(|_| model::error("Windows Redis 已接受代次的失败证据核对失败")),
             "cache-handoff-markers" => crate::recovery::clone::native::cache::readonly::handoff_markers(
                 &self.backend, &args["request"], &args["runtime"], &args["markers"],
             )

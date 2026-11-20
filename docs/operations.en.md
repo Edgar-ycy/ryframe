@@ -228,6 +228,14 @@ For local Windows fixtures, bind the absolute `redis-server.exe` path, its SHA-2
 
 A dead controller is recovered explicitly through the same entry point's `recover --review <review-receipt> --environment <bootstrap.json> --owner-binding <owner-file-binding-json-from-status> --write`. It only removes the verified local control lock and appends to the ledger; it does not stop services or replay unfinished operations. PID reuse, changed provenance, or unknown startup or closure outcomes require retaining the state and verifying complete before/after-images. Closed generations cannot issue fresh-target requests again; registered targets only accept strictly verified completed lifecycle append operations. The isolated reference fixture disables Redis persistence; a successful service restart does not prove that an initialized target's before-image remains valid. If its owner or sentinel is lost, preserve the original initialization and failure evidence, strictly close the original service tree and create a new isolated target. Do not recreate markers, ignore process generations or replay the old initialization. This fixture restriction does not require application Redis services to use the same persistence policy.
 
+When the original Windows Redis process and its Job have fully exited, RustFS is still running under its recorded identity, and `status` reports `restart-redis`, explicitly start the Redis successor using the current ledger path from that status result.
+
+```text
+cargo xtask check recovery fixture services restart-redis --review <review-receipt> --environment <bootstrap.json> --owner-binding <state.json> --write
+```
+
+This step binds the original Redis exit and cleanup receipts and creates one Redis successor. The original RustFS process, data directory, databases, and objects remain in use. Then use `target-cache-markers` in the original copy ledger to verify the preceding generation's confirmed marker result and the complete initial state of the new generation. It writes the markers atomically only when both are absent and the managed namespace is empty. If the write outcome is unknown, use `target-cache-markers` in `reconcile` mode to confirm it by reading.
+
 Record the timeline, affected tenants, request or task IDs, root cause, handling, and verification results. Configuration structures remain the authority for configuration fields, and deployment assets for metrics and alerts; this document does not maintain duplicate inventories.
 
 In monitoring bindings, `environment` remains a descriptor of the formal launch's private configuration file. The file must contain the plaintext `metrics_bearer_token`, `scope_id`, `api_config_dir`, and `worker_config_dir` fields directly, for example:

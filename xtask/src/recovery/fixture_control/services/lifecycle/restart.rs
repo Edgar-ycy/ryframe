@@ -170,32 +170,39 @@ fn restart_generation(
 
 pub(super) fn restart_requests(services: &Value, output: &Path) -> Result<Value> {
     let mut requests = services["requests"].clone();
-    if !services["cache_effective"].is_null() {
-        requests["redis"] = services["cache_effective"].clone();
-    }
-    let previous = &services["runtime"];
-    if requests["redis"]["format_version"] == 3 || previous["format_version"] == 3 {
-        check(
-            requests["redis"]["format_version"] == 3
-                && previous["format_version"] == 3
-                && requests["redis"].get("previous_boot_id").is_none(),
-            "Windows Redis 重启请求与登记代次平台不同或混有 Linux 字段",
-        )?;
-        crate::recovery::clone::native::resources::common::validate_process_identity(
-            &previous["process"],
-        )?;
-        requests["redis"]["previous_identity"] = previous["process"].clone();
-    } else {
-        requests["redis"]["previous_identity"] = json!({"pid":previous["linux_identity"]["pid"],
-            "started":previous["linux_identity"]["started"],"executable":previous["linux_identity"]["executable"]});
-        requests["redis"]["previous_boot_id"] = previous["linux_identity"]["boot_id"].clone();
-    }
-    requests["redis"]["previous_run_id"] = previous["redis"]["run_id"].clone();
+    requests["redis"] = redis_request(services)?;
     for role in ["rustfs", "redis"] {
         std::fs::create_dir(output.join(role))?;
         json_io::write_new(&output.join(role).join("request.json"), &requests[role])?;
     }
     Ok(requests)
+}
+
+pub(super) fn redis_request(services: &Value) -> Result<Value> {
+    let mut request = if services["cache_effective"].is_null() {
+        services["requests"]["redis"].clone()
+    } else {
+        services["cache_effective"].clone()
+    };
+    let previous = &services["runtime"];
+    if request["format_version"] == 3 || previous["format_version"] == 3 {
+        check(
+            request["format_version"] == 3
+                && previous["format_version"] == 3
+                && request.get("previous_boot_id").is_none(),
+            "Windows Redis 重启请求与登记代次平台不同或混有 Linux 字段",
+        )?;
+        crate::recovery::clone::native::resources::common::validate_process_identity(
+            &previous["process"],
+        )?;
+        request["previous_identity"] = previous["process"].clone();
+    } else {
+        request["previous_identity"] = json!({"pid":previous["linux_identity"]["pid"],
+            "started":previous["linux_identity"]["started"],"executable":previous["linux_identity"]["executable"]});
+        request["previous_boot_id"] = previous["linux_identity"]["boot_id"].clone();
+    }
+    request["previous_run_id"] = previous["redis"]["run_id"].clone();
+    Ok(request)
 }
 
 struct Generation<'a> {

@@ -15,6 +15,8 @@ pub(in crate::recovery) mod handoff;
 pub(super) mod prefix;
 #[path = "history/protocol.rs"]
 pub(crate) mod protocol;
+#[path = "history/redis_successor.rs"]
+mod redis_successor;
 #[cfg(test)]
 #[path = "../../../../tests/unit/recovery/fixture_control/services/history/tests.rs"]
 mod tests;
@@ -75,7 +77,15 @@ pub(crate) fn validate(run: &Path, value: &Value, ready: bool, settled: bool) ->
         let mode = text(item, "mode")?;
         check(
             item["stage"] == STAGE
-                && ["close", "recover", "reconcile", "restart", "handoff-rustfs"].contains(&mode),
+                && [
+                    "close",
+                    "recover",
+                    "reconcile",
+                    "restart",
+                    "restart-redis",
+                    "handoff-rustfs",
+                ]
+                .contains(&mode),
             "夹具服务生命周期阶段无效",
         )?;
         if item["status"] != "passed" {
@@ -111,6 +121,9 @@ pub(crate) fn validate(run: &Path, value: &Value, ready: bool, settled: bool) ->
                 evidence::reconcile(run, index + 1, attempts, item, &result, &mut history)?
             }
             "restart" => restart(run, index + 1, item, &result, &mut history)?,
+            "restart-redis" => {
+                redis_successor::validate(run, index + 1, item, &result, &mut history)?;
+            }
             _ => unreachable!("已校验生命周期模式"),
         }
     }
@@ -119,6 +132,12 @@ pub(crate) fn validate(run: &Path, value: &Value, ready: bool, settled: bool) ->
         "夹具服务存在未成功收尾的生命周期阶段",
     )?;
     Ok(history)
+}
+
+pub(in crate::recovery) fn is_published_generation(item: &Value) -> bool {
+    item["stage"] == STAGE
+        && matches!(item["mode"].as_str(), Some("restart" | "restart-redis"))
+        && item["status"] == "passed"
 }
 
 fn close(

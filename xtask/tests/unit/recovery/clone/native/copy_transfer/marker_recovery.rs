@@ -30,13 +30,65 @@ fn setup() -> (PathBuf, tempfile::TempDir, Receipts) {
         controller,
         run,
         protected: Inputs::directory(&evidence).unwrap(),
-        reboot_marker_root: None,
+        prior_marker_root: None,
+        prior: None,
     };
     (backend, directory, receipts)
 }
 
 fn observation(backend: &Path, value: &Value) -> Value {
     common::read_bound(backend, &value["observation"], "观察收据").unwrap()
+}
+
+#[test]
+fn redis_only_restart_holds_the_unique_confirmed_previous_intent() {
+    let (_backend, directory, mut receipts) = setup();
+    receipts.binding["fixture"] = json!({"restart":"previous"});
+    let previous_digest = digest::plan_hash(&receipts.binding["fixture"]).unwrap();
+    let marker_root = directory.path().join("target-cache-markers");
+    let previous = marker_root.join(&previous_digest);
+    fs::create_dir_all(&previous).unwrap();
+    receipts.directory = previous.clone();
+    receipts.intent = previous.join("intent.json");
+    receipts.protected = Inputs::directory(&previous).unwrap();
+    let result = receipts
+        .apply(&empty_image(), &|| Ok(()), |begin| {
+            begin()?;
+            Ok(receipts.after.clone())
+        })
+        .unwrap();
+    state::finish(&receipts.run, receipts.attempt, Some(&result), None).unwrap();
+
+    receipts.binding["fixture"] = json!({"restart":"redis-only"});
+    let current_digest = digest::plan_hash(&receipts.binding["fixture"]).unwrap();
+    receipts.directory = marker_root.join(current_digest);
+    fs::create_dir(&receipts.directory).unwrap();
+    receipts.intent = receipts.directory.join("intent.json");
+    receipts.attempt = state::begin(&receipts.run, "target-cache-markers", "run", &json!({}))
+        .unwrap()
+        .0;
+    receipts.protected = Inputs::directory(&receipts.directory).unwrap();
+    receipts.prior_marker_root = Some(Inputs::directory(&marker_root).unwrap());
+    let digest = json!(previous_digest);
+    assert!(confirmed::Prior::load(&receipts, &digest, |_| Err("原复制前缀不符".into())).is_err());
+    let expected_image = receipts.after.clone();
+    receipts.after["owner"] = json!("different-owner");
+    assert!(confirmed::Prior::load(&receipts, &digest, |_| Ok(())).is_err());
+    receipts.after = expected_image;
+    let (proof, binding) = confirmed::Prior::load(&receipts, &digest, |head| {
+        assert_eq!(head, &receipts.head);
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(binding["observation"], result["observation"]);
+    assert_eq!(proof.intent(), previous.join("intent.json"));
+    receipts.prior = Some(proof);
+    receipts.check().unwrap();
+    receipts.require_unattempted().unwrap();
+    let extra = marker_root.join("a".repeat(64));
+    fs::create_dir(&extra).unwrap();
+    fs::write(extra.join("intent.json"), b"another intent").unwrap();
+    assert!(receipts.check().is_err());
 }
 
 #[test]

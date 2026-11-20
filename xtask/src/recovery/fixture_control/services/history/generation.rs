@@ -218,7 +218,7 @@ pub(super) fn restart(
     validate_redis(&original, &current, review)
 }
 
-fn validate_windows_redis(
+pub(super) fn validate_windows_redis(
     run: &Path,
     previous: &Value,
     original: &Value,

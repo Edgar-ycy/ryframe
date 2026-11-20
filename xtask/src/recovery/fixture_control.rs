@@ -104,7 +104,8 @@ pub(super) fn run(command: &FixtureControlCommand, root: &Path) -> Result<()> {
                 | FixtureServiceOperation::HandoffRustfs
                 | FixtureServiceOperation::Reconcile
                 | FixtureServiceOperation::Recover
-                | FixtureServiceOperation::Restart => services::lifecycle::execute(
+                | FixtureServiceOperation::Restart
+                | FixtureServiceOperation::RestartRedis => services::lifecycle::execute(
                     root,
                     operation,
                     &options.review,

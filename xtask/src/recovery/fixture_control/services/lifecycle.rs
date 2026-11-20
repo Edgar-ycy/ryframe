@@ -58,6 +58,8 @@ mod recover;
 mod registration;
 #[path = "lifecycle/restart.rs"]
 mod restart;
+#[path = "lifecycle/restart_redis.rs"]
+mod restart_redis;
 #[path = "lifecycle/runtime.rs"]
 pub(crate) mod runtime;
 #[path = "lifecycle/status.rs"]
@@ -73,7 +75,13 @@ pub(in crate::recovery) use tree_control::stop_recovery_process;
 
 use model::{Context, binding, check, read, text};
 
-const OWNER_OPERATIONS: &[&str] = &["recover", "reconcile", "restart", "handoff-rustfs"];
+const OWNER_OPERATIONS: &[&str] = &[
+    "recover",
+    "reconcile",
+    "restart",
+    "restart-redis",
+    "handoff-rustfs",
+];
 
 fn validate_operation(operation: &str, owner: bool, write: bool) -> Result<()> {
     let needs_owner = OWNER_OPERATIONS.contains(&operation);
@@ -158,6 +166,9 @@ pub(super) fn execute_with(
         "reconcile" => reconcile::run(runtime, &context, owner.ok_or("和解缺少 owner")?),
         "recover" => recover::run(runtime, &context, owner.ok_or("恢复缺少 owner")?),
         "restart" => restart::run(runtime, &context, owner.ok_or("重启缺少 owner")?),
+        "restart-redis" => {
+            restart_redis::run(runtime, &context, owner.ok_or("Redis 接续缺少 owner")?)
+        }
         _ => unreachable!("已校验生命周期操作"),
     }
 }

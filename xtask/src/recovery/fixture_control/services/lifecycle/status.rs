@@ -43,9 +43,20 @@ pub(super) fn run(runtime: &mut dyn Runtime, context: &Context) -> Result<Value>
     } else {
         let services = registered(runtime, context, true)?;
         let recorded = incident::recorded(context, &history)?;
-        observations =
-            incident::observe_registered(runtime, context, &services, recorded.as_ref())?;
         let mut next = "close";
+        observations =
+            match incident::observe_registered(runtime, context, &services, recorded.as_ref()) {
+                Ok(observed) => observed,
+                Err(original) => {
+                    let proof =
+                        restart_redis::observe_incident(runtime, context, &history, &services)
+                            .map_err(|_| original)?;
+                    reconciliation = json!({"owner":context.value["sources"]["state_before"],
+                    "redis_incident":proof});
+                    next = "restart-redis";
+                    json!({"redis":"failed-cleaned","rustfs":"running","termination":null})
+                }
+            };
         if !observations["termination"].is_null() {
             let reconciled = &history["external_recovery"];
             let mut proof = observations["termination"]

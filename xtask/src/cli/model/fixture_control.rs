@@ -55,6 +55,7 @@ pub(crate) const FIXTURE_CONTROL_USAGE: &str = concat!(
     "  services status --review <文件> --environment <文件>\n",
     "  services <reconcile|recover|restart> --review <文件> --environment <文件> --owner-binding <文件> --write\n",
     "  services handoff-rustfs --review <文件> --environment <文件> --owner-binding <种子关闭结果> --write\n",
+    "  services restart-redis --review <文件> --environment <文件> --owner-binding <当前服务账本> --write\n",
     "路径必须是当前后端 .local-tests 内无链接的绝对路径；只读 plan/status 拒绝 --write，dataset plan、发布和生命周期操作要求 --write。",
 );
 

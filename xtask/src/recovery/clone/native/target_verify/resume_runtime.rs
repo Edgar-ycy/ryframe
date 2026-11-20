@@ -187,12 +187,7 @@ pub(super) fn fixture_evidence(
     let attempts = state::attempts(&state)?;
     let matches = attempts
         .iter()
-        .filter(|item| {
-            item["stage"] == "fixture-services"
-                && item["mode"] == "restart"
-                && item["status"] == "passed"
-                && item["result"] == *generation
-        })
+        .filter(|item| history::is_published_generation(item) && item["result"] == *generation)
         .count();
     check(
         matches == 1 && history["active_generation"] == *generation,
@@ -216,11 +211,10 @@ pub(super) fn fixture_evidence(
         )?,
     )?;
     known.push(json!({"storage":storage_projection(&initial_storage),"redis":initial_cache["runtime"]["redis"]}));
-    for item in attempts.iter().filter(|item| {
-        item["stage"] == "fixture-services"
-            && item["mode"] == "restart"
-            && item["status"] == "passed"
-    }) {
+    for item in attempts
+        .iter()
+        .filter(|item| history::is_published_generation(item))
+    {
         let result = read(backend, &bound(backend, &item["result"])?)?;
         let proof = read(backend, &bound(backend, &result["generation"])?)?;
         known.push(json!({"storage":storage_projection(&proof["rustfs"]["storage"]),"redis":proof["redis"]["runtime"]["redis"]}));

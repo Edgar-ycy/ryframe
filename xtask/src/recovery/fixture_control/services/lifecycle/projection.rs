@@ -42,10 +42,7 @@ fn active_inputs(manifest: &Value, state: &Value, history: &Value) -> Result<(Va
     let matches = state::attempts(state)?
         .iter()
         .filter(|item| {
-            item["stage"] == "fixture-services"
-                && item["mode"] == "restart"
-                && item["status"] == "passed"
-                && item["result"] == history["active_generation"]
+            history::is_published_generation(item) && item["result"] == history["active_generation"]
         })
         .collect::<Vec<_>>();
     check(
@@ -102,10 +99,7 @@ fn storage(value: &Value) -> Result<Value> {
 fn recorded(context: &Context, history: &Value) -> Result<Vec<Value>> {
     let mut recorded = Vec::new();
     for item in state::attempts(&context.value["state"])? {
-        if item["stage"] != "fixture-services"
-            || item["mode"] != "restart"
-            || item["status"] != "passed"
-            || item["result"] == history["active_generation"]
+        if !history::is_published_generation(item) || item["result"] == history["active_generation"]
         {
             continue;
         }
@@ -125,10 +119,7 @@ pub(super) fn historical(runtime: &mut dyn Runtime, backend: &Path, run: &Path) 
         json!({"value":{"rustfs":services["origin"]["storage"],"redis":services["origin"]["redis"]},"runtime":null}),
     ];
     for attempt in state::attempts(state)? {
-        if attempt["stage"] != "fixture-services"
-            || attempt["mode"] != "restart"
-            || attempt["status"] != "passed"
-        {
+        if !history::is_published_generation(attempt) {
             continue;
         }
         let outer = history::evidence::bound(run, &attempt["result"])?;

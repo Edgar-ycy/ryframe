@@ -32,13 +32,15 @@ pub(super) fn load(
         let path = common::bound_file(backend, &tree_binding, "重启进程树")?;
         let output = path.parent().ok_or("进程树缺少父目录")?;
         tree = self::tree(runtime, output, &requests["rustfs"])?;
+        let inherited = inherited_rustfs(backend, &generation)?;
+        let rustfs_origin = inherited.as_ref().unwrap_or(&generation);
         observed = inspect(
             backend,
             output,
             &value["sources"]["manifest"],
-            &generation["controller"],
-            generation["attempt"].as_u64().ok_or("重启编号无效")?,
-            &generation["rustfs"]["request"],
+            &rustfs_origin["controller"],
+            rustfs_origin["attempt"].as_u64().ok_or("重启编号无效")?,
+            &rustfs_origin["rustfs"]["request"],
         )?;
         validate_storage(&storage, &observed, &requests["rustfs"], &tree)?;
     }
@@ -56,6 +58,24 @@ pub(super) fn load(
         "cache_effective":effective(&context, &requests["redis"])?,"storage_observation":observed,
         "origin":initial,"evidence":{"rustfs_tree":tree_binding,"redis_runtime":binding(&runtime_path)?}}),
     )
+}
+
+fn inherited_rustfs(backend: &Path, generation: &Value) -> Result<Option<Value>> {
+    if generation["kind"] != "reference-fixture-redis-generation" {
+        return Ok(None);
+    }
+    let outer = common::read_bound(
+        backend,
+        &generation["previous_generation"],
+        "原 RustFS 代次结果",
+    )?;
+    let original = common::read_bound(backend, &outer["generation"], "原 RustFS 代次")?;
+    check(
+        original["kind"] == "reference-fixture-service-generation"
+            && original["rustfs"] == generation["rustfs"],
+        "Redis 单独接续未继承原 RustFS 进程树",
+    )?;
+    Ok(Some(original))
 }
 
 fn context(backend: &Path, value: &Value) -> Result<Context> {
