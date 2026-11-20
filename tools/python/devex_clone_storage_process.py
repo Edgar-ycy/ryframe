@@ -106,7 +106,7 @@ def wait_ready(child, expected: dict, request: dict) -> None:
 
 
 def start(backend: Path, request: dict, environment: dict, output: Path, registration: dict,
-          controller: dict, number: int, guard, *, supervised: bool = False) -> dict:
+          controller: dict, number: int, guard) -> dict:
     args = arguments(request)
     write_json(output / "intent.json", {"format_version": 1, "kind": "devex-clone-storage-intent", "request": registration,
                "controller": controller, "attempt": number, "arguments": args})
@@ -116,14 +116,8 @@ def start(backend: Path, request: dict, environment: dict, output: Path, registr
         private = {key: item for key, item in environment.items() if not key.upper().startswith(("RUSTFS_", "MINIO_"))}
         with (output / "stdout.log").open("xb") as stdout, (output / "stderr.log").open("xb") as stderr:
             popen_called = True
-            if supervised:
-                from full_stack_process_tree import launch_supervised_process
-
-                child = launch_supervised_process(output, "rustfs", request["scope_id"], args, output, private, stdout,
-                                                  timeout=request["timeout_seconds"])
-            else:
-                child = subprocess.Popen(args, cwd=output, env=private, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
-                                         creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+            child = subprocess.Popen(args, cwd=output, env=private, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
+                                     creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         write_json(output / "spawned.json", {"pid": child.pid, "identity_pending": True})
         actual = process_identity(child.pid)
         if actual is None or actual["executable"] != request["executable"]["path"]:
@@ -141,8 +135,6 @@ def start(backend: Path, request: dict, environment: dict, output: Path, registr
             raise ValueError("存储最终就绪观察已退出")
         result = {"identity": expected, "sha256": request["executable"]["sha256"],
                   "process_receipt": binding(output / "process.json"), "launch_receipt": binding(output / "launch.json")}
-        if supervised:
-            result["tree"] = binding(output / "rustfs-tree.json")
         write_json(output / "ready.json", {"storage": result, "request": registration, "controller": controller,
                    "attempt": number, "listeners": [request["api_url"], request["console_url"]]})
         return result
@@ -152,11 +144,7 @@ def start(backend: Path, request: dict, environment: dict, output: Path, registr
                 if not popen_called:
                     write_json(output / "not-started.json", {"intent": binding(output / "intent.json"), "popen_called": False})
             else:
-                if supervised:
-                    from full_stack_process_tree import terminate_owned_process_tree
-
-                    terminate_owned_process_tree(child.tree, crash=True)
-                elif expected is not None:
+                if expected is not None:
                     terminate_owned_process(expected)
                 elif child.poll() is None:
                     # 仅使用刚创建的 Popen 内核句柄；不能从未确认的 PID 重新寻找进程。
