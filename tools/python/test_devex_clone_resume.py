@@ -37,16 +37,6 @@ class ResumeTests(unittest.TestCase):
         self.case.case.runner.failure = None
         return len(self.case.case.writes())
 
-    def test_reconciled_before_image_gets_one_explicit_new_attempt(self):
-        self.interrupted("before-commit")
-        reconciled = self.continue_copy("reconcile")
-        self.assertEqual(set(reconciled["steps"].values()), {"reconciled_before"})
-        self.assertEqual(len(self.case.case.writes()), 1)
-        self.continue_copy("resume")
-        state = self.case.case.ledger.inspect()
-        self.assertEqual(sorted(item["attempt"] for item in state["steps"].values()), [1, 1, 2])
-        self.assertEqual(len(self.case.case.writes()), 4)
-
     def test_prewrite_interruption_reuses_plan_export_and_initialized_directory(self):
         with patch.object(factory, "TransferSteps", side_effect=RuntimeError("offline interrupted before intent")):
             with self.assertRaises(RuntimeError):

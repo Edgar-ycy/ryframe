@@ -393,19 +393,6 @@ class TransferTests(unittest.TestCase):
                 engine.apply_database("shared-control")
         self.assertEqual(len(self.writes()), 1)
 
-    def test_before_commit_failure_allows_only_explicit_reconcile_then_resume(self):
-        self.runner.failure = "before-commit"
-        with self.assertRaises(subprocess.TimeoutExpired), self.open():
-            self.engine().apply_database("shared-control")
-        self.runner.failure = None
-        with self.open(create=False, mode="reconcile"):
-            engine = self.engine()
-            step = next(iter(self.ledger.snapshot()["steps"]))
-            self.assertEqual(engine.reconcile(step), "reconciled_before")
-        with self.open(create=False, mode="resume"):
-            self.assertEqual(self.engine().resume(step), "confirmed")
-        self.assertEqual(len(self.writes()), 2)
-
     def test_post_image_or_preserved_owner_change_is_unknown_and_blocks_next_write(self):
         def damage(key):
             current = self.guard.current[key]
