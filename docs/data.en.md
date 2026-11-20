@@ -35,9 +35,7 @@ The current `0.x` versions support only new isolated databases. Old structures o
 - Control database: `cargo migrate -- control status`, then `cargo migrate -- control verify`
 - Registered tenant targets: `cargo migrate -- tenant-data status --all`, then `cargo migrate -- tenant-data verify --all`
 
-Framework maintainers can use `cargo xtask data migrate check` to validate the migration catalog, registration order, generated migration wiring, and digests in `catalog/migrations.lock.toml` without writing. Use `cargo xtask data migrate check --require-frozen` for pre-commit checks. Explicit baseline consolidation in a development version uses `cargo xtask data migrate baseline --write`. Stable versions freeze only new migrations in the current working tree, using `cargo xtask data migrate freeze`. `cargo xtask data migrate reconcile --write` selects baseline or freeze according to the current version phase, and the full-stack fixture reuses it. These commands do not connect to or modify databases.
-
-The control database migration for notice versions initializes `revision = 1` for existing notices and preserves their content. New notices also start at version `1`.
+Framework maintainers can use `cargo xtask data migrate check` to validate the migration catalog, registration order, generated migration wiring, and digests in `catalog/migrations.lock.toml` without writing. Use `cargo xtask data migrate check --require-frozen` for pre-commit checks. Explicit baseline consolidation in a development version uses `cargo xtask data migrate baseline --write`. Stable versions freeze only new migrations in the current working tree, using `cargo xtask data migrate freeze`. `cargo xtask data migrate reconcile --write` selects baseline or freeze according to the current version phase, and the full-stack fixture reuses it. These commands do not connect to or modify databases. The control database migration for notice versions initializes `revision = 1` for existing notices and preserves their content. New notices also start at version `1`.
 
 ## Adopting Existing Tables
 
