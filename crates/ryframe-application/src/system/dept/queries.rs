@@ -1,5 +1,7 @@
+use std::borrow::Cow;
+
 use ryframe_kernel::{
-    ActorContext, AppResult, DataScope, DataScopeContext, PageResult, ValidatedPageQuery,
+    ActorContext, AppResult, DataScope, DataScopeContextRef, PageResult, ValidatedPageQuery,
 };
 
 use crate::ports::system::DeptFilter;
@@ -7,19 +9,21 @@ use crate::ports::system::DeptFilter;
 use super::{CACHE_TTL_SECS, DEPT_TREE_CACHE_NAMESPACE, DeptService, DeptTreeNode, DeptVo};
 
 impl DeptService {
-    async fn visible_dept_ids(
+    async fn visible_dept_ids<'a>(
         &self,
         tenant_id: &str,
-        scope: DataScopeContext,
-    ) -> AppResult<Option<Vec<i64>>> {
+        scope: DataScopeContextRef<'a>,
+    ) -> AppResult<Option<Cow<'a, [i64]>>> {
         let ids = match scope.scope {
             DataScope::All => return Ok(None),
-            DataScope::Custom => scope.custom_dept_ids,
-            DataScope::Dept | DataScope::SelfOnly => scope.dept_id.into_iter().collect(),
-            DataScope::DeptAndChildren => match scope.dept_id {
+            DataScope::Custom => Cow::Borrowed(scope.custom_dept_ids),
+            DataScope::Dept | DataScope::SelfOnly => {
+                Cow::Owned(scope.dept_id.into_iter().collect())
+            }
+            DataScope::DeptAndChildren => Cow::Owned(match scope.dept_id {
                 Some(dept_id) => self.read.find_child_ids(tenant_id, dept_id).await?,
                 None => Vec::new(),
-            },
+            }),
         };
         Ok(Some(ids))
     }
@@ -69,7 +73,7 @@ impl DeptService {
             None => self.tree_list(tenant_id).await,
             Some(ids) => self
                 .read
-                .find_tree(tenant_id, Some(&ids))
+                .find_tree(tenant_id, Some(ids.as_ref()))
                 .await
                 .map(|nodes| nodes.into_iter().map(DeptTreeNode::from).collect()),
         }

@@ -1,7 +1,7 @@
 use crate::DbResultExt;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use ryframe_kernel::{AppError, AppResult, DataScopeContext, PageResult, ValidatedPageQuery};
+use ryframe_kernel::{AppError, AppResult, DataScopeContextRef, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
     EntityTrait, QueryFilter, QueryOrder, QuerySelect, Select,
@@ -82,7 +82,7 @@ impl OperLogRepository {
     fn filtered_select(
         tenant_id: &str,
         filter: &OperLogFilter<'_>,
-        scope_ctx: &DataScopeContext,
+        scope_ctx: &DataScopeContextRef<'_>,
     ) -> Select<oper_log::Entity> {
         let mut select = oper_log::Entity::find().filter(oper_log::Column::TenantId.eq(tenant_id));
         if let Some(name) = filter.oper_name.filter(|value| !value.is_empty()) {
@@ -158,7 +158,7 @@ impl OperLogRepository {
         db: &C,
         tenant_id: &str,
         filter: &OperLogFilter<'_>,
-        scope_ctx: &DataScopeContext,
+        scope_ctx: &DataScopeContextRef<'_>,
         window: ryframe_kernel::ExportCursorWindow<'_>,
     ) -> AppResult<Vec<oper_log::Model>>
     where
@@ -187,7 +187,7 @@ impl OperLogRepository {
         db: &C,
         tenant_id: &str,
         filter: &OperLogFilter<'_>,
-        scope_ctx: &DataScopeContext,
+        scope_ctx: &DataScopeContextRef<'_>,
         selected_ids: &[i64],
     ) -> AppResult<ryframe_kernel::ExportQuerySnapshot>
     where
@@ -208,7 +208,7 @@ impl OperLogRepository {
         tenant_id: &str,
         query: &ValidatedPageQuery,
         filter: OperLogFilter<'_>,
-        scope_ctx: &DataScopeContext,
+        scope_ctx: &DataScopeContextRef<'_>,
     ) -> AppResult<PageResult<oper_log::Model>> {
         let select = Self::filtered_select(tenant_id, &filter, scope_ctx)
             .order_by_desc(oper_log::Column::OperTime)

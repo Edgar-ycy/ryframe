@@ -6,7 +6,7 @@ use crate::{
     RoleRepository, TenantRepository, UserRepository,
     entities::{password_reset_request, role, user, user_role},
 };
-use ryframe_kernel::{AppError, DataScopeContext};
+use ryframe_kernel::{AppError, DataScopeContextRef};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, ExprTrait, QueryFilter, QueryOrder, QuerySelect,
     TransactionTrait,
@@ -102,7 +102,7 @@ impl PasswordResetTransaction for DatabasePasswordResetTransaction {
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-        scope: &'a DataScopeContext,
+        scope: &'a DataScopeContextRef<'_>,
     ) -> ryframe_kernel::AppResult<Option<PasswordResetUserState>> {
         let Some(user) = UserRepository
             .find_by_id_with_data_scope_for_update(&self.transaction, tenant_id, user_id, scope)

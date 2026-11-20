@@ -48,7 +48,7 @@ impl NoticePersistencePort for DatabaseNoticePersistence {
         &self,
         tenant_id: &str,
         id: i64,
-        data_scope: &ryframe_kernel::DataScopeContext,
+        data_scope: &ryframe_kernel::DataScopeContextRef<'_>,
     ) -> AppResult<Option<NoticeRecord>> {
         let database = self
             .database
@@ -130,7 +130,7 @@ impl NoticeTransaction for DatabaseNoticeTransaction {
         &self,
         tenant_id: &str,
         id: i64,
-        data_scope: &ryframe_kernel::DataScopeContext,
+        data_scope: &ryframe_kernel::DataScopeContextRef<'_>,
     ) -> AppResult<Option<NoticeRecord>> {
         self.ensure_tenant(tenant_id)?;
 

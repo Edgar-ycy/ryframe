@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use ryframe_kernel::DataScopeContext;
+use ryframe_kernel::DataScopeContextRef;
 
 pub const USER_STATUS_DISABLED: &str = "0";
 pub const USER_STATUS_NORMAL: &str = "1";
@@ -85,7 +85,7 @@ pub trait UserWriteTransaction:
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-        scope: &'a DataScopeContext,
+        scope: &'a DataScopeContextRef<'_>,
     ) -> ryframe_kernel::AppResult<Option<ManageableUserState>>;
 
     async fn insert_user(&self, user: NewUserRecord) -> ryframe_kernel::AppResult<UserWriteRecord>;

@@ -1,4 +1,4 @@
-use crate::data_scope::{DataScope, DataScopeContext};
+use crate::data_scope::{DataScope, DataScopeContextRef};
 use serde::{Deserialize, Serialize};
 
 /// 显式传入业务用例的已认证应用主体。
@@ -21,16 +21,52 @@ pub struct ActorContext {
 }
 
 impl ActorContext {
-    /// 构造供数据访问层使用的数据权限上下文。
-    pub fn data_scope_context(&self) -> DataScopeContext {
-        DataScopeContext {
+    /// 借用数据访问层所需的数据权限字段。
+    pub fn data_scope_context(&self) -> DataScopeContextRef<'_> {
+        DataScopeContextRef {
             scope: self.data_scope.clone(),
             user_id: self.user_id,
             dept_id: self.dept_id,
-            ancestors: self.dept_path.clone(),
-            custom_dept_ids: self.custom_dept_ids.clone(),
+            ancestors: self.dept_path.as_deref(),
+            custom_dept_ids: &self.custom_dept_ids,
             include_self: self.include_self,
             data_scope_version: self.data_scope_version,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ActorContext, DataScope};
+
+    #[test]
+    fn data_scope_view_borrows_actor_buffers_and_preserves_scope() {
+        let actor = ActorContext {
+            user_id: 17,
+            tenant_id: "tenant".into(),
+            username: "tester".into(),
+            dept_id: Some(33),
+            dept_path: Some("0,22,33".into()),
+            data_scope: DataScope::Custom,
+            custom_dept_ids: (1..=4096).collect(),
+            include_self: true,
+            data_scope_version: 42,
+            is_super_admin: false,
+        };
+
+        let scope = actor.data_scope_context();
+        assert!(std::ptr::eq(
+            scope.custom_dept_ids,
+            actor.custom_dept_ids.as_slice()
+        ));
+        assert!(std::ptr::eq(
+            scope.ancestors.unwrap(),
+            actor.dept_path.as_deref().unwrap(),
+        ));
+        assert_eq!(scope.scope, actor.data_scope);
+        assert_eq!(scope.user_id, actor.user_id);
+        assert_eq!(scope.dept_id, actor.dept_id);
+        assert_eq!(scope.include_self, actor.include_self);
+        assert_eq!(scope.data_scope_version, actor.data_scope_version);
     }
 }

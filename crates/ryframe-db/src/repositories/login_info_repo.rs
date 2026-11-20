@@ -1,7 +1,7 @@
 use crate::DbResultExt;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use ryframe_kernel::{AppError, AppResult, DataScopeContext, PageResult, ValidatedPageQuery};
+use ryframe_kernel::{AppError, AppResult, DataScopeContextRef, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
     EntityTrait, QueryFilter, QueryOrder, QuerySelect, Select,
@@ -76,7 +76,7 @@ impl LoginInfoRepository {
     fn filtered_select(
         tenant_id: &str,
         filter: &LoginInfoFilter<'_>,
-        scope_ctx: &DataScopeContext,
+        scope_ctx: &DataScopeContextRef<'_>,
     ) -> Select<login_info::Entity> {
         let mut select =
             login_info::Entity::find().filter(login_info::Column::TenantId.eq(tenant_id));
@@ -108,7 +108,7 @@ impl LoginInfoRepository {
         db: &C,
         tenant_id: &str,
         filter: &LoginInfoFilter<'_>,
-        scope_ctx: &DataScopeContext,
+        scope_ctx: &DataScopeContextRef<'_>,
         window: ryframe_kernel::ExportCursorWindow<'_>,
     ) -> AppResult<Vec<login_info::Model>>
     where
@@ -137,7 +137,7 @@ impl LoginInfoRepository {
         db: &C,
         tenant_id: &str,
         filter: &LoginInfoFilter<'_>,
-        scope_ctx: &DataScopeContext,
+        scope_ctx: &DataScopeContextRef<'_>,
         selected_ids: &[i64],
     ) -> AppResult<ryframe_kernel::ExportQuerySnapshot>
     where
@@ -158,7 +158,7 @@ impl LoginInfoRepository {
         tenant_id: &str,
         query: &ValidatedPageQuery,
         filter: LoginInfoFilter<'_>,
-        scope_ctx: &DataScopeContext,
+        scope_ctx: &DataScopeContextRef<'_>,
     ) -> AppResult<PageResult<login_info::Model>> {
         let select = Self::filtered_select(tenant_id, &filter, scope_ctx)
             .order_by_desc(login_info::Column::LoginTime)

@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use ryframe_kernel::{DataScopeContext, ExportCursorWindow, PageResult, ValidatedPageQuery};
+use ryframe_kernel::{DataScopeContextRef, ExportCursorWindow, PageResult, ValidatedPageQuery};
 
 use crate::ports::system::DeptRecord;
 
@@ -55,7 +55,7 @@ pub trait UserQueryReadPort: Send + Sync {
         &'a self,
         tenant_id: &'a str,
         filter: UserQueryFilter<'a>,
-        scope: &'a DataScopeContext,
+        scope: &'a DataScopeContextRef<'_>,
         window: ExportCursorWindow<'_>,
     ) -> ryframe_kernel::AppResult<Vec<UserQueryRecord>>;
 
@@ -64,14 +64,14 @@ pub trait UserQueryReadPort: Send + Sync {
         tenant_id: &'a str,
         query: ValidatedPageQuery,
         filter: UserQueryFilter<'a>,
-        scope: &'a DataScopeContext,
+        scope: &'a DataScopeContextRef<'_>,
     ) -> ryframe_kernel::AppResult<PageResult<UserQueryRecord>>;
 
     async fn options<'a>(
         &'a self,
         tenant_id: &'a str,
         query: Option<&'a str>,
-        scope: &'a DataScopeContext,
+        scope: &'a DataScopeContextRef<'_>,
         limit: u64,
     ) -> ryframe_kernel::AppResult<Vec<UserQueryRecord>>;
 
@@ -79,14 +79,14 @@ pub trait UserQueryReadPort: Send + Sync {
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-        scope: &'a DataScopeContext,
+        scope: &'a DataScopeContextRef<'_>,
     ) -> ryframe_kernel::AppResult<Option<UserQueryDetailRecord>>;
 
     async fn is_accessible<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-        scope: &'a DataScopeContext,
+        scope: &'a DataScopeContextRef<'_>,
     ) -> ryframe_kernel::AppResult<bool>;
 
     async fn is_super_admin<'a>(

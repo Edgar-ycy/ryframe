@@ -3,7 +3,7 @@
 // source: catalog/resources/notice.toml
 // 请勿手工修改；修改资源清单后重新生成。
 
-use ryframe_kernel::{DataScopeContext, ValidatedPageQuery};
+use ryframe_kernel::{DataScopeContextRef, ValidatedPageQuery};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct NoticeRecord {
@@ -44,7 +44,7 @@ pub struct NoticeListParams {
 
 #[derive(Clone, Copy, Debug)]
 pub struct NoticeFilter<'a> {
-    pub data_scope: &'a DataScopeContext,
+    pub data_scope: &'a DataScopeContextRef<'a>,
     pub title: Option<&'a str>,
     pub notice_type: Option<&'a str>,
     pub status: Option<&'a str>,

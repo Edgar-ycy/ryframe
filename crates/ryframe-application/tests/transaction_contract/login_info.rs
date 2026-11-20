@@ -27,7 +27,7 @@ impl LoginInfoPersistencePort for FakePersistence {
         _tenant_id: &str,
         _page: ValidatedPageQuery,
         _filter: LoginInfoFilter<'_>,
-        _data_scope: &DataScopeContext,
+        _data_scope: &DataScopeContextRef<'_>,
     ) -> AppResult<PageResult<LoginInfoRecord>> {
         unreachable!("本测试不读取列表")
     }
@@ -36,7 +36,7 @@ impl LoginInfoPersistencePort for FakePersistence {
         &self,
         _tenant_id: &str,
         _filter: LoginInfoFilter<'_>,
-        _data_scope: &DataScopeContext,
+        _data_scope: &DataScopeContextRef<'_>,
         _window: ExportCursorWindow<'_>,
     ) -> AppResult<Vec<LoginInfoRecord>> {
         unreachable!("本测试不执行导出")

@@ -6,7 +6,7 @@ use crate::{
     TenantConfigTransferRepository, TenantRepository, UserRepository,
     entities::{dept, role, user},
 };
-use ryframe_kernel::{AppError, DataScopeContext};
+use ryframe_kernel::{AppError, DataScopeContextRef};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
     TransactionTrait, sea_query::LockType,
@@ -165,7 +165,7 @@ impl UserWriteTransaction for DatabaseUserWriteTransaction {
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-        scope: &'a DataScopeContext,
+        scope: &'a DataScopeContextRef<'_>,
     ) -> ryframe_kernel::AppResult<Option<ManageableUserState>> {
         let Some(user) = UserRepository
             .find_by_id_with_data_scope_for_update(&self.transaction, tenant_id, user_id, scope)

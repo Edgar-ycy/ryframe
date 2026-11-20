@@ -113,7 +113,7 @@ root = "backend"
 path = "crates/ryframe-application/src/generated/notice/fake.rs"
 source_hash = "9c7717ecf319783c9296cc84459c3b661dcadc10a233acf1bf058176b737d151"
 schema_hash = "b68503cbce094b4575d4b533331cf0e09c0b3ea55291b17d2b06cfba23d80803"
-content_hash = "f7276d14dac89f837401559210be073bab59afd219c56ce11ae2b1c8593f28cb"
+content_hash = "d8915b8d693cdc8c8df97a6647992e9c7233fac67877ac80374d9185519e4f81"
 
 [[entries]]
 resource = "notice"
@@ -129,7 +129,7 @@ root = "backend"
 path = "crates/ryframe-application/src/generated/notice/model.rs"
 source_hash = "9c7717ecf319783c9296cc84459c3b661dcadc10a233acf1bf058176b737d151"
 schema_hash = "b68503cbce094b4575d4b533331cf0e09c0b3ea55291b17d2b06cfba23d80803"
-content_hash = "5131e11b96547e5fe34301505db975b94187ba3bb58e6ed70ee78d696081f29a"
+content_hash = "5b0d942a783b6cc5f8090a18de5c02646a71f7991d3d0ca07673af62568218a3"
 
 [[entries]]
 resource = "notice"
@@ -137,7 +137,7 @@ root = "backend"
 path = "crates/ryframe-application/src/generated/notice/port.rs"
 source_hash = "9c7717ecf319783c9296cc84459c3b661dcadc10a233acf1bf058176b737d151"
 schema_hash = "b68503cbce094b4575d4b533331cf0e09c0b3ea55291b17d2b06cfba23d80803"
-content_hash = "dde3dda3032de8233d1c7c72fef2dfe8ce3deb298a235922290069e8bec51aa3"
+content_hash = "b1d85399e535393434127497a599e813f99c597adef50309c7e7adf05fe7a217"
 
 [[entries]]
 resource = "notice"
@@ -223,7 +223,7 @@ root = "backend"
 path = "crates/ryframe-db/src/generated/notice/repository.rs"
 source_hash = "9c7717ecf319783c9296cc84459c3b661dcadc10a233acf1bf058176b737d151"
 schema_hash = "b68503cbce094b4575d4b533331cf0e09c0b3ea55291b17d2b06cfba23d80803"
-content_hash = "0ffd544b1751c9b75b0579f7ae42932dc667ffec79d5885f503aef9fc014136d"
+content_hash = "c5e27b9aa455875f36f31daf181b5aff4182b8d62b1435ab697956c3160eb220"
 
 [[entries]]
 resource = "post"

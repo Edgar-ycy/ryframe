@@ -53,8 +53,8 @@ pub use ryframe_application::{
 pub use ryframe_db::connection::execute_generated_mysql_ddl;
 #[cfg(feature = "runtime")]
 pub use ryframe_kernel::{
-    ActorContext, AppError, AppResult, DataScopeContext, PageResult, PaginationPolicy,
-    ValidatedPageQuery, decimal_fits_precision,
+    ActorContext, AppError, AppResult, DataScopeContext, DataScopeContextRef, PageResult,
+    PaginationPolicy, ValidatedPageQuery, decimal_fits_precision,
 };
 pub use ryframe_macro::{ResourceModel, capability, delete, get, patch, perm, post, put, route};
 #[cfg(feature = "persistence")]

@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use ryframe_kernel::DataScopeContext;
+use ryframe_kernel::DataScopeContextRef;
 
 pub const PASSWORD_RESET_STATUS_PENDING: &str = "pending";
 
@@ -44,7 +44,7 @@ pub trait PasswordResetTransaction: crate::PersistenceTransaction + Send + Sync 
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-        scope: &'a DataScopeContext,
+        scope: &'a DataScopeContextRef<'_>,
     ) -> ryframe_kernel::AppResult<Option<PasswordResetUserState>>;
 
     async fn insert_request(

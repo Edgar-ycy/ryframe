@@ -1,7 +1,7 @@
 use crate::DbResultExt;
 use async_trait::async_trait;
 use ryframe_kernel::{
-    AppError, AppResult, DataScope, DataScopeContext, PageResult, ValidatedPageQuery,
+    AppError, AppResult, DataScope, DataScopeContextRef, PageResult, ValidatedPageQuery,
 };
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseConnection,
@@ -119,7 +119,7 @@ impl UserRepository {
     fn apply_data_scope(
         mut select: Select<user::Entity>,
         tenant_id: &str,
-        scope_ctx: &DataScopeContext,
+        scope_ctx: &DataScopeContextRef<'_>,
     ) -> Option<Select<user::Entity>> {
         match &scope_ctx.scope {
             DataScope::All => {}
@@ -171,7 +171,7 @@ impl UserRepository {
                 let mut condition = Condition::any();
                 if !scope_ctx.custom_dept_ids.is_empty() {
                     condition = condition
-                        .add(user::Column::DeptId.is_in(scope_ctx.custom_dept_ids.clone()));
+                        .add(user::Column::DeptId.is_in(scope_ctx.custom_dept_ids.iter().copied()));
                 }
                 if scope_ctx.include_self {
                     condition = condition.add(user::Column::Id.eq(scope_ctx.user_id));
@@ -186,7 +186,7 @@ impl UserRepository {
     fn export_select(
         tenant_id: &str,
         filter: &UserFilter<'_>,
-        scope_ctx: &DataScopeContext,
+        scope_ctx: &DataScopeContextRef<'_>,
     ) -> Option<Select<user::Entity>> {
         Self::apply_data_scope(
             Self::apply_filters(Self::base_select(tenant_id), filter),
@@ -201,7 +201,7 @@ impl UserRepository {
         db: &DatabaseConnection,
         tenant_id: &str,
         query: Option<&str>,
-        scope_ctx: &DataScopeContext,
+        scope_ctx: &DataScopeContextRef<'_>,
         limit: u64,
     ) -> AppResult<Vec<user::Model>> {
         let Some(mut select) =
@@ -309,7 +309,7 @@ impl UserRepository {
         tenant_id: &str,
         query: &ValidatedPageQuery,
         filter: &UserFilter<'_>,
-        scope_ctx: &DataScopeContext,
+        scope_ctx: &DataScopeContextRef<'_>,
     ) -> AppResult<PageResult<user::Model>> {
         let Some(select) = Self::export_select(tenant_id, filter, scope_ctx) else {
             return Ok(PageResult::new(vec![], 0, query));
@@ -327,7 +327,7 @@ impl UserRepository {
         db: &C,
         tenant_id: &str,
         filter: &UserFilter<'_>,
-        scope_ctx: &DataScopeContext,
+        scope_ctx: &DataScopeContextRef<'_>,
         window: ryframe_kernel::ExportCursorWindow<'_>,
     ) -> AppResult<Vec<user::Model>>
     where
@@ -357,7 +357,7 @@ impl UserRepository {
         db: &C,
         tenant_id: &str,
         filter: &UserFilter<'_>,
-        scope_ctx: &DataScopeContext,
+        scope_ctx: &DataScopeContextRef<'_>,
         selected_ids: &[i64],
     ) -> AppResult<ryframe_kernel::ExportQuerySnapshot>
     where
@@ -377,7 +377,7 @@ impl UserRepository {
         db: &DatabaseConnection,
         tenant_id: &str,
         query: ValidatedPageQuery,
-        scope_ctx: &DataScopeContext,
+        scope_ctx: &DataScopeContextRef<'_>,
     ) -> AppResult<PageResult<user::Model>> {
         self.find_by_page_filtered_with_data_scope(
             db,

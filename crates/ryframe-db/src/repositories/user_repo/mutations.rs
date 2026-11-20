@@ -7,7 +7,7 @@ impl UserRepository {
         db: &DatabaseConnection,
         tenant_id: &str,
         id: i64,
-        scope_ctx: &DataScopeContext,
+        scope_ctx: &DataScopeContextRef<'_>,
     ) -> AppResult<Option<user::Model>> {
         let select = Self::base_select(tenant_id).filter(user::Column::Id.eq(id));
         let Some(select) = Self::apply_data_scope(select, tenant_id, scope_ctx) else {
@@ -22,7 +22,7 @@ impl UserRepository {
         txn: &DatabaseTransaction,
         tenant_id: &str,
         id: i64,
-        scope_ctx: &DataScopeContext,
+        scope_ctx: &DataScopeContextRef<'_>,
     ) -> AppResult<Option<user::Model>> {
         let select = Self::base_select(tenant_id).filter(user::Column::Id.eq(id));
         let Some(select) = Self::apply_data_scope(select, tenant_id, scope_ctx) else {

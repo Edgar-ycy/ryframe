@@ -1,4 +1,4 @@
-use ryframe_kernel::{DataScope, DataScopeContext};
+use ryframe_kernel::{DataScope, DataScopeContextRef};
 use sea_orm::sea_query::{Alias, Expr, Query};
 use sea_orm::{
     ColumnTrait, Condition, ConnectionTrait, DbBackend, ExprTrait, FromQueryResult, Statement,
@@ -11,7 +11,7 @@ use crate::entities::user;
 pub fn owner_id_condition<C>(
     owner_column: C,
     tenant_id: &str,
-    ctx: &DataScopeContext,
+    ctx: &DataScopeContextRef<'_>,
 ) -> Option<Condition>
 where
     C: ColumnTrait,
@@ -20,9 +20,7 @@ where
         DataScope::All => None,
         DataScope::SelfOnly => Some(Condition::all().add(owner_column.eq(ctx.user_id))),
         DataScope::Dept => Some(match ctx.dept_id {
-            Some(dept_id) => {
-                owner_in_departments(owner_column, tenant_id, vec![dept_id], false, ctx)
-            }
+            Some(dept_id) => owner_in_departments(owner_column, tenant_id, &[dept_id], false, ctx),
             None => Condition::all().add(Expr::cust("1 = 0")),
         }),
         DataScope::DeptAndChildren => ctx
@@ -63,7 +61,7 @@ where
         DataScope::Custom => Some(owner_in_departments(
             owner_column,
             tenant_id,
-            ctx.custom_dept_ids.clone(),
+            ctx.custom_dept_ids,
             ctx.include_self,
             ctx,
         )),
@@ -74,7 +72,7 @@ where
 pub fn owner_username_condition<C>(
     owner_column: C,
     tenant_id: &str,
-    ctx: &DataScopeContext,
+    ctx: &DataScopeContextRef<'_>,
 ) -> Option<Condition>
 where
     C: ColumnTrait,
@@ -121,7 +119,8 @@ where
         DataScope::Custom => {
             let mut visible = Condition::any();
             if !ctx.custom_dept_ids.is_empty() {
-                visible = visible.add(user::Column::DeptId.is_in(ctx.custom_dept_ids.clone()));
+                visible =
+                    visible.add(user::Column::DeptId.is_in(ctx.custom_dept_ids.iter().copied()));
             }
             if ctx.include_self {
                 visible = visible.add(user::Column::Id.eq(ctx.user_id));
@@ -143,7 +142,7 @@ pub fn projected_owner_id_condition<C>(
     owner_column: C,
     tenant_id: &str,
     build_token: &str,
-    ctx: &DataScopeContext,
+    ctx: &DataScopeContextRef<'_>,
 ) -> Condition
 where
     C: ColumnTrait,
@@ -180,7 +179,7 @@ where
                 visible = visible.add(owner_column.in_subquery(projected_users(
                     tenant_id,
                     build_token,
-                    Expr::cust("o.dept_id").is_in(ctx.custom_dept_ids.clone()),
+                    Expr::cust("o.dept_id").is_in(ctx.custom_dept_ids.iter().copied()),
                 )));
             }
             if ctx.include_self {
@@ -359,9 +358,9 @@ fn base_user_name_query(tenant_id: &str) -> sea_orm::sea_query::SelectStatement 
 fn owner_in_departments<C>(
     owner_column: C,
     tenant_id: &str,
-    dept_ids: Vec<i64>,
+    dept_ids: &[i64],
     include_self: bool,
-    ctx: &DataScopeContext,
+    ctx: &DataScopeContextRef<'_>,
 ) -> Condition
 where
     C: ColumnTrait,
@@ -369,7 +368,7 @@ where
     let mut condition = Condition::any();
     if !dept_ids.is_empty() {
         let user_ids = base_user_id_query(tenant_id)
-            .and_where(user::Column::DeptId.is_in(dept_ids))
+            .and_where(user::Column::DeptId.is_in(dept_ids.iter().copied()))
             .take();
         condition = condition.add(owner_column.in_subquery(user_ids));
     }

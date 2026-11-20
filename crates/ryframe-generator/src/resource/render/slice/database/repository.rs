@@ -150,7 +150,7 @@ fn projected_write_scope(resource: &ResourceIr) -> (String, String) {
     };
     (
         format!(
-            "    async fn lock_data_scope(\n        &self,\n        data_scope: &ryframe_kernel::DataScopeContext,\n    ) -> AppResult<()> {{\n        {data_scope_module}::lock_projected_build(\n            &self.transaction,\n            &self.tenant_id,\n            data_scope.data_scope_version,\n        )\n        .await\n        .map(|_| ())\n    }}\n\n"
+            "    async fn lock_data_scope(\n        &self,\n        data_scope: &ryframe_kernel::DataScopeContextRef<'_>,\n    ) -> AppResult<()> {{\n        {data_scope_module}::lock_projected_build(\n            &self.transaction,\n            &self.tenant_id,\n            data_scope.data_scope_version,\n        )\n        .await\n        .map(|_| ())\n    }}\n\n"
         ),
         format!(
             "        let build_token = {data_scope_module}::lock_projected_build(\n            &self.transaction,\n            tenant_id,\n            data_scope.data_scope_version,\n        )\n        .await?;\n"

@@ -4,7 +4,7 @@ use super::command_type;
 pub(crate) fn model(resource: &ResourceIr, header: &str) -> String {
     let pascal = &resource.pascal_name;
     let kernel_import = if resource.access.owner_field.is_some() {
-        "use ryframe_kernel::{DataScopeContext, ValidatedPageQuery};"
+        "use ryframe_kernel::{DataScopeContextRef, ValidatedPageQuery};"
     } else {
         "use ryframe_kernel::ValidatedPageQuery;"
     };
@@ -88,7 +88,7 @@ pub(crate) fn model(resource: &ResourceIr, header: &str) -> String {
     let lifetime = super::super::filter_lifetime(resource, "'a");
     output.push_str(&format!("pub struct {pascal}Filter{lifetime} {{\n"));
     if resource.access.owner_field.is_some() {
-        output.push_str("    pub data_scope: &'a DataScopeContext,\n");
+        output.push_str("    pub data_scope: &'a DataScopeContextRef<'a>,\n");
     }
     for field in resource
         .fields

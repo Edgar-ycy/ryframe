@@ -132,7 +132,7 @@ fn fail_if_requested(state: &mut FakeState, failure: NoticeFailure) -> AppResult
 
 fn owner_visible(
     owner_id: Option<i64>,
-    scope: &ryframe_kernel::DataScopeContext,
+    scope: &ryframe_kernel::DataScopeContextRef<'_>,
     departments: &BTreeMap<i64, (Option<i64>, BTreeSet<i64>)>,
 ) -> bool {
     if scope.scope == ryframe_kernel::DataScope::All {
@@ -168,7 +168,7 @@ impl NoticePersistencePort for NoticeFakePersistence {
         &self,
         tenant_id: &str,
         id: i64,
-        data_scope: &ryframe_kernel::DataScopeContext,
+        data_scope: &ryframe_kernel::DataScopeContextRef<'_>,
     ) -> AppResult<Option<NoticeRecord>> {
         let mut state = self.lock();
         state.calls.push(NoticeCall::FindById {
@@ -308,7 +308,7 @@ impl NoticeTransaction for FakeTransaction {
         &self,
         tenant_id: &str,
         id: i64,
-        data_scope: &ryframe_kernel::DataScopeContext,
+        data_scope: &ryframe_kernel::DataScopeContextRef<'_>,
     ) -> AppResult<Option<NoticeRecord>> {
         self.ensure_tenant(tenant_id)?;
         {

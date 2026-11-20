@@ -70,7 +70,31 @@ pub struct DataScopeContext {
     pub data_scope_version: i64,
 }
 
+/// 在当前调用中借用已解析的数据权限范围。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DataScopeContextRef<'a> {
+    pub scope: DataScope,
+    pub user_id: i64,
+    pub dept_id: Option<i64>,
+    pub ancestors: Option<&'a str>,
+    pub custom_dept_ids: &'a [i64],
+    pub include_self: bool,
+    pub data_scope_version: i64,
+}
+
 impl DataScopeContext {
+    pub fn as_ref(&self) -> DataScopeContextRef<'_> {
+        DataScopeContextRef {
+            scope: self.scope.clone(),
+            user_id: self.user_id,
+            dept_id: self.dept_id,
+            ancestors: self.ancestors.as_deref(),
+            custom_dept_ids: &self.custom_dept_ids,
+            include_self: self.include_self,
+            data_scope_version: self.data_scope_version,
+        }
+    }
+
     /// 创建超级管理员上下文（`DataScope::All`，不添加过滤条件）。
     pub fn super_admin(user_id: i64) -> Self {
         Self {

@@ -522,7 +522,7 @@ async fn user_detail_loads_department_with_tenant_and_data_scope() {
             application_ports::users::query(ControlDatabaseCluster::single(database.clone()));
         let all = DataScopeContext::super_admin(900);
         let detail = query
-            .detail("tenant-a", 101, &all)
+            .detail("tenant-a", 101, &all.as_ref())
             .await
             .map_err(|error| error.to_string())?
             .ok_or_else(|| "未读取到 tenant-a 用户详情".to_owned())?;
@@ -549,7 +549,7 @@ async fn user_detail_loads_department_with_tenant_and_data_scope() {
         for (user_id, label) in [(102, "无部门"), (103, "跨租户部门"), (104, "已删除部门")]
         {
             let detail = query
-                .detail("tenant-a", user_id, &all)
+                .detail("tenant-a", user_id, &all.as_ref())
                 .await
                 .map_err(|error| error.to_string())?
                 .ok_or_else(|| format!("{label}用户详情不存在"))?;
@@ -558,7 +558,7 @@ async fn user_detail_loads_department_with_tenant_and_data_scope() {
             }
         }
         if query
-            .detail("tenant-a", 201, &all)
+            .detail("tenant-a", 201, &all.as_ref())
             .await
             .map_err(|error| error.to_string())?
             .is_some()
@@ -568,7 +568,7 @@ async fn user_detail_loads_department_with_tenant_and_data_scope() {
 
         let self_scope = data_scope(DataScope::SelfOnly, 101, Some(10));
         if query
-            .detail("tenant-a", 101, &self_scope)
+            .detail("tenant-a", 101, &self_scope.as_ref())
             .await
             .map_err(|error| error.to_string())?
             .is_none()
@@ -577,7 +577,7 @@ async fn user_detail_loads_department_with_tenant_and_data_scope() {
         }
         let other_self = data_scope(DataScope::SelfOnly, 102, None);
         if query
-            .detail("tenant-a", 101, &other_self)
+            .detail("tenant-a", 101, &other_self.as_ref())
             .await
             .map_err(|error| error.to_string())?
             .is_some()
@@ -586,7 +586,7 @@ async fn user_detail_loads_department_with_tenant_and_data_scope() {
         }
         let department_scope = data_scope(DataScope::Dept, 900, Some(10));
         if query
-            .detail("tenant-a", 101, &department_scope)
+            .detail("tenant-a", 101, &department_scope.as_ref())
             .await
             .map_err(|error| error.to_string())?
             .is_none()
@@ -595,7 +595,7 @@ async fn user_detail_loads_department_with_tenant_and_data_scope() {
         }
         let denied_scope = data_scope(DataScope::Custom, 900, None);
         if query
-            .detail("tenant-a", 101, &denied_scope)
+            .detail("tenant-a", 101, &denied_scope.as_ref())
             .await
             .map_err(|error| error.to_string())?
             .is_some()

@@ -27,7 +27,7 @@ impl OperLogPersistencePort for FakePersistence {
         _tenant_id: &str,
         _page: ValidatedPageQuery,
         _filter: OperLogFilter<'_>,
-        _data_scope: &DataScopeContext,
+        _data_scope: &DataScopeContextRef<'_>,
     ) -> AppResult<PageResult<OperLogRecord>> {
         unreachable!("本测试不读取列表")
     }
@@ -36,7 +36,7 @@ impl OperLogPersistencePort for FakePersistence {
         &self,
         _tenant_id: &str,
         _filter: OperLogFilter<'_>,
-        _data_scope: &DataScopeContext,
+        _data_scope: &DataScopeContextRef<'_>,
         _window: ExportCursorWindow<'_>,
     ) -> AppResult<Vec<OperLogRecord>> {
         unreachable!("本测试不执行导出")

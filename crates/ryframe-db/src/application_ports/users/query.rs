@@ -4,7 +4,7 @@ use crate::{
     ControlDatabaseCluster, DeptRepository, ReadConsistency, Repository, RoleRepository,
     UserFilter, UserRepository,
 };
-use ryframe_kernel::{DataScopeContext, ExportCursorWindow, PageResult, ValidatedPageQuery};
+use ryframe_kernel::{DataScopeContextRef, ExportCursorWindow, PageResult, ValidatedPageQuery};
 use sea_orm::DatabaseConnection;
 
 use ryframe_application::ports::system::DeptRecord;
@@ -26,7 +26,7 @@ impl UserQueryReadPort for DatabaseUserQueryPersistence {
         &'a self,
         tenant_id: &'a str,
         filter: UserQueryFilter<'a>,
-        scope: &'a DataScopeContext,
+        scope: &'a DataScopeContextRef<'_>,
         window: ExportCursorWindow<'_>,
     ) -> ryframe_kernel::AppResult<Vec<UserQueryRecord>> {
         let database = self
@@ -47,7 +47,7 @@ impl UserQueryReadPort for DatabaseUserQueryPersistence {
         tenant_id: &'a str,
         query: ValidatedPageQuery,
         filter: UserQueryFilter<'a>,
-        scope: &'a DataScopeContext,
+        scope: &'a DataScopeContextRef<'_>,
     ) -> ryframe_kernel::AppResult<PageResult<UserQueryRecord>> {
         let database = self
             .database
@@ -71,7 +71,7 @@ impl UserQueryReadPort for DatabaseUserQueryPersistence {
         &'a self,
         tenant_id: &'a str,
         query: Option<&'a str>,
-        scope: &'a DataScopeContext,
+        scope: &'a DataScopeContextRef<'_>,
         limit: u64,
     ) -> ryframe_kernel::AppResult<Vec<UserQueryRecord>> {
         let database = self
@@ -90,7 +90,7 @@ impl UserQueryReadPort for DatabaseUserQueryPersistence {
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-        scope: &'a DataScopeContext,
+        scope: &'a DataScopeContextRef<'_>,
     ) -> ryframe_kernel::AppResult<Option<UserQueryDetailRecord>> {
         let database = self
             .database
@@ -135,7 +135,7 @@ impl UserQueryReadPort for DatabaseUserQueryPersistence {
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-        scope: &'a DataScopeContext,
+        scope: &'a DataScopeContextRef<'_>,
     ) -> ryframe_kernel::AppResult<bool> {
         UserRepository
             .find_by_id_with_data_scope(self.database.write(), tenant_id, user_id, scope)

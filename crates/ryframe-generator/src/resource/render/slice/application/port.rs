@@ -44,7 +44,7 @@ pub(crate) fn port(resource: &ResourceIr, header: &str) -> String {
     let data_scope_lock = if resource.access.owner_field.is_some()
         && resource.storage == StorageKind::TenantData
     {
-        "    async fn lock_data_scope(\n        &self,\n        data_scope: &ryframe_kernel::DataScopeContext,\n    ) -> AppResult<()>;\n\n"
+        "    async fn lock_data_scope(\n        &self,\n        data_scope: &ryframe_kernel::DataScopeContextRef<'_>,\n    ) -> AppResult<()>;\n\n"
     } else {
         ""
     };

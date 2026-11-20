@@ -7,7 +7,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use ryframe_kernel::{
-    AppResult, DataScopeContext, ExportCursorWindow, PageResult, ValidatedPageQuery,
+    AppResult, DataScopeContextRef, ExportCursorWindow, PageResult, ValidatedPageQuery,
 };
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 
@@ -56,7 +56,7 @@ impl OperLogPersistencePort for DatabaseOperLogPersistence {
         tenant_id: &str,
         page: ValidatedPageQuery,
         filter: OperLogFilter<'_>,
-        data_scope: &DataScopeContext,
+        data_scope: &DataScopeContextRef<'_>,
     ) -> AppResult<PageResult<OperLogRecord>> {
         let database = self
             .database
@@ -82,7 +82,7 @@ impl OperLogPersistencePort for DatabaseOperLogPersistence {
         &self,
         tenant_id: &str,
         filter: OperLogFilter<'_>,
-        data_scope: &DataScopeContext,
+        data_scope: &DataScopeContextRef<'_>,
         window: ExportCursorWindow<'_>,
     ) -> AppResult<Vec<OperLogRecord>> {
         let database = self

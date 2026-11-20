@@ -7,7 +7,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use ryframe_kernel::{
-    AppResult, DataScopeContext, ExportCursorWindow, PageResult, ValidatedPageQuery,
+    AppResult, DataScopeContextRef, ExportCursorWindow, PageResult, ValidatedPageQuery,
 };
 use sea_orm::TransactionTrait;
 
@@ -48,7 +48,7 @@ impl LoginInfoPersistencePort for DatabaseLoginInfoPersistence {
         tenant_id: &str,
         page: ValidatedPageQuery,
         filter: LoginInfoFilter<'_>,
-        data_scope: &DataScopeContext,
+        data_scope: &DataScopeContextRef<'_>,
     ) -> AppResult<PageResult<LoginInfoRecord>> {
         let database = self
             .database
@@ -74,7 +74,7 @@ impl LoginInfoPersistencePort for DatabaseLoginInfoPersistence {
         &self,
         tenant_id: &str,
         filter: LoginInfoFilter<'_>,
-        data_scope: &DataScopeContext,
+        data_scope: &DataScopeContextRef<'_>,
         window: ExportCursorWindow<'_>,
     ) -> AppResult<Vec<LoginInfoRecord>> {
         let database = self

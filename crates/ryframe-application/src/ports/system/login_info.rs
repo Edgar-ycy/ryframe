@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{
-    AppResult, DataScopeContext, ExportCursorWindow, PageResult, ValidatedPageQuery,
+    AppResult, DataScopeContextRef, ExportCursorWindow, PageResult, ValidatedPageQuery,
 };
 
 use crate::PersistenceTransaction;
@@ -41,14 +41,14 @@ pub trait LoginInfoPersistencePort: Send + Sync {
         tenant_id: &str,
         page: ValidatedPageQuery,
         filter: LoginInfoFilter<'_>,
-        data_scope: &DataScopeContext,
+        data_scope: &DataScopeContextRef<'_>,
     ) -> AppResult<PageResult<LoginInfoRecord>>;
 
     async fn find_export_batch(
         &self,
         tenant_id: &str,
         filter: LoginInfoFilter<'_>,
-        data_scope: &DataScopeContext,
+        data_scope: &DataScopeContextRef<'_>,
         window: ExportCursorWindow<'_>,
     ) -> AppResult<Vec<LoginInfoRecord>>;
 

@@ -172,7 +172,7 @@ pub(super) fn sql_literal(value: &toml::Value) -> String {
 }
 pub(crate) fn owner_scope_parameter(resource: &ResourceIr) -> &'static str {
     if resource.access.owner_field.is_some() {
-        "        data_scope: &ryframe_kernel::DataScopeContext,\n"
+        "        data_scope: &ryframe_kernel::DataScopeContextRef<'_>,\n"
     } else {
         ""
     }

@@ -533,7 +533,7 @@ en = "Created by"
             .content
             .as_str()
     };
-    assert!(content("order/model.rs").contains("pub data_scope: &'a DataScopeContext"));
+    assert!(content("order/model.rs").contains("pub data_scope: &'a DataScopeContextRef<'a>"));
     assert!(!content("order/model.rs").contains("#[derive(Clone, Copy, Debug, Default)]"));
     assert!(content("order/service.rs").contains("let data_scope = actor.data_scope_context()"));
     assert!(content("order/service.rs").contains("created_by: Some(actor.user_id)"));
