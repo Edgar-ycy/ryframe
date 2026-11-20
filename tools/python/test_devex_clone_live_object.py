@@ -158,22 +158,6 @@ class LiveObjectTests(unittest.TestCase):
         self.failed()
         self.assertEqual(len(self.business()), 1)
 
-    def test_existing_wrong_content_is_not_adopted(self):
-        self.store.outcomes = []
-        self.store.body = b"different-object"
-        self.failed()
-
-    def test_plan_change_during_live_read_is_rejected(self):
-        self.store.on_head = lambda: self.plan["target"]["s3"].update(region="other-region")
-        self.assertEqual(self.failed()["stage"], "head_before")
-        self.assertEqual(len(self.business()), 1)
-
-    def test_plan_authentication_metadata_change_during_live_read_is_rejected(self):
-        self.store.on_head = lambda: self.plan["target"]["s3"].update(
-            secret_key="different-fixture")
-        self.assertEqual(self.failed()["stage"], "head_before")
-        self.assertEqual(len(self.business()), 1)
-
     def test_ambient_credential_environment_change_does_not_change_file_bound_requests(self):
         import os
         changed = []
@@ -192,12 +176,6 @@ class LiveObjectTests(unittest.TestCase):
         self.assertTrue(all("configuration" not in request for request in self.business()))
         self.assertTrue(all("AWS_SECRET_ACCESS_KEY" not in kwargs["env"]
                             for _, kwargs in self.store.calls))
-
-    def test_successful_head_with_binding_change_is_rejected_before_download(self):
-        self.store.outcomes = []
-        self.store.on_head = lambda: self.plan["target"]["s3"].update(region="other-region")
-        self.assertEqual(self.failed()["stage"], "head_before")
-        self.assertEqual(len(self.business()), 1)
 
     def test_saved_receipt_refuses_modified_diagnostic(self):
         self.observe()

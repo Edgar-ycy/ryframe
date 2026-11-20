@@ -1,6 +1,7 @@
 use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
+    io::Write,
 };
 
 use super::*;
@@ -120,6 +121,7 @@ enum Step {
 
 struct FakeS3 {
     steps: RefCell<VecDeque<Step>>,
+    get_body: [u8; 4],
     drift_during_get: Option<PathBuf>,
 }
 
@@ -127,6 +129,7 @@ impl FakeS3 {
     fn new(steps: impl IntoIterator<Item = Step>) -> Self {
         Self {
             steps: RefCell::new(steps.into_iter().collect()),
+            get_body: *b"data",
             drift_during_get: None,
         }
     }
@@ -198,7 +201,7 @@ impl Transport for FakeS3 {
                 assert_eq!(max_bytes, 4);
                 let raw = raw.ok_or("HTTP 404 private-fixture-secret")?;
                 if raw.get("status").is_none() {
-                    fs::write(destination, b"data")?;
+                    fs::write(destination, self.get_body)?;
                     if let Some(path) = &self.drift_during_get {
                         alter_evidence(path)?;
                     }
@@ -243,10 +246,16 @@ fn assert_failed(fixture: &Fixture, fake: &FakeS3, stage: &str) {
         .err()
         .unwrap()
         .to_string();
+    assert_rejected(fixture, fake, stage, &error);
+}
+
+fn assert_rejected(fixture: &Fixture, fake: &FakeS3, stage: &str, error: &str) {
     fake.exhausted();
     let failure = fixture.proof("failure.json");
     assert_eq!(failure["stage"], stage);
     assert_eq!(failure["remote_writes"], 0);
+    assert_eq!(failure["clone_verified"], false);
+    assert_eq!(failure["restore_qualified"], false);
     assert!(!fixture.directory.join("capture.json").exists());
     assert!(!fixture.directory.join("observation.json").exists());
     assert!(!error.contains("private-fixture-secret"));
@@ -278,8 +287,11 @@ fn requires_two_explicit_head_404_responses_and_owner_bracket() {
 
 #[test]
 fn rejection_does_not_retry_or_start_later_requests() {
+    let mut wrong_length = metadata();
+    wrong_length["ContentLength"] = json!(5);
     for (steps, stage) in [
         (vec![Step::OwnerWrongScope], "owner-before"),
+        (vec![Step::Owner, head(wrong_length)], "head-before"),
         (
             vec![Step::Owner, head(metadata()), Step::Get { raw: None }],
             "get",
@@ -326,6 +338,26 @@ fn rejection_does_not_retry_or_start_later_requests() {
                 .join(format!("{stage}.diagnostic.json"))
                 .exists()
         );
+    }
+}
+
+#[test]
+fn matching_headers_and_owners_cannot_adopt_a_different_same_length_body() {
+    let fixture = Fixture::new();
+    let fake = FakeS3 {
+        get_body: *b"evil",
+        ..FakeS3::new(captured_steps(metadata(), metadata(), Step::Owner))
+    };
+    assert_failed(&fixture, &fake, "capture");
+    assert_eq!(
+        fs::read(fixture.directory.join("object.bin")).unwrap(),
+        b"evil"
+    );
+    for phase in ["head-before", "get", "head-after"] {
+        assert_eq!(fixture.proof(&format!("{phase}.json")), metadata());
+        let diagnostic = fixture.proof(&format!("{phase}.diagnostic.json"));
+        assert_eq!(diagnostic["returned"], true);
+        assert_eq!(diagnostic["checkpoint_passed"], true);
     }
 }
 
@@ -491,6 +523,92 @@ fn captured_steps(get: Value, repeated: Value, owner: Step) -> Vec<Step> {
         },
         owner,
     ]
+}
+
+#[test]
+fn held_configuration_rejects_or_detects_changes_after_the_first_head() {
+    let common_config = b"[object_storage]\n";
+    for change in [
+        Some((REGION, "us-east-2")),
+        Some(("private-fixture-secret", "private-fixture-rotate")),
+        None,
+    ] {
+        let fixture = Fixture::new();
+        let path = fixture
+            .temp
+            .path()
+            .join(".local-tests/config/app.test.toml");
+        let common_path = path.with_file_name("app.toml");
+        let original = fs::read_to_string(&path).unwrap();
+        let changed = change.map(|(previous, replacement)| {
+            let contents = original.replace(previous, replacement);
+            assert_eq!(contents.len(), original.len());
+            assert!(contents != original);
+            contents
+        });
+        let write_blocked = cfg!(windows) && changed.is_some();
+        let steps = if write_blocked {
+            captured_steps(metadata(), metadata(), Step::Owner)
+        } else {
+            vec![Step::Owner, head(metadata())]
+        };
+        let after_head = steps.len() - 2;
+        let fake = FakeS3::new(steps);
+        let attempted = Cell::new(false);
+        let outcome = observe(fixture.request(), &fake, &|| {
+            if fake.steps.borrow().len() == after_head && !attempted.replace(true) {
+                // 已取得 owner 和首个 HEAD，原 HEAD 响应尚未落盘。
+                assert!(!fixture.directory.join("head-before.json").exists());
+                if let Some(contents) = &changed {
+                    let written = fs::write(&path, contents);
+                    if write_blocked {
+                        assert_eq!(written.unwrap_err().raw_os_error(), Some(32));
+                    } else {
+                        written?;
+                    }
+                } else {
+                    fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&common_path)?
+                        .write_all(common_config)?;
+                }
+            }
+            Ok(())
+        });
+        assert!(attempted.get());
+        assert_eq!(fixture.proof("head-before.json"), metadata());
+        assert_eq!(
+            fixture.proof("head-before.diagnostic.json"),
+            json!({"operation":"head-object","returned":true,"checkpoint_passed":write_blocked})
+        );
+        let expected = if write_blocked {
+            &original
+        } else {
+            changed.as_ref().unwrap_or(&original)
+        };
+        assert!(fs::read(&path).unwrap() == expected.as_bytes());
+        if write_blocked {
+            assert_eq!(outcome.unwrap().receipt()["status"], "object_present");
+            fake.exhausted();
+            assert_eq!(fixture.proof("get.json"), metadata());
+        } else {
+            let error = outcome.err().unwrap().to_string();
+            assert_rejected(&fixture, &fake, "head-before", &error);
+            assert!(!fixture.directory.join("get.json").exists());
+            if let Some((_, replacement)) = change {
+                assert!(!error.contains(replacement));
+                assert!(
+                    !fixture
+                        .proof("failure.json")
+                        .to_string()
+                        .contains(replacement)
+                );
+            } else {
+                assert_eq!(fs::read(&common_path).unwrap(), common_config);
+            }
+        }
+    }
 }
 
 #[test]
