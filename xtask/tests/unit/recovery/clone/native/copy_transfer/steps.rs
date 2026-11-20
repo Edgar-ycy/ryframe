@@ -8,6 +8,8 @@ mod database;
 
 #[path = "steps_finish.rs"]
 mod finish_cases;
+#[path = "steps_resume_environment.rs"]
+mod resume_environment;
 #[path = "steps_resume_locks.rs"]
 mod resume_locks;
 #[path = "steps_resume_object.rs"]
