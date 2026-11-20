@@ -42,9 +42,10 @@ class SourceInventoryAdapterTests(unittest.TestCase):
         self.assertEqual(sources.canonical_digest(value), hashlib.sha256(raw).hexdigest())
 
     def test_shared_git_helper_retains_arguments_and_disables_optional_locks(self):
+        source = Path("D:/source")
         with patch.object(subprocess, "check_output", return_value=b"raw\x00") as run:
-            self.assertEqual(sources.git(Path("D:/source"), "ls-files", "-z"), b"raw\x00")
-        self.assertEqual(run.call_args.args[0], ["git", "-C", "D:\\source", "ls-files", "-z"])
+            self.assertEqual(sources.git(source, "ls-files", "-z"), b"raw\x00")
+        self.assertEqual(run.call_args.args[0], ["git", "-C", str(source), "ls-files", "-z"])
         self.assertEqual(run.call_args.kwargs["env"]["GIT_OPTIONAL_LOCKS"], "0")
 
 
