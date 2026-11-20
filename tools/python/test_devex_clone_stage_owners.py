@@ -69,28 +69,6 @@ class StageOwnersTests(unittest.TestCase):
                 Path(request['destination']).write_bytes(b'other-isolated-owner')
         return result
 
-    def test_first_copy_checks_all_buckets_once_after_prepare_and_before_any_intent(self):
-        events = []
-        original_prepare = factory.CloneSession.prepare
-        original_owners = factory.CloneSession.verify_target_owners
-        def prepare(session, *arguments):
-            original_prepare(session, *arguments)
-            events.append('prepare')
-        def owners(session):
-            self.assertTrue((session.target_directory / 'initialize.lock').exists())
-            self.assertFalse((session.output / 'ledger').exists())
-            self.assertEqual(self.case.case.writes(), [])
-            events.append('owners')
-            original_owners(session)
-        with patch.object(factory.CloneSession, 'prepare', prepare), \
-                patch.object(factory.CloneSession, 'verify_target_owners', owners):
-            result = self.execute()
-        self.assertEqual(events, ['prepare', 'owners'])
-        self.assertEqual(result['status'], 'data_steps_verified')
-        directories = list(self.output.glob('target-owners-*'))
-        self.assertEqual(len(directories), 1)
-        self.check_success_evidence(directories[0])
-
     def test_bad_non_object_bucket_rejects_first_copy_before_ledger_or_intent(self):
         with patch.object(factory, 'TransferSteps') as steps, self.assertRaisesRegex(ValueError, 'ownership'):
             self.execute(self.bad_owner)

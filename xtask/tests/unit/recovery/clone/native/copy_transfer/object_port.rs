@@ -25,6 +25,8 @@ const SOURCE_ENDPOINT: &str = "http://127.0.0.1:29601";
 const TARGET_ENDPOINT: &str = "http://127.0.0.1:29602";
 const REGION: &str = "us-east-1";
 const BUCKET: &str = "uploads";
+const TARGET_OWNER_BUCKETS: [&str; 5] =
+    ["avatar", "config-packages", "exports", "imports", "uploads"];
 
 struct Fixture {
     root: tempfile::TempDir,
@@ -197,6 +199,41 @@ struct Mock {
     calls: Mutex<Vec<String>>,
     requests: AtomicUsize,
     business_gets: AtomicUsize,
+    target_owner_buckets: Mutex<Vec<String>>,
+    owner_checkpoints: Mutex<Vec<usize>>,
+    owner_fault: Option<OwnerReadFault>,
+}
+
+enum OwnerReadFault {
+    WrongImportsScope,
+    ChangeConfiguration { path: PathBuf, bytes: Vec<u8> },
+}
+
+impl Mock {
+    fn owner_checkpoint(&self) -> Result<()> {
+        self.owner_checkpoints
+            .lock()
+            .unwrap()
+            .push(self.requests.load(Ordering::SeqCst));
+        Ok(())
+    }
+
+    fn assert_target_owner_requests(&self, buckets: &[&str]) {
+        assert_eq!(
+            self.target_owner_buckets.lock().unwrap().as_slice(),
+            buckets
+        );
+        assert_eq!(
+            self.calls.lock().unwrap().as_slice(),
+            vec![format!("{TARGET}/.ryframe-owner"); buckets.len()]
+        );
+        assert_eq!(self.requests.load(Ordering::SeqCst), buckets.len());
+        assert_eq!(self.business_gets.load(Ordering::SeqCst), 0);
+    }
+}
+
+fn owner_body(scope: &str, bucket: &str) -> String {
+    format!("ryframe-owner:v1:{scope}:object-storage:{bucket}")
 }
 
 impl Transport for Mock {
@@ -232,9 +269,27 @@ impl Transport for Mock {
             } => {
                 self.calls.lock().unwrap().push(key.clone());
                 if let Some(scope) = key.strip_suffix("/.ryframe-owner") {
-                    let owner =
-                        format!("ryframe-owner:v1:{scope}:object-storage:{}", request.bucket);
+                    let mut owner_scope = scope;
+                    if scope == TARGET {
+                        self.target_owner_buckets
+                            .lock()
+                            .unwrap()
+                            .push(request.bucket.clone());
+                        if request.bucket == "imports"
+                            && matches!(&self.owner_fault, Some(OwnerReadFault::WrongImportsScope))
+                        {
+                            owner_scope = SOURCE;
+                        }
+                    }
+                    let owner = owner_body(owner_scope, &request.bucket);
                     fs::write(destination, &owner)?;
+                    if scope == TARGET
+                        && request.bucket == "avatar"
+                        && let Some(OwnerReadFault::ChangeConfiguration { path, bytes }) =
+                            &self.owner_fault
+                    {
+                        fs::write(path, bytes).expect("模拟归属 GET 返回前必须能改写目标测试配置");
+                    }
                     return Ok(json!({"ContentLength":owner.len()}));
                 }
                 assert!(key.starts_with(TARGET) && self.present);
@@ -488,14 +543,174 @@ fn failed_source_group_drains_without_starting_any_target_observation() {
 #[test]
 fn preledger_target_owner_gate_observes_every_bucket_and_no_business_object() {
     let fixture = Fixture::new(1);
+    let target_file = fixture
+        .target_root
+        .join(".local-tests/target/app.test.toml");
+    let bound_file = digest::file(&target_file).unwrap();
+    assert_eq!(fixture.target_configuration["app_env"], "test");
+    assert_eq!(
+        fixture.target_configuration["files"],
+        json!({"app.test.toml":{"bytes":bound_file.bytes,"sha256":bound_file.sha256}})
+    );
+    let public = app_configuration::public_configuration(
+        &fixture.target_root,
+        &fixture.target_configuration,
+    )
+    .unwrap();
+    assert_eq!(public, json!({"endpoint":TARGET_ENDPOINT,"region":REGION}));
     let mock = Mock::default();
     let port = ObjectPort::new(fixture.inputs(), &mock).unwrap();
     let receipt = port.verify_target_owners(&|| Ok(())).unwrap();
     assert_eq!(receipt["status"], "target_owners_verified");
-    assert_eq!(receipt["owners"].as_array().unwrap().len(), 5);
+    assert_eq!(receipt["remote_writes"], 0);
+    assert_eq!(receipt["scope_id"], TARGET);
+    assert_eq!(receipt["endpoint"], public["endpoint"]);
+    assert_eq!(receipt["region"], public["region"]);
     assert_eq!(
-        mock.calls.lock().unwrap().as_slice(),
-        vec![format!("{TARGET}/.ryframe-owner"); 5]
+        receipt["configuration_sha256"],
+        digest::plan_hash(&json!({"configuration":&fixture.target_configuration})).unwrap()
     );
-    assert_eq!(mock.business_gets.load(Ordering::SeqCst), 0);
+    mock.assert_target_owner_requests(&TARGET_OWNER_BUCKETS);
+    let directory = target_owner_directory(&fixture);
+    let owners = receipt["owners"].as_array().unwrap();
+    assert_eq!(owners.len(), TARGET_OWNER_BUCKETS.len());
+    for (&bucket, row) in TARGET_OWNER_BUCKETS.iter().zip(owners) {
+        let filename = format!("owner-{bucket}.bin");
+        let body = fs::read(directory.join(&filename)).unwrap();
+        assert_eq!(body, owner_body(TARGET, bucket).as_bytes());
+        assert_eq!(
+            row,
+            &json!({"bucket":bucket,"key":format!("{TARGET}/.ryframe-owner"),"file":filename,
+                "bytes":body.len(),"sha256":hex::encode(Sha256::digest(&body))})
+        );
+    }
+    assert_eq!(
+        document::read(&directory.join("verified.json")).unwrap(),
+        receipt
+    );
+    assert!(!directory.join("failure.json").exists());
+}
+
+#[test]
+fn preledger_target_owner_gate_rejects_wrong_scope_in_bucket_without_business_objects() {
+    let fixture = Fixture::new(1);
+    assert!(fixture.items.iter().all(|item| item["bucket"] == BUCKET));
+    let mock = Mock {
+        owner_fault: Some(OwnerReadFault::WrongImportsScope),
+        ..Mock::default()
+    };
+    let port = ObjectPort::new(fixture.inputs(), &mock).unwrap();
+    let error = port
+        .verify_target_owners(&|| mock.owner_checkpoint())
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("对象桶 owner 不属于已登记 scope")
+    );
+
+    mock.assert_target_owner_requests(&TARGET_OWNER_BUCKETS[..4]);
+    assert_eq!(
+        mock.owner_checkpoints.lock().unwrap().as_slice(),
+        &[0, 0, 1, 1, 2, 2, 3, 3, 4]
+    );
+    let directory = target_owner_failure(&fixture);
+    let body = owner_body(SOURCE, "imports");
+    assert_eq!(body.len(), owner_body(TARGET, "imports").len());
+    assert_eq!(
+        fs::read(directory.join("owner-imports.bin")).unwrap(),
+        body.as_bytes()
+    );
+    assert_eq!(
+        document::read(&directory.join("owner-imports.json")).unwrap(),
+        json!({"ContentLength":body.len()})
+    );
+    assert_eq!(
+        document::read(&directory.join("owner-imports.diagnostic.json")).unwrap(),
+        json!({"operation":"get-object","returned":true,"checkpoint_passed":true})
+    );
+}
+
+#[test]
+fn preledger_target_owner_gate_rechecks_bound_test_toml_after_first_get() {
+    let fixture = Fixture::new(1);
+    let path = fixture
+        .target_root
+        .join(".local-tests/target/app.test.toml");
+    let original = fs::read_to_string(&path).unwrap();
+    let changed = original.replace(
+        "access_key=\"private-example\"",
+        "access_key=\"rotated-example\"",
+    );
+    assert_ne!(changed, original);
+    assert_eq!(changed.len(), original.len());
+    let mock = Mock {
+        owner_fault: Some(OwnerReadFault::ChangeConfiguration {
+            path: path.clone(),
+            bytes: changed.as_bytes().to_vec(),
+        }),
+        ..Mock::default()
+    };
+    let port = ObjectPort::new(fixture.inputs(), &mock).unwrap();
+    let error = port
+        .verify_target_owners(&|| mock.owner_checkpoint())
+        .unwrap_err();
+    assert!(error.to_string().contains("应用配置绑定摘要已变化"));
+
+    mock.assert_target_owner_requests(&TARGET_OWNER_BUCKETS[..1]);
+    assert_eq!(
+        mock.owner_checkpoints.lock().unwrap().as_slice(),
+        &[0, 0, 1]
+    );
+    assert_eq!(fs::read_to_string(&path).unwrap(), changed);
+    let rebound = app_configuration::configuration_value(
+        &fixture.target_root,
+        path.parent().unwrap(),
+        "test",
+    )
+    .unwrap();
+    assert_ne!(rebound["sha256"], fixture.target_configuration["sha256"]);
+    assert_eq!(
+        app_configuration::public_configuration(&fixture.target_root, &rebound).unwrap(),
+        json!({"endpoint":TARGET_ENDPOINT,"region":REGION})
+    );
+    let directory = target_owner_failure(&fixture);
+    let body = owner_body(TARGET, "avatar");
+    assert_eq!(
+        fs::read(directory.join("owner-avatar.bin")).unwrap(),
+        body.as_bytes()
+    );
+    assert_eq!(
+        document::read(&directory.join("owner-avatar.json")).unwrap(),
+        json!({"ContentLength":body.len()})
+    );
+    assert_eq!(
+        document::read(&directory.join("owner-avatar.diagnostic.json")).unwrap(),
+        json!({"operation":"get-object","returned":true,"checkpoint_passed":false})
+    );
+}
+
+fn target_owner_directory(fixture: &Fixture) -> PathBuf {
+    let mut entries = fs::read_dir(&fixture.work).unwrap();
+    let directory = entries.next().unwrap().unwrap().path();
+    assert!(
+        directory
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("target-owners-")
+    );
+    assert!(entries.next().is_none());
+    directory
+}
+
+fn target_owner_failure(fixture: &Fixture) -> PathBuf {
+    let directory = target_owner_directory(fixture);
+    assert_eq!(
+        document::read(&directory.join("failure.json")).unwrap(),
+        json!({"status":"target_owners_failed","error_type":"TargetOwnersObservationError","remote_writes":0})
+    );
+    assert!(!directory.join("verified.json").exists());
+    directory
 }
