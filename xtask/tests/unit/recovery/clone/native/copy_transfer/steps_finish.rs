@@ -1,7 +1,11 @@
 use std::{fs, path::Path};
 
 use super::*;
-use crate::recovery::clone::native::copy_owner::{Owner, Role};
+use crate::recovery::clone::native::{
+    copy_ledger::check_continuation,
+    copy_owner::{Owner, Role},
+    copy_transfer::{publication::Attempt, record::Prepared},
+};
 
 fn four_database_declaration(objects: usize) -> Value {
     let mut value = declaration(objects);
@@ -124,6 +128,134 @@ fn mixed_and_all_noop_databases_publish_with_the_exact_unchanged_images() {
             ]
         );
     }
+}
+
+fn run_published_copy(
+    fixture: &Fixture,
+    prepared: &Prepared,
+    plan: &Plan<'_>,
+    mode: Mode,
+    io: &mut FixtureIo,
+) -> (Value, Value) {
+    let target_lock = fixture.backend.join(".local-tests/target/initialize.lock");
+    let ledger_lock = fixture.copy.join("ledger/clone.lock");
+    let attempt = Attempt::new(mode, &fixture.copy);
+    let mut published = None;
+    let (_, ledger) = fixture
+        .run_with_publication(
+            mode,
+            |session, owner| {
+                for (role, lock) in [(Role::Target, &target_lock), (Role::Ledger, &ledger_lock)] {
+                    assert_eq!(owner.lock_path(role), lock.as_path());
+                    assert!(lock.is_dir());
+                }
+                run(plan, session, mode, io)
+            },
+            |(outcome, ledger)| {
+                assert!(!target_lock.try_exists()?);
+                assert!(!ledger_lock.try_exists()?);
+                published = Some(attempt.publish_bound(
+                    &fixture.backend,
+                    &fixture.copy,
+                    prepared,
+                    outcome,
+                    ledger,
+                )?);
+                Ok(())
+            },
+        )
+        .unwrap();
+    (published.unwrap(), ledger)
+}
+
+#[test]
+fn completed_copy_reconciles_and_resumes_without_rewriting_original_result() {
+    let fixture = Fixture::new();
+    let mut declaration = four_database_declaration(1);
+    declaration["pending_target_actions"] = json!([]);
+    let prepared = Prepared::from_test_session(&fixture.copy, declaration).unwrap();
+    let plan = Plan::from_verified(&prepared.plan).unwrap();
+    let mut io = FixtureIo::new(&plan);
+    database_writes(&mut io, &plan.databases[..2]);
+    let expected_writes = [
+        plan.databases[0].id.clone(),
+        plan.databases[1].id.clone(),
+        plan.objects[0].id.clone(),
+    ];
+    let ledger = fixture.copy.join("ledger");
+    let journal = ledger.join("events.ndjson");
+    let (first, first_ledger) = run_published_copy(&fixture, &prepared, &plan, Mode::New, &mut io);
+    assert_eq!(first["status"], "data_steps_verified");
+    assert_eq!(first["written_steps"], 3);
+    assert_eq!(first["unchanged_databases"], 2);
+    assert_eq!(first_ledger["status"], "ledger_evidence_complete");
+    assert_eq!(io.writes, expected_writes);
+    assert_eq!(io.complete_checks, 1);
+    let session = first_ledger["steps"][&expected_writes[0]]["session"]
+        .as_str()
+        .unwrap();
+    let original = [
+        fixture.copy.join("result.json"),
+        ledger.join(format!("complete-{session}.json")),
+    ]
+    .map(|path| {
+        let bytes = fs::read(&path).unwrap();
+        (path, bytes)
+    });
+    let assert_preserved = |prefix: &[u8]| {
+        for (path, bytes) in &original {
+            assert_eq!(&fs::read(path).unwrap(), bytes);
+        }
+        let next = fs::read(&journal).unwrap();
+        assert!(next.len() > prefix.len() && next.starts_with(prefix));
+        next
+    };
+    let check = |mode| {
+        check_continuation(
+            &fixture.backend,
+            &ledger,
+            prepared.record["plan_sha256"].as_str().unwrap(),
+            prepared.record["generation_sha256"].as_str().unwrap(),
+            mode,
+        )
+    };
+    let prefix = fs::read(&journal).unwrap();
+    let error = check(Mode::Resume).unwrap_err();
+    assert!(error.to_string().contains("必须先显式核对"));
+    assert_eq!(fs::read(&journal).unwrap(), prefix);
+    check(Mode::Reconcile).unwrap();
+    let (reconciled, _) = run_published_copy(&fixture, &prepared, &plan, Mode::Reconcile, &mut io);
+    assert_eq!(reconciled["status"], "copy_reconciled");
+    assert_eq!(reconciled["remote_writes"], 0);
+    assert_eq!(io.writes, expected_writes);
+    assert_eq!(io.complete_checks, 1);
+    let prefix = assert_preserved(&prefix);
+
+    check(Mode::Resume).unwrap();
+    let (mut resumed, completed) =
+        run_published_copy(&fixture, &prepared, &plan, Mode::Resume, &mut io);
+    assert_ne!(
+        resumed
+            .as_object_mut()
+            .unwrap()
+            .remove("continuation_receipt")
+            .unwrap(),
+        reconciled["continuation_receipt"]
+    );
+    assert_eq!(resumed, first);
+    assert_eq!(completed["status"], "ledger_evidence_complete");
+    assert_eq!(completion_count(&ledger), 2);
+    assert_eq!(
+        completed["steps"].as_object().unwrap().len(),
+        expected_writes.len()
+    );
+    assert_eq!(io.writes, expected_writes);
+    for id in expected_writes {
+        assert_eq!(completed["steps"][&id]["phase"], "confirmed");
+        assert_eq!(completed["steps"][&id]["attempt"], 1);
+    }
+    assert_eq!(io.complete_checks, 2);
+    let _ = assert_preserved(&prefix);
 }
 
 fn reject_incomplete_phase(

@@ -138,17 +138,6 @@ class ResumeTests(unittest.TestCase):
             lock.rmdir()
         self.assertEqual(len(self.case.case.writes()), 1)
 
-    def test_completed_copy_can_be_reverified_without_overwriting_original_result(self):
-        self.case.execute()
-        before = (self.output / "result.json").read_bytes()
-        self.continue_copy("reconcile")
-        self.continue_copy("resume")
-        self.assertEqual((self.output / "result.json").read_bytes(), before)
-        self.assertEqual(len(self.case.case.writes()), 3)
-        saved = read_json(self.output / "session.json")
-        ledger = CloneLedger(self.backend, self.output / "ledger", saved["plan_sha256"], saved["generation_sha256"])
-        self.assertEqual(ledger.inspect()["status"], "ledger_evidence_complete")
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -36,12 +36,23 @@ impl Attempt {
         ledger: &Value,
     ) -> Result<Value> {
         stage.check()?;
+        self.publish_bound(stage.backend, &stage.copy, prepared, outcome, ledger)
+    }
+
+    pub(super) fn publish_bound(
+        &self,
+        backend: &Path,
+        copy: &Path,
+        prepared: &Prepared,
+        outcome: &Outcome,
+        ledger: &Value,
+    ) -> Result<Value> {
         prepared.check()?;
         let result = value(prepared, outcome, ledger)?;
         if matches!(outcome, Outcome::Verified { .. }) {
-            let path = stage.copy.join("result.json");
+            let path = copy.join("result.json");
             if self.mode == Mode::Resume && path.try_exists()? {
-                let path = common::common_file(stage.backend, &path, "原完整复制结果")?;
+                let path = common::common_file(backend, &path, "原完整复制结果")?;
                 if document::read(&path)? != result {
                     return Err("已有复制结果与当前完整后像不同，保留原证据".into());
                 }

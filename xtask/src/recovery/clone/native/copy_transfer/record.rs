@@ -287,6 +287,19 @@ impl<'a> Files<'a> {
 }
 
 impl Prepared {
+    #[cfg(test)]
+    pub(super) fn from_test_session(copy: &Path, plan: Value) -> Result<Self> {
+        let session = copy.join("session.json");
+        let protected = Inputs::open([session.clone()])?;
+        let record = document::read(&session)?;
+        protected.check()?;
+        Ok(Self {
+            plan,
+            record,
+            protected,
+        })
+    }
+
     pub(in crate::recovery::clone::native) fn check(&self) -> Result<()> {
         self.protected.check()
     }

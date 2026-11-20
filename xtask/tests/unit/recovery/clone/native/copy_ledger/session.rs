@@ -16,8 +16,8 @@ pub(in crate::recovery::clone::native) const ARTIFACT: &str =
 
 pub(in crate::recovery::clone::native) struct Fixture {
     _temp: tempfile::TempDir,
-    backend: PathBuf,
-    copy: PathBuf,
+    pub(in crate::recovery::clone::native) backend: PathBuf,
+    pub(in crate::recovery::clone::native) copy: PathBuf,
     initialized: Value,
     export: Value,
 }
@@ -61,12 +61,22 @@ impl Fixture {
         mode: Mode,
         execute: impl FnOnce(&mut Session<'_>, &Owner) -> Result<()>,
     ) -> Result<Value> {
+        self.run_with_publication(mode, execute, |_| Ok(()))
+            .map(|(_, value)| value)
+    }
+
+    pub(in crate::recovery::clone::native) fn run_with_publication<T>(
+        &self,
+        mode: Mode,
+        execute: impl FnOnce(&mut Session<'_>, &Owner) -> Result<T>,
+        publish: impl FnOnce(&(T, Value)) -> Result<()>,
+    ) -> Result<(T, Value)> {
         let owner = Owner::register(&self.backend, &self.copy, &self.export, &self.initialized)?;
         let generation = Generation::acquire_copy(owner)?;
         let result = generation.copy_session().and_then(|(owner, guard, lock)| {
-            run(owner, guard, lock, mode, |session| execute(session, owner)).map(|(_, value)| value)
+            run(owner, guard, lock, mode, |session| execute(session, owner))
         });
-        generation.finish(result)
+        generation.finish_publishing(result, publish)
     }
 
     fn ledger(&self) -> PathBuf {
