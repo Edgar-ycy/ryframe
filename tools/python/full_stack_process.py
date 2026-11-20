@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import errno
 import json
 import os
 import select
@@ -31,23 +32,22 @@ PROCESS_ROLES = frozenset({
 })
 
 
-def _linux_identity(pid: int) -> dict | None:
+def _linux_identity(pid: int, descriptor: int) -> dict | None:
+    if select.select([descriptor], [], [], 0)[0]:
+        return None
     process = Path(f"/proc/{pid}")
     try:
         fields = (process / "stat").read_text().rpartition(")")[2].split()
-    except (FileNotFoundError, ProcessLookupError):
-        return None
-    try:
         executable = str((process / "exe").resolve(strict=True))
-    except ProcessLookupError:
-        return None
-    except FileNotFoundError as error:
-        # 已删除的映像仍可运行。只有 /proc/stat 确实消失才可记录退出。
-        try:
-            (process / "stat").read_text()
-        except (FileNotFoundError, ProcessLookupError):
+    except OSError as error:
+        if error.errno not in (errno.ENOENT, errno.ESRCH):
+            raise
+        # 内核可能先撤下退出进程的映像，再使原 pidfd 可读。
+        if select.select([descriptor], [], [], 0.02)[0]:
             return None
         raise ValueError("测试进程仍存在但可执行映像无法核验，禁止按已退出推进") from error
+    if select.select([descriptor], [], [], 0)[0]:
+        return None
     return {"pid": pid, "started": fields[19], "executable": executable}
 
 
@@ -119,7 +119,14 @@ def process_identity(pid: int) -> dict | None:
     if os.name == "nt":
         with _windows_handle(pid) as (kernel, handle):
             return _windows_identity(kernel, handle, pid)
-    return _linux_identity(pid)
+    try:
+        descriptor = os.pidfd_open(pid)
+    except ProcessLookupError:
+        return None
+    try:
+        return _linux_identity(pid, descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def assert_identity(actual: dict | None, expected: dict) -> bool:
@@ -152,7 +159,7 @@ def terminate_owned_process(expected: dict, *, crash: bool = False) -> bool:
     except ProcessLookupError:
         return False
     try:
-        if not assert_identity(_linux_identity(pid), expected):
+        if not assert_identity(_linux_identity(pid, descriptor), expected):
             return False
         signal.pidfd_send_signal(descriptor, signal.SIGKILL if crash else signal.SIGTERM)
         if not select.select([descriptor], [], [], 5)[0]:
