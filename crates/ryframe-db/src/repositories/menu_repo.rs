@@ -226,7 +226,7 @@ impl MenuRepository {
             .db()?;
 
         let permission_codes = self.permission_code_map(db, tenant_id, &all).await?;
-        Ok(build_menu_tree(&all, None, &permission_codes))
+        Ok(build_menu_tree(all, &permission_codes))
     }
 
     pub async fn find_by_permission_codes(
@@ -330,7 +330,7 @@ impl MenuRepository {
             .find_by_permission_codes(db, tenant_id, permission_codes)
             .await?;
         let menu_permission_codes = self.permission_code_map(db, tenant_id, &menus).await?;
-        Ok(build_menu_tree(&menus, None, &menu_permission_codes))
+        Ok(build_menu_tree(menus, &menu_permission_codes))
     }
 
     pub async fn find_tree_by_permission_codes_excluding_routes(
@@ -349,7 +349,7 @@ impl MenuRepository {
             )
             .await?;
         let menu_permission_codes = self.permission_code_map(db, tenant_id, &menus).await?;
-        Ok(build_menu_tree(&menus, None, &menu_permission_codes))
+        Ok(build_menu_tree(menus, &menu_permission_codes))
     }
 
     pub async fn find_by_page_filtered(
@@ -413,28 +413,112 @@ fn include_menu_with_complete_ancestors(
 }
 
 fn build_menu_tree(
-    menus: &[menu::Model],
+    menus: Vec<menu::Model>,
+    permission_codes: &HashMap<i64, String>,
+) -> Vec<MenuTreeNode> {
+    let mut children = HashMap::<Option<i64>, Vec<menu::Model>>::new();
+    for menu in menus {
+        children.entry(menu.parent_id).or_default().push(menu);
+    }
+    build_menu_children(&mut children, None, permission_codes)
+}
+
+fn build_menu_children(
+    children: &mut HashMap<Option<i64>, Vec<menu::Model>>,
     parent_id: Option<i64>,
     permission_codes: &HashMap<i64, String>,
 ) -> Vec<MenuTreeNode> {
-    menus
-        .iter()
-        .filter(|m| m.parent_id == parent_id)
-        .map(|m| MenuTreeNode {
-            id: m.id.to_string(),
-            name: m.name.clone(),
-            parent_id: m.parent_id.map(|p| p.to_string()),
-            menu_type: m.menu_type.clone(),
-            perm_id: m.perm_id.map(|id| id.to_string()),
-            perm_code: m
+    children
+        .remove(&parent_id)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|menu| MenuTreeNode {
+            id: menu.id.to_string(),
+            name: menu.name,
+            parent_id: menu.parent_id.map(|id| id.to_string()),
+            menu_type: menu.menu_type,
+            perm_id: menu.perm_id.map(|id| id.to_string()),
+            perm_code: menu
                 .perm_id
                 .and_then(|perm_id| permission_codes.get(&perm_id).cloned()),
-            route_key: m.route_key.clone(),
-            icon: m.icon.clone(),
-            sort: m.sort,
-            visible: m.visible,
-            status: m.status.clone(),
-            children: build_menu_tree(menus, Some(m.id), permission_codes),
+            route_key: menu.route_key,
+            icon: menu.icon,
+            sort: menu.sort,
+            visible: menu.visible,
+            status: menu.status,
+            children: build_menu_children(children, Some(menu.id), permission_codes),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn menu_tree_keeps_complete_ancestors_order_and_shared_permission() {
+        let all = vec![
+            row(33, Some(10), Some(7)),
+            row(30, Some(10), Some(7)),
+            row(10, Some(20), None),
+            row(45, Some(44), Some(7)),
+            row(44, Some(99), None),
+            row(40, None, None),
+            row(20, None, None),
+            row(51, None, Some(7)),
+        ];
+        let by_id = all.iter().map(|menu| (menu.id, menu)).collect();
+        let mut visible_ids = HashSet::new();
+        for id in [33, 30, 45, 51] {
+            include_menu_with_complete_ancestors(id, &by_id, &mut visible_ids);
+        }
+        assert_eq!(visible_ids, HashSet::from([20, 10, 33, 30, 51]));
+        let visible = all
+            .into_iter()
+            .filter(|menu| visible_ids.contains(&menu.id))
+            .collect();
+
+        let tree = build_menu_tree(visible, &HashMap::from([(7, "menu:read".into())]));
+        let [directory, root_page] = tree.as_slice() else {
+            panic!("菜单树应仅包含授权页面及其完整祖先");
+        };
+        assert_eq!((directory.id.as_str(), root_page.id.as_str()), ("20", "51"));
+        let [parent] = directory.children.as_slice() else {
+            panic!("菜单树应保留中间目录");
+        };
+        assert_eq!(parent.id, "10");
+        let [first, second] = parent.children.as_slice() else {
+            panic!("中间目录应包含两个授权页面");
+        };
+        assert_eq!((first.id.as_str(), second.id.as_str()), ("33", "30"));
+        for page in [first, second, root_page] {
+            assert_eq!(page.perm_code.as_deref(), Some("menu:read"));
+        }
+    }
+
+    fn row(id: i64, parent_id: Option<i64>, perm_id: Option<i64>) -> menu::Model {
+        let timestamp = chrono::DateTime::UNIX_EPOCH;
+        let menu_type = if perm_id.is_some() {
+            menu::Model::MENU_TYPE_MENU
+        } else {
+            menu::Model::MENU_TYPE_DIR
+        };
+        menu::Model {
+            id,
+            tenant_id: "tenant".into(),
+            name: id.to_string(),
+            parent_id,
+            menu_type: menu_type.into(),
+            perm_id,
+            route_key: None,
+            icon: None,
+            sort: 1,
+            visible: true,
+            status: menu::Model::STATUS_NORMAL.into(),
+            remark: None,
+            del_flag: menu::Model::DEL_FLAG_NORMAL.into(),
+            created_at: timestamp,
+            updated_at: timestamp,
+        }
+    }
 }

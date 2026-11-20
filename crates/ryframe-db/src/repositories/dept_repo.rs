@@ -1,5 +1,7 @@
 use crate::DbResultExt;
 use async_trait::async_trait;
+use std::collections::HashMap;
+
 use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, DatabaseTransaction, EntityTrait,
@@ -165,7 +167,7 @@ impl DeptRepository {
             .all(db)
             .await
             .db()?;
-        Ok(build_dept_tree(&all, None))
+        Ok(build_dept_tree(all))
     }
 
     /// 查询数据权限范围内的部门树，并补齐可见节点的祖先以保持树结构完整。
@@ -200,7 +202,7 @@ impl DeptRepository {
             .into_iter()
             .filter(|item| included.contains(&item.id))
             .collect::<Vec<_>>();
-        Ok(build_dept_tree(&filtered, None))
+        Ok(build_dept_tree(filtered))
     }
 
     /// 检查是否有子部门
@@ -421,17 +423,79 @@ impl DeptRepository {
     }
 }
 
-fn build_dept_tree(depts: &[dept::Model], parent_id: Option<i64>) -> Vec<DeptTreeNode> {
-    depts
-        .iter()
-        .filter(|d| d.parent_id == parent_id)
-        .map(|d| DeptTreeNode {
-            id: d.id.to_string(),
-            name: d.name.clone(),
-            parent_id: d.parent_id.map(|p| p.to_string()),
-            sort: d.sort,
-            status: d.status.clone(),
-            children: build_dept_tree(depts, Some(d.id)),
+fn build_dept_tree(depts: Vec<dept::Model>) -> Vec<DeptTreeNode> {
+    let mut children = HashMap::<Option<i64>, Vec<dept::Model>>::new();
+    for dept in depts {
+        children.entry(dept.parent_id).or_default().push(dept);
+    }
+    build_dept_children(&mut children, None)
+}
+
+fn build_dept_children(
+    children: &mut HashMap<Option<i64>, Vec<dept::Model>>,
+    parent_id: Option<i64>,
+) -> Vec<DeptTreeNode> {
+    children
+        .remove(&parent_id)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|dept| DeptTreeNode {
+            id: dept.id.to_string(),
+            name: dept.name,
+            parent_id: dept.parent_id.map(|id| id.to_string()),
+            sort: dept.sort,
+            status: dept.status,
+            children: build_dept_children(children, Some(dept.id)),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dept_tree_keeps_input_order_and_does_not_promote_orphans() {
+        let tree = build_dept_tree(vec![
+            row(32, Some(29)),
+            row(25, None),
+            row(31, Some(29)),
+            row(99, Some(50)),
+            row(29, Some(20)),
+            row(20, None),
+        ]);
+        let [first_root, second_root] = tree.as_slice() else {
+            panic!("缺少父级的部门不应被提升为根节点");
+        };
+        assert_eq!(
+            (first_root.id.as_str(), second_root.id.as_str()),
+            ("25", "20")
+        );
+        assert!(first_root.children.is_empty());
+        let [parent] = second_root.children.as_slice() else {
+            panic!("部门树应保留可见节点的中间祖先");
+        };
+        assert_eq!(parent.id, "29");
+        let [first, second] = parent.children.as_slice() else {
+            panic!("中间部门应保留两条可见的下级分支");
+        };
+        assert_eq!((first.id.as_str(), second.id.as_str()), ("32", "31"));
+    }
+
+    fn row(id: i64, parent_id: Option<i64>) -> dept::Model {
+        let timestamp = chrono::DateTime::UNIX_EPOCH;
+        dept::Model {
+            id,
+            tenant_id: "tenant".into(),
+            name: id.to_string(),
+            parent_id,
+            ancestors: parent_id.map_or_else(|| "0".into(), |id| format!("0,{id}")),
+            sort: 1,
+            status: dept::Model::STATUS_NORMAL.into(),
+            remark: None,
+            del_flag: dept::Model::DEL_FLAG_NORMAL.into(),
+            created_at: timestamp,
+            updated_at: timestamp,
+        }
+    }
 }
