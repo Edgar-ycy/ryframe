@@ -7,6 +7,9 @@ use crate::recovery::clone::native::{
     copy_transfer::{publication::Attempt, record::Prepared},
 };
 
+#[path = "steps_resume_drift.rs"]
+mod resume_drift;
+
 fn four_database_declaration(objects: usize) -> Value {
     let mut value = declaration(objects);
     value["databases"] = json!(

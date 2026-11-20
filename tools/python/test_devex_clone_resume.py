@@ -89,16 +89,6 @@ class ResumeTests(unittest.TestCase):
         self.continue_copy("resume")
         self.assertEqual(len(self.case.case.writes()), 3)
 
-    def test_changed_confirmed_postimage_blocks_resume_before_any_new_write(self):
-        self.interrupted()
-        self.continue_copy("reconcile")
-        key = "shared-control"
-        current = self.case.case.guard.current[key]
-        self.case.case.guard.current[key] = replace(current, tables=copy.deepcopy(self.case.case.guard.basis[key].initialized.tables))
-        with self.assertRaisesRegex(ValueError, "已确认步骤"):
-            self.continue_copy("resume")
-        self.assertEqual(len(self.case.case.writes()), 1)
-
     def test_changed_environment_or_source_image_cannot_rebind_original_session(self):
         self.interrupted()
         with self.assertRaisesRegex(ValueError, "原复制代次"):
