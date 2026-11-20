@@ -134,13 +134,6 @@ class ExportRecoveryTests(unittest.TestCase):
                 self.assertEqual(dict(os.environ), controller)
                 state.finish(self.directory, number, result=result)
 
-    def test_complete_export_followed_by_outer_failure_forbids_reexport(self):
-        self.prepare_origin()
-        retry = self.start("run")
-        with self.assertRaisesRegex(ValueError, "禁止重新完整导出"):
-            recovery.reject_reexport(self.backend, self.directory, retry)
-        self.fail_current(retry)
-
     def test_reconcile_requires_exactly_one_failed_origin_candidate(self):
         self.prepare_origin()
         second = self.start("run")

@@ -81,13 +81,6 @@ def _candidate_attempts(backend: Path, directory: Path, *, before: int, seed: bo
     return candidates
 
 
-def reject_reexport(backend: Path, directory: Path, number: int) -> None:
-    """完整 export 一旦出现在既有固定 attempt，普通 run 不得再次读取整个源。"""
-    candidates = _candidate_attempts(backend, directory, before=number)
-    if candidates:
-        raise ValueError("既有 export attempt 已写出完整候选；必须先显式 reconcile，禁止重新完整导出")
-
-
 def _intent(backend: Path, directory: Path, value: dict, attempt: dict) -> tuple[dict, dict]:
     if attempt["status"] not in {"passed", "failed"}:
         raise ValueError("只能核对已经明确收尾的原 export attempt")
