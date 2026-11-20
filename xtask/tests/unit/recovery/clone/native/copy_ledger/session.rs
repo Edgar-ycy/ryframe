@@ -1,12 +1,15 @@
 use super::*;
-use std::path::PathBuf;
+use std::{path::PathBuf, process::Command};
 
-use crate::recovery::{
-    clone::native::{
-        json as document,
-        target_verify::{guard::Generation, tree},
+use crate::{
+    cli::CloneCommand,
+    recovery::{
+        clone::native::{
+            json as document, lifecycle,
+            target_verify::{guard::Generation, tree},
+        },
+        fixture_control::portable_path,
     },
-    fixture_control::portable_path,
 };
 
 const PLAN: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -79,6 +82,83 @@ impl Fixture {
         generation.finish_publishing(result, publish)
     }
 
+    pub(in crate::recovery::clone::native) fn register_copy_run(
+        &mut self,
+    ) -> Result<(PathBuf, Value)> {
+        let mut entries = fs::read_dir(&self.copy)?;
+        assert_eq!(
+            entries.next().unwrap()?.file_name().to_str(),
+            Some("session.json")
+        );
+        assert!(entries.next().is_none());
+        self.initialize_git()?;
+        let local = self.backend.join(".local-tests");
+        let source = local.join("source");
+        fs::create_dir(&source)?;
+        let request = write_binding(
+            &source.join("request.json"),
+            &json!({"kind":"fixture-source"}),
+        )?;
+        self.export = write_binding(&source.join("export.json"), &json!({"request":request}))?;
+        let environment = json!({"environment":{"APP_ENV":"test"}});
+        let manifest = local.join("copy-manifest.json");
+        document::write_new(
+            &manifest,
+            &json!({
+                "format_version":1,"kind":"devex-clone-run","id":"orphaned-copy",
+                "source_request":request,"source_export":self.export,"initialized":self.initialized,
+                "source_environment":write_binding(&local.join("source-environment.json"), &environment)?,
+                "target_environment":write_binding(&local.join("target-environment.json"), &environment)?,
+                "copy_directory":self.copy,"copy_stage":"source_to_seed","build_bridges":[],
+            }),
+        )?;
+        let run_dir = local.join("run");
+        lifecycle::run(
+            &CloneCommand::Init {
+                manifest,
+                run_dir: run_dir.clone(),
+            },
+            &self.backend,
+        )?;
+        let registered = document::read(&run_dir.join("manifest.json"))?;
+        Ok((run_dir, registered))
+    }
+
+    fn initialize_git(&self) -> Result<()> {
+        fixture_git(&self.backend, &["init", "--quiet", "--object-format=sha1"])?;
+        fs::write(self.backend.join(".gitignore"), b"/.local-tests/\n")?;
+        fixture_git(&self.backend, &["add", "--", ".gitignore"])?;
+        fixture_git(
+            &self.backend,
+            &[
+                "-c",
+                "user.name=copy-orphan-unit",
+                "-c",
+                "user.email=copy-orphan-unit@example.invalid",
+                "commit",
+                "--quiet",
+                "--no-gpg-sign",
+                "-m",
+                "fixture",
+            ],
+        )
+    }
+
+    pub(in crate::recovery::clone::native) fn open_orphaned_reconciliation(&self) -> Result<()> {
+        let owner = Owner::register(&self.backend, &self.copy, &self.export, &self.initialized)?;
+        let generation = Generation::acquire_copy(owner)?;
+        let result = generation.copy_session().and_then(|(owner, guard, lock)| {
+            let window = Window::acquire(owner, guard, lock, Mode::Reconcile)?;
+            let record = owner.claim_lock(Role::Ledger, &window.ledger_guard)?;
+            let verify = |root: &Path| window.check_ledger(root, &record);
+            // 模拟会话未走收口，保留已同步的 opened 记录。
+            let opened = Session::open(&window, Mode::Reconcile, &verify).map(drop);
+            let released = owner.release_lock(Role::Ledger, &window.ledger_guard, &record);
+            combine(opened, released)
+        });
+        generation.finish(result)
+    }
+
     fn ledger(&self) -> PathBuf {
         self.copy.join("ledger")
     }
@@ -86,6 +166,46 @@ impl Fixture {
     fn inspect(&self) -> Value {
         inspect(&self.backend, &self.ledger(), PLAN, GENERATION).unwrap()
     }
+}
+
+fn write_binding(path: &Path, value: &Value) -> Result<Value> {
+    document::write_new(path, value)?;
+    common::binding(path)
+}
+
+fn fixture_git(backend: &Path, arguments: &[&str]) -> Result<()> {
+    let mut command = Command::new("git");
+    command.current_dir(backend).args([
+        "-c",
+        "core.hooksPath=.git/disabled-hooks",
+        "-c",
+        "core.autocrlf=false",
+    ]);
+    for (name, _) in std::env::vars_os() {
+        if name
+            .to_string_lossy()
+            .to_ascii_uppercase()
+            .starts_with("GIT_")
+        {
+            command.env_remove(name);
+        }
+    }
+    let output = command
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            backend.join(".git/disabled-global-config"),
+        )
+        .args(arguments)
+        .output()?;
+    if !output.status.success() {
+        return Err(format!(
+            "Git 夹具操作失败：{}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+        .into());
+    }
+    Ok(())
 }
 
 pub(in crate::recovery::clone::native) fn images(resource: char) -> (Value, Value) {

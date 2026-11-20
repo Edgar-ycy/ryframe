@@ -71,24 +71,6 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual(original, {path: path.read_bytes() for path in paths})
         self.assertEqual(len(self.case.case.writes()), 3)
 
-    def test_abandoned_open_session_requires_reconciliation_before_expensive_hydration(self):
-        with patch.object(factory, "TransferSteps", side_effect=RuntimeError("prewrite")):
-            with self.assertRaises(RuntimeError):
-                self.case.execute()
-        saved = read_json(self.output / "session.json")
-        ledger = CloneLedger(self.backend, self.output / "ledger", saved["plan_sha256"], saved["generation_sha256"], mode="reconcile")
-        ledger.__enter__()
-        ledger._release()
-        # 此 fixture 留下 open 账本，同时模拟控制器退出后由内核释放互斥。
-        ledger.guard.__exit__(None, None, None)
-        with patch("devex_clone_resume.hydrate", side_effect=AssertionError("known interruption must fail early")):
-            with self.assertRaisesRegex(LedgerError, "reconcile"):
-                self.continue_copy("resume")
-        self.assertEqual(len(self.case.case.writes()), 0)
-        self.continue_copy("reconcile")
-        self.continue_copy("resume")
-        self.assertEqual(len(self.case.case.writes()), 3)
-
     def test_changed_environment_or_source_image_cannot_rebind_original_session(self):
         self.interrupted()
         with self.assertRaisesRegex(ValueError, "原复制代次"):

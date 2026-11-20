@@ -10,7 +10,7 @@ use crate::recovery::clone::native::{
 #[path = "steps_resume_drift.rs"]
 mod resume_drift;
 
-fn four_database_declaration(objects: usize) -> Value {
+pub(super) fn four_database_declaration(objects: usize) -> Value {
     let mut value = declaration(objects);
     value["databases"] = json!(
         ["shared-control", "shared", "dedicated-a", "dedicated-b"]
@@ -19,7 +19,7 @@ fn four_database_declaration(objects: usize) -> Value {
     value
 }
 
-fn database_writes(io: &mut FixtureIo, steps: &[Step<'_>]) {
+pub(super) fn database_writes(io: &mut FixtureIo, steps: &[Step<'_>]) {
     for step in steps {
         io.bases.get_mut(&step.id).unwrap()["after"]["tables_sha256"] = json!("8".repeat(64));
     }
@@ -29,7 +29,7 @@ fn ledger_path(owner: &Owner) -> &Path {
     owner.lock_path(Role::Ledger).parent().unwrap()
 }
 
-fn completion_count(ledger: &Path) -> usize {
+pub(super) fn completion_count(ledger: &Path) -> usize {
     fs::read_dir(ledger)
         .unwrap()
         .map(|entry| entry.unwrap().file_name())
@@ -133,7 +133,7 @@ fn mixed_and_all_noop_databases_publish_with_the_exact_unchanged_images() {
     }
 }
 
-fn run_published_copy(
+pub(super) fn run_published_copy(
     fixture: &Fixture,
     prepared: &Prepared,
     plan: &Plan<'_>,

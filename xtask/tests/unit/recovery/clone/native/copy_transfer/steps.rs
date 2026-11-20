@@ -7,6 +7,8 @@ use crate::recovery::clone::native::copy_ledger::session::tests::{ARTIFACT, Fixt
 mod database;
 #[path = "steps_finish.rs"]
 mod finish_cases;
+#[path = "steps_resume_orphan.rs"]
+mod resume_orphan;
 
 fn declaration(object_count: usize) -> Value {
     json!({
