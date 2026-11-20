@@ -13,6 +13,9 @@ use crate::{
     },
 };
 
+#[path = "target_verify_fixture_source_rows.rs"]
+mod source_rows;
+
 pub(in super::super) struct FakeTransport<'a> {
     fixture: &'a Fixture,
     drift: bool,

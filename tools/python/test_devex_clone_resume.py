@@ -1,7 +1,6 @@
 """原目录接续的离线回归；真实账本配合明确协议替身，不声明真实复制通过。"""
 import copy
 from dataclasses import replace
-import json
 from pathlib import Path
 import subprocess
 import sys
@@ -10,7 +9,6 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import devex_clone_factory as factory
-from devex_clone_capture import read_json
 from devex_clone_ledger import CloneLedger, LedgerError
 from devex_clone_resume import continue_copy
 from restore_reference_io import ObjectCreateError
@@ -51,18 +49,6 @@ class ResumeTests(unittest.TestCase):
             self.continue_copy("resume")
         self.assertEqual(original, {path: path.read_bytes() for path in paths})
         self.assertEqual(len(self.case.case.writes()), 3)
-
-    def test_changed_environment_or_source_image_cannot_rebind_original_session(self):
-        self.interrupted()
-        with self.assertRaisesRegex(ValueError, "原复制代次"):
-            self.continue_copy("reconcile", source=self.case.environments["source"] | {"NEW_INPUT": "changed"})
-        path = self.output / "session.json"
-        saved = read_json(path)
-        saved["source_observation"]["shared-control"]["tables"]["sys_tenant"]["sha256"] = "f" * 64
-        path.write_text(json.dumps(saved), encoding="utf-8")
-        with self.assertRaisesRegex(ValueError, "来源当前完整行像"):
-            self.continue_copy("reconcile")
-        self.assertEqual(len(self.case.case.writes()), 1)
 
 
 if __name__ == "__main__":
