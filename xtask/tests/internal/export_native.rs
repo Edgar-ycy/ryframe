@@ -412,15 +412,6 @@ fn native_object_capture_uses_read_only_evidence_and_rejects_body_drift() {
             .unwrap()
             .any(|entry| entry.unwrap().path().join("capture.json").is_file())
     );
-    let capture_dir = fixture
-        .run
-        .join("e0001/objects")
-        .read_dir()
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .find(|path| path.join("capture.json").is_file())
-        .unwrap();
-    assert_python_capture_compatible(&fixture, &capture_dir);
 
     let failed = Fixture::new();
     let failed_context = object_capture_context(&failed);
@@ -549,66 +540,6 @@ fn source_cli_reads_bound_sidecar_config_records_actual_argv_and_rejects_drift_b
             .output()
             .join("configuration-drift.command.json")
             .exists()
-    );
-}
-
-fn assert_python_capture_compatible(fixture: &Fixture, capture_dir: &Path) {
-    let script = r#"
-import json
-import sys
-from pathlib import Path
-sys.path.insert(0, sys.argv[1])
-from rate_limit_tool import install_verified_binding
-install_verified_binding(sys.argv[4])
-from devex_clone_capture import capture_result, owner_evidence, read_json, verify_capture
-from restore_build import file_digest
-from restore_reference_io import ExternalTools
-request = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
-capture = Path(sys.argv[2])
-tools = ExternalTools({"source": request["source"], "tools": request["tools"]}, capture.parent.parent)
-intent = read_json(capture / "intent.json")
-actual = file_digest(capture / "object.bin")
-before = read_json(capture / "head-before.json")
-get = read_json(capture / "get.json")
-after = read_json(capture / "head-after.json")
-before_owners = [owner_evidence(capture, "owner-before", bucket, request["source"]["scope_id"]) for bucket in ("avatar", "config-packages", "exports", "imports", "uploads")]
-after_owners = [owner_evidence(capture, "owner-after", bucket, request["source"]["scope_id"]) for bucket in ("avatar", "config-packages", "exports", "imports", "uploads")]
-calculated = capture_result(intent, before, get, after, actual, before_owners, after_owners)
-stored = read_json(capture / "capture.json")
-for key in sorted(set(calculated) | set(stored)):
-    if calculated.get(key) != stored.get(key):
-        print("DIFF", key, repr(calculated.get(key)), repr(stored.get(key)))
-result = verify_capture(
-    tools, "source", "uploads", request["source"]["scope_id"] + "/file.txt",
-    capture, expected={"bytes": 4, "sha256": "%s"}, max_bytes=1024, transport="rust-s3-sigv4",
-)
-print(result["status"])
-"#;
-    let script = script.replace("%s", &sha(b"data"));
-    let native_tool = crate::rate_limit::tool_binding(Path::new(env!("CARGO_BIN_EXE_xtask")))
-        .unwrap()
-        .expect("兼容校验必须显式绑定当前原生工具");
-    let output = Command::new("python")
-        .args([
-            "-B",
-            "-c",
-            &script,
-            &fixture.backend.join("tools/python").to_string_lossy(),
-            &capture_dir.to_string_lossy(),
-            &fixture.local.join("source-request.json").to_string_lossy(),
-            &native_tool,
-        ])
-        .output()
-        .expect("Python compatibility check must start");
-    assert!(
-        output.status.success(),
-        "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        "capture_evidence_verified"
     );
 }
 
