@@ -288,6 +288,38 @@ impl ProductRepository {
         Ok(())
     }
 
+    /// 调用方已持有租户和操作租约，两者均先于此分配行锁。
+    pub async fn update_assignment_reason_in_txn(
+        &self,
+        transaction: &DatabaseTransaction,
+        tenant_id: &str,
+        version_id: i64,
+        reason: &str,
+    ) -> AppResult<()> {
+        let assignment = self.lock_assignment_in_txn(transaction, tenant_id).await?;
+        let changed = || AppError::Conflict("租户产品套餐分配已变化，请重新预览".into());
+        if assignment.tenant_id != tenant_id || assignment.plan_version_id != version_id {
+            return Err(changed());
+        }
+        if assignment.change_reason.as_deref() == Some(reason) {
+            return Ok(());
+        }
+        let result = tenant_product_plan::Entity::update_many()
+            .col_expr(
+                tenant_product_plan::Column::ChangeReason,
+                Expr::value(reason),
+            )
+            .filter(tenant_product_plan::Column::TenantId.eq(tenant_id))
+            .filter(tenant_product_plan::Column::PlanVersionId.eq(version_id))
+            .exec(transaction)
+            .await
+            .db()?;
+        if result.rows_affected != 1 {
+            return Err(changed());
+        }
+        Ok(())
+    }
+
     pub async fn increment_runtime_epoch_in_txn(
         &self,
         transaction: &DatabaseTransaction,

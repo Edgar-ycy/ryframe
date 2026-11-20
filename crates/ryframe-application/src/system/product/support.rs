@@ -44,11 +44,12 @@ pub(super) fn normalize_overrides(
     Ok(by_code.into_values().collect())
 }
 
+/// 校验覆盖修改权限，并返回当前配置与目标覆盖是否一致。
 pub(super) fn ensure_override_change_allowed(
     current: &[CapabilityOverrideVo],
     target: &[CapabilityOverrideInput],
     allowed: bool,
-) -> AppResult<()> {
+) -> AppResult<bool> {
     let unchanged = current.len() == target.len()
         && target.iter().all(|candidate| {
             current.iter().any(|existing| {
@@ -60,12 +61,25 @@ pub(super) fn ensure_override_change_allowed(
             })
         });
     if unchanged || allowed {
-        Ok(())
+        Ok(unchanged)
     } else {
         Err(AppError::PermissionDenied(
             "修改租户能力覆盖需要 tenant:capability:override 权限".into(),
         ))
     }
+}
+
+pub(super) async fn finish_product_change(
+    transaction: Box<dyn ProductWriteTransaction>,
+    tenant_id: &str,
+    owner_token: &str,
+) -> AppResult<()> {
+    transaction
+        .release_change_lease(tenant_id, owner_token)
+        .await?;
+    transaction
+        .commit(crate::TransactionAuditMode::CurrentRequest)
+        .await
 }
 
 pub(super) fn capability_records(
@@ -265,4 +279,63 @@ pub(super) fn ensure_platform_actor(actor: &ActorContext) -> AppResult<()> {
 
 pub(super) fn string_slice(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| (*value).to_owned()).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn override_permission_check_reports_matching_configuration() {
+        let current = [CapabilityOverrideVo {
+            capability_code: "example".into(),
+            enabled: true,
+            variant_code: "default".into(),
+            schema_version: 1,
+            config: serde_json::json!({"limit": 4}),
+            reason: Some("已登记".into()),
+            changed_by: Some("27".into()),
+        }];
+        let target = CapabilityOverrideInput {
+            capability_code: "example".into(),
+            enabled: true,
+            variant_code: "default".into(),
+            schema_version: 1,
+            config: serde_json::json!({"limit": 4}),
+        };
+        assert!(
+            ensure_override_change_allowed(&current, std::slice::from_ref(&target), false).unwrap()
+        );
+
+        for changed in [
+            CapabilityOverrideInput {
+                capability_code: "other".into(),
+                ..target.clone()
+            },
+            CapabilityOverrideInput {
+                enabled: false,
+                ..target.clone()
+            },
+            CapabilityOverrideInput {
+                variant_code: "other".into(),
+                ..target.clone()
+            },
+            CapabilityOverrideInput {
+                schema_version: 2,
+                ..target.clone()
+            },
+            CapabilityOverrideInput {
+                config: serde_json::json!({"limit": 5}),
+                ..target
+            },
+        ] {
+            let changed = [changed];
+            assert!(matches!(
+                ensure_override_change_allowed(&current, &changed, false),
+                Err(AppError::PermissionDenied(_))
+            ));
+            assert!(!ensure_override_change_allowed(&current, &changed, true).unwrap());
+        }
+        assert!(!ensure_override_change_allowed(&current, &[], true).unwrap());
+    }
 }

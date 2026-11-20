@@ -1,17 +1,13 @@
-use super::{ControlDatabaseCluster, application_ports, execute, require_count, run_mysql_test};
+use super::{
+    ControlDatabaseCluster, application_ports, execute, install_test_database_id_generator,
+    require_count, run_mysql_test,
+};
 use chrono::{DateTime, Duration, Utc};
 use ryframe_application::ports::backup::*;
-use ryframe_kernel::AppResult;
 use sea_orm::{IsolationLevel, TransactionTrait};
-use std::sync::atomic::{AtomicI64, Ordering};
 
 #[path = "backup/restore_safety.rs"]
 mod restore_safety;
-
-fn next_id() -> AppResult<i64> {
-    static NEXT: AtomicI64 = AtomicI64::new(900_000);
-    Ok(NEXT.fetch_add(1, Ordering::Relaxed))
-}
 
 fn check(condition: bool, message: &str) -> Result<(), String> {
     if condition {
@@ -24,7 +20,7 @@ fn check(condition: bool, message: &str) -> Result<(), String> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn backup_transactions_health_and_restore_states_use_real_mysql() {
     run_mysql_test("backup", |database| async move {
-        ryframe_db::install_id_generator(next_id).map_err(|error| error.to_string())?;
+        install_test_database_id_generator()?;
         ryframe_db::migration::up(&database, Some(&super::bootstrap_hashes())).await.map_err(|error| error.to_string())?;
         let repository = application_ports::backup::port(ControlDatabaseCluster::single(database.clone()));
         let now = repository.database_now().await.map_err(|error| error.to_string())?;

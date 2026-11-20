@@ -276,6 +276,17 @@ impl ProductWriteTransaction for DatabaseProductWriteTransaction {
             .await
     }
 
+    async fn update_assignment_reason<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        version_id: i64,
+        reason: &'a str,
+    ) -> ryframe_kernel::AppResult<()> {
+        ProductRepository
+            .update_assignment_reason_in_txn(&self.transaction, tenant_id, version_id, reason)
+            .await
+    }
+
     async fn increment_runtime_epoch<'a>(
         &'a self,
         tenant_id: &'a str,

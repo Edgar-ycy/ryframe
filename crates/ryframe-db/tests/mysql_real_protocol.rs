@@ -16,6 +16,25 @@ use mysql::{
 mod linked_job_states;
 #[path = "mysql_real_protocol/named_sources.rs"]
 mod named_sources;
+#[path = "mysql_real_protocol/product_assignment.rs"]
+mod product_assignment;
+
+#[cfg(feature = "migration")]
+fn install_test_database_id_generator() -> Result<(), String> {
+    use std::sync::{
+        OnceLock,
+        atomic::{AtomicI64, Ordering},
+    };
+
+    static INSTALLATION: OnceLock<Result<(), String>> = OnceLock::new();
+    static NEXT: AtomicI64 = AtomicI64::new(900_000);
+    INSTALLATION
+        .get_or_init(|| {
+            ryframe_db::install_id_generator(|| Ok(NEXT.fetch_add(1, Ordering::Relaxed)))
+                .map_err(|error| error.to_string())
+        })
+        .clone()
+}
 
 #[cfg(feature = "migration")]
 fn bootstrap_hashes() -> ryframe_db::migration::BootstrapHashes {

@@ -200,6 +200,14 @@ pub trait ProductWriteTransaction: crate::PersistenceTransaction + Send + Sync {
         change: ProductAssignmentChange,
     ) -> ryframe_kernel::AppResult<()>;
 
+    /// 仅更新同一租户和版本的分配原因，保留其他分配字段和能力覆盖。
+    async fn update_assignment_reason<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        version_id: i64,
+        reason: &'a str,
+    ) -> ryframe_kernel::AppResult<()>;
+
     async fn increment_runtime_epoch<'a>(
         &'a self,
         tenant_id: &'a str,

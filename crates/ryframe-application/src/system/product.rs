@@ -9,7 +9,7 @@ use crate::{
     AuthorizationCache,
     ports::product::{
         ProductAssignmentChange, ProductPlanState, ProductReadPort, ProductTransactionPort,
-        ProductVersionSnapshot, ProductVersionState, ProductWritePort,
+        ProductVersionSnapshot, ProductVersionState, ProductWritePort, ProductWriteTransaction,
         TenantCapabilityOverrideRecord, TenantProductSnapshot,
     },
 };
@@ -432,15 +432,25 @@ impl ProductService {
             ));
         }
         self.validate_publishable_capability_records(&target_snapshot.capabilities)?;
-        let current =
-            self.context_from_snapshot(transaction.current_tenant_product(tenant_id).await?)?;
-        ensure_override_change_allowed(
+        let current_snapshot = transaction.current_tenant_product(tenant_id).await?;
+        let same_version = current_snapshot.version.version_id == target.plan_version_id;
+        let current = self.context_from_snapshot(current_snapshot)?;
+        let same_overrides = ensure_override_change_allowed(
             &current.overrides,
             &normalized,
             capability_override_allowed,
         )?;
         let target_context =
             self.target_context(tenant_id, &epoch_text, target_snapshot, &normalized)?;
+        if same_version && same_overrides {
+            if let Some(reason) = reason.as_deref() {
+                transaction
+                    .update_assignment_reason(tenant_id, target.plan_version_id, reason)
+                    .await?;
+            }
+            finish_product_change(transaction, tenant_id, &owner_token).await?;
+            return Ok(current);
+        }
         let authorization_changed =
             capability_changes(&current, &target_context)
                 .iter()
@@ -479,12 +489,7 @@ impl ProductService {
         } else {
             None
         };
-        transaction
-            .release_change_lease(tenant_id, &owner_token)
-            .await?;
-        transaction
-            .commit(crate::TransactionAuditMode::CurrentRequest)
-            .await?;
+        finish_product_change(transaction, tenant_id, &owner_token).await?;
         if let Some(authorization_epoch) = authorization_epoch {
             self.authorization_cache
                 .sync_tenant_epoch(tenant_id, authorization_epoch)

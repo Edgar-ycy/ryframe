@@ -88,6 +88,12 @@ The unified error envelope exposes only allowlisted values in `details.reason`: 
 
 When the data-scope projection for a tenant business read or write is missing, not ready, or differs from the authoritative control-database version, the operation is rejected with HTTP 503, `error_key=tenant_data_target_unavailable`, and `Retry-After: 5`. Business data is temporarily unavailable: wait for projection synchronization before retrying. Refreshing the login session does not repair a lagging projection. This condition does not use `stale_runtime_epoch`, which denotes a change in the product runtime epoch.
 
+## Tenant Product Changes
+
+When applying a product change, pass the `plan_hash` and `preview_runtime_epoch` returned by the preview. The server checks assignment and override permissions and verifies the tenant runtime epoch and the target plan version in the transaction. Generate a fresh preview before submitting again if the preview has expired.
+
+Submitting the current plan version and normalized overrides still records a successful operation in the audit log. Omitting `reason` retains the assignment note. Passing a different reason updates that note alone. The response contains the current product context and its existing epochs. Switching the plan version or changing overrides advances the runtime epoch and notifies clients to refresh the tenant context.
+
 ## Filtered Exports
 
 The seven export types use separate strongly typed requests with a unified envelope:
