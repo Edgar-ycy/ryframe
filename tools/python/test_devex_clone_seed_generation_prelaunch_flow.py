@@ -47,6 +47,7 @@ class PrelaunchFlowTests(unittest.TestCase):
             "source_rebind": rebound, "storage": {"storage": self.storage}}
         self.output = self.directory / "seed-runtime/attempt-0058"
         self.runtime = Mock(output=self.output, runtime=self.output / "runtime", execution=self.backend,
+            backend=self.backend, request=read_json(self.request_path),
             selected={**self.source_request["source"], "runtime_dir": str(self.output / "runtime")},
             build={"artifacts": {role: {"executable": str(self.directory / f"{role}.exe")} for role in ("api", "worker")}})
         self.runtime.environment.side_effect = lambda: nullcontext({})
@@ -85,6 +86,7 @@ class PrelaunchFlowTests(unittest.TestCase):
         return stack
 
     def register_runtime(self, backend, directory, *, source_config_dir):
+        self.assertEqual(source_config_dir, self.backend / "config")
         self.assertEqual(set(read_json(directory / "binaries.json")), {"ryframe", "ryframe-worker", "ryframe-reset", "ryframe-migrate"})
         write_json(directory / "runtime.json", {"backend_root": str(backend)})
         return {}
