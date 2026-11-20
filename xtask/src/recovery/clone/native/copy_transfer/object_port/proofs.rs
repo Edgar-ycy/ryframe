@@ -6,17 +6,14 @@ use std::{
 use serde_json::{Value, json};
 
 use super::{
-    super::{
-        super::{
-            digest,
-            export::{bound_relative, transport::Transport},
-            input::BUCKETS,
-            json as document,
-            resources::common,
-            s3::protocol::validate_key,
-            target_verify::{guard::Inputs, tree},
-        },
-        images::ObjectObservation,
+    super::super::{
+        digest,
+        export::{bound_relative, transport::Transport},
+        input::BUCKETS,
+        json as document,
+        resources::common,
+        s3::protocol::validate_key,
+        target_verify::{guard::Inputs, tree},
     },
     Key, ObjectInputs, ObjectPort, Observed, Sample, Step, item_key, reject_failure,
 };
@@ -115,49 +112,7 @@ impl<T: Transport + Sync> ObjectPort<'_, T> {
     }
 
     pub(super) fn check_target_sample(&self, observed: &Observed) -> Result<()> {
-        let (binding, receipt) =
-            proof::bound_file(self.spec.backend, observed.descriptor(), "本批目标对象观察")?;
-        let directory = sample_directory(&binding.path, self.spec.work)?;
-        if receipt.value != *observed.receipt() {
-            return Err("本批目标对象观察收据变化".into());
-        }
-        let mut expected =
-            document::object(&receipt.value["evidence"], "本批目标原始证据")?.clone();
-        if expected
-            .insert(
-                "observation.json".into(),
-                json!({"bytes":binding.bytes,"sha256":binding.sha256}),
-            )
-            .is_some()
-        {
-            return Err("本批目标原始证据自引用观察收据".into());
-        }
-        let actual = tree::snapshot(self.spec.backend, directory, false)?;
-        let actual = document::array(&actual, "本批目标证据树")?;
-        if actual.len() != expected.len()
-            || actual.iter().any(|row| {
-                row["type"] != "file"
-                    || row["path"]
-                        .as_str()
-                        .and_then(|path| expected.get(path))
-                        .is_none_or(|file| {
-                            file["bytes"] != row["bytes"] || file["sha256"] != row["sha256"]
-                        })
-            })
-        {
-            return Err("本批目标对象原始证据缺失、改变或包含额外文件".into());
-        }
-        if let ObjectObservation::Captured(value) = observed.image_evidence() {
-            let (binding, capture) = proof::bound_file(
-                self.spec.backend,
-                &receipt.value["capture"],
-                "本批目标完整采集",
-            )?;
-            if binding.path != directory.join("capture.json") || capture.value != *value {
-                return Err("本批目标完整采集与原证据不同".into());
-            }
-        }
-        reject_failure(directory)
+        observed.check_saved(self.spec.backend, self.spec.work)
     }
 }
 

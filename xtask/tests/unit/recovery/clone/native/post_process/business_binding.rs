@@ -1,4 +1,10 @@
-use std::{path::PathBuf, sync::Mutex};
+use std::{
+    path::PathBuf,
+    sync::{
+        Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 
 use sha2::{Digest, Sha256};
 
@@ -132,6 +138,7 @@ fn observed(business: &Business<'_>) -> Value {
 struct Mock {
     extra_in_list: bool,
     missing_after_list: bool,
+    requests: AtomicUsize,
     keys: Mutex<Vec<String>>,
     downloads: Mutex<Vec<String>>,
     listed: Mutex<Vec<String>>,
@@ -143,6 +150,7 @@ impl Transport for Mock {
     }
 
     fn s3(&self, request: Request) -> Result<Value> {
+        self.requests.fetch_add(1, Ordering::Relaxed);
         let owner = format!("{TARGET}/.ryframe-owner");
         let headers = || {
             json!({"ContentType":"text/plain","ContentLength":4,"Metadata":{},
@@ -282,6 +290,40 @@ fn completion_rejects_late_failure_in_the_scope_or_a_captured_object() {
         }
         assert_eq!(document::read(&marker).unwrap(), failure);
     }
+}
+
+#[test]
+fn completion_rejects_same_length_changes_to_captured_object_evidence() {
+    let fixture = Fixture::new();
+    let business = fixture.prepare().unwrap();
+    let producer = observed(&business);
+    let mock = Mock::default();
+    let result = business
+        .finish(&producer, fixture.access(), &mock, &|| Ok(()))
+        .unwrap();
+    assert_eq!(*mock.downloads.lock().unwrap(), [EXPORT, EXTRA]);
+    let requests = mock.requests.load(Ordering::Relaxed);
+    result.check(&fixture.backend).unwrap();
+    assert_eq!(mock.requests.load(Ordering::Relaxed), requests);
+
+    let directory = fixture.output.join("remaining-object-0000");
+    let receipt = directory.join("observation.json");
+    let receipt_bytes = fs::read(&receipt).unwrap();
+    let diagnostic = directory.join("head-before.diagnostic.json");
+    let mut changed = fs::read(&diagnostic).unwrap();
+    assert_eq!(changed.last(), Some(&b'\n'));
+    *changed.last_mut().unwrap() = b' ';
+    fs::write(&diagnostic, &changed).unwrap();
+
+    let error = result.check(&fixture.backend).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "本批目标对象原始证据缺失、改变或包含额外文件"
+    );
+    assert_eq!(fs::read(receipt).unwrap(), receipt_bytes);
+    assert_eq!(fs::read(diagnostic).unwrap(), changed);
+    assert!(!directory.join("failure.json").exists());
+    assert_eq!(mock.requests.load(Ordering::Relaxed), requests);
 }
 
 #[test]

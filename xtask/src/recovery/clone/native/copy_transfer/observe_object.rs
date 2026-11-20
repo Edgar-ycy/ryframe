@@ -18,7 +18,7 @@ use super::{
         lifecycle::manifest,
         resources::common,
         s3::{Configuration, Operation, Request, app_configuration, protocol::validate_key},
-        target_verify::guard::Inputs,
+        target_verify::{guard::Inputs, tree},
     },
     images::ObjectObservation,
 };
@@ -50,6 +50,7 @@ pub(crate) struct ObserveTarget<'a> {
 pub(crate) struct Observed {
     receipt: Value,
     descriptor: Value,
+    directory_identity: Value,
     raw_sha256: String,
     capture: Option<Value>,
 }
@@ -77,6 +78,57 @@ impl Observed {
     pub(crate) fn check_failure(&self) -> Result<()> {
         let saved = binding::binding_shape(&self.descriptor, "目标对象观察收据")?;
         reject_failure(saved.path.parent().ok_or("目标对象观察收据缺少目录")?)
+    }
+
+    pub(crate) fn check_saved(&self, backend: &Path, work: &Path) -> Result<()> {
+        let directory = common::directory_identity(backend, &self.directory_identity)?;
+        let directory = PathBuf::from(manifest::path_text(&directory, "本批目标对象观察目录")?);
+        if strip_local_test_prefix(&directory, work)
+            .is_none_or(|relative| relative.as_os_str().is_empty())
+        {
+            return Err("对象观察收据不在本次复制工作根".into());
+        }
+        reject_failure(&directory)?;
+        let (binding, receipt) =
+            binding::bound_file(backend, &self.descriptor, "本批目标对象观察")?;
+        if binding.path != directory.join("observation.json") || receipt.value != self.receipt {
+            return Err("本批目标对象观察收据变化".into());
+        }
+        let mut expected =
+            document::object(&receipt.value["evidence"], "本批目标原始证据")?.clone();
+        if expected
+            .insert(
+                "observation.json".into(),
+                json!({"bytes":binding.bytes,"sha256":binding.sha256}),
+            )
+            .is_some()
+        {
+            return Err("本批目标原始证据自引用观察收据".into());
+        }
+        let actual = tree::snapshot(backend, &directory, false)?;
+        let actual = document::array(&actual, "本批目标证据树")?;
+        if actual.len() != expected.len()
+            || actual.iter().any(|row| {
+                row["type"] != "file"
+                    || row["path"]
+                        .as_str()
+                        .and_then(|path| expected.get(path))
+                        .is_none_or(|file| {
+                            file["bytes"] != row["bytes"] || file["sha256"] != row["sha256"]
+                        })
+            })
+        {
+            return Err("本批目标对象原始证据缺失、改变或包含额外文件".into());
+        }
+        if let Some(value) = &self.capture {
+            let (binding, capture) =
+                binding::bound_file(backend, &receipt.value["capture"], "本批目标完整采集")?;
+            if binding.path != directory.join("capture.json") || capture.value != *value {
+                return Err("本批目标完整采集与原证据不同".into());
+            }
+        }
+        common::directory_identity(backend, &self.directory_identity)?;
+        reject_failure(&directory)
     }
 }
 
@@ -220,6 +272,7 @@ impl<T: Transport> Observation<'_, T> {
         Ok(Observed {
             receipt,
             descriptor,
+            directory_identity: self.evidence.identity.clone(),
             raw_sha256,
             capture,
         })
