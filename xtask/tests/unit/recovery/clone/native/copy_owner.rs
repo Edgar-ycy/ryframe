@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "copy_owner_recovery_guards.rs"]
+mod recovery_guards;
+
 const SESSION_ID: &str = "session-0123456789abcdef0123456789abcdef";
 
 struct Fixture {

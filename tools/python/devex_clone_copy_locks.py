@@ -1,7 +1,6 @@
-"""登记复制锁的内核持有人并显式回收死锁；不核对、重放或清理远端数据。"""
+"""登记复制锁的内核持有人并释放已登记的复制锁。"""
 from __future__ import annotations
 
-from contextlib import ExitStack
 from dataclasses import dataclass
 import json
 import os
@@ -10,7 +9,6 @@ import uuid
 
 from devex_clone_model import digest, exact, linked, local_path, name
 from full_stack_process import process_identity, write_receipt
-from process_guard import process_guard
 from restore_build import file_digest
 
 GUARDS = {"target": "copy-target.guard", "ledger": "copy-ledger.guard"}
@@ -123,53 +121,3 @@ def release_copy_lock(lock: Path, role: str, owner: CopyOwner) -> None:
                 and lock.stat().st_ino == expected["inode"] and not any(lock.iterdir())):
             write_receipt(lock / "owner.json", expected)
         raise
-
-
-def _commands_complete(root: Path, session_id: str) -> None:
-    for path in root.glob(f"command-{name(session_id)}-*.json"):
-        if linked(path):
-            raise ValueError("复制命令记录不能经过链接")
-        value = _read(path)
-        if type(value.get("returncode")) is not int:
-            raise ValueError("复制命令未登记退出结果，不能排除遗留子进程；必须先核实现场")
-
-
-def recover_copy_locks(backend: Path, copy_directory: Path, owner_receipt: dict, *,
-                       source_export: dict, initialized: dict) -> dict:
-    """只回收本次新登记的死控制器锁；裸锁、未知命令和远端未知写入都不自动处理。"""
-    backend = backend.resolve(strict=True)
-    root = local_path(backend, str(copy_directory))
-    owner_data = _read(_bound(backend, owner_receipt))
-    owner = CopyOwner(backend, owner_receipt, owner_data["session_id"])
-    value, paths = read_copy_owner(owner)
-    if (value["copy_directory"] != str(root) or value["source_export"] != source_export
-            or value["initialized"] != initialized):
-        raise ValueError("复制锁恢复必须绑定调用方固定的来源、目标与复制目录")
-    with ExitStack() as guards:
-        for role, lock in paths.items():
-            if lock.parent.is_dir():
-                guards.enter_context(process_guard(lock.parent, GUARDS[role]))
-        actual = process_identity(value["controller"]["pid"])
-        if actual == value["controller"]:
-            raise ValueError("登记的复制控制器仍在运行，禁止回收锁")
-        _commands_complete(root, owner.session_id)
-        found = []
-        for role, lock in paths.items():
-            if lock.exists():
-                expected = _lock_record(lock, role, owner)
-                if ({path.name for path in lock.iterdir()} != {"owner.json"}
-                        or _read(lock / "owner.json") != expected):
-                    raise ValueError("复制锁没有匹配的登记持有人；裸锁或其他会话锁必须核实现场")
-                found.append((role, lock, expected))
-        result = {"format_version": 1, "kind": "devex-copy-lock-recovery", "owner_receipt": owner_receipt,
-                  "observed_controller": actual, "locks": [record for _, _, record in found],
-                  "remote_writes": 0, "remote_writes_reconciled": False, "target_ready": False,
-                  "descendant_scope": "仅检查已登记直接命令的退出记录；不证明未登记后代已退出",
-                  "requires_reconcile": True, "status": "prepared"}
-        receipt = root / ("copy-lock-recovery-" + uuid.uuid4().hex + ".json")
-        write_receipt(receipt, result)
-        for role, lock, _ in found:
-            release_copy_lock(lock, role, owner)
-        result["status"] = "owned_locks_released"
-        write_receipt(receipt, result)
-        return {**result, "receipt": _binding(receipt)}
