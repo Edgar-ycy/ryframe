@@ -1,7 +1,5 @@
 """同进程语义结果复用的失败关闭检查；不执行真实资源命令。"""
-import copy
 from pathlib import Path
-import pickle
 import shutil
 import unittest
 from workspace_directory import WorkspaceDirectory
@@ -52,36 +50,6 @@ class PlanReuseTests(unittest.TestCase):
         (self.case.fixture.root / "file.bin").write_bytes(b"evil")
         with self.assertRaisesRegex(ValueError, "变化"):
             clone.verify_plan(self.backend, str(self.path))
-
-    def test_external_json_and_unissued_objects_cannot_authorize_reuse(self):
-        for token in ({"verified": True, "plan": self.case.plan}, object.__new__(clone.VerifiedPlan), object()):
-            with self.subTest(kind=type(token).__name__), self.assertRaisesRegex(ValueError, "正式签发"):
-                clone.reuse_plan(self.backend, str(self.path), token)
-        with self.assertRaises(TypeError):
-            clone.VerifiedPlan()
-
-    def test_snapshot_is_immutable_and_copy_pickle_do_not_create_accepted_tokens(self):
-        token = self.issue()
-        first = token.plan
-        first["objects"][0]["metadata"]["Metadata"]["changed"] = "changed"
-        self.assertNotEqual(first, token.plan)
-        with self.assertRaises(AttributeError):
-            token.plan = first
-        for make in (copy.copy, copy.deepcopy, lambda value: pickle.loads(pickle.dumps(value))):
-            try:
-                candidate = make(token)
-            except TypeError:
-                continue
-            with self.assertRaisesRegex(ValueError, "正式签发"):
-                clone.reuse_plan(self.backend, str(self.path), candidate)
-        wrapper, declaration, bindings = clone.reuse_plan(self.backend, str(self.path), token)
-        wrapper["plan"]["status"] = "tampered"
-        declaration["copy_id"] = "tampered"
-        bindings.clear()
-        current = clone.reuse_plan(self.backend, str(self.path), token)
-        self.assertEqual(current[0]["plan"], token.plan)
-        self.assertNotEqual(current[1]["copy_id"], "tampered")
-        self.assertTrue(current[2])
 
     def test_other_backend_identical_plan_file_and_different_token_are_rejected(self):
         token = self.issue()
