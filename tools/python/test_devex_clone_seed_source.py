@@ -1,7 +1,7 @@
 """来源 producer 完整身份与 PID 复用风险；登记写入由原生 Runner 承担。"""
 from pathlib import Path
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import devex_clone_source_proof as source_proof
 
@@ -28,10 +28,12 @@ class SeedSourceTests(unittest.TestCase):
             self.assertEqual(source_proof.producer_identities(
                 request, registry, processes, run="fixed-runner"),
                 sorted(registry["processes"], key=lambda item: item["name"]))
-        self.assertEqual(stopped.call_count, 3)
-        registry["processes"][2]["identity"] = self.identities[0]
-        with self.assertRaisesRegex(ValueError, "重复"):
-            source_proof.producer_identities(request, registry, processes, run="fixed-runner")
+            self.assertEqual(stopped.call_args_list, [call(identity) for identity in self.identities])
+            stopped.reset_mock()
+            registry["processes"][2]["identity"] = self.identities[0]
+            with self.assertRaisesRegex(ValueError, "^producer 内核创建身份无效或重复$"):
+                source_proof.producer_identities(request, registry, processes, run="fixed-runner")
+            self.assertEqual(stopped.call_args_list, [call(identity) for identity in self.identities[:2]])
 
 
 if __name__ == "__main__":
