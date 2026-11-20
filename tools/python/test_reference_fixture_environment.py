@@ -181,12 +181,6 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertEqual(json.loads(lines[0]), {"status": "planned", "services_started": False, "remote_writes": 0})
         self.assertEqual(before, {str(path.relative_to(self.root)): path.read_bytes() for path in self.root.rglob("*") if path.is_file()})
 
-    def test_plan_rejects_historical_source_database(self):
-        publish_execution_fixture(self)
-        self.review["reference"]["source"]["databases"] = [{"database": "old"}]
-        with self.assertRaisesRegex(ValueError, "历史来源"):
-            environment.plan(self.backend, self.write("review.json", self.review), self.execution_source, self.write("build.json", self.maintenance))
-
     def test_plan_accepts_project_relative_evidence_paths(self):
         publish_execution_fixture(self)
         review = self.write("review.json", self.review)

@@ -1,5 +1,8 @@
 use super::super::{portable_path, review};
-use super::{guards, protocol::check};
+use super::{
+    guards,
+    protocol::{GuardError, check},
+};
 use crate::{
     Result,
     local_test_path::{LocalTestPathKind, validate_local_test_path},
@@ -57,7 +60,17 @@ pub(super) fn create(args: &Value) -> Result<Value> {
     match (result, after) {
         (Ok(value), Ok(())) => Ok(value),
         (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
-        (Err(error), Err(after)) => Err(format!("{error}；输入后验同时失败：{after}").into()),
+        (Err(error), Err(after)) => {
+            // 后验重算可能重复同一条已脱敏的拒绝，保留原错误类型供协议返回。
+            if let (Some(first), Some(repeated)) = (
+                error.downcast_ref::<GuardError>(),
+                after.downcast_ref::<GuardError>(),
+            ) && first.0 == repeated.0
+            {
+                return Err(error);
+            }
+            Err(format!("{error}；输入后验同时失败：{after}").into())
+        }
     }
 }
 

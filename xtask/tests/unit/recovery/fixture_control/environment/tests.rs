@@ -311,14 +311,36 @@ fn plan_is_readonly_hashes_exact_inputs_and_rejects_every_input_drift() {
         );
         std::fs::write(path, original).unwrap();
     }
-    let mut historical = native_json::read(&root.join("review.json")).unwrap();
+    let review = root.join("review.json");
+    let mut historical = native_json::read(&review).unwrap();
     historical["reference"]["source"]["databases"] = json!([{"database":"old"}]);
-    std::fs::write(
-        root.join("review.json"),
-        serde_json::to_vec(&historical).unwrap(),
-    )
-    .unwrap();
-    assert_ne!(request("plan", args).0, 0);
+    std::fs::write(&review, serde_json::to_vec(&historical).unwrap()).unwrap();
+    let inputs = [
+        review,
+        fixture.output.join("execution-source.json"),
+        root.join("maintenance_build.json"),
+    ]
+    .map(|path| {
+        let original = std::fs::read(&path).unwrap();
+        (path, original)
+    });
+
+    let (code, denied) = request("plan", args);
+    assert_eq!(code, 2);
+    assert_eq!(
+        denied,
+        json!({"ok":false,"error":{
+            "code":"invalid_fixture_environment",
+            "message":"新的隔离参考夹具不得读取或复用历史来源数据库",
+            "automatic_retry_permitted":false,"remote_write_may_have_occurred":false,
+        }})
+    );
+    for (path, original) in inputs {
+        assert_eq!(std::fs::read(path).unwrap(), original);
+    }
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 2);
+    assert!(!reference.join("run-r1").exists());
+    assert!(std::fs::read_dir(&reference).unwrap().next().is_none());
 }
 
 fn assert_reviewed_output_layout(
