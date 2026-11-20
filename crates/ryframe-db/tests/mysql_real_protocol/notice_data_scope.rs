@@ -139,7 +139,18 @@ async fn verify_write(
     };
     if allowed {
         result.map_err(|error| error.to_string())?;
-        assert_ne!(image(database, id).await?, before);
+        let after = image(database, id).await?;
+        assert_ne!(after, before);
+        if delete {
+            let saved: serde_json::Value =
+                serde_json::from_str(&after).map_err(|error| error.to_string())?;
+            assert_eq!(saved["del_flag"], "2");
+            assert!(matches!(
+                service.delete(actor, id).await,
+                Err(AppError::NotFound(_))
+            ));
+            assert_eq!(image(database, id).await?, after);
+        }
     } else {
         assert!(matches!(result, Err(AppError::NotFound(_))));
         assert_eq!(image(database, id).await?, before, "拒绝写入后完整记录不变");

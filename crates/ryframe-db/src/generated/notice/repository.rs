@@ -12,8 +12,8 @@ use ryframe_application::generated::notice::{
 use ryframe_application::{PersistenceTransaction, TransactionAuditMode};
 use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter,
-    QueryOrder, QuerySelect, TransactionTrait, sea_query::LockType,
+    ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, QueryOrder,
+    QuerySelect, TransactionTrait, sea_query::Expr, sea_query::LockType,
 };
 
 use super::entity;
@@ -175,17 +175,18 @@ impl NoticeTransaction for DatabaseNoticeTransaction {
 
     async fn delete(&self, tenant_id: &str, id: i64) -> AppResult<()> {
         self.ensure_tenant(tenant_id)?;
-        let model = entity::Entity::find_by_id(id)
+        let result = entity::Entity::update_many()
+            .col_expr(entity::Column::DelFlag, Expr::value(String::from("2")))
+            .col_expr(entity::Column::UpdatedAt, Expr::value(chrono::Utc::now()))
+            .filter(entity::Column::Id.eq(id))
             .filter(entity::Column::TenantId.eq(tenant_id))
             .filter(entity::Column::DelFlag.eq(String::from("0")))
-            .one(&self.transaction)
+            .exec(&self.transaction)
             .await
-            .db()?
-            .ok_or_else(|| AppError::NotFound("资源不存在".into()))?;
-        let mut active: entity::ActiveModel = model.into();
-        active.del_flag = Set(String::from("2"));
-        active.updated_at = Set(chrono::Utc::now());
-        active.update(&self.transaction).await.db()?;
+            .db()?;
+        if result.rows_affected != 1 {
+            return Err(AppError::NotFound("资源不存在".into()));
+        }
         Ok(())
     }
 }

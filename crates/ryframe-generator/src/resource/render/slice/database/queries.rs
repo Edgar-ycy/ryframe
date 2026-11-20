@@ -288,42 +288,62 @@ pub(crate) fn mapping(resource: &ResourceIr, source: &str) -> String {
         .join("\n")
 }
 
+pub(crate) fn uses_locked_soft_delete(resource: &ResourceIr) -> bool {
+    resource.soft_delete.is_some()
+        && resource.access.owner_field.is_some()
+        && resource
+            .fields
+            .iter()
+            .any(|field| field.name == "tenant_id")
+}
+
 pub(crate) fn delete_body(resource: &ResourceIr) -> String {
-    let query = id_query(resource, "id");
-    if let Some(soft_delete) = &resource.soft_delete {
-        let time_update = resource
-            .audit
-            .as_ref()
-            .filter(|audit| {
-                !resource
-                    .fields
-                    .iter()
-                    .any(|field| field.name == audit.updated_at && field.database_update())
-            })
-            .map(|audit| {
-                let updated_at = resource
-                    .fields
-                    .iter()
-                    .find(|field| field.name == audit.updated_at)
-                    .expect("审计字段已由 IR 校验");
-                let value = if updated_at.nullable {
-                    "Some(chrono::Utc::now())"
-                } else {
-                    "chrono::Utc::now()"
-                };
-                format!("        active.{} = Set({value});\n", audit.updated_at)
+    let Some(soft_delete) = &resource.soft_delete else {
+        let query = id_query(resource, "id");
+        return format!(
+            "        let model = {query}\n            .one(&self.transaction)\n            .await\n            .db()?\n            .ok_or_else(|| AppError::NotFound(\"资源不存在\".into()))?;\n        model.delete(&self.transaction).await.db()?;\n        Ok(())"
+        );
+    };
+    let updated_at = soft_delete_updated_at(resource);
+    let field = &soft_delete.field;
+    let deleted = field_literal(resource, field, &soft_delete.deleted);
+    if uses_locked_soft_delete(resource) {
+        let column = column_variant(field);
+        let active = field_literal(resource, field, &soft_delete.active);
+        let time_update = updated_at
+            .map(|(field, value)| {
+                let time_column = column_variant(&field.name);
+                format!(
+                    "\n            .col_expr(entity::Column::{time_column}, Expr::value({value}))"
+                )
             })
             .unwrap_or_default();
-        format!(
-            "        let model = {query}\n            .one(&self.transaction)\n            .await\n            .db()?\n            .ok_or_else(|| AppError::NotFound(\"资源不存在\".into()))?;\n        let mut active: entity::ActiveModel = model.into();\n        active.{field} = Set({deleted});\n{time_update}        active.update(&self.transaction).await.db()?;\n        Ok(())",
-            field = soft_delete.field,
-            deleted = field_literal(resource, &soft_delete.field, &soft_delete.deleted),
-        )
-    } else {
-        format!(
-            "        let model = {query}\n            .one(&self.transaction)\n            .await\n            .db()?\n            .ok_or_else(|| AppError::NotFound(\"资源不存在\".into()))?;\n        model.delete(&self.transaction).await.db()?;\n        Ok(())"
-        )
+        return format!(
+            "        let result = entity::Entity::update_many()\n            .col_expr(entity::Column::{column}, Expr::value({deleted})){time_update}\n            .filter(entity::Column::Id.eq(id))\n            .filter(entity::Column::TenantId.eq(tenant_id))\n            .filter(entity::Column::{column}.eq({active}))\n            .exec(&self.transaction)\n            .await\n            .db()?;\n        if result.rows_affected != 1 {{\n            return Err(AppError::NotFound(\"资源不存在\".into()));\n        }}\n        Ok(())"
+        );
     }
+    let query = id_query(resource, "id");
+    let time_update = updated_at
+        .map(|(field, value)| format!("        active.{} = Set({value});\n", field.name))
+        .unwrap_or_default();
+    format!(
+        "        let model = {query}\n            .one(&self.transaction)\n            .await\n            .db()?\n            .ok_or_else(|| AppError::NotFound(\"资源不存在\".into()))?;\n        let mut active: entity::ActiveModel = model.into();\n        active.{field} = Set({deleted});\n{time_update}        active.update(&self.transaction).await.db()?;\n        Ok(())"
+    )
+}
+
+fn soft_delete_updated_at(resource: &ResourceIr) -> Option<(&FieldIr, &'static str)> {
+    let audit = resource.audit.as_ref()?;
+    let field = resource
+        .fields
+        .iter()
+        .find(|field| field.name == audit.updated_at)
+        .expect("审计字段已由 IR 校验");
+    let value = if field.nullable {
+        "Some(chrono::Utc::now())"
+    } else {
+        "chrono::Utc::now()"
+    };
+    (!field.database_update()).then_some((field, value))
 }
 
 pub(crate) fn commit_body(storage: StorageKind) -> &'static str {

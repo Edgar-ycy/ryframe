@@ -80,6 +80,52 @@ fn router_moves_state_into_the_last_guard_before_unguarded_resources() {
 }
 
 #[test]
+fn scoped_soft_delete_updates_the_locked_tenant_row_without_a_second_select() {
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../catalog/resources/notice.toml");
+    let notice = load_resource(path).expect("Notice 资源清单应有效");
+    let rendered = render_resources(&[notice]).expect("Notice 应能生成");
+    let repository = &rendered
+        .assets
+        .iter()
+        .find(|asset| asset.path.ends_with("notice/repository.rs"))
+        .expect("应生成公告仓储")
+        .content;
+    let (_, delete) = repository.split_once("async fn delete(").unwrap();
+    let (delete, _) = delete.split_once("impl PersistenceTransaction").unwrap();
+    for expected in [
+        "self.ensure_tenant(tenant_id)?",
+        "entity::Entity::update_many()",
+        "Column::DelFlag, Expr::value(String::from(\"2\"))",
+        "Column::UpdatedAt, Expr::value(chrono::Utc::now())",
+        "Column::Id.eq(id)",
+        "Column::TenantId.eq(tenant_id)",
+        "Column::DelFlag.eq(String::from(\"0\"))",
+        ".exec(&self.transaction)",
+        "rows_affected != 1",
+        "AppError::NotFound",
+    ] {
+        assert!(delete.contains(expected), "软删除缺少约束 {expected}");
+    }
+    assert!(!delete.contains(".one("));
+
+    let service = &rendered
+        .assets
+        .iter()
+        .find(|asset| asset.path.ends_with("notice/service.rs"))
+        .expect("应生成公告服务")
+        .content;
+    let (_, delete) = service.split_once("pub async fn delete(").unwrap();
+    let (delete, _) = delete.split_once("pub async fn find_by_page").unwrap();
+    let lock = delete.find(".find_by_id_for_update(").unwrap();
+    let write = delete.find("transaction.delete(").unwrap();
+    assert!(lock < write);
+    assert!(delete.contains(
+        "complete_transaction(transaction, operation, TransactionAuditMode::CurrentRequest)"
+    ));
+}
+
+#[test]
 fn post_manifest_preserves_the_existing_public_contract_and_extensions() {
     let post = load_resource(post_path()).expect("Post 资源清单应有效");
 

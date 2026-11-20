@@ -50,7 +50,9 @@ pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], heade
     } else {
         ""
     };
-    let set_import = if resource.soft_delete.is_some() {
+    let soft_delete_import = if uses_locked_soft_delete(resource) {
+        "sea_query::Expr, "
+    } else if resource.soft_delete.is_some() {
         "ActiveValue::Set, "
     } else {
         ""
@@ -107,7 +109,7 @@ pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], heade
         query_filter_trait = query_filter_trait,
         detail_import = detail_import,
         model_trait = model_trait,
-        set_import = set_import,
+        soft_delete_import = soft_delete_import,
         transaction_trait = transaction_trait,
         tenant_mismatch = tenant_mismatch,
         detail_type = detail_type,

@@ -223,7 +223,7 @@ root = "backend"
 path = "crates/ryframe-db/src/generated/notice/repository.rs"
 source_hash = "9c7717ecf319783c9296cc84459c3b661dcadc10a233acf1bf058176b737d151"
 schema_hash = "b68503cbce094b4575d4b533331cf0e09c0b3ea55291b17d2b06cfba23d80803"
-content_hash = "61b84e6103d73718a12ff93db03322df29454fec01909da9f61ecf7fccb02d4e"
+content_hash = "0ffd544b1751c9b75b0579f7ae42932dc667ffec79d5885f503aef9fc014136d"
 
 [[entries]]
 resource = "post"
