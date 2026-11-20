@@ -5,8 +5,11 @@ use crate::recovery::clone::native::copy_ledger::session::tests::{ARTIFACT, Fixt
 
 #[path = "steps_database.rs"]
 mod database;
+
 #[path = "steps_finish.rs"]
 mod finish_cases;
+#[path = "steps_resume_locks.rs"]
+mod resume_locks;
 #[path = "steps_resume_object.rs"]
 mod resume_object;
 #[path = "steps_resume_orphan.rs"]

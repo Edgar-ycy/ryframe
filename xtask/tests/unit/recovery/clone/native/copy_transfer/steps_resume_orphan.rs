@@ -110,7 +110,11 @@ fn orphaned_empty_copy_needs_reconciliation_before_hydration() {
     }
 }
 
-fn bind_copy_files(fixture: &Fixture, manifest: &Value, declaration: &Value) -> Result<Prepared> {
+pub(super) fn bind_copy_files(
+    fixture: &Fixture,
+    manifest: &Value,
+    declaration: &Value,
+) -> Result<Prepared> {
     let input = fixture.copy.join("input.json");
     document::write_new(&input, declaration)?;
     let binding = digest::file(&input)?;

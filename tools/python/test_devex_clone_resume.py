@@ -74,17 +74,6 @@ class ResumeTests(unittest.TestCase):
             self.continue_copy("reconcile")
         self.assertEqual(len(self.case.case.writes()), 1)
 
-    def test_target_or_ledger_lock_is_not_removed_or_replaced(self):
-        self.interrupted()
-        for lock in (self.case.target / "initialize.lock", self.output / "ledger/clone.lock"):
-            lock.mkdir()
-            identity = lock.stat().st_ino
-            with self.assertRaises((FileExistsError, LedgerError)):
-                self.continue_copy("reconcile")
-            self.assertEqual(lock.stat().st_ino, identity)
-            lock.rmdir()
-        self.assertEqual(len(self.case.case.writes()), 1)
-
 
 if __name__ == "__main__":
     unittest.main()
