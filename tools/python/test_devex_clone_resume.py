@@ -47,15 +47,6 @@ class ResumeTests(unittest.TestCase):
         self.assertEqual(sorted(item["attempt"] for item in state["steps"].values()), [1, 1, 2])
         self.assertEqual(len(self.case.case.writes()), 4)
 
-    def test_object_response_lost_is_verified_without_repeating_put_or_database_writes(self):
-        self.assertEqual(self.interrupted("put-response-lost"), 3)
-        with self.assertRaises(LedgerError):
-            self.continue_copy("resume")
-        result = self.continue_copy("reconcile")
-        self.assertEqual(set(result["steps"].values()), {"confirmed"})
-        self.continue_copy("resume")
-        self.assertEqual(len(self.case.case.writes()), 3)
-
     def test_prewrite_interruption_reuses_plan_export_and_initialized_directory(self):
         with patch.object(factory, "TransferSteps", side_effect=RuntimeError("offline interrupted before intent")):
             with self.assertRaises(RuntimeError):

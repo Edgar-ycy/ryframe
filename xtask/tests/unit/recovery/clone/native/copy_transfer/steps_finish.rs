@@ -278,7 +278,7 @@ fn lost_database_commit_is_reconciled_and_not_dispatched_again_on_resume() {
     let first = &plan.databases[0].id;
     let after = io.bases[first]["after"].clone();
     io.stop_at = Some(first.clone());
-    io.failed_database_image = Some(after.clone());
+    io.committed_write_image = Some(after.clone());
     let error = run_published_copy(&fixture, &prepared, &plan, Mode::New, &mut io).unwrap_err();
     assert_eq!(error.to_string(), "复制进程结束，资源写入结果未知");
     assert_eq!(io.writes.as_slice(), std::slice::from_ref(first));
@@ -392,7 +392,7 @@ fn matching_after_images_do_not_complete_unknown_or_reconciled_before_intents() 
         let last = &plan.databases[3].id;
         let after = io.bases[last]["after"].clone();
         io.stop_at = Some(last.clone());
-        io.failed_database_image = (phase == "unknown").then_some(after.clone());
+        io.committed_write_image = (phase == "unknown").then_some(after.clone());
         let fixture = Fixture::new();
         rejected_session(&fixture, Mode::New, |session, owner| {
             let error = run(&plan, session, Mode::New, &mut io).err().unwrap();

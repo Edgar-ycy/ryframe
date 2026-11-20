@@ -7,6 +7,8 @@ use crate::recovery::clone::native::copy_ledger::session::tests::{ARTIFACT, Fixt
 mod database;
 #[path = "steps_finish.rs"]
 mod finish_cases;
+#[path = "steps_resume_object.rs"]
+mod resume_object;
 #[path = "steps_resume_orphan.rs"]
 mod resume_orphan;
 
@@ -31,7 +33,7 @@ struct FixtureIo {
     database_fault: Option<DatabaseFault>,
     omitted_database: Option<String>,
     stop_at: Option<String>,
-    failed_database_image: Option<Value>,
+    committed_write_image: Option<Value>,
     resume_target_usable: bool,
     complete_checks: usize,
     fail_verify_complete: bool,
@@ -80,7 +82,7 @@ impl FixtureIo {
             database_fault: None,
             omitted_database: None,
             stop_at: None,
-            failed_database_image: None,
+            committed_write_image: None,
             resume_target_usable: true,
             complete_checks: 0,
             fail_verify_complete: false,
@@ -191,7 +193,7 @@ impl CopyIo for FixtureIo {
                         .push(DatabaseEvent::WriteObject(step.id.clone()));
                 }
                 if self.stop_at.as_ref() == Some(&step.id) {
-                    if let Some(image) = self.failed_database_image.take() {
+                    if let Some(image) = self.committed_write_image.take() {
                         self.current.insert(step.id.clone(), image);
                     }
                     return Err("复制进程结束，资源写入结果未知".into());

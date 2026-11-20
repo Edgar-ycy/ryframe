@@ -145,7 +145,7 @@ fn mixed_database_intents_are_reconciled_from_one_full_vector_without_replay() {
         if phase == "mismatch" {
             image["tables_sha256"] = json!("9".repeat(64));
         }
-        io.failed_database_image = (phase != "reconciled_before").then_some(image);
+        io.committed_write_image = (phase != "reconciled_before").then_some(image);
         let fixture = Fixture::new();
         interrupt_second(&fixture, &plan, &mut io);
 

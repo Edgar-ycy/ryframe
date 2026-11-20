@@ -14,7 +14,7 @@ fn changed_confirmed_database_postimage_blocks_resume_before_new_writes() {
     let before = io.bases[first]["before"].clone();
     let after = io.bases[first]["after"].clone();
     io.stop_at = Some(first.clone());
-    io.failed_database_image = Some(after.clone());
+    io.committed_write_image = Some(after.clone());
     let error = run_published_copy(&fixture, &prepared, &plan, Mode::New, &mut io).unwrap_err();
     assert_eq!(error.to_string(), "复制进程结束，资源写入结果未知");
     assert_eq!(io.writes.as_slice(), std::slice::from_ref(first));
