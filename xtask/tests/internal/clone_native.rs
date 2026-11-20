@@ -16,16 +16,16 @@ const UUID: &str = "67cd8d4a-fe90-11ef-98fd-5847ca786499";
 type TestRow = Map<String, Value>;
 type TestData = BTreeMap<String, Vec<(String, TestRow)>>;
 
-struct Fixture {
-    root: PathBuf,
-    export: PathBuf,
+pub(crate) struct Fixture {
+    pub(crate) root: PathBuf,
+    pub(crate) export: PathBuf,
     input: PathBuf,
-    value: Value,
+    pub(crate) value: Value,
     data: TestData,
 }
 
 impl Fixture {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let (root, export, input) = fixture_paths();
         copy_catalog(&root);
         let evidence = initial_evidence(&export);
@@ -944,7 +944,7 @@ fn set_row(fixture: &mut Fixture, key: &str, table: &str, field: &str, value: Va
     row.insert(field.into(), value);
 }
 
-fn snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+pub(crate) fn snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     let mut result = BTreeMap::new();
     let mut pending = vec![root.to_path_buf()];
     while let Some(path) = pending.pop() {

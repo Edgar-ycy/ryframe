@@ -1,5 +1,8 @@
 use std::fs;
 
+use crate::clone_native_tests::{Fixture, snapshot};
+
+use super::super::proofs::Proofs;
 use super::*;
 
 const COPY_STAGE: &str = "source_to_seed";
@@ -158,6 +161,132 @@ fn saved_copy_preflight_holds_the_original_three_files_without_writes() {
     assert_eq!(continuation.declaration, fixture.declaration);
     continuation.check().unwrap();
     assert_eq!(fixture.snapshot(), before);
+}
+
+#[test]
+fn prepares_once_and_hydrates_against_original_copy_proofs() {
+    let fixture = Fixture::new();
+    let local = fixture.root.join(".local-tests");
+    let copy = local.join("copy");
+    let target = local.join("target");
+    fs::create_dir(&copy).unwrap();
+    fs::create_dir(&target).unwrap();
+
+    let (manifest, initialized) = initial_manifest(&fixture, &copy, &target);
+    let initial = &manifest["initialized"];
+    let export = &manifest["source_export"];
+    let source_stopped = &fixture.value["evidence"]["source_stopped"];
+    let original_receipts = [
+        fixture.export.join("export.json"),
+        target.join("initialized.json"),
+    ];
+    let read_receipts = || {
+        original_receipts
+            .each_ref()
+            .map(|path| fs::read(path).unwrap())
+    };
+    let originals = read_receipts();
+    let proofs = publish_initial_proofs(&fixture, source_stopped, initial, &initialized);
+    let mut declaration = fixture.value.clone();
+    declaration["evidence"] = proofs.descriptors.clone();
+    let source_generation = json!({"stopped":true});
+    let target_generation = json!({"initialized":true});
+    let source_observation =
+        json!({"shared-control":{},"shared":{},"dedicated-a":{},"dedicated-b":{}});
+    let facts = || Facts {
+        source_generation: &source_generation,
+        target_generation: &target_generation,
+        source_observation: &source_observation,
+        declaration: &declaration,
+    };
+    let bind = || Files::bind(&fixture.root, &manifest, export).unwrap();
+    let prepared = bind().prepare(facts()).unwrap();
+    prepared.check().unwrap();
+    proofs.checkpoint().unwrap();
+    let (original_plan, original_record) = (prepared.plan.clone(), prepared.record.clone());
+    assert_eq!(original_plan["copy_stage"], COPY_STAGE);
+    assert_eq!(&original_record["source_export"], export);
+    assert_eq!(&original_record["initialized"], initial);
+    drop((prepared, proofs));
+    assert_eq!(read_receipts(), originals);
+    assert_eq!(snapshot(&copy).len(), 3);
+    let before = snapshot(&fixture.root);
+    let proof_directories = || {
+        fs::read_dir(&fixture.export)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .filter(|name| {
+                name.to_str()
+                    .is_some_and(|name| name.starts_with("target-proof-"))
+            })
+            .collect::<BTreeSet<_>>()
+    };
+    let original_proof_directories = proof_directories();
+    assert_eq!(original_proof_directories.len(), 1);
+
+    for _ in 0..2 {
+        let files = bind();
+        let continuation = files.continuation(COPY_STAGE).unwrap();
+        let proofs = Proofs::open(
+            &fixture.export,
+            &continuation.declaration["evidence"],
+            source_stopped,
+            initial,
+            &initialized,
+        )
+        .unwrap();
+        let hydrated = files.hydrate(&continuation, facts()).unwrap();
+        assert_eq!(proofs.descriptors, declaration["evidence"]);
+        assert_eq!(hydrated.plan, original_plan);
+        assert_eq!(hydrated.record, original_record);
+        proofs.checkpoint().unwrap();
+        hydrated.check().unwrap();
+        assert_eq!(snapshot(&fixture.root), before);
+        assert_eq!(proof_directories(), original_proof_directories);
+    }
+}
+
+fn publish_initial_proofs(
+    fixture: &Fixture,
+    source_stopped: &Value,
+    initial: &Value,
+    initialized: &Value,
+) -> Proofs {
+    let stopped = json!({
+        "status":"fresh_target_reverified","initialized":initial,
+        "inventory":initialized["inventory"],"remote_writes":0,
+        "target_ready":false,"clone_verified":false,"restore_qualified":false,
+    });
+    Proofs::publish(
+        &fixture.root,
+        &fixture.export,
+        source_stopped,
+        initial,
+        initialized,
+        &stopped,
+    )
+    .unwrap()
+}
+
+fn initial_manifest(fixture: &Fixture, copy: &Path, target: &Path) -> (Value, Value) {
+    let local = copy.parent().unwrap();
+    let export = write_binding(
+        &fixture.export.join("export.json"),
+        &json!({
+            "artifact_root":fixture.export,"evidence":{"generation-after":fixture.value["evidence"]["source_stopped"]},
+            "databases":fixture.value["databases"],"objects":fixture.value["objects"],
+        }),
+    );
+    let observations = json!({"target-db":{"kind":"database","tables":{},"preserved":{}}});
+    let initialized = json!({"inventory":{"observations":observations}});
+    let initial = write_binding(&target.join("initialized.json"), &initialized);
+    let environment = json!({"environment":{"APP_ENV":"test"}});
+    let manifest = json!({
+        "copy_directory":copy,"copy_stage":COPY_STAGE,"source_export":export,"initialized":initial,
+        "source_environment":write_binding(&local.join("source-environment.json"), &environment),
+        "target_environment":write_binding(&local.join("target-environment.json"), &environment),
+    });
+    (manifest, initialized)
 }
 
 #[derive(Clone, Copy, Debug)]
