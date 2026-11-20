@@ -248,32 +248,29 @@ fn validate_tables(receipt: &Value, mut tables: Vec<toml::Table>) -> Result<(tom
     Ok((api_table, scope))
 }
 
-fn verify_binaries(directory: &Path, receipt: &Value) -> Result<()> {
+pub(in crate::recovery) fn read_binaries(directory: &Path) -> Result<Value> {
     let binaries = read_json(
         &directory.join("binaries.json"),
         "全栈二进制清单",
         64 * 1024,
     )?;
-    exact_object(
-        &binaries,
-        &[
-            "ryframe",
-            "ryframe-worker",
-            "ryframe-reset",
-            "ryframe-migrate",
-        ],
-        "全栈二进制清单",
-    )?;
-    exact_object(&receipt["artifacts"], &["api", "worker"], "运行产物")?;
-    for name in [
+    let roles = [
         "ryframe",
         "ryframe-worker",
         "ryframe-reset",
         "ryframe-migrate",
-    ] {
+    ];
+    exact_object(&binaries, &roles, "全栈二进制清单")?;
+    for name in roles {
         let path = PathBuf::from(text_field(&binaries, name, "二进制清单")?);
         validate_absolute_path(&path, LocalTestPathKind::ExistingFile)?;
     }
+    Ok(binaries)
+}
+
+fn verify_binaries(directory: &Path, receipt: &Value) -> Result<()> {
+    let binaries = read_binaries(directory)?;
+    exact_object(&receipt["artifacts"], &["api", "worker"], "运行产物")?;
     for (role, name) in [("api", "ryframe"), ("worker", "ryframe-worker")] {
         let path = PathBuf::from(text_field(&binaries, name, "二进制清单")?);
         validate_absolute_path(&path, LocalTestPathKind::ExistingFile)?;

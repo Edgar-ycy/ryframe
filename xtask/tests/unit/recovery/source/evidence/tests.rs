@@ -53,6 +53,79 @@ fn full_stack_source_facts_are_read_only_and_reject_undeclared_inputs() {
 }
 
 #[test]
+fn full_stack_binaries_read_requires_exact_roles_and_ordinary_absolute_paths() {
+    use std::fs;
+
+    let local = crate::workspace::root_dir().join(".local-tests");
+    fs::create_dir_all(&local).unwrap();
+    let directory = tempfile::tempdir_in(local).unwrap();
+    let manifest = directory.path().join("binaries.json");
+    let mut binaries = json!({});
+    for role in [
+        "ryframe",
+        "ryframe-worker",
+        "ryframe-reset",
+        "ryframe-migrate",
+    ] {
+        let path = directory.path().join(format!("{role} 产物.exe"));
+        fs::write(&path, role.as_bytes()).unwrap();
+        binaries[role] = json!(path);
+    }
+    let original = serde_json::to_string(&binaries).unwrap();
+    fs::write(&manifest, &original).unwrap();
+    let request = json!({"operation":"full-stack-binaries-read","write":false,
+        "arguments":{"directory":directory.path()}});
+    let call = |request: &Value| execute(&serde_json::to_vec(request).unwrap());
+    let reject = |request: &Value, expected: &str| {
+        let error = call(request).unwrap_err().to_string();
+        assert!(error.contains(expected), "{error}");
+    };
+    assert_eq!(call(&request).unwrap(), binaries);
+    assert_eq!(fs::read_to_string(&manifest).unwrap(), original);
+    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 5);
+
+    let mut changed = request.clone();
+    changed["write"] = json!(true);
+    reject(&changed, "写入授权");
+    let mut changed = request.clone();
+    changed["arguments"]["output"] = json!(manifest);
+    reject(&changed, "字段");
+    let mut changed = request.clone();
+    changed["arguments"]["directory"] = json!("relative");
+    reject(&changed, "绝对路径");
+    assert_eq!(fs::read_to_string(&manifest).unwrap(), original);
+
+    let duplicate = format!(
+        "{},\"ryframe\":{}}}",
+        original.strip_suffix('}').unwrap(),
+        binaries["ryframe"]
+    );
+    fs::write(&manifest, &duplicate).unwrap();
+    reject(&request, "重复 JSON 字段");
+    assert_eq!(fs::read_to_string(&manifest).unwrap(), duplicate);
+
+    let mut missing = binaries.clone();
+    missing.as_object_mut().unwrap().remove("ryframe-reset");
+    let raw = serde_json::to_string(&missing).unwrap();
+    fs::write(&manifest, &raw).unwrap();
+    reject(&request, "字段缺失");
+    assert_eq!(fs::read_to_string(&manifest).unwrap(), raw);
+
+    for (path, expected) in [
+        (json!("relative.exe"), "绝对路径"),
+        (json!(directory.path().join("missing.exe")), "路径不存在"),
+        (json!(directory.path()), "普通文件"),
+    ] {
+        let mut changed = binaries.clone();
+        changed["ryframe-migrate"] = path;
+        let raw = serde_json::to_string(&changed).unwrap();
+        fs::write(&manifest, &raw).unwrap();
+        reject(&request, expected);
+        assert_eq!(fs::read_to_string(&manifest).unwrap(), raw);
+    }
+}
+
+#[test]
 fn native_source_reader_accepts_published_local_pair_and_rejects_rebound_commit() {
     use crate::recovery::{
         clone::native::json as documents, fixture_control::source_pair,

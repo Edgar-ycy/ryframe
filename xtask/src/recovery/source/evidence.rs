@@ -195,6 +195,11 @@ fn dispatch(request: &Value) -> Result<Value> {
         Some("copy-api-environment") => environment::copy_api(args),
         Some("source-inventory") => super::super::clone::native::source::protocol::request(args),
         Some("full-stack-source-evidence") => full_stack_source(args),
+        Some("full-stack-binaries-read") => {
+            documents::exact(args, &["directory"], "全栈二进制清单读取参数")?;
+            let directory = binding::path(&args["directory"])?;
+            crate::recovery::fixture_control::artifact::runtime::read_binaries(&directory)
+        }
         Some("physical-binding") => binding::physical(args),
         Some("lineage-derive") => lineage::derive(args),
         Some("lineage-verify") => lineage::verify(args),

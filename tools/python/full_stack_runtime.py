@@ -7,11 +7,12 @@ import json
 import os
 import re
 import shutil
+import subprocess
 from pathlib import Path
 
+import native_s3_client as native
 from artifact_digests import file_digest
 from process_environment import configured
-from ci_full_stack_resources import read_binaries
 from full_stack_provenance import (
     full_stack_source_evidence,
     register_runtime_evidence,
@@ -66,7 +67,12 @@ def runtime_contract(backend: Path, directory: Path, *, api_config_dir: Path | N
                      worker_config_dir: Path | None = None) -> dict:
     if os.environ.get("APP_ENV") != "test":
         raise ValueError("全栈进程控制要求 APP_ENV=test")
-    binaries = read_binaries(directory)
+    response, _ = native._read_response(*native._invoke(
+        "__source-evidence", {"operation": "full-stack-binaries-read", "write": False,
+            "arguments": {"directory": str(directory)}},
+        subprocess.run, may_write=False,
+    ))
+    binaries = response["value"]
     api_dir = api_config_dir if api_config_dir is not None else directory / "config"
     worker_dir = worker_config_dir if worker_config_dir is not None else directory / "worker-config"
     if (not api_dir.is_absolute() or not worker_dir.is_absolute() or api_dir.name != "config"

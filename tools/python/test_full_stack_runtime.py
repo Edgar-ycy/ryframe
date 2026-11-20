@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import full_stack_runtime as runtime
-from ci_full_stack_resources import BINARIES
+from full_stack_provenance import BINARY_ROLES
 
 
 class RuntimeContractTests(unittest.TestCase):
@@ -36,7 +36,7 @@ class RuntimeContractTests(unittest.TestCase):
         artifacts = self.root / "产物 目录"
         artifacts.mkdir()
         self.binaries = {}
-        for _, name in BINARIES:
+        for name in sorted(BINARY_ROLES):
             path = artifacts / (name + ".exe")
             path.write_bytes(name.encode())
             self.binaries[name] = str(path)
