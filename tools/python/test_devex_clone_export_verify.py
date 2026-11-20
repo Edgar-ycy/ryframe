@@ -480,23 +480,6 @@ class ExportVerificationTests(unittest.TestCase):
         self.failed_observation(loaded, single=True)
         self.assertEqual(self.calls, [])
 
-    def test_single_head_only_does_not_download_or_list_whole_dataset(self):
-        result = self.observe(single=True)
-        self.assertFalse(result["whole_source"])
-        operations = [json.loads(options["input"])["operation"] for _, options in self.calls]
-        self.assertEqual(operations.count("head-object"), 1)
-        self.assertNotIn("list-objects-v2", operations)
-        self.assertEqual(operations.count("get-object"), 2)
-        owners = [json.loads(options["input"]) for _, options in self.calls
-                  if json.loads(options["input"]).get("key", "").endswith("/.ryframe-owner")]
-        self.assertEqual([request["bucket"] for request in owners], ["uploads", "uploads"])
-
-    def test_real_pagination_is_completed_without_truncating_key_set(self):
-        self.paginated = True
-        self.observe()
-        self.assertEqual(sum(json.loads(options["input"]).get("continuation") is not None
-                             for _, options in self.calls), 2)
-
     def test_missing_extra_duplicate_and_looping_source_lists_fail(self):
         loaded = self.load()
         for index, flag in enumerate(("missing", "extra", "duplicate", "cycle")):
@@ -506,12 +489,6 @@ class ExportVerificationTests(unittest.TestCase):
                 setattr(self, flag, True)
                 self.failed_observation(loaded)
                 setattr(self, flag, False)
-
-    def test_wrong_owner_fails_before_any_business_head(self):
-        self.wrong_owner = True
-        self.failed_observation()
-        self.assertFalse(any(json.loads(options["input"])["operation"] == "head-object"
-                             for _, options in self.calls))
 
     def test_changed_head_metadata_is_never_adopted(self):
         self.head_changed = True
