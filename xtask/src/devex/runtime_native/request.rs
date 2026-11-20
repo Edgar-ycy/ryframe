@@ -13,8 +13,19 @@ use reqwest::{
     header::{HeaderMap, HeaderValue},
 };
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, time::Duration};
+use std::{
+    collections::BTreeMap,
+    time::{Duration, Instant},
+};
 use url::Url;
+use uuid::{Uuid, Variant};
+
+pub(crate) struct RequestObservation {
+    pub operation: String,
+    pub status: Option<u16>,
+    pub duration_ms: f64,
+    pub request_id: Option<Uuid>,
+}
 
 pub(crate) struct Session<'a> {
     config: &'a Value,
@@ -24,6 +35,7 @@ pub(crate) struct Session<'a> {
     token: Option<String>,
     client: Client,
     pub requests: u64,
+    pub observations: Vec<RequestObservation>,
     samples: Option<&'a Samples>,
 }
 
@@ -65,6 +77,7 @@ impl<'a> Session<'a> {
             token: None,
             client,
             requests: 0,
+            observations: Vec::new(),
             samples,
         })
     }
@@ -154,6 +167,9 @@ impl<'a> Session<'a> {
             .before(&self.identity, name, operation, cancel)
             .await?;
         self.requests += 1;
+        let started = Instant::now();
+        let mut status = None;
+        let mut request_id = None;
         let result = cancel
             .during(async {
                 tokio::time::timeout(timeout(self.config)?, async {
@@ -168,6 +184,8 @@ impl<'a> Session<'a> {
                             None,
                         )
                     })?;
+                    status = Some(response.status().as_u16());
+                    request_id = response_request_id(response.headers());
                     self.cookies(response.headers())?;
                     if !response.status().is_success() {
                         return Err(Failure::request(
@@ -186,7 +204,15 @@ impl<'a> Session<'a> {
                 .await
                 .map_err(|_| Failure::request("request_timeout", name, None))?
             })
-            .await?;
+            .await;
+        let duration_ms = super::milliseconds(started.elapsed());
+        self.observations.push(RequestObservation {
+            operation: name.into(),
+            status,
+            duration_ms,
+            request_id,
+        });
+        let result = result?;
         if result
             .get("code")
             .is_some_and(|code| code.as_f64() != Some(200.0))
@@ -381,6 +407,24 @@ impl<'a> Session<'a> {
         }
         Ok(())
     }
+}
+
+fn response_request_id(headers: &HeaderMap) -> Option<Uuid> {
+    let values = headers.get_all("x-request-id");
+    let mut values = values.iter();
+    let value = values.next()?.to_str().ok()?;
+    if value.len() != 36 || values.next().is_some() {
+        return None;
+    }
+    let id = Uuid::parse_str(value).ok()?;
+    (id.get_version_num() == 7
+        && id.get_variant() == Variant::RFC4122
+        && id
+            .hyphenated()
+            .encode_lower(&mut Uuid::encode_buffer())
+            .as_bytes()
+            == value.as_bytes())
+    .then_some(id)
 }
 
 fn timeout(config: &Value) -> NativeResult<Duration> {

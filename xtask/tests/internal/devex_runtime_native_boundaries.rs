@@ -115,6 +115,132 @@ fn response_streams_keep_downloads_bounded_and_binary_media_strict() {
 }
 
 #[test]
+fn devex_http_request_evidence_correlates_only_safe_response_metadata() {
+    const ID: &str = "018f5a21-5678-7abc-8def-0123456789ab";
+    const ERROR_ID: &str = "018f5a21-5678-7abc-9def-0123456789ac";
+    const JSON: &str = "Content-Type: application/json\r\n";
+    for login_success in [true, false] {
+        let mut replies = vec![(
+            "200 OK",
+            "Content-Type: application/json\r\nX-Request-Id: 018f5a21-5678-7abc-8def-0123456789ab\r\n",
+            r#"{"code":200}"#,
+        )];
+        let mut expected = vec![("get_auth_csrf", Some(200), Some(ID))];
+        let denied = (
+            "403 Forbidden",
+            "Content-Type: application/json\r\nX-Request-Id: 018f5a21-5678-7abc-9def-0123456789ac\r\n",
+            r#"{"detail":"private-response-body"}"#,
+        );
+        if login_success {
+            replies.extend([
+                ("200 OK", JSON, r#"{"code":200,"data":{"access_token":"private-access-token"}}"#),
+                (
+                    "200 OK",
+                    "Content-Type: application/json\r\nX-Request-Id: private-response-header\r\n",
+                    "private-invalid-json",
+                ),
+                denied,
+                ("invalid", JSON, ""),
+                (
+                    "200 OK",
+                    "Content-Type: application/json\r\nX-Request-Id: 018f5a21-5678-7abc-8def-0123456789ab\r\nX-Request-Id: 018f5a21-5678-7abc-8def-0123456789ab\r\n",
+                    r#"{"code":200}"#,
+                ),
+                (
+                    "204 No Content",
+                    "X-Request-Id: 018F5A21-5678-7ABC-8DEF-0123456789AB\r\n",
+                    "",
+                ),
+            ]);
+            expected.extend([
+                ("post_auth_login", Some(200), None),
+                ("get_list", Some(200), None),
+                ("get_list", Some(403), Some(ERROR_ID)),
+                ("get_list", None, None),
+                ("get_auth_csrf", Some(200), None),
+                ("post_auth_logout", Some(204), None),
+            ]);
+        } else {
+            replies.push(denied);
+            expected.push(("post_auth_login", Some(403), Some(ERROR_ID)));
+        }
+        let (address, calls, server_thread) = server(replies);
+        asynchronous(async {
+            let base = crate::workspace::root_dir().join(".local-tests");
+            fs::create_dir_all(&base).unwrap();
+            let output = tempfile::Builder::new()
+                .prefix("devex-http-evidence-")
+                .tempdir_in(base)
+                .unwrap();
+            let measured = measure_http_fixture(address, output.path()).await;
+            assert_eq!(measured.network_requests, expected.len() as u64);
+            assert_eq!(calls.lock().unwrap().len(), expected.len());
+            assert_eq!(measured.completed_cycles, 0);
+            assert_eq!(measured.failed_cycles, 3);
+            assert_eq!(measured.session_failures, u64::from(!login_success));
+            let evidence = fs::read_to_string(output.path().join("http-requests.jsonl")).unwrap();
+            assert!(!evidence.contains("private-"));
+            assert!(!evidence.contains("file-only-fixture"));
+            assert_eq!(evidence.lines().count(), expected.len());
+            for (index, (line, (operation, status, id))) in
+                evidence.lines().zip(expected).enumerate()
+            {
+                let row: Value = serde_json::from_str(line).unwrap();
+                assert_eq!(row.as_object().unwrap().len(), 7);
+                assert_eq!(row["scenario"], "list");
+                assert_eq!(row["worker"], 0);
+                assert_eq!(row["sequence"], index + 1);
+                assert_eq!(row["operation"], operation);
+                assert_eq!(row["status"], json!(status));
+                assert_eq!(row["request_id"], json!(id));
+                assert!(
+                    row["duration_ms"]
+                        .as_f64()
+                        .is_some_and(|value| value >= 0.0)
+                );
+            }
+        });
+        server_thread.join().unwrap();
+    }
+}
+
+async fn measure_http_fixture(address: String, directory: &Path) -> load::Measurement {
+    let mut config = pool(1);
+    config["contract"]["cycles"] = json!(3);
+    config["contract"]["timeout_ms"] = json!(1000);
+    config["bindings"]["api_url"] = json!(address);
+    config["contract"]["workloads"]["api"][0]["steps"] = json!([{"operation":"get_list"}]);
+    let catalog = BTreeMap::from([
+        (
+            "get_auth_csrf".into(),
+            json!({"method":"GET","path":"/csrf"}),
+        ),
+        (
+            "post_auth_login".into(),
+            json!({"method":"POST","path":"/login"}),
+        ),
+        (
+            "post_auth_logout".into(),
+            json!({"method":"POST","path":"/logout"}),
+        ),
+        ("get_list".into(), json!({"method":"GET","path":"/list"})),
+    ]);
+    let mut input = input(directory);
+    input.concurrency = 1;
+    let pacing = pacer(directory);
+    let cancel = process::Cancellation::default();
+    let mut measured = load::run(&config, &catalog, &input, directory, None, &pacing, &cancel)
+        .await
+        .unwrap();
+    assert!(!directory.join("http-requests.jsonl").exists());
+    measured
+        .finalize(&config, directory, &cancel)
+        .await
+        .unwrap();
+    measured
+}
+
+#[test]
 fn import_manifest_rejects_duplicate_escaped_foreign_and_changed_samples() {
     use crate::devex::import_samples::{
         ImportSampleManifest, ManifestFile, PerformanceRequest, model, model_sha256,

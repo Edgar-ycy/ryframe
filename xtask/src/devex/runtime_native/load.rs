@@ -5,7 +5,7 @@ use super::{
     jobs,
     pacing::Pacing,
     process::Cancellation,
-    request::Session,
+    request::{RequestObservation, Session},
 };
 use futures_util::future::join_all;
 use serde_json::{Value, json};
@@ -52,6 +52,7 @@ pub(crate) struct Pending {
     pub failed: u64,
     pub elapsed: f64,
     pub events: Vec<Value>,
+    pub http_requests: Vec<Vec<RequestObservation>>,
 }
 pub(crate) struct Measurement {
     pub scenarios: BTreeMap<String, Value>,
@@ -120,6 +121,24 @@ impl Measurement {
             }).collect::<Vec<_>>();
             artifacts::append(&directory.join("cycles.jsonl"), &rows)?;
             artifacts::append(&directory.join("session-events.jsonl"), &item.events)?;
+            for (worker, requests) in item.http_requests.iter().enumerate() {
+                let rows: Vec<_> = requests
+                    .iter()
+                    .enumerate()
+                    .map(|(index, row)| {
+                        json!({
+                            "scenario": name,
+                            "worker": worker,
+                            "sequence": index + 1,
+                            "operation": row.operation,
+                            "status": row.status,
+                            "duration_ms": row.duration_ms,
+                            "request_id": row.request_id.map(|id| id.to_string()),
+                        })
+                    })
+                    .collect();
+                artifacts::append(&directory.join("http-requests.jsonl"), &rows)?;
+            }
         }
         if !self.pending.is_empty() {
             self.completed_cycles = self
@@ -193,6 +212,7 @@ pub(crate) async fn run(
                 failed: 0,
                 elapsed: super::milliseconds(started.elapsed()),
                 events: Vec::new(),
+                http_requests: Vec::new(),
             };
             for outcome in outcomes {
                 let outcome = outcome?;
@@ -205,6 +225,7 @@ pub(crate) async fn run(
                     .count() as u64;
                 pending.records.extend(outcome.records);
                 pending.events.extend(outcome.events);
+                pending.http_requests.push(outcome.http_requests);
             }
             result.pending.push(pending);
         }
@@ -234,6 +255,7 @@ struct WorkerResult {
     events: Vec<Value>,
     failed: u64,
     requests: u64,
+    http_requests: Vec<RequestObservation>,
 }
 #[allow(clippy::too_many_arguments)]
 async fn worker_run(
@@ -259,6 +281,7 @@ async fn worker_run(
         events: Vec::new(),
         failed: 0,
         requests: 0,
+        http_requests: Vec::new(),
     };
     let started = Instant::now();
     let login = session.login(pacing, cancel).await;
@@ -269,6 +292,7 @@ async fn worker_run(
         result.events.push(event);
         result.failed = cycles;
         result.requests = session.requests;
+        result.http_requests = session.observations;
         return Ok(result);
     }
     result.events.push(event);
@@ -327,5 +351,6 @@ async fn worker_run(
     }
     result.events.push(event);
     result.requests = session.requests;
+    result.http_requests = session.observations;
     Ok(result)
 }

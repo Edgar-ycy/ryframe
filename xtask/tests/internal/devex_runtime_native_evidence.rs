@@ -29,6 +29,7 @@ fn missing_job_proof_excludes_success_but_preserves_duration_and_redacted_eviden
                     failed: 0,
                     elapsed: 20.0,
                     events: vec![],
+                    http_requests: vec![],
                 },
                 load::Pending {
                     // 缺少业务 ID，不能查询数据库或凭已完成请求认定作业通过。
@@ -38,6 +39,7 @@ fn missing_job_proof_excludes_success_but_preserves_duration_and_redacted_eviden
                     failed: 0,
                     elapsed: 120.0,
                     events: vec![],
+                    http_requests: vec![],
                 },
             ],
         };
