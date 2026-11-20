@@ -1,4 +1,4 @@
-use std::{fs, path::Path};
+use std::{collections::BTreeSet, fs, path::Path};
 
 use super::*;
 use crate::recovery::clone::native::{
@@ -136,36 +136,39 @@ fn run_published_copy(
     plan: &Plan<'_>,
     mode: Mode,
     io: &mut FixtureIo,
-) -> (Value, Value) {
+) -> Result<(Value, Value)> {
     let target_lock = fixture.backend.join(".local-tests/target/initialize.lock");
     let ledger_lock = fixture.copy.join("ledger/clone.lock");
     let attempt = Attempt::new(mode, &fixture.copy);
     let mut published = None;
-    let (_, ledger) = fixture
-        .run_with_publication(
-            mode,
-            |session, owner| {
-                for (role, lock) in [(Role::Target, &target_lock), (Role::Ledger, &ledger_lock)] {
-                    assert_eq!(owner.lock_path(role), lock.as_path());
-                    assert!(lock.is_dir());
-                }
-                run(plan, session, mode, io)
-            },
-            |(outcome, ledger)| {
-                assert!(!target_lock.try_exists()?);
-                assert!(!ledger_lock.try_exists()?);
-                published = Some(attempt.publish_bound(
-                    &fixture.backend,
-                    &fixture.copy,
-                    prepared,
-                    outcome,
-                    ledger,
-                )?);
-                Ok(())
-            },
-        )
-        .unwrap();
-    (published.unwrap(), ledger)
+    let transfer = fixture.run_with_publication(
+        mode,
+        |session, owner| {
+            for (role, lock) in [(Role::Target, &target_lock), (Role::Ledger, &ledger_lock)] {
+                assert_eq!(owner.lock_path(role), lock.as_path());
+                assert!(lock.is_dir());
+            }
+            run(plan, session, mode, io)
+        },
+        |(outcome, ledger)| {
+            assert!(!target_lock.try_exists()?);
+            assert!(!ledger_lock.try_exists()?);
+            published = Some(attempt.publish_bound(
+                &fixture.backend,
+                &fixture.copy,
+                prepared,
+                outcome,
+                ledger,
+            )?);
+            Ok(())
+        },
+    );
+    if transfer.is_err() {
+        assert!(!target_lock.try_exists()?);
+        assert!(!ledger_lock.try_exists()?);
+    }
+    let (_, ledger) = attempt.failure(&fixture.backend, &fixture.copy, transfer, "transfer")?;
+    Ok((published.unwrap(), ledger))
 }
 
 #[test]
@@ -184,7 +187,8 @@ fn completed_copy_reconciles_and_resumes_without_rewriting_original_result() {
     ];
     let ledger = fixture.copy.join("ledger");
     let journal = ledger.join("events.ndjson");
-    let (first, first_ledger) = run_published_copy(&fixture, &prepared, &plan, Mode::New, &mut io);
+    let (first, first_ledger) =
+        run_published_copy(&fixture, &prepared, &plan, Mode::New, &mut io).unwrap();
     assert_eq!(first["status"], "data_steps_verified");
     assert_eq!(first["written_steps"], 3);
     assert_eq!(first["unchanged_databases"], 2);
@@ -224,7 +228,8 @@ fn completed_copy_reconciles_and_resumes_without_rewriting_original_result() {
     assert!(error.to_string().contains("必须先显式核对"));
     assert_eq!(fs::read(&journal).unwrap(), prefix);
     check(Mode::Reconcile).unwrap();
-    let (reconciled, _) = run_published_copy(&fixture, &prepared, &plan, Mode::Reconcile, &mut io);
+    let (reconciled, _) =
+        run_published_copy(&fixture, &prepared, &plan, Mode::Reconcile, &mut io).unwrap();
     assert_eq!(reconciled["status"], "copy_reconciled");
     assert_eq!(reconciled["remote_writes"], 0);
     assert_eq!(io.writes, expected_writes);
@@ -233,7 +238,7 @@ fn completed_copy_reconciles_and_resumes_without_rewriting_original_result() {
 
     check(Mode::Resume).unwrap();
     let (mut resumed, completed) =
-        run_published_copy(&fixture, &prepared, &plan, Mode::Resume, &mut io);
+        run_published_copy(&fixture, &prepared, &plan, Mode::Resume, &mut io).unwrap();
     assert_ne!(
         resumed
             .as_object_mut()
@@ -256,6 +261,90 @@ fn completed_copy_reconciles_and_resumes_without_rewriting_original_result() {
     }
     assert_eq!(io.complete_checks, 2);
     let _ = assert_preserved(&prefix);
+}
+
+#[test]
+fn lost_database_commit_is_reconciled_and_not_dispatched_again_on_resume() {
+    let fixture = Fixture::new();
+    let mut declaration = four_database_declaration(1);
+    declaration["pending_target_actions"] = json!([]);
+    let prepared = Prepared::from_test_session(&fixture.copy, declaration).unwrap();
+    let plan = Plan::from_verified(&prepared.plan).unwrap();
+    let mut io = FixtureIo::new(&plan);
+    database_writes(&mut io, &plan.databases[..2]);
+    let first = &plan.databases[0].id;
+    let after = io.bases[first]["after"].clone();
+    io.stop_at = Some(first.clone());
+    io.failed_database_image = Some(after.clone());
+    let error = run_published_copy(&fixture, &prepared, &plan, Mode::New, &mut io).unwrap_err();
+    assert_eq!(error.to_string(), "复制进程结束，资源写入结果未知");
+    assert_eq!(io.writes.as_slice(), std::slice::from_ref(first));
+    assert_eq!(io.current[first], after);
+    io.stop_at = None;
+
+    let ledger = fixture.copy.join("ledger");
+    let result_path = fixture.copy.join("result.json");
+    let failure_path = fixture.copy.join("failure.json");
+    let paths = [
+        &failure_path,
+        &ledger.join("events.ndjson"),
+        &ledger.join("head.json"),
+    ];
+    let original = paths.map(|path| fs::read(path).unwrap());
+    let failure: Value = serde_json::from_slice(&original[0]).unwrap();
+    assert_eq!(failure["phase"], "transfer");
+    assert_eq!(failure["status"], "needs_reconciliation");
+    assert_eq!(failure["automatic_retry"], false);
+    let check = |mode| {
+        check_continuation(
+            &fixture.backend,
+            &ledger,
+            prepared.record["plan_sha256"].as_str().unwrap(),
+            prepared.record["generation_sha256"].as_str().unwrap(),
+            mode,
+        )
+    };
+    let error = check(Mode::Resume).unwrap_err();
+    assert!(error.to_string().contains("必须先显式核对"));
+    assert_eq!(paths.map(|path| fs::read(path).unwrap()), original);
+    assert_eq!(io.writes.as_slice(), std::slice::from_ref(first));
+
+    check(Mode::Reconcile).unwrap();
+    let (reconciled, reconciled_ledger) =
+        run_published_copy(&fixture, &prepared, &plan, Mode::Reconcile, &mut io).unwrap();
+    assert_eq!(reconciled["status"], "copy_reconciled");
+    assert_eq!(reconciled["remote_writes"], 0);
+    assert_eq!(reconciled["steps"].as_object().unwrap().len(), 1);
+    assert_eq!(reconciled["steps"][first], "confirmed");
+    assert_eq!(reconciled_ledger["steps"][first]["attempt"], 1);
+    let pending = plan
+        .all()
+        .filter(|step| &step.id != first)
+        .map(|step| &step.id)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(reconciled["pending_steps"], json!(pending));
+    assert_eq!(io.writes.as_slice(), std::slice::from_ref(first));
+    assert_eq!(io.complete_checks, 0);
+    assert!(!result_path.exists());
+    assert_eq!(completion_count(&ledger), 0);
+    assert_eq!(fs::read(&failure_path).unwrap(), original[0]);
+
+    check(Mode::Resume).unwrap();
+    let (_, completed) =
+        run_published_copy(&fixture, &prepared, &plan, Mode::Resume, &mut io).unwrap();
+    let second = &plan.databases[1].id;
+    let object = &plan.objects[0].id;
+    assert_eq!(io.writes, [first.clone(), second.clone(), object.clone()]);
+    assert_eq!(io.complete_checks, 1);
+    assert_eq!(completed["status"], "ledger_evidence_complete");
+    assert_eq!(completed["steps"][first]["phase"], "confirmed");
+    assert_eq!(completed["steps"][first]["attempt"], 1);
+    let saved: Value = serde_json::from_slice(&fs::read(result_path).unwrap()).unwrap();
+    assert_eq!(saved["status"], "data_steps_verified");
+    assert_eq!(saved["written_steps"], 3);
+    assert_eq!(saved["target_ready"], false);
+    assert_eq!(saved["restore_success"], false);
+    assert_eq!(fs::read(&failure_path).unwrap(), original[0]);
 }
 
 fn reject_incomplete_phase(

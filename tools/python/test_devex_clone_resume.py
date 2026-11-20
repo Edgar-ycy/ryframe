@@ -37,22 +37,6 @@ class ResumeTests(unittest.TestCase):
         self.case.case.runner.failure = None
         return len(self.case.case.writes())
 
-    def test_lost_commit_requires_reconciliation_and_does_not_repeat_confirmed_write(self):
-        self.interrupted()
-        with self.assertRaises(LedgerError):
-            self.continue_copy("resume")
-        self.assertEqual(len(self.case.case.writes()), 1)
-        before = (self.output / "failure.json").read_bytes()
-        reconciled = self.continue_copy("reconcile")
-        self.assertEqual(set(reconciled["steps"].values()), {"confirmed"})
-        self.assertEqual(len(self.case.case.writes()), 1)
-        result = self.continue_copy("resume")
-        self.assertEqual(result["status"], "data_steps_verified")
-        self.assertEqual(len(self.case.case.writes()), 3)
-        self.assertEqual((self.output / "failure.json").read_bytes(), before)
-        self.assertFalse(result["target_ready"])
-        self.assertFalse(result["restore_success"])
-
     def test_reconciled_before_image_gets_one_explicit_new_attempt(self):
         self.interrupted("before-commit")
         reconciled = self.continue_copy("reconcile")
