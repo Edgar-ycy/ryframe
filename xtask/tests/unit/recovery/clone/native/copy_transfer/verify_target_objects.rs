@@ -197,6 +197,25 @@ impl Fake {
         }
         assert_eq!(self.active.load(Ordering::SeqCst), 0);
     }
+
+    fn list(&self, bucket: &str, prefix: &str, continuation: Option<&str>) -> Result<Value> {
+        assert!(self.finalizing);
+        assert_eq!(prefix, format!("{SCOPE}/"));
+        assert!(continuation.is_none());
+        self.lists.lock().unwrap().push(bucket.to_owned());
+        let mut entries = vec![json!({"Key":format!("{SCOPE}/.ryframe-owner")})];
+        if bucket == BUCKET {
+            if let Some(marker) = &self.observation_failure_in_listing {
+                self.assert_head_calls(self.objects);
+                record_observation_failure(marker)?;
+            }
+            entries.extend((0..self.objects).map(|index| json!({"Key":key(index)})));
+            if self.fault == Fault::ExtraKey {
+                entries.push(json!({"Key":format!("{SCOPE}/extra")}));
+            }
+        }
+        Ok(json!({"IsTruncated":false,"Contents":entries}))
+    }
 }
 
 impl Transport for Fake {
@@ -259,24 +278,7 @@ impl Transport for Fake {
             Operation::List {
                 prefix,
                 continuation,
-            } => {
-                assert!(self.finalizing);
-                assert_eq!(prefix, format!("{SCOPE}/"));
-                assert!(continuation.is_none());
-                self.lists.lock().unwrap().push(request.bucket.clone());
-                let mut entries = vec![json!({"Key":format!("{SCOPE}/.ryframe-owner")})];
-                if request.bucket == BUCKET {
-                    if let Some(marker) = &self.observation_failure_in_listing {
-                        self.assert_head_calls(self.objects);
-                        record_observation_failure(marker)?;
-                    }
-                    entries.extend((0..self.objects).map(|index| json!({"Key":key(index)})));
-                    if self.fault == Fault::ExtraKey {
-                        entries.push(json!({"Key":format!("{SCOPE}/extra")}));
-                    }
-                }
-                Ok(json!({"IsTruncated":false,"Contents":entries}))
-            }
+            } => self.list(&request.bucket, &prefix, continuation.as_deref()),
             Operation::Get {
                 key: target,
                 destination,

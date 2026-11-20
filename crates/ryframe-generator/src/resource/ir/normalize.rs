@@ -87,17 +87,7 @@ pub(in crate::resource) fn normalize(
         false,
     )?;
 
-    let mut indexes = spec
-        .database
-        .indexes
-        .into_iter()
-        .map(|index| IndexIr {
-            name: index.name,
-            fields: index.fields,
-            unique: index.unique,
-        })
-        .collect::<Vec<_>>();
-    indexes.sort_by(|left, right| left.name.cmp(&right.name));
+    let indexes = normalize_indexes(spec.database.indexes);
 
     Ok(ResourceIr {
         schema_version: spec.schema_version,
@@ -159,6 +149,20 @@ pub(in crate::resource) fn normalize(
         source_path,
         source_hash,
     })
+}
+
+fn normalize_indexes(spec: Vec<super::IndexSpec>) -> Vec<IndexIr> {
+    let mut indexes = spec
+        .into_iter()
+        .map(|index| IndexIr {
+            name: index.name,
+            fields: index.fields,
+            unique: index.unique,
+        })
+        .collect::<Vec<_>>();
+    indexes.sort_by(|left, right| left.name.cmp(&right.name));
+
+    indexes
 }
 
 fn normalize_relations(spec: &[super::RelationSpec]) -> Vec<RelationIr> {

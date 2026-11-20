@@ -186,41 +186,6 @@ fn parses_check_task_graph_and_internal_groups() {
             Command::Check(CheckCommand::Ci(operation))
         );
     }
-    assert_eq!(
-        parse_command(&[
-            "check",
-            "ci",
-            "rust-gate",
-            "--frontend-ref",
-            "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
-            "--profile",
-            "windows-smoke",
-            "--test-jobs",
-            "4",
-        ])
-        .unwrap(),
-        Command::Check(CheckCommand::Ci(CiCommand::RustGate(
-            crate::cli::RustGateOptions {
-                frontend_ref: Some("cccccccccccccccccccccccccccccccccccccccc".to_owned()),
-                profile: Some("windows-smoke".to_owned()),
-                test_jobs: Some(4),
-                ..Default::default()
-            }
-        )))
-    );
-    for arguments in [
-        ["--test-jobs", "0"].as_slice(),
-        ["--jobs", "1"].as_slice(),
-        ["--jobs", "0"].as_slice(),
-        ["--jobs", "65"].as_slice(),
-        ["--target-dir", "relative-target"].as_slice(),
-        ["--jobs", "6", "--jobs", "4"].as_slice(),
-        ["--plan", "--plan"].as_slice(),
-        ["--profile", "windows-smoke", "--plan"].as_slice(),
-    ] {
-        let command = [&["check", "ci", "rust-gate"], arguments].concat();
-        assert!(parse_command(&command).is_err(), "{arguments:?}");
-    }
     let candidate = std::env::current_dir()
         .unwrap()
         .join("candidate-openapi.json");
@@ -1008,3 +973,5 @@ fn rejects_ambiguous_global_or_value_arguments() {
 
 #[path = "cli_resource_gate.rs"]
 mod resource_gate_options;
+#[path = "cli_rust_gate.rs"]
+mod rust_gate_options;
