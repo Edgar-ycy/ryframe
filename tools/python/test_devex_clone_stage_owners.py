@@ -49,8 +49,10 @@ class StageOwnersTests(unittest.TestCase):
         self.assertEqual([request['bucket'] for request in requests], sorted(BUCKETS))
         self.assertTrue(all(request['key'] == 'clone-target/.ryframe-owner' for request in requests))
         self.assertTrue(all(request['scope_id'] == 'clone-target' for request in requests))
-        self.assertTrue(all(request['configuration'] == self.case.target_request['target']['s3']
-                            for request in requests))
+        binding = self.case.case.tools.plan['target']['s3']['configuration']
+        for request in requests:
+            self.assertEqual(request['configuration_binding'], binding)
+            self.assertNotIn('configuration', request)
         value = json.loads((directory / 'verified.json').read_text(encoding='utf-8'))
         self.assertEqual(value['status'], 'target_owners_verified')
         self.assertEqual(value['scope_id'], 'clone-target')
