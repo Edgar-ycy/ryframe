@@ -259,6 +259,7 @@ fn verify_endpoints(request: &Value, runtime: &Value) -> NativeResult<()> {
         .strip_suffix("/readyz")
         .ok_or_else(|| Failure::new(RUNTIME_ENDPOINTS))?;
     let metrics = &request["metrics_urls"];
+    let api_metrics_path = "/api/v1/monitor/metrics";
     strict::exact(metrics, &["api", "worker"], "DevEx 指标端点")
         .map_err(|_| Failure::new(RUNTIME_ENDPOINTS))?;
     if !request["scope_id"]
@@ -267,7 +268,7 @@ fn verify_endpoints(request: &Value, runtime: &Value) -> NativeResult<()> {
         || request["scope_id"] != runtime["restore"]["scope_id"]
         || endpoint(&request["api_url"], "")? != api
         || endpoint(&request["frontend_url"], "")? != endpoint(&ready["frontend"], "")?
-        || endpoint(&metrics["api"], "/metrics")? != format!("{api}/metrics")
+        || endpoint(&metrics["api"], api_metrics_path)? != format!("{api}{api_metrics_path}")
         || endpoint(&metrics["worker"], "/metrics")? != format!("{worker}/metrics")
     {
         return Err(Failure::new(RUNTIME_ENDPOINTS));
@@ -337,7 +338,7 @@ mod tests {
                     "backend":fingerprint,"frontend":fingerprint,"runner_frontend":fingerprint,
                 },
                 "api_url":"http://127.0.0.1:80","frontend_url":"http://127.0.0.1:4173",
-                "metrics_urls":{"api":"http://127.0.0.1:80/metrics","worker":"https://[::1]:443/metrics"},
+                "metrics_urls":{"api":"http://127.0.0.1:80/api/v1/monitor/metrics","worker":"https://[::1]:443/metrics"},
                 "environment_sha256":artifacts::sha(&fs::read(&environment).unwrap()),"provenance":provenance,
             });
             Self {
@@ -391,9 +392,15 @@ mod tests {
         request = fixture.request.clone();
         request["backend"] = request["driver"].clone();
         assert_eq!(category(&request), RUNTIME_ROOTS);
-        request = fixture.request.clone();
-        request["metrics_urls"]["api"] = json!("http://127.0.0.1:80/api/v1/monitor/metrics");
-        assert_eq!(category(&request), RUNTIME_ENDPOINTS);
+        for (role, url) in [
+            ("api", "http://127.0.0.1:80/metrics"),
+            ("api", "http://127.0.0.1:8080/api/v1/monitor/metrics"),
+            ("worker", "https://[::1]:443/api/v1/monitor/metrics"),
+        ] {
+            request = fixture.request.clone();
+            request["metrics_urls"][role] = json!(url);
+            assert_eq!(category(&request), RUNTIME_ENDPOINTS, "{role}: {url}");
+        }
         request = fixture.request;
         request["scope_id"] = json!("foreign-scope");
         assert_eq!(category(&request), RUNTIME_ENDPOINTS);

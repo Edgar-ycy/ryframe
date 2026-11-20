@@ -83,7 +83,7 @@ fn source_request_is_frozen_and_excludes_the_retired_interpreter() {
     let mut config = json!({"contract":{"environment_sha256":"b".repeat(64)},"bindings":{
         "scope_id":"provenance-fixture","source_fingerprints":input.source_fingerprints,
         "api_url":"http://127.0.0.1:18080","frontend_url":"http://127.0.0.1:4174",
-        "metrics_urls":{"api":"http://127.0.0.1:18080/metrics","worker":"http://127.0.0.1:18081/metrics"},
+        "metrics_urls":{"api":"http://127.0.0.1:18080/api/v1/monitor/metrics","worker":"http://127.0.0.1:18081/metrics"},
         "provenance":{"runtime_receipt":descriptor,"target_plan":descriptor,
             "runtime_registration":descriptor,"runtime_launch":descriptor,
             "environment_document":directory.path().join("environment.json")}}});
