@@ -200,6 +200,11 @@ fn derive(target: &Path, table: &mut toml::Table, maintenance: &Value) -> Result
 fn publish(directory: &Path, bytes: &[u8]) -> Result<()> {
     crate::ci::databases::files::private_directory(directory)
         .map_err(|_| "reset 私有目录权限建立失败；不写明文，不继续写资源")?;
+    // Windows 原子发布直接使用 Win32 路径，暂存文件与目标须使用同一个扩展长度目录。
+    #[cfg(windows)]
+    let native_directory = PathBuf::from(common::windows_path(directory)?);
+    #[cfg(windows)]
+    let directory = native_directory.as_path();
     let mut staged = tempfile::NamedTempFile::new_in(directory)?;
     staged.write_all(bytes)?;
     staged.flush()?;
