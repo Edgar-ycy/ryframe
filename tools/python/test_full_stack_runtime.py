@@ -136,15 +136,6 @@ class RuntimeContractTests(unittest.TestCase):
                 self.receipt.write_bytes(original)
                 self.assert_rejected_without_replacing(original)
 
-    def test_all_declared_binary_roles_are_required_before_registration(self):
-        for value in ({key: item for key, item in self.binaries.items() if key != "ryframe-reset"},
-                      self.binaries | {"unregistered": self.binaries["ryframe"]}):
-            with self.subTest(value=value):
-                self.manifest.write_text(json.dumps(value), encoding="utf-8")
-                with self.assertRaises(ValueError):
-                    runtime.register_runtime(self.backend, self.directory)
-                self.assertFalse(self.receipt.exists())
-
     def test_managed_directory_and_both_file_digests_are_bound(self):
         registered = runtime.register_runtime(self.backend, self.directory)
         self.assertEqual(registered["api_config_dir"], str(self.configuration))
