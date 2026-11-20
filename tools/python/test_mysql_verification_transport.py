@@ -63,13 +63,17 @@ class MysqlVerificationTransportTests(unittest.TestCase):
 
     def test_business_sql_keeps_stdin_and_never_places_secret_in_argv(self):
         sql = "START TRANSACTION; INSERT INTO `sys_post` (`name`) VALUES ('私密 business-secret'); COMMIT;\n"
-        self.tools.mysql(self.database, sql)
-        command, options = self.run.call_args.args[0], self.run.call_args.kwargs
-        self.assertNotIn("--execute", command)
-        self.assertNotIn("business-secret", " ".join(command))
-        self.assertEqual(options["input"], sql.encode("utf-8"))
-        self.assertNotIn("stdin", options)
-        self.assertEqual(self.run.call_count, 1)
+        payload = sql.encode("utf-8")
+        for data in (sql, payload):
+            with self.subTest(type=type(data).__name__):
+                self.run.reset_mock()
+                self.tools.mysql(self.database, data)
+                command, options = self.run.call_args.args[0], self.run.call_args.kwargs
+                self.assertNotIn("--execute", command)
+                self.assertNotIn("business-secret", " ".join(command))
+                self.assertEqual(options["input"], payload)
+                self.assertNotIn("stdin", options)
+                self.assertEqual(self.run.call_count, 1)
 
     def test_fixed_query_method_does_not_delegate_to_business_stdin(self):
         self.tools.mysql = Mock(side_effect=AssertionError("不能回退到 stdin"))
@@ -165,9 +169,12 @@ class MysqlVerificationTransportTests(unittest.TestCase):
             self.tools.database_verification_response(self.database, "ownership")
         self.assertEqual(self.run.call_count, 1)
 
-    def test_bad_business_sql_type_does_not_turn_into_argv(self):
-        with self.assertRaises(AttributeError):
-            self.tools.mysql(self.database, None)
+    def test_bad_business_sql_type_is_rejected_before_command_creation(self):
+        with patch.object(self.tools, "_mysql_command") as command:
+            for value in (None, 1, bytearray(b"not-sql")):
+                with self.subTest(type=type(value).__name__), self.assertRaises(TypeError):
+                    self.tools.mysql(self.database, value)
+            command.assert_not_called()
         self.run.assert_not_called()
 
     def test_shared_command_rejects_changed_defaults_before_both_transports(self):

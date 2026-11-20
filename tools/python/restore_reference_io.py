@@ -233,8 +233,10 @@ class ExternalTools:
         return command, self.mysql_environment()
 
     def mysql(self, database: dict, sql: str | bytes) -> str:
+        if not isinstance(sql, (str, bytes)):
+            raise TypeError("MySQL 业务 SQL 必须为字符串或字节")
         command, environment = self._mysql_command(database)
-        result = self.execute(command, data=sql.encode() if isinstance(sql, str) else sql, env=environment)
+        result = self.execute(command, data=sql.encode("utf-8") if isinstance(sql, str) else sql, env=environment)
         return result.stdout.decode("utf-8").strip()
 
     @staticmethod
