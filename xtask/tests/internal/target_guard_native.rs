@@ -107,24 +107,24 @@ fn release_failure_keeps_unknown_files_and_preserves_the_primary_error() {
 }
 
 #[test]
-fn target_tree_matches_python_for_unicode_files_and_empty_directories() {
+fn target_tree_preserves_unicode_paths_and_empty_directories() {
     let fixture = Fixture::new();
     fs::create_dir(fixture.target.join("空目录")).unwrap();
     fs::create_dir(fixture.target.join("中文 空格")).unwrap();
     fs::write(fixture.target.join("中文 空格/receipt.json"), b"{}\n").unwrap();
     let actual = tree::snapshot(&fixture.backend, &fixture.target, false).unwrap();
-    let output = std::process::Command::new(crate::check::consumer_context::python::selected_program(&workspace::root_dir()).unwrap())
-        .args(["-X", "utf8", "-B", "-c", "import json,sys; from pathlib import Path; from devex_clone_target_binding import target_files; print(json.dumps(target_files(Path(sys.argv[1]))))"])
-        .arg(&fixture.target).env("PYTHONPATH", fixture.backend.join("tools/python"))
-        .output().unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
     assert_eq!(
         actual,
-        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+        serde_json::json!([
+            { "path": "中文 空格", "type": "directory" },
+            {
+                "path": "中文 空格/receipt.json",
+                "type": "file",
+                "bytes": 3,
+                "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+            },
+            { "path": "空目录", "type": "directory" }
+        ])
     );
     let files = tree::files(&fixture.target, &actual).unwrap();
     assert_eq!(files, [fixture.target.join("中文 空格/receipt.json")]);
