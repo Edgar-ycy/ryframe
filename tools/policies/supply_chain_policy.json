@@ -175,7 +175,7 @@
       "workflow": "extended-ci.yml",
       "job": "full-stack-e2e",
       "service": "rustfs",
-      "image": "ghcr.io/rustfs/rustfs:1.0.0-rc.5-glibc@sha256:65fdebfd6cf628f66747f0aacb2c5d531bd634f39e382c6ef07142dbc3313876"
+      "image": "ghcr.io/rustfs/rustfs:1.0.5-glibc@sha256:f9697e5401145bc3bc3926ea0ab3b39b0dabf8a4e8c28b125dde62cf264350e7"
     }
   ],
   "vulnerability_gate": {

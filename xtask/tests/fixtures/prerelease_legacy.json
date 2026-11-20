@@ -2902,12 +2902,6 @@
       "name": "sea-orm-arrow",
       "version": "2.0.0-rc.5",
       "source": "Cargo.lock"
-    },
-    {
-      "ecosystem": "container",
-      "name": "ghcr.io/rustfs/rustfs",
-      "version": "1.0.0-rc.5-glibc",
-      "source": ".github/workflows/extended-ci.yml"
     }
   ]
 }

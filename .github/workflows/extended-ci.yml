@@ -108,7 +108,7 @@ jobs:
       CARGO_TARGET_DIR: ${{ github.workspace }}/target/ci/full-stack/backend
     services:
       rustfs:
-        image: ghcr.io/rustfs/rustfs:1.0.0-rc.5-glibc@sha256:65fdebfd6cf628f66747f0aacb2c5d531bd634f39e382c6ef07142dbc3313876
+        image: ghcr.io/rustfs/rustfs:1.0.5-glibc@sha256:f9697e5401145bc3bc3926ea0ab3b39b0dabf8a4e8c28b125dde62cf264350e7
         env:
           RUSTFS_ACCESS_KEY: ryframe-ci-access
           RUSTFS_SECRET_KEY: ryframe-ci-isolated-storage-secret
