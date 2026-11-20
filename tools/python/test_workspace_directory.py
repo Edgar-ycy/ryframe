@@ -100,33 +100,42 @@ class WorkspaceDirectoryTests(unittest.TestCase):
             parked = outer / "parked"
             error = PermissionError("模拟只读文件删除失败")
 
-            def replace_and_retry(*_args, **kwargs):
+            # 仅切换被测模块的分支，Path 和实际链接仍使用宿主文件系统。
+            filesystem = mock.Mock(wraps=os)
+            filesystem.name = "nt"
+            filesystem.path = os.path
+            filesystem.chmod = mock.Mock()
+            filesystem.unlink = mock.Mock()
+
+            def replace():
                 original.rename(parked)
                 self._link_directory(original, external)
-                if during_cleanup:
-                    kwargs["onerror"](os.unlink, str(victim), (PermissionError, error, None))
+
+            def replace_and_retry(_path, *, onerror):
+                replace()
+                onerror(filesystem.unlink, str(victim), (PermissionError, error, None))
 
             try:
                 if not during_cleanup:
-                    replace_and_retry()
-                with mock.patch("workspace_directory.os.chmod") as chmod:
-                    with self.assertRaises(OSError):
-                        if during_cleanup and os.name == "nt":
-                            with mock.patch(
-                                "workspace_directory.shutil.rmtree", side_effect=replace_and_retry
-                            ):
-                                temporary.cleanup()
-                        elif not during_cleanup and os.name == "nt":
-                            with mock.patch(
-                                "workspace_directory.shutil.rmtree",
-                                side_effect=AssertionError("拒绝链接前不得递归删除"),
-                            ):
-                                temporary.cleanup()
-                        else:
-                            if during_cleanup:
-                                replace_and_retry()
-                            temporary._checked_cleanup_path(victim)
-                    chmod.assert_not_called()
+                    replace()
+                effect = replace_and_retry if during_cleanup else AssertionError(
+                    "拒绝链接前不得递归删除"
+                )
+                with mock.patch("workspace_directory.os", filesystem), mock.patch(
+                    "workspace_directory.shutil.rmtree", side_effect=effect
+                ) as remove:
+                    with self.assertRaisesRegex(
+                        PermissionError, "拒绝清理包含链接或重解析点的路径"
+                    ):
+                        temporary.cleanup()
+                    if during_cleanup:
+                        remove.assert_called_once_with(
+                            temporary.path, onerror=temporary._retry_readonly_file
+                        )
+                    else:
+                        remove.assert_not_called()
+                    filesystem.chmod.assert_not_called()
+                    filesystem.unlink.assert_not_called()
                 self.assertEqual(sentinel.read_bytes(), b"git-object-sentinel")
                 after = sentinel.lstat()
                 self.assertEqual(after.st_mode, before.st_mode)
