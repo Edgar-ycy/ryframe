@@ -219,6 +219,7 @@ fn to_record(model: entity::Model) -> NoticeRecord {
         del_flag: model.del_flag,
         created_at: model.created_at,
         updated_at: model.updated_at,
+        revision: model.revision,
     }
 }
 
@@ -234,5 +235,6 @@ fn to_entity(record: NoticeRecord) -> entity::Model {
         del_flag: record.del_flag,
         created_at: record.created_at,
         updated_at: record.updated_at,
+        revision: record.revision,
     }
 }

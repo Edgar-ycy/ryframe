@@ -190,7 +190,7 @@ fn control_schema_contains_fresh_baseline_and_password_upgrade() {
     assert_eq!(actual_names, expected_names);
     assert_eq!(
         migrations.len(),
-        3 + ryframe_db::generated::migrations().len()
+        4 + ryframe_db::generated::migrations().len()
     );
     assert_eq!(CONTROL_MIGRATION_LEDGER, "seaql_migrations");
     assert_eq!(migrations[0].name(), "m20260820_000000_control_baseline");
@@ -199,6 +199,7 @@ fn control_schema_contains_fresh_baseline_and_password_upgrade() {
         migrations[2].name(),
         "m20261017_000000_data_scope_projection"
     );
+    assert_eq!(migrations[3].name(), "m20261120_072911_notice_revision");
 }
 
 #[test]
@@ -312,8 +313,12 @@ fn baseline_table_set_and_schema_fingerprint_are_stable() {
     tables.dedup();
     assert_eq!(tables.len(), count);
     assert_eq!(count, 49);
-    assert_eq!(schema_fingerprint(), "3f5f39d1b9783bb1");
+    let notice = control_ddl_statements()
+        .find(|statement| statement.starts_with("CREATE TABLE IF NOT EXISTS `sys_notice`"))
+        .unwrap();
+    assert!(!notice.contains("`revision`"));
+    assert_eq!(schema_fingerprint(), "a80d395f2a485c22");
     let snapshot = mysql_snapshot_sql();
-    assert!(snapshot.contains("schema fingerprint: 3f5f39d1b9783bb1"));
+    assert!(snapshot.contains("schema fingerprint: a80d395f2a485c22"));
     assert_eq!(snapshot.matches("CREATE TABLE IF NOT EXISTS").count(), 49);
 }

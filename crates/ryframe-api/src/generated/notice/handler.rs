@@ -132,7 +132,7 @@ pub async fn create(
     tag = "通知公告",
     params(("id" = String, Path)),
     request_body = UpdateNoticeDto,
-    responses((status = 200, description = "更新成功", body = ApiResponse<NoticeVo>)),
+    responses((status = 200, description = "更新成功", body = ApiResponse<NoticeVo>), (status = 409, description = "记录版本冲突")),
     security(("bearer" = []))
 )]
 pub async fn update(

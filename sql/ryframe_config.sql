@@ -1,5 +1,5 @@
 -- 自动生成文件：RyFrame 控制库新基线快照。
--- schema fingerprint: 3f5f39d1b9783bb1
+-- schema fingerprint: a80d395f2a485c22
 -- 唯一事实来源：ryframe-db::migration Migrator 与 Seeder。
 -- 仅供审阅：部署和重置工具不得执行此文件。
 -- 重新生成命令：cargo run --locked -p ryframe-db --features migration --bin export_mysql_snapshot -- sql/ryframe_config.sql
@@ -1199,6 +1199,8 @@ ALTER TABLE `sys_user`
     ADD CONSTRAINT `fk_user_avatar_file`
     FOREIGN KEY (`avatar_file_id`) REFERENCES `sys_file` (`id`)
     ON UPDATE CASCADE ON DELETE RESTRICT;
+
+ALTER TABLE `sys_notice` ADD COLUMN `revision` BIGINT UNSIGNED NOT NULL DEFAULT 1;
 
 -- 幂等初始化数据；此审阅快照不用于部署初始化。
 

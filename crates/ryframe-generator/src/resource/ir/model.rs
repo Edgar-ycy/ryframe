@@ -138,6 +138,8 @@ pub struct ResourceIr {
     pub bootstrap_migration: bool,
     pub schema_hash: String,
     pub schema_revision: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision_field: Option<String>,
     pub indexes: Vec<IndexIr>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub foreign_keys: Vec<super::super::ForeignKeySpec>,

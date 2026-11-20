@@ -1,6 +1,7 @@
 use super::{bootstrap_hashes, db_error, execute, require_count, run_mysql_test};
 use ryframe_db::migration;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm_migration::MigratorTrait;
 
 #[path = "initialization_data.rs"]
 mod data;
@@ -46,6 +47,35 @@ async fn sql_import_and_migrations_produce_equivalent_control_databases() {
         })
         .await;
         Ok(())
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn notice_revision_migration_preserves_rows_from_the_frozen_control_prefix() {
+    run_mysql_test("notice-revision-upgrade", |database| async move {
+        migration::Migrator::up(&database, Some(3)).await.map_err(db_error)?;
+        migration::seed(&database, Some(&bootstrap_hashes())).await.map_err(db_error)?;
+        execute(
+            &database,
+            "INSERT INTO sys_notice(id,title,content) VALUES(34001,'保留标题','保留正文')",
+        )
+        .await?;
+
+        let before = migration::status(&database).await.map_err(db_error)?;
+        assert_eq!(before.missing, ["m20261120_072911_notice_revision"]);
+        assert!(before.unexpected.is_empty());
+        let missing = migration::verify_current_schema(&database).await.unwrap_err();
+        assert!(missing.to_string().contains("missing column sys_notice.revision"));
+
+        migration::up(&database, None).await.map_err(db_error)?;
+        migration::verify(&database).await.map_err(db_error)?;
+        require_count(
+            &database,
+            "SELECT COUNT(*) AS value FROM sys_notice WHERE id=34001 AND title='保留标题' AND content='保留正文' AND revision=1",
+            1,
+        )
+        .await
     })
     .await;
 }

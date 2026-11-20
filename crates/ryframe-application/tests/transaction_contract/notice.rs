@@ -25,6 +25,7 @@ fn record(timestamp: chrono::DateTime<Utc>) -> NoticeRecord {
         del_flag: "0".into(),
         created_at: timestamp,
         updated_at: timestamp,
+        revision: 1,
     }
 }
 
@@ -44,6 +45,7 @@ async fn update_failure_rolls_back_the_same_transaction() {
             &actor(),
             8,
             UpdateNoticeCommand {
+                expected_revision: 1,
                 title: "失败通知".into(),
                 content_markdown: "失败内容".into(),
                 notice_type: None,
@@ -99,6 +101,7 @@ async fn update_locks_row_without_configuration_version_transaction_steps() {
             &actor(),
             8,
             UpdateNoticeCommand {
+                expected_revision: 1,
                 title: "新通知".into(),
                 content_markdown: "新内容".into(),
                 notice_type: Some("2".into()),
@@ -111,6 +114,7 @@ async fn update_locks_row_without_configuration_version_transaction_steps() {
     assert_eq!(updated.title, "新通知");
     assert_eq!(updated.content_markdown, "新内容");
     assert_eq!(updated.notice_type.as_deref(), Some("2"));
+    assert_eq!(updated.revision, 2);
     assert_eq!(
         persistence.calls(),
         [
@@ -121,7 +125,9 @@ async fn update_locks_row_without_configuration_version_transaction_steps() {
                 tenant_id: "tenant-a".into(),
                 id: 8,
             },
-            NoticeCall::Update { record: updated },
+            NoticeCall::Update {
+                record: updated.clone(),
+            },
             NoticeCall::Commit {
                 audit_mode: TransactionAuditMode::CurrentRequest,
             },
@@ -130,5 +136,39 @@ async fn update_locks_row_without_configuration_version_transaction_steps() {
     assert_eq!(
         persistence.transaction_states(),
         [NoticeTransactionState::Committed]
+    );
+
+    let stale = service
+        .update(
+            &actor(),
+            8,
+            UpdateNoticeCommand {
+                expected_revision: 1,
+                title: "过期通知".into(),
+                content_markdown: "过期内容".into(),
+                notice_type: None,
+                status: "1".into(),
+            },
+        )
+        .await;
+    assert!(matches!(stale, Err(AppError::Conflict(_))));
+    assert!(matches!(
+        &persistence.calls()[4..],
+        [
+            NoticeCall::Begin { .. },
+            NoticeCall::FindByIdForUpdate { .. },
+            NoticeCall::Rollback,
+        ]
+    ));
+    assert_eq!(
+        persistence.transaction_states(),
+        [
+            NoticeTransactionState::Committed,
+            NoticeTransactionState::RolledBack,
+        ]
+    );
+    assert_eq!(
+        service.find_by_id(&actor(), 8).await.unwrap(),
+        Some(updated)
     );
 }

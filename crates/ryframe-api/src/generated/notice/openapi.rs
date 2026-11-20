@@ -78,7 +78,8 @@ pub fn crud_resource_metadata() -> serde_json::Value {
         field_notice_type(),
         field_status(),
         field_created_by(),
-        field_created_at()
+        field_created_at(),
+        field_revision()
     ]);
     metadata
 }
@@ -316,5 +317,38 @@ fn field_created_at() -> serde_json::Value {
       "value_type": "date_time",
       "widget": "date_time",
       "wire_type": "date_time"
+    })
+}
+
+fn field_revision() -> serde_json::Value {
+    serde_json::json!({
+      "enum_values": {},
+      "labels": {
+        "en": "Notice Revision",
+        "zh_cn": "公告版本"
+      },
+      "name": "revision",
+      "nullable": false,
+      "order": 110,
+      "usage": {
+        "create": false,
+        "create_optional": false,
+        "filter": false,
+        "list": true,
+        "read": true,
+        "sort": false,
+        "update": false,
+        "update_optional": false
+      },
+      "validation": {
+        "max_length": null,
+        "maximum": null,
+        "min_length": null,
+        "minimum": "0",
+        "required": false
+      },
+      "value_type": "u64",
+      "widget": "hidden",
+      "wire_type": "string"
     })
 }

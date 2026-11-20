@@ -20,6 +20,7 @@ mod m20260820_000000_control_baseline;
 mod m20261013_000000_password_change;
 #[cfg(feature = "migration")]
 mod m20261017_000000_data_scope_projection;
+mod m20261120_072911_notice_revision;
 mod schema;
 #[cfg(feature = "migration")]
 mod seeder;
@@ -49,6 +50,7 @@ const HANDWRITTEN_MIGRATION_NAMES: &[&str] = &[
     "m20260820_000000_control_baseline",
     "m20261013_000000_password_change",
     "m20261017_000000_data_scope_projection",
+    "m20261120_072911_notice_revision",
 ];
 
 pub fn expected_migration_names() -> impl Iterator<Item = &'static str> {
@@ -101,9 +103,16 @@ impl MigrationStatus {
 #[cfg(feature = "migration")]
 pub struct Migrator;
 
-/// 当前唯一控制库 baseline 的稳定 schema 指纹。
+/// 控制库当前基线与追加结构的稳定指纹。
 pub fn schema_fingerprint() -> String {
-    baseline_contract::schema_fingerprint()
+    let baseline = baseline_contract::schema_fingerprint();
+    let mut hash = u64::from_str_radix(&baseline, 16).expect("冻结基线指纹必须为十六进制");
+    let ddl = m20261120_072911_notice_revision::add_column_sql();
+    for byte in ddl.bytes().chain([0xff]) {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
 }
 
 #[cfg(feature = "migration")]
@@ -114,6 +123,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20260820_000000_control_baseline::Migration),
             Box::new(m20261013_000000_password_change::Migration),
             Box::new(m20261017_000000_data_scope_projection::Migration),
+            Box::new(m20261120_072911_notice_revision::Migration),
         ];
         migrations.extend(crate::generated::migrations());
         migrations

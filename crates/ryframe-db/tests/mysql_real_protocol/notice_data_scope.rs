@@ -26,6 +26,7 @@ fn actor(scope: DataScope) -> ActorContext {
 
 fn command() -> UpdateNoticeCommand {
     UpdateNoticeCommand {
+        expected_revision: 1,
         title: "Scope-fixture-updated".into(),
         content_markdown: "更新".into(),
         notice_type: None,
@@ -66,12 +67,12 @@ async fn prepare(database: &DatabaseConnection) -> Result<Arc<NoticeService>, St
 }
 
 async fn restore(database: &DatabaseConnection) -> Result<(), String> {
-    execute(database, "UPDATE sys_notice SET title='Scope-fixture-original',content='原始',`type`=NULL,status='1',del_flag='0',updated_at='2026-08-20 00:00:00' WHERE tenant_id='system' AND id IN(91001,91002,91003,91004)").await
+    execute(database, "UPDATE sys_notice SET title='Scope-fixture-original',content='原始',`type`=NULL,status='1',del_flag='0',updated_at='2026-08-20 00:00:00',revision=1 WHERE tenant_id='system' AND id IN(91001,91002,91003,91004)").await
 }
 
 async fn image<C: ConnectionTrait>(database: &C, id: i64) -> Result<String, String> {
     database.query_one_raw(Statement::from_sql_and_values(DbBackend::MySql,
-        "SELECT CAST(JSON_OBJECT('id',id,'tenant_id',tenant_id,'title',title,'content',content,'type',`type`,'status',status,'created_by',created_by,'del_flag',del_flag,'created_at',created_at,'updated_at',updated_at) AS CHAR) AS item FROM sys_notice WHERE id=?", [id.into()]))
+        "SELECT CAST(JSON_OBJECT('id',id,'tenant_id',tenant_id,'title',title,'content',content,'type',`type`,'status',status,'created_by',created_by,'del_flag',del_flag,'created_at',created_at,'updated_at',updated_at,'revision',revision) AS CHAR) AS item FROM sys_notice WHERE id=?", [id.into()]))
         .await.map_err(db_error)?.ok_or("缺少 Notice 前后像")?.try_get("","item").map_err(|error| error.to_string())
 }
 
@@ -204,6 +205,64 @@ async fn notice_lock_rechecks_owner_after_a_concurrent_owner_change() {
             "锁等待结束后不得沿用旧 owner 判断"
         );
         assert_eq!(image(&database, 91001).await?, expected);
+        Ok(())
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn notice_lock_allows_only_one_update_for_the_same_revision() {
+    run_mysql_test("notice-revision-race", |database| async move {
+        let service = prepare(&database).await?;
+        let actor = actor(DataScope::SelfOnly);
+        let original = service
+            .find_by_id(&actor, 91001)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or("缺少公告更新夹具")?;
+        assert_eq!(original.revision, 1);
+        let blocking = database.begin().await.map_err(db_error)?;
+        blocking
+            .query_one_raw(Statement::from_string(
+                DbBackend::MySql,
+                "SELECT id FROM sys_notice WHERE id=91001 FOR UPDATE",
+            ))
+            .await
+            .map_err(db_error)?;
+        let [first, second] = ["第一份更新", "第二份更新"].map(|title| {
+            let service = service.clone();
+            let actor = actor.clone();
+            tokio::spawn(async move {
+                let mut command = command();
+                command.title = title.into();
+                service.update(&actor, 91001, command).await
+            })
+        });
+        let waited = wait_for_notice_lock(&database).await;
+        let released = if waited.is_ok() {
+            blocking.commit().await
+        } else {
+            blocking.rollback().await
+        };
+        let (first, second) = tokio::join!(first, second);
+        waited?;
+        released.map_err(db_error)?;
+        let first = first.map_err(|error| error.to_string())?;
+        let second = second.map_err(|error| error.to_string())?;
+        let (winner, title) = match (first, second) {
+            (Ok(winner), Err(AppError::Conflict(_))) => (winner, "第一份更新"),
+            (Err(AppError::Conflict(_)), Ok(winner)) => (winner, "第二份更新"),
+            _ => return Err("同一原版本的两次更新应恰好成功一次，另一次应返回版本冲突".into()),
+        };
+        assert_eq!(winner.title, title);
+        assert_eq!(winner.revision, 2);
+        assert_eq!(
+            service
+                .find_by_id(&actor, 91001)
+                .await
+                .map_err(|error| error.to_string())?,
+            Some(winner)
+        );
         Ok(())
     })
     .await;

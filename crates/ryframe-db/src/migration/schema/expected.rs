@@ -13,13 +13,42 @@ use super::{
         ExpectedTable,
     },
 };
-use crate::migration::baseline_contract::ddl_statements;
+use crate::migration::{
+    baseline_contract::ddl_statements, m20261120_072911_notice_revision as notice_revision,
+};
 
 pub(super) fn expected_schema() -> Result<ExpectedSchema, DbErr> {
     let mut schema = ExpectedSchema::default();
     extend_schema(&mut schema, ddl_statements())?;
     add_post_baseline_constraints(&mut schema);
+    add_notice_revision(&mut schema)?;
     Ok(schema)
+}
+
+fn add_notice_revision(schema: &mut ExpectedSchema) -> Result<(), DbErr> {
+    let table_name = notice_revision::TABLE;
+    let table = schema
+        .tables
+        .get(table_name)
+        .ok_or_else(|| DbErr::Custom("冻结基线缺少公告表".into()))?;
+    let (character_set, collation) = (table.character_set.clone(), table.collation.clone());
+    let ordinal = schema
+        .column_order
+        .iter()
+        .filter_map(|((table, _), ordinal)| (table == table_name).then_some(*ordinal))
+        .max()
+        .ok_or_else(|| DbErr::Custom("冻结基线缺少公告表的列".into()))?;
+    let definition = notice_revision::COLUMN_DEFINITION;
+    add_column(
+        schema,
+        table_name,
+        definition,
+        &definition.to_ascii_uppercase(),
+        &character_set,
+        &collation,
+        ordinal + 1,
+    );
+    Ok(())
 }
 
 pub(super) fn extend_schema<'a>(
@@ -475,6 +504,21 @@ mod tests {
         assert_eq!(key.referenced_table, "sys_background_job");
         assert_eq!(key.delete_rule, "cascade");
         assert_eq!(key.update_rule, "restrict");
+    }
+
+    #[test]
+    fn current_control_schema_requires_notice_revision_as_its_last_column() {
+        let schema = super::expected_schema().unwrap();
+        let revision = ("sys_notice".into(), "revision".into());
+        let updated_at = ("sys_notice".into(), "updated_at".into());
+        let column = &schema.columns[&revision];
+        assert_eq!(column.column_type, "bigintunsigned");
+        assert!(!column.nullable);
+        assert_eq!(column.default.as_deref(), Some("1"));
+        assert_eq!(
+            schema.column_order[&revision],
+            schema.column_order[&updated_at] + 1
+        );
     }
 
     #[test]

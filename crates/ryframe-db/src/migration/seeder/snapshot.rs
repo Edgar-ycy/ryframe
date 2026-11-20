@@ -1,5 +1,8 @@
 use super::*;
-use crate::migration::access_catalog::{NEXT_MENU_ID_SQL, NEXT_PERMISSION_ID_SQL};
+use crate::migration::{
+    access_catalog::{NEXT_MENU_ID_SQL, NEXT_PERMISSION_ID_SQL},
+    m20261120_072911_notice_revision as notice_revision,
+};
 
 /// 生成空控制库的完整初始化脚本。调用方必须使用遇错即停的导入模式。
 pub fn mysql_initialization_sql(hashes: &crate::migration::BootstrapHashes) -> String {
@@ -58,7 +61,7 @@ pub fn mysql_snapshot_sql() -> String {
          -- 唯一事实来源：ryframe-db::migration Migrator 与 Seeder。\n\
          -- 仅供审阅：部署和重置工具不得执行此文件。\n\
          -- 重新生成命令：cargo run --locked -p ryframe-db --features migration --bin export_mysql_snapshot -- sql/ryframe_config.sql\n\n",
-        crate::migration::m20260820_000000_control_baseline::schema_fingerprint()
+        crate::migration::schema_fingerprint()
     );
     for statement in ddl_statements() {
         snapshot.push_str(statement.trim());
@@ -67,6 +70,7 @@ pub fn mysql_snapshot_sql() -> String {
     for statement in post_table_statements() {
         append_snapshot_statement(&mut snapshot, statement);
     }
+    append_snapshot_statement(&mut snapshot, &notice_revision::add_column_sql());
     snapshot.push_str("-- 幂等初始化数据；此审阅快照不用于部署初始化。\n\n");
     for statement in seed_statements() {
         snapshot.push_str(

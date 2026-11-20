@@ -3488,6 +3488,9 @@
                   "null"
                 ]
               },
+              "revision": {
+                "type": "string"
+              },
               "status": {
                 "type": "string"
               },
@@ -3500,7 +3503,8 @@
               "title",
               "content_markdown",
               "status",
-              "created_at"
+              "created_at",
+              "revision"
             ],
             "type": "object"
           },
@@ -11521,6 +11525,9 @@
               "null"
             ]
           },
+          "revision": {
+            "type": "string"
+          },
           "status": {
             "type": "string"
           },
@@ -11533,7 +11540,8 @@
           "title",
           "content_markdown",
           "status",
-          "created_at"
+          "created_at",
+          "revision"
         ],
         "type": "object"
       },
@@ -12883,6 +12891,9 @@
                     "null"
                   ]
                 },
+                "revision": {
+                  "type": "string"
+                },
                 "status": {
                   "type": "string"
                 },
@@ -12895,7 +12906,8 @@
                 "title",
                 "content_markdown",
                 "status",
-                "created_at"
+                "created_at",
+                "revision"
               ],
               "type": "object"
             },
@@ -16889,6 +16901,10 @@
             "minLength": 1,
             "type": "string"
           },
+          "expected_revision": {
+            "pattern": "^(?:0|[1-9][0-9]*)$",
+            "type": "string"
+          },
           "notice_type": {
             "type": [
               "string",
@@ -16903,6 +16919,7 @@
           }
         },
         "required": [
+          "expected_revision",
           "title",
           "content_markdown",
           "status"
@@ -31683,6 +31700,35 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "记录版本冲突",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -35481,6 +35527,36 @@
             "value_type": "date_time",
             "widget": "date_time",
             "wire_type": "date_time"
+          },
+          {
+            "enum_values": {},
+            "labels": {
+              "en": "Notice Revision",
+              "zh_cn": "公告版本"
+            },
+            "name": "revision",
+            "nullable": false,
+            "order": 110,
+            "usage": {
+              "create": false,
+              "create_optional": false,
+              "filter": false,
+              "list": true,
+              "read": true,
+              "sort": false,
+              "update": false,
+              "update_optional": false
+            },
+            "validation": {
+              "max_length": null,
+              "maximum": null,
+              "min_length": null,
+              "minimum": "0",
+              "required": false
+            },
+            "value_type": "u64",
+            "widget": "hidden",
+            "wire_type": "string"
           }
         ],
         "labels": {

@@ -32,9 +32,17 @@ pub(super) fn dto(resource: &ResourceIr, header: &str) -> String {
 fn render_input(resource: &ResourceIr, output: &mut String, create: bool) {
     let pascal = &resource.pascal_name;
     let prefix = if create { "Create" } else { "Update" };
+    let versioned_update = !create && resource.revision_field.is_some();
     output.push_str("#[derive(Debug, Deserialize, Validate, ToSchema)]\n");
     output.push_str("#[serde(deny_unknown_fields)]\n");
     output.push_str(&format!("pub struct {prefix}{pascal}Dto {{\n"));
+    if versioned_update {
+        output.push_str(concat!(
+            "    #[schema(value_type = String, pattern = r\"^(?:0|[1-9][0-9]*)$\")]\n",
+            "    #[serde(deserialize_with = \"crate::http::integer::deserialize_u64\")]\n",
+            "    pub expected_revision: u64,\n",
+        ));
+    }
     for field in resource.fields.iter().filter(|field| {
         if create {
             field.usage.create
@@ -90,6 +98,9 @@ fn render_input(resource: &ResourceIr, output: &mut String, create: bool) {
     output.push_str(&format!(
         "impl From<{prefix}{pascal}Dto> for {prefix}{pascal}Command {{\n    fn from(value: {prefix}{pascal}Dto) -> Self {{\n        Self {{\n"
     ));
+    if versioned_update {
+        output.push_str("            expected_revision: value.expected_revision,\n");
+    }
     for field in resource.fields.iter().filter(|field| {
         if create {
             field.usage.create
@@ -230,6 +241,11 @@ pub(super) fn handler(resource: &ResourceIr, header: &str) -> String {
         update_operation = operations.update,
         delete_operation = operations.delete,
         detail_path = format!("{path}/{{id}}"),
+        revision_conflict = if resource.revision_field.is_some() {
+            ", (status = 409, description = \"记录版本冲突\")"
+        } else {
+            ""
+        },
         not_found = format!("{}不存在", resource.labels.zh_cn),
         header = header,
         pascal = pascal,

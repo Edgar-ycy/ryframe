@@ -263,6 +263,7 @@ fn validate_managed_fields(
     fields: &[FieldIr],
 ) -> Result<(), ResourceError> {
     let service_managed = managed_fields(resource, source_path, spec, fields)?;
+    validate_revision_field(resource, source_path, spec, fields, &service_managed)?;
     for field in fields {
         let editable = field.usage.create || field.usage.update;
         if service_managed.contains(&field.name) && editable {
@@ -306,6 +307,70 @@ fn validate_managed_fields(
                 "启用 usage.create、声明类型正确的 default 或受支持的 sql_default，或移入强类型 Service 扩展",
             ));
         }
+    }
+    Ok(())
+}
+
+fn validate_revision_field(
+    resource: &str,
+    source_path: &str,
+    spec: &ResourceSpec,
+    fields: &[FieldIr],
+    service_managed: &BTreeSet<String>,
+) -> Result<(), ResourceError> {
+    let Some(name) = &spec.database.revision_field else {
+        return Ok(());
+    };
+    let error = |field: &str, message: &str, suggestion: &str| {
+        field_error(resource, field, source_path, message, suggestion)
+    };
+    if name != "revision" {
+        return Err(error(
+            name,
+            "database.revision_field 只支持 revision",
+            "将版本字段命名为 revision，并在 database.revision_field 中引用",
+        ));
+    }
+    if spec.storage.kind != StorageKind::ControlRow
+        || spec.access.system_tenant_only
+        || spec.access.owner_field.is_none()
+    {
+        return Err(error(
+            name,
+            "database.revision_field 要求具备租户和归属行锁的控制库资源",
+            "使用带 tenant_id 和 access.owner_field 的 control_row 资源",
+        ));
+    }
+    if fields.iter().any(|field| field.name == "expected_revision") {
+        return Err(error(
+            "expected_revision",
+            "expected_revision 已保留给版本保护的更新请求",
+            "为业务字段选择其他名称",
+        ));
+    }
+    if service_managed.contains(name) || spec.access.owner_field.as_ref() == Some(name) {
+        return Err(error(
+            name,
+            "database.revision_field 引用了具有其他职责的字段",
+            "声明独立的版本字段",
+        ));
+    }
+    let field = fields.iter().find(|field| field.name == *name);
+    if !field.is_some_and(|field| {
+        field.value_type == ValueType::U64
+            && field.wire_type == ValueType::String
+            && !field.nullable
+            && !field.usage.create
+            && !field.usage.update
+            && field.usage.read
+            && field.usage.list
+            && field.default.as_ref().and_then(toml::Value::as_integer) == Some(1)
+    }) {
+        return Err(error(
+            name,
+            "database.revision_field 必须引用默认值为 1 的非空只读 u64 字段",
+            "声明 u64 字符串字段，设置 default = 1 与 read/list，关闭 create/update",
+        ));
     }
     Ok(())
 }

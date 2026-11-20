@@ -37,6 +37,8 @@ bash 可使用 `< .local-tests/control-init.sql`；PowerShell 不支持该重定
 
 框架维护者可用 `cargo xtask data migrate check` 只读核验迁移目录、注册顺序、生成迁移接线和 `catalog/migrations.lock.toml` 摘要；提交前检查使用 `cargo xtask data migrate check --require-frozen`。开发版显式重整基线使用 `cargo xtask data migrate baseline --write`，稳定版只冻结当前工作树中的新迁移，使用 `cargo xtask data migrate freeze`。`cargo xtask data migrate reconcile --write` 按当前版本阶段选择 baseline 或 freeze，全栈夹具复用它。以上命令不连接或修改数据库。
 
+控制库公告版本迁移为原有公告初始化 `revision = 1`，保留公告内容。新建公告也从版本 `1` 开始。
+
 ## 已有表接管
 
 已有表只能显式接管。在正常控制库另加未登记的业务表后，启动校验拒绝未知表属于预期边界；保留表及数据，不能把生成模型后直接 `serve` 当成接管。先停止 API/Worker 等生产者，准备已登记模块及匹配模型、迁移，并使用包含该登记的当前迁移程序。接管前置只读核验控制库框架账本、完整物理结构和目标边界；新增业务权限/菜单不必预先 seed，业务结构、物理目标、来源摘要和其他账本约束仍由接管计划逐次核对。保存预览和 inspect 不写数据库，apply 只登记已核对的 adopted 账本元数据，不执行历史业务 DDL 或更改业务行。应用后先 inspect 原计划；需要初始化新增访问目录或执行已审阅的后续迁移时，再显式执行对应范围的 `up`，最后完整 verify。以下新模块示例用 `control up` 初始化访问目录，再校验；API/Worker 启动前仍要求完整业务权限与菜单通过，不存在宽松启动路径：

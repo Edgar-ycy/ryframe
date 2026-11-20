@@ -21,6 +21,7 @@ fn list() -> NoticeListParams {
 
 fn command() -> UpdateNoticeCommand {
     UpdateNoticeCommand {
+        expected_revision: 1,
         title: "不应写入".into(),
         content_markdown: "不应写入".into(),
         notice_type: None,

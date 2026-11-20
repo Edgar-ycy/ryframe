@@ -135,6 +135,8 @@ pub struct DatabaseSpec {
     /// 后续 schema 演进对应的显式追加迁移名称；首次引入可以省略。
     #[serde(default)]
     pub schema_revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision_field: Option<String>,
     #[serde(default)]
     pub indexes: Vec<IndexSpec>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

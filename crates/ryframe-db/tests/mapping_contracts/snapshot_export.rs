@@ -12,7 +12,13 @@ fn deployment_sql_has_credentials_constraints_and_complete_ledger() {
     assert!(sql.contains("CHECK (`valid` = 1)"));
     assert!(sql.contains("ADD CONSTRAINT `fk_user_avatar_file`"));
     assert!(sql.contains("`password_change_required`"));
+    let notice = sql.find("CREATE TABLE `sys_notice`").unwrap();
+    let revision = sql
+        .find("ALTER TABLE `sys_notice` ADD COLUMN `revision` BIGINT UNSIGNED NOT NULL DEFAULT 1")
+        .unwrap();
+    let seed = sql.find("INSERT INTO `sys_tenant`").unwrap();
     let ledger = sql.find("CREATE TABLE `seaql_migrations`").unwrap();
+    assert!(notice < revision && revision < seed && seed < ledger);
     assert!(sql.find("INSERT INTO `sys_user`").unwrap() < ledger);
     for name in ryframe_db::migration::expected_migration_names() {
         assert!(sql[ledger..].contains(name));

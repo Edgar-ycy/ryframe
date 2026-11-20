@@ -53,6 +53,7 @@ impl NoticeService {
             del_flag: String::from("0"),
             created_at: now,
             updated_at: now,
+            revision: 1_u64,
         };
         let transaction = self.persistence.begin(tenant_id).await?;
         let operation = async {
@@ -77,6 +78,15 @@ impl NoticeService {
                 .find_by_id_for_update(tenant_id, id, &actor.data_scope_context())
                 .await?
                 .ok_or_else(|| AppError::NotFound("通知公告不存在".into()))?;
+            if record.revision != command.expected_revision {
+                return Err(AppError::Conflict(
+                    "记录版本已变化，请重新读取后更新".into(),
+                ));
+            }
+            record.revision = record
+                .revision
+                .checked_add(1)
+                .ok_or_else(|| AppError::Conflict("记录版本已达上限".into()))?;
             let now = Utc::now();
             record.title = command.title;
             record.content_markdown = command.content_markdown;

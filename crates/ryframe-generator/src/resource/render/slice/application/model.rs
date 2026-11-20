@@ -55,6 +55,9 @@ pub(crate) fn model(resource: &ResourceIr, header: &str) -> String {
 
     output.push_str("#[derive(Clone, Debug)]\n");
     output.push_str(&format!("pub struct Update{pascal}Command {{\n"));
+    if resource.revision_field.is_some() {
+        output.push_str("    pub expected_revision: u64,\n");
+    }
     for field in resource.fields.iter().filter(|field| field.usage.update) {
         output.push_str(&format!(
             "    pub {}: {},\n",

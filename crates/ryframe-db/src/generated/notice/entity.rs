@@ -21,6 +21,7 @@ pub struct Model {
     pub del_flag: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub revision: u64,
 }
 
 pub const SOFT_DELETE_ACTIVE: &str = "0";

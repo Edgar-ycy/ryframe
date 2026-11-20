@@ -115,6 +115,7 @@ pub(in crate::resource) fn normalize(
         bootstrap_migration: spec.database.bootstrap_migration,
         schema_hash,
         schema_revision: spec.database.schema_revision,
+        revision_field: spec.database.revision_field,
         foreign_keys: spec.database.foreign_keys,
         indexes,
         soft_delete: spec.database.soft_delete.map(|value| SoftDeleteIr {

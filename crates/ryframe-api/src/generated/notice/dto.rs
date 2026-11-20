@@ -51,6 +51,9 @@ impl From<CreateNoticeDto> for CreateNoticeCommand {
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateNoticeDto {
+    #[schema(value_type = String, pattern = r"^(?:0|[1-9][0-9]*)$")]
+    #[serde(deserialize_with = "crate::http::integer::deserialize_u64")]
+    pub expected_revision: u64,
     #[validate(length(min = 1, max = 200))]
     pub title: String,
     #[validate(
@@ -66,6 +69,7 @@ pub struct UpdateNoticeDto {
 impl From<UpdateNoticeDto> for UpdateNoticeCommand {
     fn from(value: UpdateNoticeDto) -> Self {
         Self {
+            expected_revision: value.expected_revision,
             title: value.title,
             content_markdown: value.content_markdown,
             notice_type: value.notice_type,
@@ -110,6 +114,7 @@ pub struct NoticeVo {
     pub status: String,
     pub created_by: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    pub revision: String,
 }
 
 impl From<NoticeRecord> for NoticeVo {
@@ -122,6 +127,7 @@ impl From<NoticeRecord> for NoticeVo {
             status: value.status,
             created_by: value.created_by.map(|item| item.to_string()),
             created_at: value.created_at,
+            revision: value.revision.to_string(),
         }
     }
 }

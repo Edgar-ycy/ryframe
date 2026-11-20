@@ -94,6 +94,12 @@ When applying a product change, pass the `plan_hash` and `preview_runtime_epoch`
 
 Submitting the current plan version and normalized overrides still records a successful operation in the audit log. Omitting `reason` retains the assignment note. Passing a different reason updates that note alone. The response contains the current product context and its existing epochs. Switching the plan version or changing overrides advances the runtime epoch and notifies clients to refresh the tenant context.
 
+## Concurrent Notice Editing
+
+Before editing a notice, read its details with `GET /api/v1/system/notices/{id}` and keep the `revision` from that response. When saving with `PUT /api/v1/system/notices/{id}`, submit that version as the required `expected_revision`. Both fields use decimal strings.
+
+The server checks the version inside the authorized transaction. Each successful save increments the version by one. If another editor has updated the notice, the server returns HTTP 409 and preserves the saved record. Clients should keep the local edits, fetch the latest details, and let the editor decide how to merge the changes before submitting with the latest version.
+
 ## Filtered Exports
 
 The seven export types use separate strongly typed requests with a unified envelope:

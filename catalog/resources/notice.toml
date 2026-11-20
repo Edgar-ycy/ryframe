@@ -16,6 +16,8 @@ configuration_versioned = false
 [database]
 table = "sys_notice"
 primary_key = ["id"]
+schema_revision = "m20261120_072911_notice_revision"
+revision_field = "revision"
 
 [[database.indexes]]
 name = "idx_tenant_id"
@@ -202,6 +204,22 @@ widget = "date_time"
 [fields.labels]
 zh_cn = "更新时间"
 en = "Updated at"
+
+[[fields]]
+name = "revision"
+value_type = "u64"
+wire_type = "string"
+order = 110
+default = 1
+widget = "hidden"
+
+[fields.usage]
+read = true
+list = true
+
+[fields.labels]
+zh_cn = "公告版本"
+en = "Notice Revision"
 
 [api]
 path = "/api/v1/system/notices"

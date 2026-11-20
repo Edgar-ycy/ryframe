@@ -22,6 +22,8 @@ mod resource_integers;
 mod resource_migration_generation;
 #[path = "resource_contracts/resource_relations.rs"]
 mod resource_relations;
+#[path = "resource_contracts/resource_revision.rs"]
+mod resource_revision;
 #[path = "resource_contracts/resource_unsigned.rs"]
 mod resource_unsigned;
 #[path = "resource_contracts/resource_validation.rs"]

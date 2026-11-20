@@ -17,6 +17,7 @@ pub struct NoticeRecord {
     pub del_flag: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub revision: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -28,6 +29,7 @@ pub struct CreateNoticeCommand {
 
 #[derive(Clone, Debug)]
 pub struct UpdateNoticeCommand {
+    pub expected_revision: u64,
     pub title: String,
     pub content_markdown: String,
     pub notice_type: Option<String>,

@@ -161,6 +161,7 @@ pub fn draft_resource_from_table(
                 primary_key,
                 bootstrap_migration: false,
                 schema_revision: None,
+                revision_field: None,
                 indexes,
                 soft_delete: metadata.soft_delete,
                 audit: metadata.audit,

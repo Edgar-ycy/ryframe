@@ -120,7 +120,7 @@ pub async fn create(
     tag = {tag:?},
     params(("id" = String, Path)),
     request_body = Update{pascal}Dto,
-    responses((status = 200, description = "更新成功", body = ApiResponse<{pascal}Vo>)),
+    responses((status = 200, description = "更新成功", body = ApiResponse<{pascal}Vo>){revision_conflict}),
     security(("bearer" = []))
 )]
 pub async fn update(
