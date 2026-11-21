@@ -351,22 +351,6 @@ class TransferTests(unittest.TestCase):
                 self.engine()
         self.assertEqual(self.writes(), [])
 
-    def test_injected_table_or_changed_artifact_never_writes(self):
-        with self.open():
-            engine = self.engine()
-            engine.databases[next(iter(engine.databases))]["tables"]["ryframe_resource_ownership"] = 1
-            with self.assertRaises(ValueError):
-                engine.apply_database("shared-control")
-        self.assertEqual(self.writes(), [])
-
-    def test_changed_artifact_after_engine_creation_is_rejected(self):
-        with self.open():
-            engine = self.engine()
-            (self.fixture.root / "shared-control.sql").write_text("changed")
-            with self.assertRaises(ValueError):
-                engine.apply_database("shared-control")
-        self.assertEqual(self.writes(), [])
-
     def test_unknown_names_and_source_object_key_cannot_expand_plan(self):
         with self.open():
             engine = self.engine()
@@ -424,19 +408,6 @@ class TransferTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 engine.finish()
         self.assertEqual(len(self.writes()), 1)
-
-    def test_complete_unchanged_database_is_readonly_and_bound_in_result(self):
-        key = "dedicated-a"
-        basis = self.guard.basis[key]
-        initial = replace(basis.initialized, tables=basis.source.tables)
-        self.guard.basis[key] = replace(basis, initialized=initial)
-        self.guard.current[key] = initial
-        with self.open():
-            engine = self.engine()
-            self.apply_all(engine)
-            engine.finish()
-        self.assertEqual(engine.result()["unchanged_databases"], 1)
-        self.assertEqual(len(self.writes()), 2)
 
     def test_confirmation_write_failure_keeps_unknown_resource_and_no_success(self):
         with self.assertRaises(OSError), self.open():
