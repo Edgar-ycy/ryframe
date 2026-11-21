@@ -176,24 +176,6 @@ class RunTests(unittest.TestCase):
         self.assertTrue(all(item["result"] is None for item in observed["attempts"]))
         self.assertFalse((self.directory / "run.lock").exists())
 
-    def test_unknown_write_or_residual_lock_prevents_binary_collection(self):
-        from devex_clone_ledger import LedgerError
-
-        output = Path(self.value["copy_directory"])
-        output.mkdir()
-        write_json(output / "session.json", {"source_export": self.value["source_export"],
-                   "initialized": self.value["initialized"]})
-        for message in ("unknown write", "residual lock"):
-            with patch("devex_clone_resume.check_continuation", side_effect=LedgerError(message)), \
-                    patch.object(run, "copy_binary_bindings") as collect, \
-                    patch.object(run, "protect_binaries") as protect, \
-                    patch("devex_clone_resume.continue_copy") as continuation:
-                with self.assertRaises(LedgerError):
-                    run.run_copy(self.backend, self.directory, self.value, run.environments(self.backend, self.value), "resume")
-                collect.assert_not_called()
-                protect.assert_not_called()
-                continuation.assert_not_called()
-
     def test_retired_runtime_is_rejected_before_paths_or_locks(self):
         original = {path: path.read_bytes() for path in self.directory.iterdir() if path.is_file()}
         with patch.object(run, "process_guard") as guard:

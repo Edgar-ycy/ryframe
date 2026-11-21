@@ -75,20 +75,30 @@ fn reconcile_preserves_residual_target_and_ledger_locks_after_unknown_write() {
     let state_path = run_dir.join("state.json");
     let original_state = fs::read(&state_path).unwrap();
 
-    with_residual_lock(&ledger.join("clone.lock"), || {
+    let assert_rejected = |mode, expected| {
         let error =
-            stage::run_named(&fixture.backend, &run_dir, "copy", "reconcile", &Runner).unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "原复制账本已持锁或模式无效，必须先核对登记的原控制器"
-        );
+            stage::run_named(&fixture.backend, &run_dir, "copy", mode, &Runner).unwrap_err();
+        assert_eq!(error.to_string(), expected);
         assert_eq!(fs::read(&state_path).unwrap(), original_state);
         assert_eq!(directory_entries(&run_dir), run_members);
+        assert!(directory_entries(&run_dir.join("results")).is_empty());
         assert_eq!(directory_entries(&fixture.copy), copy_members);
         assert_eq!(
             fixed.each_ref().map(|path| fs::read(path).unwrap()),
             original
         );
+    };
+    assert_rejected("resume", "原复制会话未正常关闭或有未知写入，必须先显式核对");
+    assert_eq!(directory_entries(&ledger), ledger_members);
+
+    let ledger_lock = ledger.join("clone.lock");
+    with_residual_lock(&ledger_lock, || {
+        let mut locked_members = ledger_members.clone();
+        assert!(locked_members.insert(ledger_lock.clone()));
+        for mode in ["resume", "reconcile"] {
+            assert_rejected(mode, "原复制账本已持锁或模式无效，必须先核对登记的原控制器");
+            assert_eq!(directory_entries(&ledger), locked_members);
+        }
     });
 
     with_residual_lock(&target.join("initialize.lock"), || {
