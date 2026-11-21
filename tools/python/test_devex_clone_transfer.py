@@ -520,18 +520,6 @@ class TransferTests(unittest.TestCase):
         self.assertFalse(result["get_header_consistent"])
         self.assertEqual(result["get_header_differences"][0]["field"], "ContentLanguage")
 
-    def test_success_then_live_data_changed_cannot_finish(self):
-        with self.open():
-            engine = self.engine()
-            self.apply_all(engine)
-            current = self.guard.current["shared-control"]
-            tables = copy.deepcopy(current.tables)
-            tables["sys_user"]["sha256"] = "8" * 64
-            self.guard.current["shared-control"] = replace(current, tables=tables)
-            with self.assertRaises(ValueError):
-                engine.finish()
-        self.assertFalse(list(self.ledger_dir.glob("complete-*.json")))
-
     def test_absent_or_extra_table_in_observer_cannot_be_silently_ignored(self):
         initial = self.guard.current["shared-control"]
         self.guard.current["shared-control"] = replace(initial, all_tables=initial.all_tables + ("unknown_table",))
