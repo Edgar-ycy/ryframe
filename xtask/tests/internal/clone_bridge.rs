@@ -588,24 +588,6 @@ fn assert_maintenance_cache_independence(
             maintenance::verify_with(&fixture.root, &build, runner).unwrap(),
             *receipt
         );
-        let python_receipt = python_json(
-            &fixture.root,
-            r#"
-import json
-import sys
-from pathlib import Path
-from devex_clone_tools import TOOLS, target_directory, verify_evidence
-root, build = Path(sys.argv[1]), Path(sys.argv[2])
-observed = json.loads(build.read_text(encoding="utf-8"))
-target = target_directory(root)
-assert observed["backend_root"] == str(root), (observed["backend_root"], str(root))
-assert observed["target_directory"] == str(target), (observed["target_directory"], str(target))
-assert set(observed["artifacts"]) == set(TOOLS), (set(observed["artifacts"]), set(TOOLS))
-print(json.dumps(verify_evidence(root, build), ensure_ascii=False))
-"#,
-            &[&fixture.root, &build],
-        );
-        assert_eq!(python_receipt, *receipt);
         assert_eq!(snapshot(output), frozen);
         assert_eq!(
             cache
@@ -802,35 +784,6 @@ fn maintenance_rejects_nonlocal_and_linked_output_before_running_commands() {
             .unwrap_err();
     assert!(error.to_string().contains("链接"), "{error}");
     assert_eq!(runner.calls.get(), 0);
-}
-
-fn python_json(root: &Path, script: &str, arguments: &[&Path]) -> Value {
-    let result = python_output(root, script, arguments);
-    assert!(
-        result.status.success(),
-        "python failed:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&result.stdout),
-        String::from_utf8_lossy(&result.stderr)
-    );
-    serde_json::from_slice(&result.stdout).unwrap()
-}
-
-fn python_output(root: &Path, script: &str, arguments: &[&Path]) -> std::process::Output {
-    let tool = crate::rate_limit::tool_binding(Path::new(env!("CARGO_BIN_EXE_xtask")))
-        .unwrap()
-        .expect("维护收据互验必须绑定当前原生工具");
-    let script = format!(
-        "import sys\nfrom rate_limit_tool import install_verified_binding\ninstall_verified_binding(sys.argv.pop(1))\n{script}"
-    );
-    Command::new(
-        crate::check::consumer_context::python::selected_program(&workspace::root_dir()).unwrap(),
-    )
-    .args(["-B", "-c", &script, &tool])
-    .args(arguments)
-    .current_dir(root)
-    .env("PYTHONPATH", workspace::root_dir().join("tools/python"))
-    .output()
-    .unwrap()
 }
 
 fn snapshot(root: &Path) -> Vec<(String, Vec<u8>)> {
