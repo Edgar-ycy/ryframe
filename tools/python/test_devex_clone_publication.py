@@ -157,15 +157,6 @@ class PublicationTests(unittest.TestCase):
             state.recover_lock(self.backend, self.directory, owner_binding)
         self.assertFalse(lock.exists())
 
-    def test_different_existing_result_is_never_overwritten(self):
-        number = state.begin(self.directory, "copy", "run", self.case.sources)
-        path = self.directory / "results/0001.json"
-        write_json(path, {"original": "failure evidence"})
-        before = path.read_bytes()
-        with self.assertRaisesRegex(ValueError, "拒绝覆盖"):
-            state.finish(self.directory, number, result={"status": "copy_completed"})
-        self.assertEqual(path.read_bytes(), before)
-
     def test_old_persistent_controller_cannot_recover_a_new_running_attempt(self):
         with patch.object(run, "run_copy", return_value={"status": "copy_completed"}):
             run.execute(self.backend, self.directory, "copy", "run")

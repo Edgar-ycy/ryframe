@@ -506,6 +506,78 @@ fn failure_cancel_and_partial_results_are_recorded_without_replay() {
     );
 }
 
+#[derive(Default)]
+struct ConflictingResult {
+    executions: AtomicUsize,
+    controller: std::cell::RefCell<Vec<u8>>,
+}
+
+const ORIGINAL_RESULT: &[u8] = b"{ \"original\": \"failure evidence\" }\n";
+
+impl stage::StageRunner for ConflictingResult {
+    fn preflight(&self, _: &stage::StageRequest<'_>) -> crate::Result<()> {
+        Ok(())
+    }
+
+    fn execute(&self, request: &stage::StageRequest<'_>) -> crate::Result<Value> {
+        use native::lifecycle::state;
+        assert_eq!(request.attempt, Some(1));
+        assert_eq!(self.executions.fetch_add(1, Ordering::Relaxed), 0);
+        *self.controller.borrow_mut() = fs::read(state::controller_path(request.run_dir, 1))?;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(state::result_path(request.run_dir, 1))?;
+        std::io::Write::write_all(&mut file, ORIGINAL_RESULT)?;
+        Ok(json!({"status":"data_steps_verified"}))
+    }
+}
+
+#[test]
+fn preserves_original_result_when_stage_publication_conflicts() {
+    use native::lifecycle::state;
+
+    let fixture = Fixture::new();
+    fixture.init().unwrap();
+    let runner = ConflictingResult::default();
+    let run = || stage::run_named(&fixture.backend, &fixture.run, "copy", "run", &runner);
+    let check_evidence = || {
+        assert_eq!(runner.executions.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            fs::read(state::result_path(&fixture.run, 1)).unwrap(),
+            ORIGINAL_RESULT
+        );
+        assert_eq!(
+            &fs::read(state::controller_path(&fixture.run, 1)).unwrap(),
+            &*runner.controller.borrow()
+        );
+        assert_eq!(
+            fs::read_dir(fixture.run.join("results")).unwrap().count(),
+            1
+        );
+        assert!(!fixture.run.join("run.lock").exists());
+    };
+
+    let error = run().unwrap_err();
+    assert_eq!(error.to_string(), "已保存的阶段结果不同，拒绝覆盖失败证据");
+    let staged = fixture.state();
+    assert_eq!(staged["attempts"].as_array().unwrap().len(), 1);
+    assert_eq!(staged["attempts"][0]["status"], "running");
+    assert_eq!(staged["attempts"][0]["result"], Value::Null);
+    check_evidence();
+
+    let error = run().unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "存在未收尾阶段，须先核实运行进程并显式恢复控制锁"
+    );
+    let rejected = fixture.state();
+    assert_eq!(rejected["attempts"].as_array().unwrap().len(), 1);
+    assert_eq!(rejected["attempts"][0]["status"], "failed");
+    assert_eq!(rejected["attempts"][0]["result"], Value::Null);
+    check_evidence();
+}
+
 #[test]
 fn revision_numbers_are_monotonic_and_tampering_fails_closed() {
     let fixture = Fixture::new();
