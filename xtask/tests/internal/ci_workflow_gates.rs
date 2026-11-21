@@ -75,6 +75,68 @@ fn full_stack_native_stages_keep_failure_collection_and_required_artifacts() {
             .is_some()
     );
     let job = job(&extended, "full-stack-e2e");
+    let configured = assert_full_stack_configuration(job);
+    let tool_target = "$RUNNER_TEMP/ryframe-full-stack-tool";
+    let backend = "${{ matrix.backend }}";
+    let (built, tool_build) = command(job, "cargo build --locked -p xtask --bin xtask");
+    assert_eq!(argument(tool_build, "--target-dir"), tool_target);
+    assert_eq!(text(tool_build, "working-directory"), backend);
+
+    let native_stage = |mode: &str| {
+        let invocation = format!(r#""{tool_target}/debug/xtask" check recovery full-stack {mode}"#);
+        let (index, step) = command(job, &invocation);
+        assert_eq!(text(step, "run").trim(), invocation);
+        assert_eq!(text(step, "working-directory"), backend);
+        (index, step)
+    };
+    let (prepare, _) = native_stage("prepare");
+    let (start, _) = native_stage("start");
+    let (core, core_frontend) = command(job, "corepack pnpm build");
+    let (business, business_frontend) = native_stage("frontend");
+    let (verify, verifier) = command(job, "cargo xtask check release ci verify-pair");
+    let (collect, collector) = native_stage("collect");
+
+    assert_eq!(text(core_frontend, "if"), "${{ matrix.fixture == 'core' }}");
+    assert_eq!(
+        text(core_frontend, "working-directory"),
+        "${{ matrix.frontend }}"
+    );
+    assert_eq!(
+        text(business_frontend, "if"),
+        "${{ matrix.fixture == 'business' }}"
+    );
+    assert_eq!(
+        argument(verifier, "--input"),
+        "$RUNNER_TEMP/ryframe-full-stack/source-pair.json"
+    );
+    assert_eq!(
+        argument(verifier, "--frontend-dir"),
+        "$GITHUB_WORKSPACE/frontend"
+    );
+    assert!(configured < built && built < prepare && prepare < start);
+    assert!(start < core && core < verify);
+    assert!(start < business && business < verify);
+    assert!(verify < collect);
+    assert_eq!(text(collector, "if"), "${{ always() }}");
+    let upload = steps(job)[collect + 1..]
+        .iter()
+        .find(|step| uses(step, "actions/upload-artifact@"))
+        .unwrap();
+    assert_eq!(text(upload, "if"), "${{ always() }}");
+    let upload_inputs = upload.get("with").unwrap();
+    assert_eq!(text(upload_inputs, "if-no-files-found"), "error");
+    assert_eq!(
+        upload_inputs.get("include-hidden-files"),
+        Some(&YamlValue::Bool(true))
+    );
+    assert!(
+        text(upload_inputs, "path")
+            .lines()
+            .any(|path| path.trim() == "${{ runner.temp }}/ryframe-full-stack")
+    );
+}
+
+fn assert_full_stack_configuration(job: &YamlValue) -> usize {
     let (configured, configuration) = fixture_configuration(job);
     assert_eq!(configuration["api_docs"]["enabled"].as_bool(), Some(false));
     assert_eq!(
@@ -114,20 +176,7 @@ fn full_stack_native_stages_keep_failure_collection_and_required_artifacts() {
             .split_whitespace()
             .any(|v| v == "--write")
     );
-    let (prepare, _) = command(job, "cargo xtask check recovery full-stack prepare");
-    let (start, _) = command(job, "cargo xtask check recovery full-stack start");
-    let (build, _) = command(job, "corepack pnpm build");
-    let (collect, collector) = command(job, "cargo xtask check recovery full-stack collect");
-    assert!(configured < prepare && prepare < start && start < build && build < collect);
-    assert_eq!(text(collector, "if"), "${{ always() }}");
-    let upload = steps(job)[collect + 1..]
-        .iter()
-        .find(|step| uses(step, "actions/upload-artifact@"))
-        .unwrap();
-    assert_eq!(
-        text(upload.get("with").unwrap(), "if-no-files-found"),
-        "error"
-    );
+    configured
 }
 
 #[test]
