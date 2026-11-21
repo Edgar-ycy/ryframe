@@ -44,6 +44,7 @@ fn server(response: Vec<u8>) -> (String, mpsc::Receiver<String>, thread::JoinHan
                 Err(error) => panic!("模拟 S3 未在期限内收到连接：{error}"),
             }
         };
+        socket.set_nonblocking(false).unwrap();
         socket
             .set_read_timeout(Some(std::time::Duration::from_secs(10)))
             .unwrap();
