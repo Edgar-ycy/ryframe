@@ -16,7 +16,10 @@ pub(crate) fn read_archive(path: &Path) -> Result<Vec<(String, Vec<u8>)>> {
         let mut entry = archive
             .by_index(index)
             .map_err(|error| format!("无法读取全栈证据 ZIP 条目：{error}"))?;
-        let path = entry.name().to_owned();
+        let path = entry
+            .name()
+            .map_err(|error| format!("无法读取全栈证据 ZIP 条目路径：{error}"))?
+            .into_owned();
         validate_member_path(&path)?;
         let name = path.rsplit('/').next().unwrap_or_default();
         let Some(limit) = ARCHIVE_RECEIPT_LIMITS

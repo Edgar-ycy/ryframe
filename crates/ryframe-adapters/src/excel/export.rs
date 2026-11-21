@@ -85,7 +85,9 @@ impl<'headers> IncrementalExcelWriter<'headers> {
             )));
         }
         let mut workbook = Workbook::new();
-        let worksheet = workbook.add_worksheet_with_constant_memory();
+        let worksheet = workbook
+            .add_worksheet_with_constant_memory()
+            .map_err(|error| AppError::Internal(format!("创建 Excel 工作表失败: {error}")))?;
         ExcelExporter::set_sheet_name(worksheet, sheet_name)?;
         ExcelExporter::write_headers(worksheet, headers)?;
         ExcelExporter::auto_width(worksheet, headers.len())?;
