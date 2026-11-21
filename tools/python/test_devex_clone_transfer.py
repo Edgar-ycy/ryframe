@@ -398,15 +398,6 @@ class TransferTests(unittest.TestCase):
                 engine.finish()
         self.assertEqual(len(self.writes()), 1)
 
-    def test_confirmation_write_failure_keeps_unknown_resource_and_no_success(self):
-        with self.assertRaises(OSError), self.open():
-            engine = self.engine()
-            with patch.object(self.ledger, "confirm", side_effect=OSError("fixture evidence failure")):
-                engine.apply_database("shared-control")
-        with self.assertRaises(ValueError):
-            engine.result()
-        self.assertEqual(len(self.writes()), 1)
-
     def test_finished_ledger_receipt_failure_cannot_publish_data_success(self):
         with self.assertRaises(ExceptionGroup), self.open():
             engine = self.engine()

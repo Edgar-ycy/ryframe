@@ -383,6 +383,94 @@ fn copy_history_uses_the_registered_target_lock_and_releases_it_before_publishin
 }
 
 #[test]
+fn replaced_head_rejects_database_confirmation_after_one_write() {
+    use std::cell::Cell;
+
+    use crate::recovery::clone::native::digest;
+    use sha2::{Digest, Sha256};
+
+    let fixture = Fixture::new();
+    let ledger = fixture.ledger();
+    let journal = ledger.join("events.ndjson");
+    let head = ledger.join("head.json");
+    let saved_head = fixture.copy.join("original-head.json");
+    let database = fixture.copy.join("database-output.rows");
+    let step = "database-first";
+    let rows = b"copied table rows";
+    let before = json!({"kind":"database","resource_sha256":"1".repeat(64),
+        "schema_sha256":"2".repeat(64),"preserved_sha256":"3".repeat(64),
+        "tables_sha256":hex::encode(Sha256::digest(b"original target rows"))});
+    let mut after = before.clone();
+    after["tables_sha256"] = json!(hex::encode(Sha256::digest(rows)));
+    let writes = Cell::new(0);
+    let published = Cell::new(false);
+    let mut prefix = None;
+    let result = fixture.run_with_publication(
+        Mode::New,
+        |session, _| {
+            session.intent(step, &before, &after, ARTIFACT)?;
+            session.write_once(step, &before, &after, ARTIFACT, |verify| {
+                verify()?;
+                let mut output = fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&database)?;
+                output.write_all(rows)?;
+                drop(output);
+                writes.set(writes.get() + 1);
+                verify()
+            })?;
+            let mut observed = before.clone();
+            observed["tables_sha256"] = json!(digest::file(&database)?.sha256);
+            assert_eq!(observed, after);
+
+            prefix = Some((fs::read(&journal)?, fs::read(&head)?));
+            // 保留原文件，以原字节复制出身份不同的账本头。
+            fs::rename(&head, &saved_head)?;
+            fs::copy(&saved_head, &head)?;
+            assert_ne!(
+                same_file::Handle::from_path(&saved_head)?,
+                same_file::Handle::from_path(&head)?
+            );
+            let error = session.confirm(step, &observed).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "持锁期间账本文件身份或原始字节发生变化；保留现场"
+            );
+            Err::<(), _>(error)
+        },
+        |_| {
+            published.set(true);
+            Ok(())
+        },
+    );
+    assert!(result.is_err());
+    assert!(!published.get());
+    assert_eq!(writes.get(), 1);
+    assert_eq!(fs::read(&database).unwrap(), rows);
+    let (original_journal, original_head) = prefix.unwrap();
+    assert_eq!(fs::read(&journal).unwrap(), original_journal);
+    assert_eq!(fs::read(&saved_head).unwrap(), original_head);
+    assert_eq!(fs::read(&head).unwrap(), original_head);
+
+    let saved = fixture.inspect();
+    assert_eq!(saved["status"], "needs_reconciliation");
+    assert!(saved["completed_at"].is_null());
+    assert_eq!(saved["steps"].as_object().unwrap().len(), 1);
+    let entry = &saved["steps"][step];
+    assert_eq!(entry["phase"], "unknown");
+    assert_eq!(entry["attempt"], 1);
+    assert_eq!(entry["artifact_sha256"], ARTIFACT);
+    assert_eq!((&entry["before"], &entry["after"]), (&before, &after));
+    assert_eq!(
+        super::super::check_continuation(&fixture.backend, &ledger, PLAN, GENERATION, Mode::Resume)
+            .unwrap_err()
+            .to_string(),
+        "原复制会话未正常关闭或有未知写入，必须先显式核对"
+    );
+}
+
+#[test]
 fn failed_completion_publication_preserves_the_conflicting_file_and_records_fault() {
     let fixture = Fixture::new();
     let (before, after) = images('3');
