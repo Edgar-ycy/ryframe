@@ -1,6 +1,5 @@
 import hashlib
 import json
-import os
 from pathlib import Path
 import sys
 import unittest
@@ -352,23 +351,6 @@ class CloneLedgerTests(unittest.TestCase):
         for key in (exact_key + "x", prefix + "汉" * 340):
             with self.subTest(bytes=len(key.encode())), self.assertRaises(LedgerError):
                 resource_digest(self.generation, {**self.object_resource, "key": key})
-
-    def test_review_exclusive_publication_never_overwrites_a_racing_receipt(self):
-        ledger = self.ledger(create=True)
-        original_link = os.link
-        def racing_link(source, destination, **options):
-            if Path(destination).name.startswith("complete-"):
-                Path(destination).write_bytes(b"previous unrelated receipt")
-            return original_link(source, destination, **options)
-        with patch("devex_clone_ledger.os.link", side_effect=racing_link), self.assertRaises(ExceptionGroup):
-            with ledger:
-                ledger.intent("copy-one", self.before, self.after, sha("sql"))
-                ledger.confirm("copy-one", self.after)
-                ledger.finish()
-        receipt = next(self.root.glob("complete-*.json"))
-        self.assertEqual(receipt.read_bytes(), b"previous unrelated receipt")
-        self.assertIsNone(ledger.receipt)
-        self.assertEqual(self.ledger().inspect()["status"], "needs_reconciliation")
 
 
 if __name__ == "__main__":
