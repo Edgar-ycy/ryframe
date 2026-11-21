@@ -1,16 +1,18 @@
 # RyFrame
 
-[English](README.en.md)
+[English](README.en.md) · [本地启动](#下载后首次运行) · [开发第一个业务模块](#开发业务) · [Vue 3 管理端](https://github.com/Edgar-ycy/ryframe-vue3)
 
-RyFrame 是面向企业后台的 Rust 2024 框架，与 Vue 3 管理端配套使用。当前为 `0.x` 开发版本，请使用当前契约和全新隔离数据库，不能直接覆盖旧开发库。
+RyFrame 帮你用 Rust 和 Vue 3 开发企业管理后台。以订单管理为例，定义订单模型后，生成器可以生成增删改查接口和数据库迁移。启用前端同步后，还能生成标准列表、表单和路由。你可以直接复用登录、角色授权、租户隔离和操作日志，集中编写订单自己的业务规则。
 
-提供用户、角色、权限、组织、产品套餐、多租户、配置迁移、跨库迁移、监控、消息、调度、导入导出，以及个人资料、密码、头像和登录会话管理。套餐可发布空能力版本；通知公告和租户主动消息发布可按套餐启停，停用不删除历史数据，也不关闭系统通知、调度、导入导出或备份恢复。
+![RyFrame 管理端的权限管理页，展示用户、角色和菜单的权限树](docs/images/permissions.jpg)
 
 ## 下载后首次运行
 
+当前 `0.x` 开发版允许 API、配置和数据库结构发生不兼容变更。请使用配套的前后端契约和全新隔离数据库，保留旧开发库。从首个正式版 `v1.0.0` 起，项目保护已发布的契约和数据升级路径。
+
 后端和前端是独立仓库，以下命令在后端仓库根目录执行。本地示例使用 Windows PowerShell。首次启动、联调和可选的开发步骤都无需手工创建 Git 忽略目录，构建和运行目录由工具按需创建。MySQL、Redis 和 RustFS/MinIO/S3 兼容存储可以在满足版本、协议和连接要求的任意平台或远程服务器运行，不要求 WSL。
 
-1. Windows 原生构建先安装 Visual Studio 或 Build Tools 的“Desktop development with C++”工作负载，包含目标架构的 MSVC C/C++ 工具与 Windows SDK，见 [rustup 官方 Windows MSVC 前置说明](https://rust-lang.github.io/rustup/installation/windows-msvc.html)。再安装 rustup，在仓库内运行 `rustup show`，使用 `rust-toolchain.toml` 固定的正式 Rust、rustfmt 和 Clippy。
+1. Windows 原生构建先安装 Visual Studio 或 Build Tools 的“Desktop development with C++”工作负载，包含目标架构的 MSVC C/C++ 工具与 Windows SDK，见 [rustup 官方 Windows MSVC 前置说明](https://rust-lang.github.io/rustup/installation/windows-msvc.html)。再安装 rustup，在仓库内运行 `rustup show`，使用 `rust-toolchain.toml` 固定的正式 Rust、rustfmt 和 Clippy。构建时请保留 `vendor/`。Cargo 通过 `Cargo.toml` 的 `[patch.crates-io]` 读取仓库内的 SQLx、SeaORM 和 OpenTelemetry 依赖源码。首次构建仍需下载本机尚未缓存的其他依赖。
 2. 准备 MySQL 8.0.16 或更高版本（不以 MariaDB 替代），以及具备当前数据库建库、迁移和业务读写权限的账号。Redis 使用 RESP 连接，当前验收基线为 Redis 7.x（CI 使用 7.4.9），按部署方式提供 AUTH、独立 database 和 TLS。公共配置的文件存储默认使用本地目录，但 `config/app.dev.toml` 会覆盖为 RustFS；不使用对象存储服务时，须按下方片段在私有开发配置中显式改为 `local`。也支持 MinIO 和 S3 兼容服务。实时消息的 WebSocket 票据依赖可用 Redis；`redis.mode="optional"` 下应用就绪不代表实时消息可用，验收实时消息时应配置 `required` 并提供可连接的 Redis。
 3. 使用数据库客户端创建空库，例如：
 
@@ -53,7 +55,7 @@ cargo serve -- --config-dir ../ryframe-dev-config
 
 普通初始用户 `user`、新建及批量导入的普通用户初始密码为 `123456`；管理员使用显式配置的密码。所有新账号首次登录必须改密，改密前不能操作业务，改密成功后重新登录。重复迁移不会重置已有密码或改密状态。已有开发版普通账号密码未知时，按[显式账号恢复流程](docs/api.md#异常账号恢复)生成一次性链接，由用户自行设置密码。
 
-新配置默认单租户，身份固定使用系统租户，登录页不选租户。需要多租户时在配置文件中设置 `multi_tenancy.enabled = true`。已有部署的显式选择继续生效；单租户仍可使用配置迁移和数据维护。
+新配置默认单租户，身份固定使用系统租户，登录页不选租户。需要多租户时在配置文件中设置 `multi_tenancy.enabled = true`。已有部署的显式选择继续生效；单租户仍可使用配置迁移和数据维护。套餐可发布空能力版本；通知公告和租户主动消息发布可按套餐启停，停用不删除历史数据，也不关闭系统通知、调度、导入导出或备份恢复。
 
 ## 数据库、配置与 SQL 导入
 
@@ -112,9 +114,7 @@ cargo xtask build
 - [架构与扩展](docs/architecture.md)：模块边界、SDK 和业务装配。
 - [开发指南](docs/development.md)：工具链、运行、模型和生成流程。
 - [API 指南](docs/api.md)：会话、认证、错误和契约。
-- [数据指南](docs/data.md)：初始化、多库、租户路由、复制与恢复。
+- [数据指南](docs/data.md)说明多库初始化、租户路由、复制与恢复。首次初始化会登记数据库归属，已有无归属库须先[规划显式接管](docs/data.md#首次初始化与既有数据库归属接管)。归属冲突时保留业务数据。
 - [运维指南](docs/operations.md)：部署、升级、reset 和排障。
 
 字段、菜单、权限与默认值以 OpenAPI、访问目录、配置结构和命令帮助为准。MQTT、邮件、乐观锁等按需插件属于后续路线，本轮不增加占位接口或额外服务要求。
-
-物理数据库归属由首次初始化登记；既有无归属数据库须显式计划接管，冲突拒绝且不改业务数据。入口与停止生产者要求见[数据指南](docs/data.md#首次初始化与既有数据库归属接管)。

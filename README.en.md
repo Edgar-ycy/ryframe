@@ -1,16 +1,18 @@
 # RyFrame
 
-[简体中文](README.md)
+[简体中文](README.md) · [Run locally](#first-run-after-downloading) · [Build your first business module](#develop-business-modules) · [Vue 3 frontend](https://github.com/Edgar-ycy/ryframe-vue3)
 
-RyFrame is a Rust 2024 framework for enterprise administration, paired with a Vue 3 frontend. This is a `0.x` development version: use current contracts and a new isolated database rather than overwriting an older development installation.
+RyFrame helps you build administration apps with Rust and Vue 3. For an order management module, define the order model to generate CRUD endpoints and database migrations. Enable frontend synchronization to generate the list, form and routes as well. Reuse sign-in, role permissions, tenant isolation and operation logs while you write the rules specific to orders.
 
-It includes users, roles, permissions, organizations, product plans, tenancy, configuration transfer, database migration, monitoring, messages, scheduling, imports, exports, profiles, passwords, avatars and login sessions. Plans may have no optional capabilities. Notices and tenant message publishing can be enabled per plan; disabling them preserves history and does not disable system notifications, scheduling, imports, exports, backups or recovery.
+![The RyFrame permissions page showing the permission tree for users, roles and menus](docs/images/permissions.jpg)
 
 ## First run after downloading
 
+The `0.x` development series allows breaking changes to APIs, configuration and database schemas. Use matching frontend and backend contracts and a fresh isolated database. Keep your existing development database intact. Starting with the first stable release, `v1.0.0`, the project protects published contracts and data upgrade paths.
+
 Backend and frontend are separate repositories. Run these Windows PowerShell examples from the backend root. First startup, integration, and optional development steps require no manual creation of Git-ignored directories. Tools create build and runtime directories as needed. MySQL, Redis and RustFS/MinIO/S3-compatible storage may run on any suitable platform or remote server. WSL is not required.
 
-1. For native Windows builds, first install the “Desktop development with C++” workload in Visual Studio or Build Tools, including MSVC C/C++ tools for the target architecture and a Windows SDK; see the [official rustup Windows MSVC prerequisites](https://rust-lang.github.io/rustup/installation/windows-msvc.html). Then install rustup and run `rustup show` in the repository to select the stable toolchain, rustfmt and Clippy pinned by `rust-toolchain.toml`.
+1. For native Windows builds, first install the “Desktop development with C++” workload in Visual Studio or Build Tools, including MSVC C/C++ tools for the target architecture and a Windows SDK; see the [official rustup Windows MSVC prerequisites](https://rust-lang.github.io/rustup/installation/windows-msvc.html). Then install rustup and run `rustup show` in the repository to select the stable toolchain, rustfmt and Clippy pinned by `rust-toolchain.toml`. Keep `vendor/` when building. Cargo uses `[patch.crates-io]` in `Cargo.toml` to load SQLx, SeaORM and OpenTelemetry sources from this repository. The first build still needs to download other dependencies missing from the local cache.
 2. Prepare MySQL 8.0.16 or newer (MariaDB is not a substitute) and an account with the required schema, migration and application permissions. Redis uses a RESP connection; Redis 7.x is the current acceptance baseline (CI uses 7.4.9), with AUTH, an isolated database index and TLS configured as required by the deployment. Common configuration defaults file storage to a local directory, but `config/app.dev.toml` overrides it with RustFS. If no object storage service is used, explicitly switch the private development configuration to `local` as shown below. MinIO and S3-compatible services are also supported. Realtime messaging WebSocket tickets require available Redis; application readiness with `redis.mode="optional"` does not establish realtime messaging availability. For realtime messaging acceptance, configure `required` and provide reachable Redis.
 3. Create an empty database with a database client, for example:
 
@@ -53,7 +55,7 @@ The daily Cargo aliases use the checked-in `Cargo.lock`. `up` initializes or upg
 
 The initial ordinary account `user`, newly created users and imported ordinary users start with `123456`; administrators use the explicitly configured password. Every new account must change its password before business access, then sign in again. Repeated migration does not reset existing passwords or the change requirement. For an existing development account with an unknown password, use the [explicit recovery flow](docs/api.en.md#recovering-accounts-with-unknown-passwords): an administrator issues a one-time link and the user chooses a new password.
 
-New configurations default to single tenancy, using the internal system tenant without a login tenant selector. Enable multiple tenants with `multi_tenancy.enabled = true` in the configuration file. Existing explicit settings remain effective. Configuration transfer and data maintenance remain available in single tenancy.
+New configurations default to single tenancy, using the internal system tenant without a login tenant selector. Enable multiple tenants with `multi_tenancy.enabled = true` in the configuration file. Existing explicit settings remain effective. Configuration transfer and data maintenance remain available in single tenancy. Plans may have no optional capabilities. Notices and tenant message publishing can be enabled per plan; disabling them preserves history and does not disable system notifications, scheduling, imports, exports, backups or recovery.
 
 ## Databases, configuration and SQL import
 
@@ -112,9 +114,7 @@ The read-only `--plan` guarantee applies to tasks after the tool starts: no task
 - [Architecture and extension points](docs/architecture.en.md): module boundaries, SDK and assembly.
 - [Development](docs/development.en.md): toolchain, startup, models and generation.
 - [API](docs/api.en.md): sessions, authentication, errors and contracts.
-- [Data](docs/data.en.md): initialization, multiple databases, tenant routing, copying and recovery.
+- [Data](docs/data.en.md) covers initialization, tenant routing, copying and recovery across databases. First initialization records database ownership. For an existing unowned database, [plan explicit adoption](docs/data.en.md#initial-ownership-registration-and-explicit-adoption-of-existing-databases). An ownership conflict leaves business data intact.
 - [Operations](docs/operations.en.md): deployment, upgrades, reset and troubleshooting.
 
 OpenAPI, the access catalog, configuration types and command help define fields, menus, permissions and defaults. Optional MQTT, email and optimistic-locking plugins are future work; this iteration adds no placeholder interfaces or extra service requirements.
-
-First initialization registers physical database ownership. Existing unowned databases require explicit planned adoption; conflicts fail without modifying business data. See the [data guide](docs/data.en.md#initial-ownership-registration-and-explicit-adoption-of-existing-databases) for commands and producer-stop requirements.
