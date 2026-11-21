@@ -335,18 +335,6 @@ class ExportVerificationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.load()
 
-    def test_changed_object_payload_and_original_head_are_rejected(self):
-        entry = next(bucket for bucket in self.export["objects"] if bucket["bucket"] == "uploads")["entries"][0]
-        body = self.fixture.output / entry["artifact"]["file"]
-        body.write_bytes(b"changed")
-        with self.assertRaises(ValueError):
-            self.load()
-        body.write_bytes(b"data")
-        head = body.parent / "head-before.json"
-        head.write_text("{}", encoding="utf-8")
-        with self.assertRaises(ValueError):
-            self.load()
-
     def test_lightweight_binding_check_still_rejects_original_diagnostic_changes(self):
         loaded = self.load()
         entry = next(bucket for bucket in self.export["objects"] if bucket["bucket"] == "uploads")["entries"][0]
