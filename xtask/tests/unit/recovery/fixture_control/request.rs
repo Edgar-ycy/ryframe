@@ -584,3 +584,88 @@ fn product_guard_rechecks_actual_selected_configuration() {
     fs::write(selected, b"scope_id = \"second\"\n").unwrap();
     assert!(product.check().is_err());
 }
+
+#[test]
+fn direct_toml_credentials_remain_required_with_ambient_process_values() {
+    const CHILD: &str = "RYFRAME_FIXTURE_REQUEST_AMBIENT_TEST_CHILD";
+    const AMBIENT: [(&str, &str); 2] = [
+        ("AWS_ACCESS_KEY_ID", "ambient-access"),
+        ("AWS_SECRET_ACCESS_KEY", "ambient-secret"),
+    ];
+    if std::env::var_os(CHILD).is_none() {
+        let name = format!(
+            "{}::direct_toml_credentials_remain_required_with_ambient_process_values",
+            module_path!().split_once("::").unwrap().1
+        );
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", &name, "--nocapture"])
+            .env(CHILD, "1")
+            .envs(AMBIENT)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    for (name, value) in AMBIENT {
+        assert_eq!(std::env::var(name).unwrap(), value);
+    }
+
+    let fixture = RequestFixture::new();
+    fixture.register_services();
+    let options = fixture.options(FixtureSide::Base);
+    let backend = &fixture.sources.backend;
+    let product = Product::load(backend, &options.environment, "base").unwrap();
+    let service = load_service(backend, &fixture.run, &product.prepared, "base").unwrap();
+    let request = product
+        .request(&options.id, "base", &service.storage)
+        .unwrap();
+    binding_request::validate(backend, &request, &Value::Null).unwrap();
+    assert_eq!(
+        request["target"]["s3"]["access_key"],
+        format!("{ACCESS}-base")
+    );
+    assert_eq!(
+        request["target"]["s3"]["secret_key"],
+        format!("{SECRET}-base")
+    );
+
+    fixture.prepare(
+        FixtureSide::Base,
+        &format!("access_key_env='AWS_ACCESS_KEY_ID'\nsecret_key='{SECRET}-base'\n"),
+    );
+    fixture.reject(options, "对象存储须显式配置认证");
+}
+
+#[test]
+fn rehashed_toml_with_another_scope_is_rejected_before_request_publication() {
+    let fixture = RequestFixture::new();
+    fixture.register_services();
+    let options = fixture.options(FixtureSide::Candidate);
+    Product::load(&fixture.sources.backend, &options.environment, "candidate").unwrap();
+
+    let review = fs::read(&fixture.review).unwrap();
+    let ledger = crate::clone_native_tests::snapshot(&fixture.run);
+    let mut receipt = document::read(&options.environment).unwrap();
+    let plan = receipt["plan"].clone();
+    let config = options.environment.parent().unwrap().join("config");
+    let selected = config.join("app.test.toml");
+    let original = fs::read_to_string(&selected).unwrap();
+    let changed = original.replacen("scope_id='fixture-candidate'", "scope_id='fixture-base'", 1);
+    assert_ne!(changed, original);
+    fs::write(&selected, changed).unwrap();
+    let rebound = json!(configuration_digest(&config).unwrap());
+    assert_ne!(receipt["configuration_sha256"], rebound);
+    receipt["configuration_sha256"] = rebound;
+    document::write_replace(&options.environment, &receipt).unwrap();
+
+    fixture.reject(options.clone(), "私有环境未绑定当前 scope 或配置摘要");
+    assert_eq!(document::read(&options.environment).unwrap()["plan"], plan);
+    assert_eq!(fs::read(&fixture.review).unwrap(), review);
+    assert_eq!(crate::clone_native_tests::snapshot(&fixture.run), ledger);
+    assert!(!fixture.run.join("run.lock").exists());
+}
