@@ -166,12 +166,7 @@ pub(crate) fn verify(backend: &Path, review: &Value) -> Result<Option<SeedServic
 
 pub(super) fn publish(backend: &Path, options: &FixtureReconciledReview) -> Result<Value> {
     let origin = Origin::load(backend, &options.workspace)?;
-    let file = validate_local_test_path(
-        &options.execution_source,
-        backend,
-        LocalTestPathKind::ExistingFile,
-    )?;
-    let binding = file_binding(&file, "接续执行源码发布")?;
+    let binding = execution_source_binding(backend, &options.execution_source)?;
     let publication = execution::verify(backend, &binding)?;
     let execution = execution_root(&publication)?;
     validate_future_root(&options.future_root, &execution)?;
@@ -187,6 +182,12 @@ pub(super) fn publish(backend: &Path, options: &FixtureReconciledReview) -> Resu
         return Err("产品接续审阅发布后发生变化".into());
     }
     Ok(json!({"status":"reconciled_seed_reviewed","services_started":false,"remote_writes":0}))
+}
+
+fn execution_source_binding(backend: &Path, file: &Path) -> Result<Value> {
+    let file = validate_local_test_path(file, backend, LocalTestPathKind::ExistingFile)?;
+    let file = portable_path(&std::fs::canonicalize(file)?);
+    file_binding(&file, "接续执行源码发布")
 }
 
 fn execution_root(publication: &Value) -> Result<PathBuf> {

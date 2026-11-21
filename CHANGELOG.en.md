@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix mixed-separator execution source bindings when publishing a reconciled review on Windows. Review publication and environment planning use the same canonical source path while preserving file digests and checks for path escape and links.
+
 - Full-stack CI verifies both frozen TOML files before preparing object buckets and uses the native S3 file binding to create and verify each bucket.
 
 - Fix startup for the required-check summary in GitHub Actions. The runner locates the Rust aggregator built for the current job and passes job results in a temporary JSON file.

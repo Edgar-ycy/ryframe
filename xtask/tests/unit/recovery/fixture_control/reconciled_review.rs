@@ -105,3 +105,42 @@ fn seed_request_keeps_resources_and_exact_database_credentials_across_execution_
         );
     }
 }
+
+#[cfg(windows)]
+#[test]
+fn successor_publication_path_matches_environment_plan_and_rejects_unsafe_paths() {
+    use crate::recovery::fixture_control::{
+        environment::protocol::tests::published_plan, source_pair::execution::tests::Fixture,
+    };
+
+    let fixture = Fixture::new();
+    let (_, plan) = published_plan(&fixture);
+    let canonical = portable_path(
+        &fixture
+            .output
+            .join("execution-source.json")
+            .canonicalize()
+            .unwrap(),
+    );
+    let directory = canonical.parent().unwrap();
+    let mixed = PathBuf::from(format!("{}/execution-source.json", directory.display()));
+    assert_ne!(mixed.as_os_str(), canonical.as_os_str());
+
+    let issued = execution_source_binding(&fixture.backend, &mixed).unwrap();
+    assert_eq!(issued, plan["execution_source"]);
+    assert_eq!(issued["path"], json!(canonical));
+    assert!(execution_source_binding(&fixture.backend, &fixture.receipt).is_err());
+
+    let junction = fixture.backend.join(".local-tests").join("source-junction");
+    let status = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(&junction)
+        .arg(directory)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let linked = junction.join("execution-source.json");
+    let rejected = execution_source_binding(&fixture.backend, &linked);
+    std::fs::remove_dir(junction).unwrap();
+    assert!(rejected.unwrap_err().to_string().contains("junction"));
+}
