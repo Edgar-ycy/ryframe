@@ -23,6 +23,9 @@ use crate::{
     },
 };
 
+#[path = "target_database_native/publication.rs"]
+mod publication;
+
 const SCOPE: &str = "database-native-fixture";
 const KEYS: [&str; 4] = ["shared-control", "shared", "dedicated-a", "dedicated-b"];
 const UUID: &str = "67cd8d4a-fe90-11ef-98fd-5847ca786499";
@@ -554,37 +557,6 @@ fn only_exact_empty_success_gets_one_identity_retry() {
                 .starts_with("mysql-identity-retry-"))
             .count(),
         1
-    );
-}
-
-#[test]
-fn checkpoint_error_is_returned_and_no_inventory_is_published() {
-    let fixture = Fixture::new();
-    let fake = Fake::new(&fixture, "none");
-    let calls = Cell::new(0);
-    let result = database::capture_with(&fixture.context, &fake, &|| {
-        calls.set(calls.get() + 1);
-        if calls.get() == 11 {
-            Err("explicit checkpoint failure".into())
-        } else {
-            Ok(())
-        }
-    });
-    let error = result.err().unwrap();
-    assert!(error.to_string().contains("CheckpointError"));
-    assert!(
-        error
-            .source()
-            .unwrap()
-            .to_string()
-            .contains("explicit checkpoint failure")
-    );
-    assert!(
-        !fixture
-            .context
-            .observation_dir
-            .join("inventory/inventory.json")
-            .exists()
     );
 }
 
