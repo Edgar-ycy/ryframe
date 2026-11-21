@@ -300,8 +300,8 @@ impl<T: Transport, F: Fn() -> Result<()>> Capture<'_, T, F> {
             .write(self.directory, "inventory.json", &receipt)?;
         let path = self.directory.join("inventory.json");
         let published = evidence::descriptor(&path)?;
-        let result = self.evidence.files(self.directory).and_then(|files| {
-            (self.checkpoint)()?;
+        let result = (self.checkpoint)().and_then(|()| {
+            let files = self.evidence.files(self.directory)?;
             Ok(Captured { binding: before.clone(), inventory: receipt.clone(), receipt: json!({"path": path, "bytes": published["bytes"], "sha256": published["sha256"]}), observations: images, evidence_files: files })
         });
         if result.is_err() && evidence::descriptor(&path)? == published {

@@ -54,11 +54,18 @@ fn checkpoint_error_is_returned_and_no_inventory_is_published() {
 #[test]
 fn checkpoint_error_after_publish_preserves_unknown_evidence() {
     for injected in ["unknown-post-publication.json", "inventory.json"] {
-        check_failed_publication(injected);
+        check_failed_publication(injected, Some(CHECKPOINT_ERROR));
     }
 }
 
-fn check_failed_publication(injected_name: &str) {
+#[test]
+fn successful_checkpoint_after_publish_still_rejects_changed_evidence() {
+    for injected in ["unknown-post-publication.json", "inventory.json"] {
+        check_failed_publication(injected, None);
+    }
+}
+
+fn check_failed_publication(injected_name: &str, checkpoint_error: Option<&str>) {
     let fixture = Fixture::new();
     let transport = Fake::new(&fixture, "none");
     let directory = fixture.context.observation_dir.join("inventory");
@@ -80,11 +87,17 @@ fn check_failed_publication(injected_name: &str) {
             .create_new(true)
             .open(&injected)?
             .write_all(UNKNOWN_BYTES)?;
-        Err(CHECKPOINT_ERROR.into())
+        match checkpoint_error {
+            Some(error) => Err(error.into()),
+            None => Ok(()),
+        }
     });
     assert_eq!(
-        result.err().expect("发布后检查点必须失败").to_string(),
-        CHECKPOINT_ERROR
+        result
+            .err()
+            .expect("变更证据后的库存发布必须失败")
+            .to_string(),
+        checkpoint_error.unwrap_or("库存目录包含未声明文件、目录或已变化证据")
     );
     assert_eq!(transport.inventories.get(), 8);
     assert_eq!(transport.identities.get(), 16);
