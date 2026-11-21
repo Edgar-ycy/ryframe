@@ -377,6 +377,53 @@ fn evidence_file_io_records_verifies_and_remains_complete_after_handles_close() 
 }
 
 #[test]
+fn evidence_concurrent_distinct_schemas_share_fresh_directory() {
+    use std::{sync::Barrier, thread};
+
+    let root = io_root("concurrent-shared-root");
+    let directory = root.join(".local-tests/mysql/fixtures");
+    assert!(!directory.exists());
+    let plans = [1, 2, 3, 4].map(|sequence| {
+        let mut metadata = plan();
+        metadata.schema = format!("ryframe_it_scope_case_123_{sequence}");
+        metadata
+    });
+    let ready = Barrier::new(plans.len());
+    let records = thread::scope(|scope| {
+        let handles = plans.each_ref().map(|metadata| {
+            let root = &root;
+            let ready = &ready;
+            scope.spawn(move || {
+                ready.wait();
+                let mut evidence = Evidence::create(root, metadata).unwrap();
+                evidence.verify().unwrap();
+                (
+                    evidence.plan.expected.clone(),
+                    evidence.journal.expected.clone(),
+                )
+            })
+        });
+        handles.map(|handle| handle.join().unwrap())
+    });
+    assert_eq!(fs::read_dir(&directory).unwrap().count(), plans.len() * 2);
+    for (metadata, (plan_bytes, journal_bytes)) in plans.iter().zip(records) {
+        let schema = &metadata.schema;
+        assert_eq!(plan_bytes, metadata.bytes().unwrap());
+        assert_eq!(
+            fs::read(directory.join(format!("{schema}.plan.json"))).unwrap(),
+            plan_bytes
+        );
+        assert_eq!(
+            fs::read(directory.join(format!("{schema}.journal.jsonl"))).unwrap(),
+            journal_bytes
+        );
+        let record: serde_json::Value = serde_json::from_slice(&journal_bytes).unwrap();
+        assert_eq!(record["schema"], schema.as_str());
+        assert_eq!(record["stage"], "planned");
+    }
+}
+
+#[test]
 fn evidence_duplicate_schema_create_new_preserves_locked_original_files() {
     let root = io_root("duplicate");
     let mut evidence = Evidence::create(&root, &plan()).unwrap();

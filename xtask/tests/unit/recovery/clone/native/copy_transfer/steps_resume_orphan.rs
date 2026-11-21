@@ -23,6 +23,9 @@ use crate::{
     },
 };
 
+#[path = "post_plan.rs"]
+mod post_plan;
+
 #[test]
 fn orphaned_empty_copy_needs_reconciliation_before_hydration() {
     let mut fixture = Fixture::new();

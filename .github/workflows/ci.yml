@@ -177,6 +177,7 @@ jobs:
           --release-ref "$GITHUB_REF"
 
       - name: 检出前端资源 Workspace
+        id: frontend-checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           repository: ${{ steps.frontend-ref.outputs.repository }}
@@ -202,7 +203,7 @@ jobs:
         working-directory: backend
         run: >-
           cargo xtask check ci rust-gate --frontend-dir ../frontend
-          --frontend-ref "${{ steps.frontend-ref.outputs.ref }}"
+          --frontend-ref "${{ steps.frontend-checkout.outputs.commit }}"
 
       - name: 输出 sccache 命中统计
         if: ${{ always() }}
@@ -320,6 +321,7 @@ jobs:
           --candidate-openapi "$RUNNER_TEMP/candidate-openapi.json"
 
       - name: 检出前端资源 Workspace
+        id: frontend-checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           repository: ${{ steps.contract-frontend-ref.outputs.repository || steps.resource-frontend-ref.outputs.repository }}
@@ -381,7 +383,7 @@ jobs:
           cargo xtask check ci resource-gate --frontend-dir ../frontend \
             "${base_args[@]}" \
             --head-sha "${{ github.event.pull_request.head.sha || github.sha }}" \
-            --frontend-ref "${{ steps.contract-frontend-ref.outputs.ref || steps.resource-frontend-ref.outputs.ref }}" \
+            --frontend-ref "${{ steps.frontend-checkout.outputs.commit }}" \
             --targeted --jobs 12 --test-jobs 8
 
       - name: 校验正式前端消费契约
@@ -544,6 +546,7 @@ jobs:
           --release-ref "$GITHUB_REF"
 
       - name: 检出前端真实 Workspace
+        id: frontend-checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           repository: ${{ steps.windows-frontend-ref.outputs.repository }}
@@ -569,7 +572,7 @@ jobs:
         working-directory: ryframe
         run: >-
           cargo xtask check ci rust-gate --frontend-dir ../ryframe-vue3
-          --frontend-ref "${{ steps.windows-frontend-ref.outputs.ref }}"
+          --frontend-ref "${{ steps.frontend-checkout.outputs.commit }}"
           --profile windows-smoke --test-jobs 4
 
       - name: 输出 sccache 统计

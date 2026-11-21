@@ -98,6 +98,32 @@ fn github_value(step: &YamlValue, binding: &str) -> String {
 }
 
 #[test]
+fn frontend_gates_bind_the_checked_out_commit() {
+    let ci = workflow("ci.yml");
+    for (name, gate, path) in [
+        ("rust-gate", "rust-gate", "frontend"),
+        ("resource-gate", "resource-gate", "frontend"),
+        ("windows-smoke", "rust-gate", "ryframe-vue3"),
+    ] {
+        let job = job(&ci, name);
+        let (gate_index, gate) = command(job, &format!("cargo xtask check ci {gate}"));
+        let checkout = steps(job)[..gate_index]
+            .iter()
+            .find(|step| {
+                uses(step, "actions/checkout@")
+                    && step.get("id").and_then(YamlValue::as_str) == Some("frontend-checkout")
+            })
+            .unwrap();
+        assert_eq!(text(checkout.get("with").unwrap(), "path"), path);
+        assert_eq!(argument(gate, "--frontend-dir"), format!("../{path}"));
+        assert_eq!(
+            github_value(gate, r"--frontend-ref(?:\s+|=)"),
+            "${{steps.frontend-checkout.outputs.commit}}"
+        );
+    }
+}
+
+#[test]
 fn commit_range_expressions_do_not_use_tag_before_as_a_commit_baseline() {
     let ci = workflow("ci.yml");
     let expected = "${{github.event.pull_request.base.sha||(github.ref_type=='branch'&&github.event.before)||''}}";

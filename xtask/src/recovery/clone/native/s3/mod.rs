@@ -14,7 +14,7 @@ mod response;
 mod signing;
 #[cfg(test)]
 #[path = "../../../../../tests/unit/recovery/clone/native/s3/tests.rs"]
-mod tests;
+pub(in crate::recovery::clone::native) mod tests;
 mod write;
 
 pub(crate) struct Configuration {

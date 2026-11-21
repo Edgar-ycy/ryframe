@@ -351,22 +351,6 @@ class TransferTests(unittest.TestCase):
                 self.engine()
         self.assertEqual(self.writes(), [])
 
-    def test_injected_table_or_changed_artifact_never_writes(self):
-        with self.open():
-            engine = self.engine()
-            engine.databases[next(iter(engine.databases))]["tables"]["ryframe_resource_ownership"] = 1
-            with self.assertRaises(ValueError):
-                engine.apply_database("shared-control")
-        self.assertEqual(self.writes(), [])
-
-    def test_changed_artifact_after_engine_creation_is_rejected(self):
-        with self.open():
-            engine = self.engine()
-            (self.fixture.root / "shared-control.sql").write_text("changed")
-            with self.assertRaises(ValueError):
-                engine.apply_database("shared-control")
-        self.assertEqual(self.writes(), [])
-
     def test_unknown_names_and_source_object_key_cannot_expand_plan(self):
         with self.open():
             engine = self.engine()
@@ -386,17 +370,6 @@ class TransferTests(unittest.TestCase):
             engine.apply_database("shared-control")
         self.assertEqual(len(self.writes()), 1)
         self.assertEqual(next(iter(self.ledger.snapshot()["steps"].values()))["phase"], "unknown")
-
-    def test_409_and_412_are_not_retried_or_adopted(self):
-        for status in ("409", "412"):
-            with self.subTest(status=status):
-                self.ledger_dir = self.work / ("ledger-" + status)
-                self.runner.failure = status
-                before = len(self.writes())
-                with self.assertRaises(ObjectCreateError), self.open():
-                    self.engine().apply_object("uploads", "clone-target/system/file.txt")
-                self.assertEqual(len(self.writes()), before + 1)
-                self.assertEqual(next(iter(self.ledger.snapshot()["steps"].values()))["phase"], "unknown")
 
     def test_preexisting_object_is_not_adopted_or_overwritten(self):
         self.runner.objects["uploads", "clone-target/system/file.txt"] = b"data", {"ContentType": "text/plain", "Metadata": {}}
@@ -423,28 +396,6 @@ class TransferTests(unittest.TestCase):
             engine = self.engine()
             with self.assertRaises(ValueError):
                 engine.finish()
-        self.assertEqual(len(self.writes()), 1)
-
-    def test_complete_unchanged_database_is_readonly_and_bound_in_result(self):
-        key = "dedicated-a"
-        basis = self.guard.basis[key]
-        initial = replace(basis.initialized, tables=basis.source.tables)
-        self.guard.basis[key] = replace(basis, initialized=initial)
-        self.guard.current[key] = initial
-        with self.open():
-            engine = self.engine()
-            self.apply_all(engine)
-            engine.finish()
-        self.assertEqual(engine.result()["unchanged_databases"], 1)
-        self.assertEqual(len(self.writes()), 2)
-
-    def test_confirmation_write_failure_keeps_unknown_resource_and_no_success(self):
-        with self.assertRaises(OSError), self.open():
-            engine = self.engine()
-            with patch.object(self.ledger, "confirm", side_effect=OSError("fixture evidence failure")):
-                engine.apply_database("shared-control")
-        with self.assertRaises(ValueError):
-            engine.result()
         self.assertEqual(len(self.writes()), 1)
 
     def test_finished_ledger_receipt_failure_cannot_publish_data_success(self):

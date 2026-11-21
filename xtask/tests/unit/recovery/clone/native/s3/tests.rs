@@ -73,7 +73,7 @@ fn object_response(length: u64, body: &[u8]) -> Vec<u8> {
     result
 }
 
-fn put_server(
+pub(in crate::recovery::clone::native) fn put_server(
     response: Vec<u8>,
     after_read: impl FnOnce() + Send + 'static,
 ) -> (String, mpsc::Receiver<Vec<u8>>, thread::JoinHandle<()>) {
