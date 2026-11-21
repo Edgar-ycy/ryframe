@@ -14,6 +14,10 @@ type AssetDelta = Vec<(PathBuf, Option<Vec<u8>>, Option<Vec<u8>>)>;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cli_configuration_and_builder_import_the_same_two_table_assets() {
+    if !mysql::integration_enabled() {
+        eprintln!("跳过 MySQL 真实协议测试（未验收）：缺少显式 .local-tests/mysql/config 配置目录");
+        return;
+    }
     assert_eq!(std::env::var("APP_ENV").as_deref(), Ok("test"));
     mysql::run_mysql_test("entryparity", |database| async move {
         let mut frontends = Vec::new();
