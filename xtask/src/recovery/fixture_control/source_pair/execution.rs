@@ -349,14 +349,7 @@ pub(in crate::recovery) fn verify_pair<T>(
     pair: &Value,
     observe: impl FnOnce(&Value) -> Result<T>,
 ) -> Result<T> {
-    exact(
-        pair,
-        &["format_version", "kind", "execution_source", "sources"],
-        "执行来源组合",
-    )?;
-    if pair["format_version"] != 1 || pair["kind"] != PAIR_KIND {
-        return Err("执行来源组合类型或版本无效".into());
-    }
+    validate_pair(pair)?;
     let window = root_window(root, &pair["execution_source"])?;
     let selected = require_root(root, window.publication());
     let sources = window::check(
@@ -369,4 +362,16 @@ pub(in crate::recovery) fn verify_pair<T>(
         Ok(value) => after.map(|()| value),
         Err(error) => Err(window::failure(error, after)),
     }
+}
+
+fn validate_pair(pair: &Value) -> Result<()> {
+    exact(
+        pair,
+        &["format_version", "kind", "execution_source", "sources"],
+        "执行来源组合",
+    )?;
+    if pair["format_version"] != 1 || pair["kind"] != PAIR_KIND {
+        return Err("执行来源组合类型或版本无效".into());
+    }
+    Ok(())
 }

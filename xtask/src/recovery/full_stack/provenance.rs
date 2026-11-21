@@ -4,7 +4,8 @@ use crate::{
     recovery::{
         clone::native::{json as documents, source},
         fixture_control::{
-            file_binding, git_root, path_text_canonical, portable_path, read_json, text_field,
+            file_binding, git_root, path_text_canonical, portable_path, read_json,
+            source_pair::execution::HeldTargetSource, text_field,
         },
     },
 };
@@ -54,6 +55,19 @@ pub(in crate::recovery) fn published<T>(
     use crate::recovery::fixture_control::source_pair::execution;
     let root = portable_path(&fs::canonicalize(root)?);
     execution::verify_pair(&root, pair, |publication| {
+        published_evidence(&root, directory, pair, publication, observe)
+    })
+}
+
+pub(in crate::recovery) fn published_held<T>(
+    root: &Path,
+    directory: &Path,
+    pair: &Value,
+    holder: &HeldTargetSource,
+    observe: impl FnOnce(&Value) -> Result<T>,
+) -> Result<T> {
+    let root = portable_path(&fs::canonicalize(root)?);
+    holder.with_pair(&root, pair, |publication| {
         published_evidence(&root, directory, pair, publication, observe)
     })
 }

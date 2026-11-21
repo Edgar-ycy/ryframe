@@ -354,9 +354,72 @@ fn frontend_publication_rejects_overlap_mismatch_and_original_drift() {
 }
 
 #[cfg(windows)]
+fn rejects_unbound_pair(
+    held: &super::HeldTargetSource,
+    root: &Path,
+    other_root: &Path,
+    combination: &Value,
+    substituted: &Value,
+) {
+    for (field, value) in [
+        ("format_version", json!(2)),
+        ("kind", json!("另一种组合")),
+        ("unexpected", json!(true)),
+        ("execution_source", substituted.clone()),
+        (
+            "sources",
+            json!({"backend": combination["sources"]["backend"]}),
+        ),
+    ] {
+        let mut changed = combination.clone();
+        changed[field] = value;
+        assert!(
+            held.with_pair(root, &changed, |_| -> crate::Result<()> {
+                panic!("来源组合被替换后不得执行观察")
+            })
+            .is_err()
+        );
+    }
+    assert!(
+        held.with_pair(other_root, combination, |_| -> crate::Result<()> {
+            panic!("来源组合不得跨根执行观察")
+        })
+        .is_err()
+    );
+}
+
+#[cfg(windows)]
+fn rejects_runtime_pair_byte_drift(
+    root: &Path,
+    runtime: &Path,
+    combination: &Value,
+    held: &super::HeldTargetSource,
+) {
+    let path = runtime.join("source-pair.json");
+    let original = fs::read(&path).unwrap();
+    let mut reformatted = original.clone();
+    reformatted.push(b'\n');
+    let changed = crate::recovery::full_stack::provenance::published_held(
+        root,
+        runtime,
+        combination,
+        held,
+        |_| {
+            fs::write(&path, reformatted)?;
+            Ok(())
+        },
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(changed.contains("发布业务来源在核验期间变化"), "{changed}");
+    fs::write(path, original).unwrap();
+}
+
+#[cfg(windows)]
 #[test]
 fn held_target_source_reuses_only_the_bound_four_roots() {
-    use super::{HeldTargetSource, target_binding};
+    use super::{HeldTargetSource, pair, target_binding};
+    use crate::recovery::full_stack::provenance;
 
     let fixture = Fixture::new();
     for root in [&fixture.backend, &fixture.frontend] {
@@ -367,10 +430,29 @@ fn held_target_source_reuses_only_the_bound_four_roots() {
     let path = fixture.output.join("backend");
     let declared = json!({"path":path,"execution_source":fixture.binding()});
     let (root, binding) = target_binding(&fixture.backend, &declared).unwrap();
+    let combination = pair(&fixture.backend, &root, &declared["execution_source"]).unwrap();
+    let runtime = root.join(".local-tests/runtime");
+    fs::create_dir_all(&runtime).unwrap();
+    let pair_path = runtime.join("source-pair.json");
+    fs::write(pair_path, canonical(&combination)).unwrap();
+    let full =
+        provenance::published(&root, &runtime, &combination, |value| Ok(value.clone())).unwrap();
     let held = HeldTargetSource::open(&fixture.backend, &declared, &binding).unwrap();
     assert_eq!(
         held.verify(&fixture.backend, &declared).unwrap(),
-        (root, binding)
+        (root.clone(), binding)
+    );
+    assert_eq!(
+        held.with_pair(&root, &combination, |value| Ok(value.clone()))
+            .unwrap(),
+        publication
+    );
+    assert_eq!(
+        provenance::published_held(&root, &runtime, &combination, &held, |value| Ok(
+            value.clone()
+        ))
+        .unwrap(),
+        full
     );
     held.check_end().unwrap();
 
@@ -378,10 +460,53 @@ fn held_target_source_reuses_only_the_bound_four_roots() {
     substituted["execution_source"]["sha256"] = json!("0".repeat(64));
     assert!(held.verify(&fixture.backend, &substituted).is_err());
     assert!(held.verify(&fixture.frontend, &declared).is_err());
+    rejects_unbound_pair(
+        &held,
+        &root,
+        &fixture.frontend,
+        &combination,
+        &substituted["execution_source"],
+    );
+    rejects_runtime_pair_byte_drift(&root, &runtime, &combination, &held);
+
+    let sibling_fixture = fixture.output.join("fixture.json");
+    let error = held
+        .with_pair(&root, &combination, |_| {
+            fs::write(&sibling_fixture, b"{}")?;
+            Ok(())
+        })
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("独立执行源码的父目录不能含 fixture.json"),
+        "{error}"
+    );
+    assert!(
+        held.with_pair(&root, &combination, |_| -> crate::Result<()> {
+            panic!("发布源码父目录混入 fixture 后不得执行观察")
+        })
+        .is_err()
+    );
+    fs::remove_file(sibling_fixture).unwrap();
+
     assert!(fs::write(&fixture.receipt, b"invalid").is_err());
     assert!(fs::write(fixture.frontend.join(MARKER), b"invalid").is_err());
     let unexpected = path.join("src/unregistered.txt");
-    fs::write(&unexpected, b"unexpected").unwrap();
+    let drift = held
+        .with_pair(&root, &combination, |_| -> crate::Result<()> {
+            fs::write(&unexpected, b"unexpected")?;
+            Err("观察阶段失败".into())
+        })
+        .unwrap_err()
+        .to_string();
+    assert!(drift.contains("观察阶段失败"), "{drift}");
+    assert!(drift.contains("受保护来源目录出现新成员"), "{drift}");
+    assert!(
+        held.with_pair(&root, &combination, |_| -> crate::Result<()> {
+            panic!("来源树漂移后不得执行观察")
+        })
+        .is_err()
+    );
     assert!(held.verify(&fixture.backend, &declared).is_err());
     assert!(held.check_end().is_err());
     fs::remove_file(unexpected).unwrap();

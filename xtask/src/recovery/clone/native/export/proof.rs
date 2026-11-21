@@ -10,7 +10,10 @@ use super::super::{
     resources::common,
 };
 use super::input::Context;
-use crate::Result;
+use crate::{
+    Result,
+    recovery::fixture_control::{artifact, source_pair::execution::HeldTargetSource},
+};
 
 #[cfg(test)]
 #[path = "../../../../../tests/unit/recovery/clone/native/export/producers.rs"]
@@ -25,7 +28,13 @@ pub(crate) fn generation(context: &Context) -> Result<Value> {
 }
 
 pub(crate) fn generation_in(context: &Context, scope: &bridge::scope::Scope) -> Result<Value> {
-    generation_observed(context, scope, common::require_closed_runtime_ports, false)
+    generation_observed(
+        context,
+        scope,
+        common::require_closed_runtime_ports,
+        false,
+        None,
+    )
 }
 
 fn generation_observed(
@@ -33,6 +42,7 @@ fn generation_observed(
     scope: &bridge::scope::Scope,
     require_ports: fn(&str, &str) -> Result<()>,
     require_producer_names: bool,
+    held: Option<&HeldTargetSource>,
 ) -> Result<Value> {
     let build_path = manifest::bound_file(
         &context.backend,
@@ -51,7 +61,7 @@ fn generation_observed(
         true,
     )?;
     let runtime = json_io::read(&runtime_path)?;
-    verify_runtime_contract(context, &runtime_path, &runtime)?;
+    verify_runtime_contract(context, &runtime_path, &runtime, held)?;
     if runtime.get("scope_id").and_then(Value::as_str)
         != context.source().get("scope_id").and_then(Value::as_str)
     {
@@ -83,7 +93,7 @@ fn generation_observed(
     {
         return Err("源运行配置在导出证明核验期间变化".into());
     }
-    verify_runtime_contract(context, &runtime_path, &runtime)?;
+    verify_runtime_contract(context, &runtime_path, &runtime, held)?;
     let proof = json!({
         "source": expected["snapshot"],
         "worktree_fingerprint": context.request["worktree_fingerprint"],
@@ -101,16 +111,22 @@ fn generation_observed(
     Ok(proof)
 }
 
-fn verify_runtime_contract(context: &Context, path: &Path, expected: &Value) -> Result<()> {
+fn verify_runtime_contract(
+    context: &Context,
+    path: &Path,
+    expected: &Value,
+    held: Option<&HeldTargetSource>,
+) -> Result<()> {
     super::super::seed::runtime_model::validate_api_environment(
         &context.backend,
         &context.environment,
     )?;
     let directory = path.parent().ok_or("源运行收据缺少所在目录")?;
-    let actual = crate::recovery::fixture_control::verify_full_stack_runtime(
-        &context.execution_backend,
-        directory,
-    )?;
+    let actual = match held {
+        Some(held) => artifact::runtime::verify_held(&context.execution_backend, directory, held)?,
+        None => artifact::runtime::verify(&context.execution_backend, directory)?,
+    }
+    .receipt;
     if actual != *expected {
         return Err("源完整运行契约与已读取的运行收据不同".into());
     }

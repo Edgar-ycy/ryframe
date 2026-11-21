@@ -1,6 +1,9 @@
 //! 复核构建、运行、源码组合和当前工作树，不接受陈旧来源证据。
 use super::super::{exact_object, file_binding, git_root, read_json, text_field};
-use crate::{Result, recovery::clone::native::source};
+use crate::{
+    Result,
+    recovery::{clone::native::source, fixture_control::source_pair::execution::HeldTargetSource},
+};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
@@ -11,16 +14,29 @@ pub(super) fn verify(root: &Path, directory: &Path) -> Result<()> {
 }
 
 pub(super) fn verify_observed(root: &Path, directory: &Path, observe: impl FnOnce()) -> Result<()> {
+    verify_in(root, directory, None, observe)
+}
+
+pub(super) fn verify_held(root: &Path, directory: &Path, held: &HeldTargetSource) -> Result<()> {
+    verify_in(root, directory, Some(held), || {})
+}
+
+fn verify_in(
+    root: &Path,
+    directory: &Path,
+    held: Option<&HeldTargetSource>,
+    observe: impl FnOnce(),
+) -> Result<()> {
     let pair_path = directory.join("source-pair.json");
     let runtime_path = directory.join("runtime-evidence.json");
     if !pair_path.exists() {
-        if runtime_path.exists() {
+        if held.is_some() || runtime_path.exists() {
             return Err("非全栈入口存在意外运行来源证据".into());
         }
         return Ok(());
     }
     let bindings = evidence_bindings(directory, &["runtime.json", "runtime-evidence.json"])?;
-    verify_build_observed(root, directory, |source, build_binding| {
+    verify_build_in(root, directory, held, |source, build_binding| {
         let actual = read_json(&runtime_path, "全栈运行来源证据", 4 * 1024 * 1024)?;
         if actual != runtime_evidence(directory, source, build_binding)? {
             return Err("全栈运行来源证据与当前来源不匹配".into());
@@ -34,6 +50,15 @@ pub(super) fn verify_observed(root: &Path, directory: &Path, observe: impl FnOnc
 pub(super) fn verify_build_observed<T>(
     root: &Path,
     directory: &Path,
+    observe: impl FnOnce(&Value, &Value) -> Result<T>,
+) -> Result<T> {
+    verify_build_in(root, directory, None, observe)
+}
+
+fn verify_build_in<T>(
+    root: &Path,
+    directory: &Path,
+    held: Option<&HeldTargetSource>,
     observe: impl FnOnce(&Value, &Value) -> Result<T>,
 ) -> Result<T> {
     let mut bindings = evidence_bindings(directory, &["source-pair.json", "binaries.json"])?;
@@ -72,31 +97,47 @@ pub(super) fn verify_build_observed<T>(
         verify_artifacts(directory, &build)?;
         observe(source, &build_binding)
     };
-    let observed =
-        if pair["kind"] == crate::recovery::fixture_control::source_pair::execution::PAIR_KIND {
-            crate::recovery::full_stack::provenance::published(root, directory, &pair, |current| {
-                if current != source {
-                    return Err("已发布业务来源与完整当前来源不一致".into());
-                }
-                inspect()
-            })?
-        } else {
-            if source["fixture"] == "business" {
-                let fixture = root
-                    .parent()
-                    .ok_or("业务后端缺少父目录")?
-                    .join("fixture.json");
-                for path in [fixture, root.join(BUSINESS_MODEL)] {
-                    let binding = evidence_binding(&path)?;
-                    bindings.push((path, binding));
-                }
+    let observed = if held.is_some()
+        || pair["kind"] == crate::recovery::fixture_control::source_pair::execution::PAIR_KIND
+    {
+        let verify_published = |current: &Value| {
+            if current != source {
+                return Err("已发布业务来源与完整当前来源不一致".into());
             }
-            verify_source(root, &path, &pair, source)?;
-            let observed = inspect()?;
-            let (path, pair) = source_pair(directory)?;
-            verify_source(root, &path, &pair, source)?;
-            observed
+            inspect()
         };
+        match held {
+            Some(held) => crate::recovery::full_stack::provenance::published_held(
+                root,
+                directory,
+                &pair,
+                held,
+                verify_published,
+            )?,
+            None => crate::recovery::full_stack::provenance::published(
+                root,
+                directory,
+                &pair,
+                verify_published,
+            )?,
+        }
+    } else {
+        if source["fixture"] == "business" {
+            let fixture = root
+                .parent()
+                .ok_or("业务后端缺少父目录")?
+                .join("fixture.json");
+            for path in [fixture, root.join(BUSINESS_MODEL)] {
+                let binding = evidence_binding(&path)?;
+                bindings.push((path, binding));
+            }
+        }
+        verify_source(root, &path, &pair, source)?;
+        let observed = inspect()?;
+        let (path, pair) = source_pair(directory)?;
+        verify_source(root, &path, &pair, source)?;
+        observed
+    };
     if build["build_jobs"].as_u64()
         != Some(u64::from(
             crate::recovery::clone::native::bridge::build_jobs(root)?,
@@ -106,6 +147,22 @@ pub(super) fn verify_build_observed<T>(
     }
     verify_bindings(bindings)?;
     Ok(observed)
+}
+
+#[cfg(windows)]
+pub(super) fn hold_published(root: &Path, directory: &Path) -> Result<Option<HeldTargetSource>> {
+    use crate::recovery::fixture_control::source_pair::execution;
+
+    if !directory.join("source-pair.json").try_exists()? {
+        return Ok(None);
+    }
+    let (_, pair) = source_pair(directory)?;
+    if pair["kind"] != execution::PAIR_KIND {
+        return Ok(None);
+    }
+    let declared = json!({"path":root,"execution_source":pair["execution_source"]});
+    let (_, binding) = execution::target_binding(root, &declared)?;
+    Ok(Some(HeldTargetSource::open(root, &declared, &binding)?))
 }
 
 pub(super) fn runtime_evidence(

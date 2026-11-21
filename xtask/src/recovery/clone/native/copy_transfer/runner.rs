@@ -335,7 +335,15 @@ impl<'a> Operation<'a> {
         let mut io = io::Live::open(self, bound, &window, owner, current)?;
         io.verify_target_owners()?;
         session::run(current, guard, lock, self.stage.mode, |ledger| {
-            steps::run(&plan, ledger, self.stage.mode, &mut io)
+            let execution = steps::run(&plan, ledger, self.stage.mode, &mut io);
+            let checked = self.source.complete_source_window();
+            match (execution, checked) {
+                (Ok(outcome), Ok(())) => Ok(outcome),
+                (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+                (Err(error), Err(after)) => {
+                    Err(format!("{error}；运行来源完整后验失败：{after}").into())
+                }
+            }
         })
     }
 }

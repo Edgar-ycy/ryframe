@@ -6,7 +6,10 @@ use serde_json::Value;
 use crate::Result;
 
 #[cfg(windows)]
-use super::{assets, held_git::HeldGit, root_window, target_root, target_source_binding};
+use super::{
+    LocalTestPathKind, assets, held_git::HeldGit, require_root, root_window, target_root,
+    target_source_binding, validate_absolute_path, validate_pair, window,
+};
 #[cfg(windows)]
 use crate::recovery::clone::native::{source, target_verify::guard::HeldSourceTree};
 
@@ -95,6 +98,40 @@ impl HeldTargetSource {
         }
     }
 
+    /// 在同一受保护来源中观察精确组合，返回结果前再次核对四根和登记文件。
+    pub(in crate::recovery) fn with_pair<T>(
+        &self,
+        root: &Path,
+        pair: &Value,
+        observe: impl FnOnce(&Value) -> Result<T>,
+    ) -> Result<T> {
+        #[cfg(windows)]
+        {
+            validate_pair(pair)?;
+            validate_absolute_path(root, LocalTestPathKind::ExistingDirectory)?;
+            let publication = self.window.publication();
+            require_root(root, publication)?;
+            if pair["execution_source"] != self.declaration["execution_source"] {
+                return Err("执行来源组合的清单绑定与已保护来源不同".into());
+            }
+            if pair["sources"] != publication["original"]["source_pair"]["sources"] {
+                return Err("执行来源组合的原始来源不匹配".into());
+            }
+            self.checkpoint()?;
+            let result = observe(publication);
+            let after = self.checkpoint();
+            match result {
+                Ok(value) => after.map(|()| value),
+                Err(error) => Err(window::failure(error, after)),
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (root, pair, observe);
+            match self.impossible {}
+        }
+    }
+
     pub(in crate::recovery) fn check_end(&self) -> Result<()> {
         #[cfg(windows)]
         {
@@ -108,6 +145,15 @@ impl HeldTargetSource {
 
     #[cfg(windows)]
     fn checkpoint(&self) -> Result<()> {
+        if self
+            .root
+            .parent()
+            .ok_or("执行源码根缺少父目录")?
+            .join("fixture.json")
+            .exists()
+        {
+            return Err("独立执行源码的父目录不能含 fixture.json".into());
+        }
         self.window.check_documents()?;
         // 四个根的句柄只读且各自独立；以现有有界线程能力并行观测。
         crate::source_scan::ordered(&self.roots, true, |root| {

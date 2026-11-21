@@ -20,7 +20,9 @@ use crate::{
     Result,
     cli::CloneSide,
     local_test_path::{LocalTestPathKind, strip_local_test_prefix, validate_local_test_path},
-    recovery::source::evidence::comparison,
+    recovery::{
+        fixture_control::source_pair::execution::HeldTargetSource, source::evidence::comparison,
+    },
 };
 
 use super::record::{Continuation, Files};
@@ -209,6 +211,7 @@ pub(super) struct Source {
     pub(super) region: String,
     storage: Option<Value>,
     held: Inputs,
+    runtime_source: Option<HeldTargetSource>,
 }
 
 impl Source {
@@ -232,6 +235,7 @@ impl Source {
         let public = app_configuration::public_configuration(backend, &configuration)?;
         request["config_dir"] = configuration["directory"].clone();
         let held = protect_source(&context)?;
+        let runtime_source = resume_runtime_source(stage, &context)?;
         let source = Self {
             export,
             root,
@@ -243,6 +247,7 @@ impl Source {
             configuration,
             storage: source_storage(stage)?,
             held,
+            runtime_source,
         };
         source.check_generation(stage)?;
         Ok(source)
@@ -255,14 +260,49 @@ impl Source {
     pub(super) fn check_generation(&self, stage: &Stage<'_>) -> Result<()> {
         stage.check()?;
         self.check_inputs()?;
-        let generation =
-            export::proof::copy::request(&json!({"backend":stage.backend,"run_dir":stage.run}))?;
+        let generation = export::proof::copy::request_in(
+            &json!({"backend":stage.backend,"run_dir":stage.run}),
+            self.runtime_source.as_ref(),
+        )?;
         if generation != self.frozen.generation || source_storage(stage)? != self.storage {
             return Err("当前源停止证据或已登记的源存储代次不同于原复制来源".into());
         }
         stage.check()?;
         self.check_inputs()
     }
+
+    pub(super) fn complete_source_window(&self) -> Result<()> {
+        self.runtime_source
+            .as_ref()
+            .map_or(Ok(()), HeldTargetSource::check_end)
+    }
+}
+
+fn resume_runtime_source(
+    stage: &Stage<'_>,
+    context: &export::input::Context,
+) -> Result<Option<HeldTargetSource>> {
+    #[cfg(windows)]
+    if stage.mode == Mode::Resume && stage.manifest["copy_stage"] == "source_to_seed" {
+        let path = common::bound_file(
+            stage.backend,
+            &context.request["runtime"],
+            "复制来源运行收据",
+        )?;
+        let directory = path.parent().ok_or("复制来源运行收据缺少目录")?;
+        return match crate::recovery::fixture_control::artifact::runtime::hold_published_source(
+            &context.execution_backend,
+            directory,
+        ) {
+            Ok(held) => Ok(held),
+            Err(_) => {
+                eprintln!("本次复制无法持续保护已发布的运行来源，逐次执行完整来源复核");
+                Ok(None)
+            }
+        };
+    }
+    let _ = (stage, context);
+    Ok(None)
 }
 
 fn source_storage(stage: &Stage<'_>) -> Result<Option<Value>> {

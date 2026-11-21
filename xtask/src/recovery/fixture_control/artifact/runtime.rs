@@ -134,6 +134,25 @@ pub(crate) fn verify(root: &Path, directory: &Path) -> Result<Binding> {
     Ok(binding)
 }
 
+pub(in crate::recovery) fn verify_held(
+    root: &Path,
+    directory: &Path,
+    held: &crate::recovery::fixture_control::source_pair::execution::HeldTargetSource,
+) -> Result<Binding> {
+    let binding = verify_configuration(root, directory)?;
+    verify_binaries(directory, &binding.receipt)?;
+    super::source::verify_held(root, directory, held)?;
+    Ok(binding)
+}
+
+#[cfg(windows)]
+pub(in crate::recovery) fn hold_published_source(
+    root: &Path,
+    directory: &Path,
+) -> Result<Option<crate::recovery::fixture_control::source_pair::execution::HeldTargetSource>> {
+    super::source::hold_published(root, directory)
+}
+
 /// 重启事实只核对原运行配置合同；当前产物和源码漂移由完整核验单独报告。
 pub(crate) fn verify_configuration(root: &Path, directory: &Path) -> Result<Binding> {
     let receipt = read_json(&directory.join("runtime.json"), "全栈运行收据", 64 * 1024)?;

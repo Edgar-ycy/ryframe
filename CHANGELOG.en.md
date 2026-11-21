@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- On Windows, resuming a copy from a published source to a seed target protects the four source trees under the existing copy lock and reuses their verification results. The tool verifies the complete sources at both ends of that window and continues to verify live ports, runtime configuration, and build artifacts at every checkpoint.
+
 - Fix mixed-separator execution source bindings when publishing a reconciled review on Windows. Review publication and environment planning use the same canonical source path while preserving file digests and checks for path escape and links.
 
 - Full-stack CI verifies both frozen TOML files before preparing object buckets and uses the native S3 file binding to create and verify each bucket.

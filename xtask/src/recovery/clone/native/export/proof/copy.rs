@@ -13,11 +13,19 @@ use crate::{
             maintenance,
             target_verify::{authority, guard::Inputs},
         },
+        fixture_control::source_pair::execution::HeldTargetSource,
         source::evidence::binding,
     },
 };
 
 pub(crate) fn request(args: &Value) -> Result<Value> {
+    request_in(args, None)
+}
+
+pub(in crate::recovery::clone::native) fn request_in(
+    args: &Value,
+    held: Option<&HeldTargetSource>,
+) -> Result<Value> {
     document::exact(args, &["backend", "run_dir"], "复制来源代次参数")?;
     let backend = binding::path(&args["backend"])?;
     let run = binding::path(&args["run_dir"])?;
@@ -28,17 +36,17 @@ pub(crate) fn request(args: &Value) -> Result<Value> {
         let registered = manifest::load(&backend, &path)?;
         let source_request = &registered.value["source_request"];
         let source_environment = &registered.value["source_environment"];
-        let held = Inputs::open([
+        let request_inputs = Inputs::open([
             manifest::bound_file(&backend, source_request, "复制来源请求", true)?,
             manifest::bound_file(&backend, source_environment, "复制来源环境", true)?,
         ])?;
         let result = (|| {
             let context =
                 Context::from_copy_manifest(&backend, &run, &run, registered.value.clone())?;
-            observe(&context)
+            observe(&context, held)
         })();
         let checked = (|| {
-            held.check()?;
+            request_inputs.check()?;
             manifest::bound_file(&backend, source_request, "复制来源请求", true)?;
             manifest::bound_file(&backend, source_environment, "复制来源环境", true)?;
             Ok(())
@@ -48,16 +56,24 @@ pub(crate) fn request(args: &Value) -> Result<Value> {
     checked_result(result, manifest_held.check())
 }
 
-fn observe(context: &Context) -> Result<Value> {
+fn observe(context: &Context, held: Option<&HeldTargetSource>) -> Result<Value> {
     let bindings = document::array(&context.manifest["build_bridges"], "复制来源构建桥接")?;
     let inherited = cache::runner::inherited_bridges(&context.backend, &context.manifest)?;
     let scope = Scope::load(&context.backend, bindings, &inherited)?;
-    observe_in(context, &scope)
+    observe_in_held(context, &scope, held)
 }
 
 pub(crate) fn observe_in(context: &Context, scope: &Scope) -> Result<Value> {
+    observe_in_held(context, scope, None)
+}
+
+fn observe_in_held(
+    context: &Context,
+    scope: &Scope,
+    held: Option<&HeldTargetSource>,
+) -> Result<Value> {
     let jobs = bridge::build_jobs(&context.execution_backend)?;
-    let value = super::generation_observed(context, scope, require_closed, true)?;
+    let value = super::generation_observed(context, scope, require_closed, true, held)?;
     maintenance::require_build_jobs(&value["maintenance"], jobs)?;
     if bridge::build_jobs(&context.execution_backend)? != jobs {
         return Err("复制来源复核期间有效维护并发配置发生变化".into());

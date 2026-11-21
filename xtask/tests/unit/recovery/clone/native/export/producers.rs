@@ -241,7 +241,7 @@ fn full_runtime_contract_rejects_configuration_mismatch_duplicate_instances_and_
         .unwrap();
     let (mut context, mut runtime) = full_runtime_fixture(holder.path());
     let path = publish_runtime(&mut context, &mut runtime);
-    verify_runtime_contract(&context, &path, &runtime).unwrap();
+    verify_runtime_contract(&context, &path, &runtime, None).unwrap();
     let worker = holder.path().join("worker-config/app.test.toml");
     let original = std::fs::read_to_string(&worker).unwrap();
     for text in [
@@ -250,19 +250,19 @@ fn full_runtime_contract_rejects_configuration_mismatch_duplicate_instances_and_
     ] {
         std::fs::write(&worker, text).unwrap();
         publish_runtime(&mut context, &mut runtime);
-        assert!(verify_runtime_contract(&context, &path, &runtime).is_err());
+        assert!(verify_runtime_contract(&context, &path, &runtime, None).is_err());
     }
     std::fs::write(&worker, original).unwrap();
     runtime["unexpected"] = json!(true);
     publish_runtime(&mut context, &mut runtime);
-    assert!(verify_runtime_contract(&context, &path, &runtime).is_err());
+    assert!(verify_runtime_contract(&context, &path, &runtime, None).is_err());
     runtime.as_object_mut().unwrap().remove("unexpected");
     publish_runtime(&mut context, &mut runtime);
     let mut old = runtime.clone();
     old["scope_id"] = json!("other-scope");
-    assert!(verify_runtime_contract(&context, &path, &old).is_err());
+    assert!(verify_runtime_contract(&context, &path, &old, None).is_err());
     context
         .environment
         .insert("UNEXPECTED".into(), "private".into());
-    assert!(verify_runtime_contract(&context, &path, &runtime).is_err());
+    assert!(verify_runtime_contract(&context, &path, &runtime, None).is_err());
 }
