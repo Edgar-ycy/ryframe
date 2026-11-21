@@ -3,7 +3,7 @@ use std::{
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
-    process::ExitStatus,
+    process::{Command, ExitStatus, Stdio},
 };
 
 use serde_json::{Value, json};
@@ -14,9 +14,11 @@ use crate::{
         digest,
         export::transport::{CommandOutput, CommandSpec, Transport},
         json as json_io,
+        lifecycle::manifest,
+        s3::app_configuration,
         target_verify::{
             database::{self, model},
-            input::TargetContext,
+            input::{TargetContext, request_configuration},
         },
     },
 };
@@ -586,64 +588,45 @@ fn checkpoint_error_is_returned_and_no_inventory_is_published() {
     );
 }
 
-fn python_observation_adapter(
-    fixture: &Fixture,
-    raw: &Value,
-    declared: &Value,
-    owners: &[Value],
-) -> Value {
-    let input = fixture.context.observation_dir.join("oracle-input.json");
-    json_io::write_replace(
-        &input,
-        &json!({"raw": raw, "declared": declared, "owners": owners}),
-    )
-    .unwrap();
-    let script = r#"import json,sys,subprocess
-from pathlib import Path
-from dataclasses import asdict
-from devex_clone_inventory import observation_from_inventory
-v=json.loads(Path(sys.argv[2]).read_text(encoding='utf-8'))
-try:
-    result=observation_from_inventory(Path(sys.argv[1]),v['raw'],v['declared'],'database-native-fixture',tuple(v['owners']))
-    print(json.dumps({'ok':True,'value':asdict(result)},ensure_ascii=False))
-except ValueError:
-    print(json.dumps({'ok':False}))
-"#;
-    let output = crate::target_configuration_fixture::python_command(script)
-        .arg(fixture.context.execution_backend().unwrap())
-        .arg(input)
-        .env(
-            "PYTHONPATH",
-            crate::workspace::root_dir().join("tools/python"),
-        )
-        .output()
+fn native_inventory_request(
+    backend: &Path,
+    operation: &str,
+    arguments: &Value,
+) -> (ExitStatus, Value) {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .arg(crate::recovery::source::evidence::MARKER)
+        .current_dir(backend)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_json::from_slice(&output.stdout).unwrap()
+    let request = json!({"operation": operation, "arguments": arguments, "write": false});
+    serde_json::to_writer(child.stdin.take().unwrap(), &request).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.stderr.is_empty());
+    let response = serde_json::from_slice(&output.stdout).unwrap();
+    (output.status, response)
 }
 
 #[test]
-fn python_observation_adapter_preserves_all_four_target_results() {
+fn native_observation_protocol_preserves_all_four_target_results() {
     let fixture = Fixture::new();
+    let execution = fixture.context.execution_backend().unwrap();
     for key in KEYS {
         let db = fixture.database(key);
         let raw = fixture.raw(key);
         let owners = model::expected_owners(SCOPE, key == "shared-control");
-        let native = model::observation(
-            &fixture.context.execution_backend().unwrap(),
-            &raw,
-            &db,
-            SCOPE,
-            &owners,
-        )
-        .unwrap();
-        // 同一原生模型的跨进程适配契约，核对 Python 返回类型与完整结果。
-        let python = python_observation_adapter(&fixture, &raw, &db, &owners);
-        assert_eq!(python, json!({"ok": true, "value": native}));
+        let native = model::observation(&execution, &raw, &db, SCOPE, &owners).unwrap();
+        let arguments = json!({"backend": execution, "value": raw, "declared": db,
+            "scope": SCOPE, "ownership": owners});
+        let (status, actual) = native_inventory_request(
+            &fixture.context.backend,
+            "copy-database-observation",
+            &arguments,
+        );
+        assert!(status.success(), "{key}: {actual}");
+        assert_eq!(actual, json!({"ok": true, "result": {"value": native}}));
     }
 }
 
@@ -817,59 +800,80 @@ fn fresh_only_restricts_biz_rows_and_external_fence_slot() {
 }
 
 #[test]
-fn python_can_reverify_the_complete_native_receipt() {
+fn native_saved_inventory_reverifies_all_eight_raw_files() {
     let fixture = Fixture::new();
     let captured =
         database::capture_with(&fixture.context, &Fake::new(&fixture, "none"), &|| Ok(())).unwrap();
-    let arguments = fixture.context.observation_dir.join("reverify.json");
-    json_io::write_new(
-        &arguments,
-        &json!({"receipt": captured.receipt, "target": fixture.context.target(), "request": fixture.context.request, "environment": fixture.context.environment}),
-    )
-    .unwrap();
-    let script = r#"import json,sys,subprocess
-from pathlib import Path
-from devex_clone_inventory import verify_side_inventory,configuration
-from native_s3_client import _invoke as native_invoke, _read_response as native_response
-from restore_reference_plan import plan_hash,configuration_binding
-from restore_build import file_digest
-v=json.loads(Path(sys.argv[3]).read_text(encoding='utf-8'))
-result=verify_side_inventory(Path(sys.argv[1]),v['receipt'],v['target'],Path(sys.argv[2]))
-assert len(result['receipt']['inventories'])==8
-assert len(result['databases'])==4
-request=v['request']
-review=json.loads(Path(request['review']['path']).read_text(encoding='utf-8'))
-selected=review['scopes'][request['side']]
-side={**v['target'],**{key:selected[key] for key in ('runtime_dir','api_url')}}
-side['s3']={'configuration':configuration_binding(Path(sys.argv[2]),Path(result['binding']['configuration']['directory']))}
-maintenance=Path(request['maintenance_build']['path'])
-expected={'side':'target','tools_plan_sha256':plan_hash({'target':side,'tools':request['tools']}),
-          'configuration':configuration(Path(sys.argv[2]),v['environment'],side,evidence_root=Path(sys.argv[1]),config_dir=Path(result['binding']['configuration']['directory'])),
-          'physical':native_response(*native_invoke('__source-evidence', {'operation':'physical-binding','write':False,'arguments':{'backend':sys.argv[2],'evidence_root':sys.argv[1],'source':side,'app_env':v['environment']['APP_ENV'],'config_dir':result['binding']['configuration']['directory']}},subprocess.run,may_write=False))[0]['value'],
-          'maintenance':file_digest(maintenance),'source':json.loads(maintenance.read_text(encoding='utf-8'))['source']}
-assert result['binding']==expected
-print(json.dumps(result['receipt']))
-"#;
-    let output = crate::target_configuration_fixture::python_command(script)
-        .arg(&fixture.context.backend)
-        .arg(fixture.context.execution_backend().unwrap())
-        .arg(arguments)
-        .env(
-            "PYTHONPATH",
-            crate::workspace::root_dir().join("tools/python"),
-        )
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let python: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let context = &fixture.context;
+    let receipt_path = Path::new(captured.receipt["path"].as_str().unwrap());
+    let directory = receipt_path.parent().unwrap();
     assert_eq!(
-        python,
-        json_io::read(Path::new(captured.receipt["path"].as_str().unwrap())).unwrap()
+        captured.inventory["inventories"].as_object().unwrap().len(),
+        8
     );
+    assert_eq!(captured.receipt, bound(receipt_path));
+    let raw = BTreeMap::from(KEYS.map(|key| (key, fixture.raw(key))));
+    let binding = expected_inventory_binding(context);
+    assert_eq!(captured.binding, binding);
+    let arguments = json!({"backend": context.backend, "descriptor": captured.receipt,
+        "selected": {"scope_id": SCOPE, "databases": context.target()["databases"]},
+        "execution": context.execution_backend().unwrap()});
+    let mut snapshot = crate::clone_native_tests::snapshot(directory);
+    let invoke =
+        || native_inventory_request(&context.backend, "copy-side-inventory-verify", &arguments);
+    let (status, actual) = invoke();
+    assert!(status.success(), "{actual}");
+    assert_eq!(
+        actual,
+        json!({"ok":true,"result":{"value":{"receipt":json_io::read(receipt_path).unwrap(),
+            "binding":binding,"databases":raw}}})
+    );
+    assert_eq!(snapshot, crate::clone_native_tests::snapshot(directory));
+    let tampered = directory.join("after-target-shared.json");
+    let bytes = snapshot.get_mut(&tampered).unwrap();
+    assert_eq!(bytes.pop(), Some(b'\n'));
+    bytes.push(b' ');
+    fs::write(&tampered, bytes.as_slice()).unwrap();
+    assert_eq!(json_io::read(&tampered).unwrap(), raw["shared"]);
+    let (status, rejected) = invoke();
+    assert_eq!(status.code(), Some(1), "{rejected}");
+    assert_eq!(rejected["ok"], false);
+    assert_eq!(rejected["error"]["category"], "SourceEvidenceRejected");
+    let message = rejected["error"]["message"].as_str().unwrap();
+    assert!(message.contains("原始输出摘要变化"), "{message}");
+    assert_eq!(snapshot, crate::clone_native_tests::snapshot(directory));
+}
+
+fn expected_inventory_binding(context: &TargetContext) -> Value {
+    let execution = context.execution_backend().unwrap();
+    let (directory, files) =
+        request_configuration::fresh_files(&execution, &context.environment, &context.request)
+            .unwrap();
+    let load = |name: &str| {
+        json_io::read(Path::new(context.request[name]["path"].as_str().unwrap())).unwrap()
+    };
+    let mut selected = context.target().clone();
+    let review = load("review");
+    let review_side = context.request["side"].as_str().unwrap();
+    for name in ["runtime_dir", "api_url"] {
+        selected[name] = review["scopes"][review_side][name].clone();
+    }
+    selected["s3"] = json!({"configuration": app_configuration::configuration_value(&execution, &directory, "test").unwrap()});
+    let physical = crate::recovery::source::evidence::binding::physical(&json!({
+        "backend":execution,"evidence_root":context.backend,"source":selected,"app_env":"test","config_dir":directory
+    })).unwrap();
+    let maintenance = digest::file(Path::new(
+        context.request["maintenance_build"]["path"]
+            .as_str()
+            .unwrap(),
+    ))
+    .unwrap();
+    json!({"side":"target",
+        "tools_plan_sha256":digest::plan_hash(&json!({"target":selected,"tools":context.request["tools"]})).unwrap(),
+        "configuration":{"directory":manifest::path_text(&directory,"测试配置目录").unwrap(),"files":files,
+            "environment_sha256":digest::plan_hash(&json!({"APP_ENV":"test"})).unwrap()},
+        "physical":physical,"maintenance":{"bytes":maintenance.bytes,"sha256":maintenance.sha256},
+        "source":load("maintenance_build")["source"]})
 }
 
 fn add_business_catalog(fixture: &Fixture) {

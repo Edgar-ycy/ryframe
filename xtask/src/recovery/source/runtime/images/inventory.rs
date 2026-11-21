@@ -8,12 +8,15 @@ use serde_json::{Value, json};
 
 use crate::{
     Result,
+    local_test_path::{LocalTestPathKind, validate_absolute_path},
     recovery::clone::native::{
         digest, json as document,
         resources::common,
         target_verify::{database::model, guard::Inputs},
     },
 };
+
+use super::super::binding;
 
 const KEYS: [&str; 4] = ["shared-control", "shared", "dedicated-a", "dedicated-b"];
 const FIELDS: &[&str] = &[
@@ -32,6 +35,22 @@ const FIELDS: &[&str] = &[
     "clone_verified",
     "restore_qualified",
 ];
+
+pub(in crate::recovery::source::evidence) fn request(args: &Value) -> Result<Value> {
+    document::exact(
+        args,
+        &["backend", "descriptor", "selected", "execution"],
+        "四目标库存复核参数",
+    )?;
+    let selected = &args["selected"];
+    document::exact(selected, &["scope_id", "databases"], "四目标库存复核目标")?;
+    let backend = binding::path(&args["backend"])?;
+    let execution = binding::path(&args["execution"])?;
+    for root in [&backend, &execution] {
+        validate_absolute_path(root, LocalTestPathKind::ExistingDirectory)?;
+    }
+    verify(&backend, &args["descriptor"], selected, &execution)
+}
 
 pub(in crate::recovery::source::evidence) fn verify(
     backend: &Path,

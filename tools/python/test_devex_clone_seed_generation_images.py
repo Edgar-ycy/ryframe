@@ -141,8 +141,10 @@ class GenerationImageTests(unittest.TestCase):
         native_run = subprocess.run
         native_binding = rate_limit_tool.tool_binding()
         self.assertIsNotNone(native_binding)
+        inventory_checks = 0
 
         def readonly_native(command, **kwargs):
+            nonlocal inventory_checks
             self.assertEqual(Path(command[0]), Path(native_binding["path"]))
             request = json.loads(kwargs["input"])
             if command[1:] == ["__rate-limit", "load-table"]:
@@ -159,9 +161,17 @@ class GenerationImageTests(unittest.TestCase):
                 self.assertIs(request["write"], False)
                 self.assertIn(request["operation"], {
                     "reference-plan-hash", "copy-schema-catalog",
-                    "copy-database-observation", "reference-configuration-binding", "reference-copy-metadata",
-                    "reference-safe-file",
+                    "copy-database-observation", "copy-side-inventory-verify", "reference-configuration-binding",
+                    "reference-copy-metadata", "reference-safe-file",
                 })
+                if request["operation"] == "copy-side-inventory-verify":
+                    inventory_checks += 1
+                    self.assertEqual(request["arguments"], {
+                        "backend": str(self.backend),
+                        "descriptor": binding(self.output / "databases/inventory.json"),
+                        "selected": {key: self.f.selected[key] for key in ("scope_id", "databases")},
+                        "execution": str(self.backend),
+                    })
                 if request["operation"] == "reference-safe-file":
                     self.assertEqual(request["arguments"]["root"], str(self.output))
                     self.assertIs(request["arguments"]["exists"], True)
@@ -174,6 +184,7 @@ class GenerationImageTests(unittest.TestCase):
 
         with patch("subprocess.run", side_effect=readonly_native):
             value = self.verify(descriptor)
+        self.assertEqual(inventory_checks, 1)
         self.assertEqual(self.f.calls, original_calls)
         self.assertEqual(len(value["raw_inventories"]), 8)
         self.assertEqual(len(value["owner_evidence"]), 10)
@@ -196,7 +207,7 @@ class GenerationImageTests(unittest.TestCase):
         value = read_json(raw)
         value["target"]["preserved_tables"][0]["sha256"] = "e" * 64
         raw.write_text(json.dumps(value), encoding="utf-8")
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "原始输出摘要变化"):
             self.verify(descriptor)
 
     def test_raw_observation_target_is_bound_to_image(self):

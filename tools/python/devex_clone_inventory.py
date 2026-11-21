@@ -4,8 +4,7 @@ from __future__ import annotations
 from native_s3_client import _invoke as native_invoke, _read_response as native_response
 
 import copy
-from dataclasses import asdict, dataclass
-import json
+from dataclasses import dataclass
 import os
 from pathlib import Path
 import subprocess
@@ -175,39 +174,9 @@ def _inventory_transport(command, **kwargs):
 
 def verify_side_inventory(backend: Path, descriptor: dict, selected: dict, execution: Path) -> dict:
     """只读重算已采集的四目标完整像，不将保存证据表述为当前停机或 fresh 资格。"""
-    from devex_clone_source_proof import bound_file
-
-    path = bound_file(backend, descriptor)
-    value = read_json(path)
-    exact(value, {"format_version", "status", "side", "scope_id", "binding_sha256", "keys", "inventories", "observations",
-                  "remote_writes", "producer_stopped_proven", "fresh_target_proven", "target_ready", "clone_verified", "restore_qualified"})
-    if (path.name != "inventory.json" or os.path.exists(filesystem_path(path.parent / "failure.json"))
-            or value["format_version"] != 1 or value["status"] != "side_inventory_captured"
-            or value["side"] not in {"source", "target"} or value["scope_id"] != selected["scope_id"]
-            or value["keys"] != list(KEYS) or value["remote_writes"] != 0
-            or any(value[key] is not False for key in ("producer_stopped_proven", "fresh_target_proven", "target_ready", "clone_verified", "restore_qualified"))):
-        raise ValueError("四目标完整像收据类型、scope 或资格字段不同")
-    before = read_json(regular_file(path.parent / "binding-before.json"))
-    if before != read_json(regular_file(path.parent / "binding-after.json")) or plan_hash(before) != value["binding_sha256"]:
-        raise ValueError("四目标完整像来源前后绑定不同")
-    names = {f"{phase}-target-{key}.json" for phase in ("before", "after") for key in KEYS}
-    if set(value["inventories"]) != names or set(value["observations"]) != set(KEYS):
-        raise ValueError("四目标完整像缺少明确的八份原始输出")
-    observed, raw = {}, {}
-    for db in selected["databases"]:
-        key = db["key"]
-        phases = []
-        for phase in ("before", "after"):
-            filename = f"{phase}-target-{key}.json"
-            current = regular_file(path.parent / filename)
-            if file_digest(current) != value["inventories"][filename]:
-                raise ValueError("完整数据库像原始输出摘要变化")
-            phases.append(read_json(current))
-        if phases[0] != phases[1]:
-            raise ValueError("完整数据库像采集期间变化")
-        item = observation_from_inventory(execution, phases[0], db, selected["scope_id"], expected_owners(selected["scope_id"], db["kind"] == "combined"))
-        observed[key] = json.loads(json.dumps(asdict(item)))
-        raw[key] = phases[0]
-    if observed != value["observations"] or bound_file(backend, descriptor) != path:
-        raise ValueError("四目标逐表、保留表、placement 或 ownership 与原始输出不同")
-    return {"receipt": value, "binding": before, "databases": raw}
+    return _native("copy-side-inventory-verify", {
+        "backend": str(backend),
+        "descriptor": descriptor,
+        "selected": {"scope_id": selected["scope_id"], "databases": selected["databases"]},
+        "execution": str(execution),
+    })

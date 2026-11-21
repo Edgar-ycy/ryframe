@@ -179,6 +179,7 @@ fn dispatch(request: &Value) -> Result<Value> {
         Some("copy-side-inventory-capture") => {
             crate::recovery::clone::native::target_verify::database::protocol::request(args)
         }
+        Some("copy-side-inventory-verify") => images::inventory::request(args),
         Some("copy-schedule-actions") => crate::recovery::clone::native::schedule::request(args),
         Some(operation @ ("business-catalog" | "business-ledger-columns")) => {
             business_catalog(operation, args)
