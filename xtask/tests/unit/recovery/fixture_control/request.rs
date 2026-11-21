@@ -718,3 +718,36 @@ fn rehashed_toml_with_another_scope_is_rejected_before_request_publication() {
     assert_eq!(crate::clone_native_tests::snapshot(&fixture.run), ledger);
     assert!(!fixture.run.join("run.lock").exists());
 }
+
+#[test]
+fn request_refuses_when_either_registered_service_is_stopped() {
+    let fixture = RequestFixture::new();
+    fixture.register_services();
+    let backend = &fixture.sources.backend;
+    let service = Service::load(backend, &fixture.run, &fixture.review).unwrap();
+    let output = fixture.options(FixtureSide::Seed).output.output;
+    let original = crate::clone_native_tests::snapshot(&fixture.run);
+
+    for (redis, rustfs) in [("stopped", "running"), ("running", "stopped")] {
+        let mut observations = 0;
+        let error = publish(&output, || {
+            service.observe_with(backend, |registered| {
+                assert_eq!(registered, &service.registered);
+                observations += 1;
+                Ok(json!({"redis":redis,"rustfs":rustfs,"termination":null}))
+            })?;
+            Ok(service.storage.clone())
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "fresh-target 请求签发时 RustFS 或 Redis 未保持存活",
+            "Redis={redis}, RustFS={rustfs}"
+        );
+        assert_eq!(observations, 1);
+        assert!(!output.exists());
+        assert!(!fixture.run.join("run.lock").exists());
+        assert_eq!(crate::clone_native_tests::snapshot(&fixture.run), original);
+    }
+}
