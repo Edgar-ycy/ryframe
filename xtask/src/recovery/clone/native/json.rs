@@ -1,11 +1,13 @@
 use std::{
     collections::HashSet,
-    fs::{self, OpenOptions},
-    io::Write,
-    path::Path,
+    error::Error,
+    fs::{self, File, OpenOptions},
+    io::{self, Write},
+    path::{Path, PathBuf},
 };
 
 use serde_json::{Map, Value};
+use tempfile::NamedTempFile;
 
 use crate::Result;
 
@@ -54,6 +56,114 @@ pub(crate) fn write_new(path: &Path, value: &Value) -> Result<()> {
     stream.write_all(encoded.as_bytes())?;
     stream.sync_all()?;
     Ok(())
+}
+
+/// 完整序列化并同步同目录临时文件后才发布，不覆盖已有最终路径。
+pub(crate) fn publish_new(path: &Path, value: &Value, label: &'static str) -> Result<()> {
+    publish_new_with(
+        path,
+        value,
+        label,
+        None,
+        |file, bytes| file.write_all(bytes),
+        File::sync_all,
+    )
+}
+
+pub(in crate::recovery::clone::native) fn publish_new_with(
+    path: &Path,
+    value: &Value,
+    label: &'static str,
+    staging: Option<&Path>,
+    writer: impl FnOnce(&mut File, &[u8]) -> io::Result<()>,
+    sync: impl FnOnce(&File) -> io::Result<()>,
+) -> Result<()> {
+    let (directory, creation) = match staging {
+        Some(directory) => (directory, "创建发布临时文件"),
+        None => (
+            path.parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new(".")),
+            "创建同目录临时文件",
+        ),
+    };
+    let mut encoded = serde_json::to_vec_pretty(value)
+        .map_err(|error| publication_failure(path, label, "序列化完整 JSON", error))?;
+    encoded.push(b'\n');
+    let mut temporary = NamedTempFile::new_in(directory)
+        .map_err(|error| publication_failure(path, label, creation, error))?;
+    let prepared = (|| {
+        writer(temporary.as_file_mut(), &encoded)
+            .map_err(|error| publication_failure(path, label, "写入临时文件", error))?;
+        temporary
+            .as_file_mut()
+            .flush()
+            .map_err(|error| publication_failure(path, label, "刷新临时文件", error))?;
+        sync(temporary.as_file())
+            .map_err(|error| publication_failure(path, label, "同步临时文件", error))
+    })();
+    if let Err(error) = prepared {
+        return fail_publication(temporary, error);
+    }
+    match temporary.persist_noclobber(path) {
+        Ok(_) => Ok(()),
+        Err(error) => fail_publication(
+            error.file,
+            publication_failure(path, label, "发布最终文件", error.error),
+        ),
+    }
+}
+
+#[derive(Debug)]
+struct PublicationError {
+    path: PathBuf,
+    label: &'static str,
+    stage: &'static str,
+    cause: Box<dyn Error>,
+    cleanup: Option<io::Error>,
+}
+
+impl std::fmt::Display for PublicationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "{}{}失败（{}）：{}",
+            self.label,
+            self.stage,
+            self.path.display(),
+            self.cause
+        )?;
+        if let Some(error) = &self.cleanup {
+            write!(formatter, "；关闭本次临时文件同时失败：{error}")?;
+        }
+        Ok(())
+    }
+}
+
+impl Error for PublicationError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(self.cause.as_ref())
+    }
+}
+
+fn publication_failure(
+    path: &Path,
+    label: &'static str,
+    stage: &'static str,
+    cause: impl Error + 'static,
+) -> PublicationError {
+    PublicationError {
+        path: path.to_path_buf(),
+        label,
+        stage,
+        cause: Box::new(cause),
+        cleanup: None,
+    }
+}
+
+fn fail_publication(temporary: NamedTempFile, mut error: PublicationError) -> Result<()> {
+    error.cleanup = temporary.close().err();
+    Err(Box::new(error))
 }
 
 pub(crate) fn write_replace(path: &Path, value: &Value) -> Result<()> {

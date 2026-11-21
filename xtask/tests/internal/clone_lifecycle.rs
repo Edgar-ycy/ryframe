@@ -14,7 +14,6 @@ use super::{
     workspace,
 };
 
-#[cfg(windows)]
 #[path = "clone_recovery_retry.rs"]
 mod recovery_retry;
 

@@ -154,11 +154,15 @@ fn parse_recover(args: &[String], copy: bool) -> Result<CloneCommand, CliError> 
         true,
     )?;
     let run_dir = run_dir(&options)?;
-    let owner_binding = path(
-        required(&options, "--owner-binding")?,
-        "--owner-binding",
-        LocalTestPathKind::ExistingFile,
-    )?;
+    let supplied = required(&options, "--owner-binding")?;
+    let owner_binding = if !copy && Path::new(supplied) == run_dir.join("run.lock/owner.json") {
+        // 锁清理后的结果接续仍使用这一个原描述符路径，后像由恢复入口核验。
+        let candidate = PathBuf::from(supplied);
+        validate_local_test_path(&candidate, &root_dir(), LocalTestPathKind::OutputFile)
+            .map_err(|error| CliError::new(format!("--owner-binding 无效：{error}")))?
+    } else {
+        path(supplied, "--owner-binding", LocalTestPathKind::ExistingFile)?
+    };
     Ok(if copy {
         CloneCommand::RecoverCopy {
             run_dir,

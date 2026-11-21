@@ -86,6 +86,33 @@ fn copy_lock_recovery_requires_explicit_write() {
 }
 
 #[test]
+fn only_ordinary_recovery_accepts_its_removed_owner_path() {
+    let fixture = Fixture::new();
+    let removed = fixture.run.join("run.lock/owner.json");
+    let other = fixture.run.join("controller-0001.json");
+    assert!(!removed.parent().unwrap().exists());
+    let mut args = [
+        "recover",
+        "--run-dir",
+        Fixture::value(&fixture.run),
+        "--owner-binding",
+        Fixture::value(&removed),
+        "--write",
+    ];
+    assert!(fixture.parse(&args[..5]).is_err());
+    assert!(matches!(
+        fixture.parse(&args),
+        Ok(CloneCommand::Recover { run_dir, owner_binding })
+            if run_dir == fixture.run && owner_binding == removed
+    ));
+    args[0] = "recover-copy";
+    assert!(fixture.parse(&args).is_err());
+    args[0] = "recover";
+    args[4] = Fixture::value(&other);
+    assert!(fixture.parse(&args).is_err());
+}
+
+#[test]
 fn parses_core_clone_operations_and_enforces_write_policy() {
     let fixture = Fixture::new();
     let output = fixture.directory.join("plan.json");

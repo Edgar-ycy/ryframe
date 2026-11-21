@@ -12,7 +12,7 @@ use crate::{
 pub(crate) mod identity;
 pub(crate) mod lock;
 pub(crate) mod manifest;
-mod recover;
+pub(crate) mod recover;
 mod runtime_history;
 mod runtime_lock;
 pub(super) mod runtime_recover;

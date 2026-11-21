@@ -31,6 +31,19 @@ impl ProcessGuard {
         Self::acquire_named(directory, "run-control.guard")
     }
 
+    pub(crate) fn acquire_existing(directory: &Path) -> Result<Self> {
+        let parent = guard_parent(directory)?;
+        let path = directory.join("run-control.guard");
+        guard_metadata(&path, 1)?;
+        let existing = same_file::Handle::from_path(&path)?;
+        let file = guard_options().open(&path)?;
+        let guard = Self::lock_open_file(path, file, parent, false)?;
+        if guard.handle != existing {
+            return Err("控制互斥文件已被替换或改变，拒绝继续".into());
+        }
+        Ok(guard)
+    }
+
     pub(crate) fn acquire_named(directory: &Path, name: &str) -> Result<Self> {
         if name.is_empty() || name.contains(['/', '\\']) || name.contains("..") {
             return Err("控制互斥文件名称无效".into());
@@ -45,6 +58,15 @@ impl ProcessGuard {
             }
             Err(error) => return Err(error.into()),
         };
+        Self::lock_open_file(path, file, parent, created)
+    }
+
+    fn lock_open_file(
+        path: PathBuf,
+        file: File,
+        parent: (u64, u64),
+        created: bool,
+    ) -> Result<Self> {
         let handle = same_file::Handle::from_file(file.try_clone()?)?;
         file.try_lock().map_err(|error| -> String {
             match error {

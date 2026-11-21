@@ -1,12 +1,20 @@
+#[cfg(windows)]
 use std::os::windows::fs::OpenOptionsExt;
 
 use super::*;
 use crate::recovery::clone::native::lifecycle::state;
 
+#[path = "clone_recovery_result_finalization.rs"]
+mod result_finalization;
+
+#[cfg(windows)]
 const FILE_SHARE_READ: u32 = 0x0000_0001;
+#[cfg(windows)]
 const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+#[cfg(windows)]
 const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
 
+#[cfg(windows)]
 #[test]
 fn recovers_the_same_controller_after_windows_denies_lock_directory_removal() {
     for use_durable in [false, true] {
@@ -98,6 +106,7 @@ fn recovers_the_same_controller_after_windows_denies_lock_directory_removal() {
     }
 }
 
+#[cfg(windows)]
 fn retain_uncommitted_intent(
     fixture: &Fixture,
     owner_path: &Path,
