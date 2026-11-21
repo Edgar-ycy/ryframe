@@ -367,11 +367,17 @@ impl Service {
     }
 
     fn observe(&self, backend: &Path) -> Result<()> {
-        let observed = query::dispatch(
-            backend,
-            "service-observe",
-            &json!({"services":self.registered}),
-        )?;
+        self.observe_with(backend, |registered| {
+            query::dispatch(backend, "service-observe", &json!({"services":registered}))
+        })
+    }
+
+    fn observe_with(
+        &self,
+        backend: &Path,
+        observe: impl FnOnce(&Value) -> Result<Value>,
+    ) -> Result<()> {
+        let observed = observe(&self.registered)?;
         if observed != json!({"redis":"running","rustfs":"running","termination":null}) {
             return Err("fresh-target 请求签发时 RustFS 或 Redis 未保持存活".into());
         }

@@ -331,6 +331,55 @@ fn each_side_loads_its_real_configuration_and_the_same_registered_seed_services(
 }
 
 #[test]
+fn request_rejects_redis_runtime_receipt_drift_after_successful_observation() {
+    let fixture = RequestFixture::new();
+    fixture.register_services();
+    let backend = &fixture.sources.backend;
+    let service = Service::load(backend, &fixture.run, &fixture.review).unwrap();
+    let output = fixture.options(FixtureSide::Seed).output.output;
+    let redis = &service.registered["evidence"]["redis_runtime"];
+    let runtime = common::bound_file(backend, redis, "当前服务运行收据").unwrap();
+    let mut expected = crate::clone_native_tests::snapshot(&fixture.run);
+    let running = json!({"redis":"running","rustfs":"running","termination":null});
+
+    service
+        .observe_with(backend, |registered| {
+            assert_eq!(registered, &service.registered);
+            Ok(running.clone())
+        })
+        .unwrap();
+    assert_eq!(crate::clone_native_tests::snapshot(&fixture.run), expected);
+    assert!(!output.exists());
+
+    let original = &expected[&runtime];
+    let changed = std::str::from_utf8(original)
+        .unwrap()
+        .replacen("fixture-first-generation", "Fixture-first-generation", 1)
+        .into_bytes();
+    assert_eq!(changed.len(), original.len());
+    assert_ne!(&changed, original);
+
+    let mut observations = 0;
+    let error = publish(&output, || {
+        service.observe_with(backend, |registered| {
+            assert_eq!(registered, &service.registered);
+            observations += 1;
+            fs::write(&runtime, &changed)?;
+            Ok(running.clone())
+        })?;
+        Ok(service.storage.clone())
+    })
+    .unwrap_err();
+    assert_eq!(error.to_string(), "当前服务运行收据与登记摘要不一致");
+    assert_eq!(observations, 1);
+    assert!(!output.exists());
+    assert!(!fixture.run.join("run.lock").exists());
+
+    *expected.get_mut(&runtime).unwrap() = changed;
+    assert_eq!(crate::clone_native_tests::snapshot(&fixture.run), expected);
+}
+
+#[test]
 fn request_refuses_wrong_scope_and_credentials_before_creating_output() {
     let fixture = RequestFixture::new();
     fixture.register_services();
