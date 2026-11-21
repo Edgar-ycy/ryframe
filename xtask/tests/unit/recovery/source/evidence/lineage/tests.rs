@@ -105,7 +105,7 @@ fn origin(root: &Path) -> Origin {
         let file_path = format!("{id}/object-{index:03}.bin");
         let item = json!({"file_id":(2000+index).to_string(),"file_name":format!("object-{index:03}.bin"),"file_path":file_path,
                 "file_url":format!("/{file_path}"),"bytes":4*1024*1024,"sha256":digest::plan_hash(&json!(file_path)).unwrap()});
-        objects.push(json!({"bucket":crate::recovery::clone::native::input::BUCKETS[index%5],"source_key":format!("restore-source-unit/{file_path}"),
+        objects.push(json!({"bucket":"uploads","source_key":format!("restore-source-unit/{file_path}"),
                 "target_key":format!("perf-seed-unit/{file_path}"),"artifact":{"bytes":item["bytes"],"sha256":item["sha256"]},"metadata":{"tenant-id":id}}));
         tenants[index % 11]["files"]
             .as_array_mut()

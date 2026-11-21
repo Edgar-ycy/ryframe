@@ -661,6 +661,7 @@ fn bound_s3_credentials_are_literal_and_bucket_failures_never_retry_or_expose_se
                     Err(error) => panic!("隔离对象协议替身未收到请求：{error}"),
                 }
             };
+            socket.set_nonblocking(false).unwrap();
             socket
                 .set_read_timeout(Some(Duration::from_secs(5)))
                 .unwrap();

@@ -163,16 +163,13 @@ fn fresh_verification_private_boundary_rejects_overlap_trailing_separator_and_ex
 #[test]
 fn fresh_verification_direct_target_needs_no_workspace_and_rejects_incomplete_inventory() {
     let f = Fixture::new();
-    // 模拟原 factory 可直接消费的合法 T；只移除隔离夹具的外层工作区快照，T 原件不变。
-    for name in [
-        "registration.json",
-        "prepared-files.json",
-        "initialized-files.json",
-    ] {
-        fs::remove_file(f.local.join(name)).unwrap();
+    // 直接观察从目标目录定位原登记；两份外层快照属于正式工作区入口。
+    assert!(f.local.join("registration.json").is_file());
+    for name in ["prepared-files.json", "initialized-files.json"] {
+        let path = f.local.join(name);
+        fs::remove_file(&path).unwrap();
+        assert!(!path.exists());
     }
-    assert!(!f.local.join("registration.json").exists());
-    assert!(!f.local.join("initialized-files.json").exists());
     let resources = Resources::new(&f);
     resources.initialized_state();
     let original = snapshot(&f.target);
