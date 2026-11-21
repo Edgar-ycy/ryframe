@@ -18,7 +18,7 @@ pub(in crate::recovery::clone::native) const ARTIFACT: &str =
     "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 
 pub(in crate::recovery::clone::native) struct Fixture {
-    _temp: tempfile::TempDir,
+    _temp: Option<tempfile::TempDir>,
     pub(in crate::recovery::clone::native) backend: PathBuf,
     pub(in crate::recovery::clone::native) copy: PathBuf,
     initialized: Value,
@@ -30,7 +30,13 @@ impl Fixture {
         let managed = crate::workspace::root_dir().join(".local-tests");
         fs::create_dir_all(&managed).unwrap();
         let temp = tempfile::tempdir_in(managed).unwrap();
-        let backend = portable_path(&fs::canonicalize(temp.path()).unwrap());
+        let mut fixture = Self::in_root(temp.path(), &json!({"target":true}));
+        fixture._temp = Some(temp);
+        fixture
+    }
+
+    pub(in crate::recovery::clone::native) fn in_root(root: &Path, initialized: &Value) -> Self {
+        let backend = portable_path(&fs::canonicalize(root).unwrap());
         let local = backend.join(".local-tests");
         let copy = local.join("copy");
         let target = local.join("target");
@@ -38,7 +44,7 @@ impl Fixture {
         fs::create_dir(&target).unwrap();
         let initialized_path = target.join("initialized.json");
         let export_path = local.join("export.json");
-        document::write_new(&initialized_path, &json!({"target":true})).unwrap();
+        document::write_new(&initialized_path, initialized).unwrap();
         document::write_new(&export_path, &json!({"source":true})).unwrap();
         let initialized = common::binding(&initialized_path).unwrap();
         let export = common::binding(&export_path).unwrap();
@@ -51,7 +57,7 @@ impl Fixture {
         )
         .unwrap();
         Self {
-            _temp: temp,
+            _temp: None,
             backend,
             copy,
             initialized,
@@ -85,6 +91,16 @@ impl Fixture {
     pub(in crate::recovery::clone::native) fn register_copy_run(
         &mut self,
     ) -> Result<(PathBuf, Value)> {
+        let source = self.backend.join(".local-tests/source");
+        fs::create_dir(&source)?;
+        self.register_copy_run_with_export(&source, json!({}))
+    }
+
+    pub(in crate::recovery::clone::native) fn register_copy_run_with_export(
+        &mut self,
+        source: &Path,
+        mut export: Value,
+    ) -> Result<(PathBuf, Value)> {
         let mut entries = fs::read_dir(&self.copy)?;
         assert_eq!(
             entries.next().unwrap()?.file_name().to_str(),
@@ -93,13 +109,12 @@ impl Fixture {
         assert!(entries.next().is_none());
         self.initialize_git()?;
         let local = self.backend.join(".local-tests");
-        let source = local.join("source");
-        fs::create_dir(&source)?;
         let request = write_binding(
             &source.join("request.json"),
             &json!({"kind":"fixture-source"}),
         )?;
-        self.export = write_binding(&source.join("export.json"), &json!({"request":request}))?;
+        export["request"] = request.clone();
+        self.export = write_binding(&source.join("export.json"), &export)?;
         let environment = json!({"environment":{"APP_ENV":"test"}});
         let manifest = local.join("copy-manifest.json");
         document::write_new(
