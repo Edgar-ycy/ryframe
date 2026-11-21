@@ -4,12 +4,14 @@ use serde_json::{Value, json};
 
 use super::release::{
     archive::{
-        ARCHIVE_RECEIPT_LIMITS, BUILD_EVIDENCE, FIXTURE_RECEIPT, RUNTIME_EVIDENCE, RUNTIME_RECEIPT,
-        SOURCE_PAIR_RECEIPT, read_archive, validate_archive_evidence,
+        ARCHIVE_RECEIPT_LIMITS, BUILD_EVIDENCE, FIXTURE_RECEIPT, FRONTEND_BUILD, FRONTEND_SOURCE,
+        RUNTIME_EVIDENCE, RUNTIME_RECEIPT, SOURCE_PAIR_RECEIPT, read_archive,
+        validate_archive_evidence,
     },
     evidence::EMPTY_SHA256,
     support::{parse_json, sha256},
 };
+use crate::recovery::clone::native::source;
 
 struct ArchiveFixture {
     backend_sha: String,
@@ -113,7 +115,14 @@ impl ArchiveFixture {
                     "sha256": self.fixture_hash,
                 }]),
             ),
-            "frontend": sources["frontend"],
+            "frontend": self.snapshot(
+                &self.frontend_sha,
+                false,
+                json!([
+                    {"path": "src/generated/business/index.ts", "sha256": sha256(b"generated index")},
+                    {"path": "src/generated/business/order.ts", "sha256": sha256(b"generated order")},
+                ]),
+            ),
         });
         let receipt = json!({
             "format_version": 1,
@@ -147,6 +156,38 @@ impl ArchiveFixture {
             "generated": generated,
         });
         (backend_root, source, Some((receipt_raw, receipt)))
+    }
+
+    fn frontend_receipts(&self, source: &Value, backend_root: &str) -> (Value, Value) {
+        let head = "c".repeat(40);
+        let mut files = vec![json!({"path": "README.md", "sha256": sha256(b"frontend")})];
+        files.extend_from_slice(source["generated"]["frontend"]["files"].as_array().unwrap());
+        let inventory = json!({
+            "source": {
+                "snapshot": {"head": head, "patch_sha256": EMPTY_SHA256, "files": [], "clean": true},
+                "worktree_fingerprint": format!("sha256:{}", sha256(b"published frontend")),
+            },
+            "files": files,
+            "guard": {"head": head, "index_sha256": sha256(b"index"), "modes_sha256": sha256(b"modes")},
+        });
+        let build = frontend_build_receipt(&inventory, &head);
+        let receipt = json!({
+            "format_version": 1,
+            "kind": "generated-business-frontend-build",
+            "source_pair": source["source_pair"]["receipt"],
+            "fixture": source["fixture_receipt"],
+            "generated": source["generated"]["frontend"],
+            "published": {
+                "path": format!("{backend_root}/.local-tests/full-stack-frontend"),
+                "head": head,
+                "parent": self.frontend_sha,
+                "tree": "d".repeat(40),
+                "inventory": inventory,
+                "fingerprints": frontend_fingerprints(&inventory),
+            },
+            "build": self.binding(&format!("{}/{FRONTEND_BUILD}", self.receipt_root), &raw(&build)),
+        });
+        (receipt, build)
     }
 
     fn artifacts(&self) -> serde_json::Map<String, Value> {
@@ -224,16 +265,29 @@ impl ArchiveFixture {
                 raw(&runtime_evidence),
             ),
         ];
-        if let Some((fixture_raw, _)) = &fixture_receipt {
-            members.push(("artifact/logs/fixture.json".to_owned(), fixture_raw.clone()));
-        }
-        let values = json!({
+        let mut values = json!({
             "pair": pair,
             "build": build,
             "runtime": runtime,
             "runtime_evidence": runtime_evidence,
-            "fixture": fixture_receipt.map(|(_, value)| value),
+            "fixture": fixture_receipt.as_ref().map(|(_, value)| value),
         });
+        if let Some((fixture_raw, _)) = fixture_receipt {
+            let (frontend_source, frontend_build) = self.frontend_receipts(&source, &backend_root);
+            members.extend([
+                (format!("artifact/logs/{FIXTURE_RECEIPT}"), fixture_raw),
+                (
+                    format!("artifact/logs/{FRONTEND_SOURCE}"),
+                    raw(&frontend_source),
+                ),
+                (
+                    format!("artifact/logs/{FRONTEND_BUILD}"),
+                    raw(&frontend_build),
+                ),
+            ]);
+            values["frontend_source"] = frontend_source;
+            values["frontend_build"] = frontend_build;
+        }
         (members, values)
     }
 
@@ -252,6 +306,40 @@ impl ArchiveFixture {
             (fixture == "business").then_some(self.fixture_hash.as_str()),
         )
     }
+}
+
+fn frontend_fingerprints(inventory: &Value) -> Value {
+    source::fingerprints(&source::validate_inventory(inventory).unwrap().files).unwrap()
+}
+
+fn frontend_build_receipt(inventory: &Value, head: &str) -> Value {
+    let domains = source::protocol::request(&json!({
+        "action": "domains", "repository": "frontend", "inventory": inventory,
+    }))
+    .unwrap();
+    let source_raw = raw(&json!({"format_version": 1, "frontend_commit": head}));
+    let artifacts = [
+        (".vite/manifest.json", b"{}".to_vec()),
+        (
+            "build-identity.json",
+            raw(&json!({"frontend_commit": head})),
+        ),
+        ("index.html", b"<html></html>".to_vec()),
+    ]
+    .map(|(path, bytes)| json!({"path": path, "bytes": bytes.len(), "sha256": sha256(&bytes)}));
+    json!({
+        "format_version": 3, "kind": "restore-frontend-build", "sources": domains, "files": artifacts,
+        "build": {
+            "command": ["vite", "build"], "mode": "production", "target": "vite-default",
+            "toolchain": {"node": "fixture", "vite": "fixture",
+                "pnpm": {"pinned": "fixture", "observed": "fixture"}},
+            "configuration": {"environment": "test", "directory": "config",
+                "files": [{"path": "config/app.test.toml", "sha256": sha256(b"test configuration")}],
+                "tools": []},
+            "identity": {"frontend_commit": head,
+                "source_file": {"path": ".local-tests/build/source.json", "sha256": sha256(&source_raw)}},
+        },
+    })
 }
 
 fn raw(value: &Value) -> Vec<u8> {
@@ -295,6 +383,7 @@ fn core_archive_binds_clean_source_roles_and_runtime_receipts() {
     assert_eq!(result["build_evidence"], values["build"]);
     assert_eq!(result["runtime"], values["runtime"]);
     assert_eq!(result["runtime_evidence"], values["runtime_evidence"]);
+    assert!(result.get("frontend_source").is_none());
 }
 
 #[test]
@@ -303,6 +392,7 @@ fn business_archive_binds_fixture_raw_bytes_and_generated_model() {
     let (entries, values) = fixture.archive("business");
     let result = fixture.validate(&entries, "business").unwrap();
     assert_eq!(result["fixture_receipt"], values["fixture"]);
+    assert_eq!(result["frontend_source"], values["frontend_source"]);
     assert_eq!(
         result["build_evidence"]["source"]["original"],
         values["fixture"]["sources"]
@@ -319,6 +409,88 @@ fn business_archive_binds_fixture_raw_bytes_and_generated_model() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn business_archive_rejects_unbound_published_frontend_and_wrong_build_identity() {
+    let fixture = ArchiveFixture::new();
+    let (entries, values) = fixture.archive("business");
+    let mut old_build = values["build"].clone();
+    old_build["source"]["generated"]["frontend"] =
+        old_build["source"]["original"]["frontend"].clone();
+    let error = fixture
+        .validate(
+            &replace(&entries, BUILD_EVIDENCE, raw(&old_build)),
+            "business",
+        )
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("生成 frontend 来源没有绑定"),
+        "{error}"
+    );
+
+    for missing in [FRONTEND_SOURCE, FRONTEND_BUILD] {
+        let incomplete = entries
+            .iter()
+            .filter(|(path, _)| path.rsplit('/').next() != Some(missing))
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(
+            fixture.validate(&incomplete, "business").is_err(),
+            "{missing}"
+        );
+    }
+
+    let mut wrong_parent = values["frontend_source"].clone();
+    wrong_parent["published"]["parent"] = json!("e".repeat(40));
+    let error = fixture
+        .validate(
+            &replace(&entries, FRONTEND_SOURCE, raw(&wrong_parent)),
+            "business",
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("原父提交"), "{error}");
+
+    let mut wrong_generated = values["frontend_source"].clone();
+    wrong_generated["generated"]["files"][0]["sha256"] = json!(sha256(b"other generated source"));
+    let error = fixture
+        .validate(
+            &replace(&entries, FRONTEND_SOURCE, raw(&wrong_generated)),
+            "business",
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("生成夹具或快照"), "{error}");
+
+    let mut missing_file = values["frontend_source"].clone();
+    let published = &mut missing_file["published"];
+    published["inventory"]["files"]
+        .as_array_mut()
+        .unwrap()
+        .pop();
+    published["fingerprints"] = frontend_fingerprints(&published["inventory"]);
+    let error = fixture
+        .validate(
+            &replace(&entries, FRONTEND_SOURCE, raw(&missing_file)),
+            "business",
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("缺少生成文件"), "{error}");
+
+    let mut wrong_build = values["frontend_build"].clone();
+    wrong_build["build"]["identity"]["frontend_commit"] = json!(fixture.frontend_sha);
+    let wrong_raw = raw(&wrong_build);
+    let mut changed = values["frontend_source"].clone();
+    changed["build"] = fixture.binding(
+        &format!("{}/{FRONTEND_BUILD}", fixture.receipt_root),
+        &wrong_raw,
+    );
+    let invalid = replace(
+        &replace(&entries, FRONTEND_BUILD, wrong_raw),
+        FRONTEND_SOURCE,
+        raw(&changed),
+    );
+    let error = fixture.validate(&invalid, "business").unwrap_err();
+    assert!(error.to_string().contains("已发布来源"), "{error}");
 }
 
 #[test]

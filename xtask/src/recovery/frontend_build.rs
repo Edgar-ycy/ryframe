@@ -108,6 +108,26 @@ pub(crate) fn validate(
     Ok(proof)
 }
 
+/// 核验归档中的前端构建收据与本次 CI 派生提交的完整清单。
+pub(crate) fn validate_ci_receipt(receipt: &Value, inventory: &Value, head: &str) -> Result<()> {
+    model::receipt(receipt)?;
+    if receipt["sources"]["full"] != *inventory
+        || receipt["build"]["identity"]["frontend_commit"] != head
+        || receipt["build"]["configuration"]["environment"] != "test"
+        || receipt["build"]["configuration"]["directory"] != "config"
+        || !receipt["files"].as_array().is_some_and(|files| {
+            ["index.html", ".vite/manifest.json", "build-identity.json"]
+                .iter()
+                .all(|path| files.iter().any(|file| file["path"] == *path))
+        })
+    {
+        return Err(fail(
+            "业务 CI 的前端构建收据与已发布来源、测试配置或产物入口不符",
+        ));
+    }
+    Ok(())
+}
+
 /// 为启动探针生成当前完整产物清单，在返回前复核原文件和成员集合。
 pub(in crate::recovery) fn artifact_snapshot(root: &Path) -> Result<Value> {
     let artifacts = files::artifacts(root)?;

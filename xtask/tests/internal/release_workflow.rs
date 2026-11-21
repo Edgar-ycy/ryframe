@@ -58,14 +58,26 @@ fn extended_full_stack_records_before_fixture_and_rechecks_after_build() {
     let (record, record_step) = command(full_stack, "cargo xtask check release ci record-pair");
     let (fixture, fixture_step) = command(full_stack, "cargo xtask check recovery fixture");
     let (config, config_step) = command(full_stack, "cargo xtask check ci full-stack-config");
-    let (build, build_step) = command(full_stack, "corepack pnpm build");
+    let tool = r#""$RUNNER_TEMP/ryframe-full-stack-tool/debug/xtask" check recovery full-stack"#;
+    let (start, _) = command(full_stack, &format!("{tool} start"));
+    let (core_build, core_step) = command(full_stack, "corepack pnpm build");
+    let frontend_command = format!("{tool} frontend");
+    let (business_build, business_step) = command(full_stack, &frontend_command);
     let (verify, verify_step) = command(full_stack, "cargo xtask check release ci verify-pair");
-    assert!(record < fixture && fixture < config && config < build && build < verify);
+    assert!(
+        record < fixture
+            && fixture < config
+            && config < start
+            && start < core_build
+            && core_build < business_build
+            && business_build < verify
+    );
     for (step, directory) in [
         (record_step, "backend"),
         (fixture_step, "backend"),
         (config_step, "${{ matrix.backend }}"),
-        (build_step, "${{ matrix.frontend }}"),
+        (core_step, "${{ matrix.frontend }}"),
+        (business_step, "${{ matrix.backend }}"),
         (verify_step, "backend"),
     ] {
         assert_eq!(text(step, "working-directory"), directory);
@@ -93,9 +105,15 @@ fn extended_full_stack_records_before_fixture_and_rechecks_after_build() {
         "$GITHUB_WORKSPACE/backend/.local-tests/business-fixture"
     );
     assert_eq!(
-        argument(build_step, "--source-commit"),
+        argument(core_step, "--source-commit"),
         "$(git rev-parse HEAD)"
     );
+    assert_eq!(text(core_step, "if"), "${{ matrix.fixture == 'core' }}");
+    assert_eq!(
+        text(business_step, "if"),
+        "${{ matrix.fixture == 'business' }}"
+    );
+    assert_eq!(text(business_step, "run"), frontend_command);
 }
 
 #[test]

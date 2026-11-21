@@ -183,7 +183,7 @@ impl<'a> Native<'a> {
             if crate::devex::runtime_native::entry::allowed_environment(&name)
                 || matches!(
                     name.to_ascii_uppercase().as_str(),
-                    "COREPACK_HOME" | "PNPM_CONFIG_STORE_DIR"
+                    "COREPACK_HOME" | "NPM_CONFIG_STORE_DIR" | "PNPM_CONFIG_STORE_DIR"
                 )
                 || name.starts_with("DOCKER_")
                 || matches!(
@@ -255,7 +255,7 @@ impl Port for Native<'_> {
                 &mut command,
             )?;
         }
-        if Path::new(program).is_absolute() {
+        if program == "corepack" || Path::new(program).is_absolute() {
             command.env("APP_ENV", "test");
         }
         let cargo_json =

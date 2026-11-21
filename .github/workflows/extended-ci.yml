@@ -251,8 +251,14 @@ jobs:
         run: '"$RUNNER_TEMP/ryframe-full-stack-tool/debug/xtask" check recovery full-stack start'
 
       - name: 构建前端生产产物
+        if: ${{ matrix.fixture == 'core' }}
         working-directory: ${{ matrix.frontend }}
         run: corepack pnpm build --source-commit "$(git rev-parse HEAD)"
+
+      - name: 构建生成业务前端生产产物
+        if: ${{ matrix.fixture == 'business' }}
+        working-directory: ${{ matrix.backend }}
+        run: '"$RUNNER_TEMP/ryframe-full-stack-tool/debug/xtask" check recovery full-stack frontend'
 
       - name: 复核全栈源码组合未变化
         working-directory: backend

@@ -77,14 +77,11 @@ pub(crate) fn pair_receipts(
             .as_object()
             .cloned()
             .ok_or_else(|| "全栈源码组合收据不是对象".to_string())?;
-        receipt.insert(
-            "archive_evidence".to_owned(),
-            json!({
-                "build_evidence": validated["build_evidence"],
-                "runtime": validated["runtime"],
-                "runtime_evidence": validated["runtime_evidence"],
-            }),
-        );
+        let mut archive_evidence = json!({
+            "build_evidence": validated["build_evidence"],
+            "runtime": validated["runtime"],
+            "runtime_evidence": validated["runtime_evidence"],
+        });
         receipt.insert(
             "artifact".to_owned(),
             json!({
@@ -94,6 +91,7 @@ pub(crate) fn pair_receipts(
             }),
         );
         if fixture == "business" {
+            archive_evidence["frontend_source"] = validated["frontend_source"].clone();
             receipt.insert(
                 "fixture".to_owned(),
                 validated
@@ -102,6 +100,7 @@ pub(crate) fn pair_receipts(
                     .ok_or_else(|| "业务 crate fixture 收据缺失".to_string())?,
             );
         }
+        receipt.insert("archive_evidence".to_owned(), archive_evidence);
         result.insert(fixture, Value::Object(receipt));
     }
     Ok(Value::Object(result))

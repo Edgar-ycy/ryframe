@@ -266,17 +266,13 @@ pub(crate) fn validate_fixture(
             return Err("业务 crate 缺少生成内容的源码指纹".into());
         }
         let files = generated_file_map(value, name)?;
-        if name == "frontend" {
-            if Value::Object(value.clone()) != source.cloned().unwrap_or(Value::Null) {
-                return Err("业务 crate 生成不得改写前端仓库源码".into());
-            }
-            generated_files.insert(name, files);
-            continue;
-        }
         if value.get("patch_sha256").and_then(Value::as_str) == Some(EMPTY_SHA256)
             && files.is_empty()
         {
             return Err(format!("业务 crate {name} 没有实际生成变化").into());
+        }
+        if name == "frontend" {
+            continue;
         }
         let missing = BUSINESS_BACKEND_OUTPUTS
             .iter()

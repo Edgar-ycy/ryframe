@@ -124,6 +124,27 @@ fn inferred_and_explicit_full_inventory_accept_real_clean_source_and_reject_mism
 }
 
 #[test]
+fn ci_receipt_binds_test_configuration_and_complete_derived_source() {
+    let temporary = fixture();
+    let root = temporary.path();
+    let inventory = source::inventory_value(&source::capture(root).unwrap());
+    let head = inventory["source"]["snapshot"]["head"].as_str().unwrap();
+    write_receipt(root, head, &inventory);
+    let proof = validate(root, Some(&inventory), Some(head)).unwrap();
+    super::validate_ci_receipt(&proof.receipt, &inventory, head).unwrap();
+
+    let mut changed = proof.receipt;
+    changed["build"]["configuration"]["environment"] = json!("dev");
+    assert!(super::validate_ci_receipt(&changed, &inventory, head).is_err());
+    changed["build"]["configuration"]["environment"] = json!("test");
+    changed["files"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|file| file["path"] != "index.html");
+    assert!(super::validate_ci_receipt(&changed, &inventory, head).is_err());
+}
+
+#[test]
 fn readonly_frontend_proof_preserves_every_input_and_artifact() {
     let temporary = fixture();
     let root = temporary.path();

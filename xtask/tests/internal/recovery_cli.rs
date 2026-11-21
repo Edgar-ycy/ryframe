@@ -640,6 +640,7 @@ fn parses_typed_full_stack_operations_and_rejects_ambiguous_arguments() {
     for (operation, expected) in [
         ("prepare", FullStackCommand::Prepare),
         ("start", FullStackCommand::Start),
+        ("frontend", FullStackCommand::Frontend),
         ("collect", FullStackCommand::Collect),
     ] {
         assert_eq!(

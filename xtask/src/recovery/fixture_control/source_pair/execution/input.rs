@@ -259,7 +259,7 @@ fn validate(fixture: &Value) -> Result<()> {
     Ok(())
 }
 
-fn capture(root: &Path, generated: &Value) -> Result<Side> {
+pub(super) fn capture(root: &Path, generated: &Value) -> Result<Side> {
     let inventory = source::capture(root)?;
     let snapshot = &inventory.source.snapshot;
     let expected = json!({"head":snapshot.head,"patch_sha256":snapshot.patch_sha256,

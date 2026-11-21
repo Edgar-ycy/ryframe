@@ -396,7 +396,14 @@ fn pair_fixture(evidence: &Value) -> Value {
                 "patch_sha256": sha256(b"generated"),
                 "files": files,
             },
-            "frontend": sources["frontend"],
+            "frontend": {
+                "head": "b".repeat(40),
+                "patch_sha256": sha256(b"generated-frontend"),
+                "files": [{
+                    "path": "src/generated/business/order.ts",
+                    "sha256": sha256(b"generated frontend order"),
+                }],
+            },
         },
     });
     let mut business = pair.clone();

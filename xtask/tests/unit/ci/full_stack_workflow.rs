@@ -82,20 +82,43 @@ fn rejects_drift_in_source_pair_and_stage_ownership() {
             "收集进程与基础设施日志\n        if: ${{ success() }}",
             "full-stack collect 的 if",
         ),
+    ] {
+        assert_rejected(CURRENT.replacen(old, new, 1), expected, old);
+    }
+}
+
+#[test]
+fn rejects_drift_in_frontend_build_conditions_and_commands() {
+    for (old, new, expected) in [
         (
             "working-directory: ${{ matrix.frontend }}",
             "working-directory: frontend",
             "前端生产构建",
         ),
         (
-            "- name: 构建前端生产产物\n",
-            "- name: 构建前端生产产物\n        if: ${{ false }}\n",
-            "无条件",
+            "构建前端生产产物\n        if: ${{ matrix.fixture == 'core' }}\n",
+            "构建前端生产产物\n        if: ${{ matrix.fixture == 'business' }}\n",
+            "前端生产构建 的 if",
         ),
         (
             "corepack pnpm build --source-commit",
             "corepack pnpm build && corepack pnpm check --source-commit",
-            "前端生产构建",
+            "前端生产构建 的 run",
+        ),
+        (
+            "构建生成业务前端生产产物\n        if: ${{ matrix.fixture == 'business' }}\n",
+            "构建生成业务前端生产产物\n",
+            "full-stack frontend 的 if",
+        ),
+        (
+            "if: ${{ matrix.fixture == 'business' }}\n        working-directory: ${{ matrix.backend }}\n        run:",
+            "if: ${{ matrix.fixture == 'business' }}\n        working-directory: ${{ matrix.frontend }}\n        run:",
+            "full-stack frontend 的 working-directory",
+        ),
+        (
+            "/debug/xtask\" check recovery full-stack frontend",
+            "/release/xtask\" check recovery full-stack frontend",
+            "full-stack frontend",
         ),
     ] {
         assert_rejected(CURRENT.replacen(old, new, 1), expected, old);
@@ -110,15 +133,19 @@ fn rejects_source_verification_before_frontend_build() {
     let end = CURRENT
         .find("      - name: 收集进程与基础设施日志")
         .unwrap();
-    let build = CURRENT.find("      - name: 构建前端生产产物").unwrap();
-    let changed = format!(
-        "{}{}{}{}",
-        &CURRENT[..build],
-        &CURRENT[start..end],
-        &CURRENT[build..start],
-        &CURRENT[end..],
-    );
-    assert_rejected(changed, "步骤顺序", "前端构建前复核来源");
+    for build_name in ["构建前端生产产物", "构建生成业务前端生产产物"] {
+        let build = CURRENT
+            .find(&format!("      - name: {build_name}"))
+            .unwrap();
+        let changed = format!(
+            "{}{}{}{}",
+            &CURRENT[..build],
+            &CURRENT[start..end],
+            &CURRENT[build..start],
+            &CURRENT[end..],
+        );
+        assert_rejected(changed, "步骤顺序", build_name);
+    }
 }
 
 #[test]
@@ -184,6 +211,21 @@ fn rejects_missing_attempt_matrix_or_public_diagnostics_binding() {
             "business-fixture/prepare.log",
             "business-fixture/playwright-real",
             "playwright-real",
+        ),
+        (
+            "${{ runner.temp }}/ryframe-full-stack\n",
+            "${{ runner.temp }}/unregistered\n",
+            "固定运行目录",
+        ),
+        (
+            "!${{ runner.temp }}/ryframe-full-stack/worker-config/**",
+            "${{ runner.temp }}/ryframe-full-stack/worker-config/**",
+            "私有配置排除项",
+        ),
+        (
+            "backend/.local-tests/business-fixture/prepare.log",
+            "backend/.local-tests/business-fixture/prepare.log\n            backend/.local-tests/business-fixture/backend/.local-tests/full-stack-frontend",
+            "不得上传派生仓库",
         ),
         ("${{ always() }}", "${{ success() }}", "${{ always() }}"),
     ] {

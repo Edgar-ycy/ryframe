@@ -74,10 +74,13 @@ fn parse_full_stack(args: &[String]) -> Result<FullStackCommand, CliError> {
         [help] if matches!(help.as_str(), "--help" | "-h") => Ok(FullStackCommand::Help),
         [operation] if operation == "prepare" => Ok(FullStackCommand::Prepare),
         [operation] if operation == "start" => Ok(FullStackCommand::Start),
+        [operation] if operation == "frontend" => Ok(FullStackCommand::Frontend),
         [operation] if operation == "collect" => Ok(FullStackCommand::Collect),
         [operation, help]
-            if matches!(operation.as_str(), "prepare" | "start" | "collect")
-                && matches!(help.as_str(), "--help" | "-h") =>
+            if matches!(
+                operation.as_str(),
+                "prepare" | "start" | "frontend" | "collect"
+            ) && matches!(help.as_str(), "--help" | "-h") =>
         {
             Ok(FullStackCommand::Help)
         }
@@ -94,7 +97,8 @@ fn parse_full_stack(args: &[String]) -> Result<FullStackCommand, CliError> {
         }
         [] => Err(CliError::new("check recovery full-stack 缺少明确子操作")),
         [operation, ..]
-            if ["prepare", "start", "collect", "rate-limit"].contains(&operation.as_str()) =>
+            if ["prepare", "start", "frontend", "collect", "rate-limit"]
+                .contains(&operation.as_str()) =>
         {
             Err(CliError::new(format!("full-stack {operation} 参数无效")))
         }

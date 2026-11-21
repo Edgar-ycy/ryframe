@@ -7,9 +7,20 @@ const WORKFLOW: &str = ".github/workflows/extended-ci.yml";
 const SOURCE_PAIR: &str = r#""$RUNNER_TEMP/ryframe-full-stack/source-pair.json""#;
 const FRONTEND_ROOT: &str = r#""$GITHUB_WORKSPACE/frontend""#;
 const FIXTURE_OUTPUT: &str = r#""$GITHUB_WORKSPACE/backend/.local-tests/business-fixture""#;
-const FIXTURE_RECEIPT: &str = "backend/.local-tests/business-fixture/fixture.json";
 const DIAGNOSTICS: &str = "保存全栈诊断产物";
 const TOOL_TARGET: &str = "$RUNNER_TEMP/ryframe-full-stack-tool";
+const CORE: &str = "${{ matrix.fixture == 'core' }}";
+const BUSINESS: &str = "${{ matrix.fixture == 'business' }}";
+const CORE_BUILD: &str = r#"corepack pnpm build --source-commit "$(git rev-parse HEAD)""#;
+const DIAGNOSTIC_PATHS: &[&str] = &[
+    "${{ runner.temp }}/ryframe-full-stack",
+    "!${{ runner.temp }}/ryframe-full-stack/config/**",
+    "!${{ runner.temp }}/ryframe-full-stack/worker-config/**",
+    "!**/.local-tests/frontend-tools.json",
+    "!**/.local-tests/full-stack-config/**",
+    "backend/.local-tests/business-fixture/fixture.json",
+    "backend/.local-tests/business-fixture/prepare.log",
+];
 
 pub(super) fn run(root: &Path) -> Result<()> {
     let path = root.join(WORKFLOW);
@@ -42,12 +53,7 @@ fn validate_stages(steps: &[YamlValue], upload: usize) -> YamlResult<()> {
     let verify = pair_step(steps, "cargo xtask check release ci verify-pair", "--input")?;
     let (fixture, fixture_step) = command(steps, "cargo xtask check recovery fixture")?;
     required_text(fixture_step, "working-directory", "backend", "业务夹具")?;
-    required_text(
-        fixture_step,
-        "if",
-        "${{ matrix.fixture == 'business' }}",
-        "业务夹具",
-    )?;
+    required_text(fixture_step, "if", BUSINESS, "业务夹具")?;
     required_argument(
         fixture_step,
         "--frontend-dir",
@@ -72,22 +78,29 @@ fn validate_stages(steps: &[YamlValue], upload: usize) -> YamlResult<()> {
     let prepare = matrix_tool_step(steps, &format!("{tool} prepare"), None)?;
     let start = matrix_tool_step(steps, &format!("{tool} start"), None)?;
     let collect = matrix_tool_step(steps, &format!("{tool} collect"), Some("${{ always() }}"))?;
-    let (build, step) = command(steps, "corepack pnpm build")?;
+    let (core_build, step) = command(steps, "corepack pnpm build")?;
     required_text(
         step,
         "working-directory",
         "${{ matrix.frontend }}",
         "前端生产构建",
     )?;
-    let build_command = text(step, "run").unwrap_or_default();
-    if step.get("if").is_some() || build_command.contains("pnpm check") {
-        return Err(
-            "前端生产构建必须无条件使用 corepack pnpm build，且不得在该步骤运行 pnpm check".into(),
-        );
-    }
+    required_text(step, "if", CORE, "前端生产构建")?;
+    required_text(step, "run", CORE_BUILD, "前端生产构建")?;
+    let business_build = matrix_tool_step(steps, &format!("{tool} frontend"), Some(BUSINESS))?;
 
     if ![
-        record, fixture, configure, tool_build, prepare, start, build, verify, collect, upload,
+        record,
+        fixture,
+        configure,
+        tool_build,
+        prepare,
+        start,
+        core_build,
+        business_build,
+        verify,
+        collect,
+        upload,
     ]
     .windows(2)
     .all(|pair| pair[0] < pair[1])
@@ -149,11 +162,14 @@ fn validate_upload(steps: &[YamlValue]) -> YamlResult<usize> {
         return Err(format!("{DIAGNOSTICS}必须包含隐藏文件"));
     }
     let paths = text(settings, "path").ok_or("缺少全栈诊断产物路径")?;
-    if !paths.lines().any(|path| path.trim() == FIXTURE_RECEIPT)
-        || paths.contains("playwright-real")
+    if !paths
+        .lines()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .eq(DIAGNOSTIC_PATHS.iter().copied())
     {
         return Err(
-            "全栈诊断产物必须包含业务夹具公开收据，且不得上传已退役的 playwright-real 路径".into(),
+            "全栈诊断产物必须使用固定运行目录、私有配置排除项和业务夹具公开收据，且不得上传派生仓库或已退役的 playwright-real 路径".into(),
         );
     }
     Ok(index)

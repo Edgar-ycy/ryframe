@@ -13,6 +13,8 @@ use super::{
     },
 };
 
+#[path = "archive/frontend.rs"]
+mod frontend;
 #[path = "archive/input.rs"]
 mod input;
 #[path = "archive/reader.rs"]
@@ -28,6 +30,8 @@ pub(crate) const BUILD_EVIDENCE: &str = "build-evidence.json";
 pub(crate) const RUNTIME_RECEIPT: &str = "runtime.json";
 pub(crate) const RUNTIME_EVIDENCE: &str = "runtime-evidence.json";
 pub(crate) const FIXTURE_RECEIPT: &str = "fixture.json";
+pub(crate) const FRONTEND_SOURCE: &str = "frontend-source.json";
+pub(crate) const FRONTEND_BUILD: &str = "frontend-build.json";
 pub(crate) const BINARY_ROLES: &[&str] = &[
     "ryframe",
     "ryframe-worker",
@@ -41,6 +45,8 @@ pub(crate) const ARCHIVE_RECEIPT_LIMITS: &[(&str, usize)] = &[
     (RUNTIME_RECEIPT, 64 * 1024),
     (RUNTIME_EVIDENCE, 4 * 1024 * 1024),
     (FIXTURE_RECEIPT, 4 * 1024 * 1024),
+    (FRONTEND_SOURCE, 16 * 1024 * 1024),
+    (FRONTEND_BUILD, 16 * 1024 * 1024),
 ];
 
 const PAIR_FIELDS: &[&str] = &[
@@ -174,10 +180,15 @@ pub(crate) fn validate_archive_evidence(
         "runtime_evidence": runtime_evidence,
     });
     if fixture == "business" {
-        result["fixture_receipt"] = receipts
-            .get(FIXTURE_RECEIPT)
-            .cloned()
-            .unwrap_or(Value::Null);
+        result["fixture_receipt"] = receipts[FIXTURE_RECEIPT].clone();
+        result["frontend_source"] = frontend::validate(
+            &receipts,
+            &members[FRONTEND_BUILD],
+            &source,
+            backend_root,
+            frontend_sha,
+            &receipt_root,
+        )?;
     }
     Ok(result)
 }

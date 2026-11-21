@@ -78,7 +78,14 @@ fn business_fixture() -> (Value, String) {
                 "patch_sha256": sha256(b"generated-backend"),
                 "files": files,
             },
-            "frontend": source(&"b".repeat(40)),
+            "frontend": {
+                "head": "b".repeat(40),
+                "patch_sha256": sha256(b"generated-frontend"),
+                "files": [{
+                    "path": "src/generated/business/order.ts",
+                    "sha256": sha256(b"generated frontend order"),
+                }],
+            },
         },
     });
     (receipt, fixture_sha)
@@ -278,7 +285,7 @@ fn business_fixture_requires_clean_sources_and_completed_generation() {
 }
 
 #[test]
-fn business_fixture_binds_outputs_and_keeps_frontend_clean() {
+fn business_fixture_binds_outputs_and_requires_generated_frontend() {
     let (receipt, fixture_sha) = business_fixture();
     let mut missing = receipt.clone();
     missing["generated"]["backend"]["files"]
@@ -326,11 +333,22 @@ fn business_fixture_binds_outputs_and_keeps_frontend_clean() {
         .is_err()
     );
 
-    let mut changed_frontend = receipt;
-    changed_frontend["generated"]["frontend"]["patch_sha256"] = json!("c".repeat(64));
+    let mut old_fixture = receipt.clone();
+    old_fixture["generated"]["frontend"] = old_fixture["sources"]["frontend"].clone();
+    let failure = validate_fixture(
+        Some(&old_fixture),
+        &"a".repeat(40),
+        &"b".repeat(40),
+        &fixture_sha,
+    )
+    .unwrap_err();
+    assert!(failure.to_string().contains("frontend 没有实际生成变化"));
+
+    let mut wrong_digest = receipt;
+    wrong_digest["generated"]["frontend"]["files"][0]["sha256"] = json!("invalid");
     assert!(
         validate_fixture(
-            Some(&changed_frontend),
+            Some(&wrong_digest),
             &"a".repeat(40),
             &"b".repeat(40),
             &fixture_sha

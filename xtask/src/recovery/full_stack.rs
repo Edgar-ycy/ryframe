@@ -5,6 +5,8 @@ pub(in crate::recovery) mod build;
 pub(super) mod context;
 #[path = "full_stack/execution.rs"]
 pub(super) mod execution;
+#[path = "full_stack/frontend.rs"]
+mod frontend;
 #[path = "full_stack/lifecycle.rs"]
 mod lifecycle;
 #[path = "full_stack/prepare.rs"]
@@ -43,7 +45,9 @@ pub(super) trait Port {
 pub(crate) fn run(command: &FullStackCommand, root: &Path) -> Result<()> {
     match command {
         FullStackCommand::Help => {
-            println!("cargo xtask check recovery full-stack <prepare|rate-limit|start|collect>");
+            println!(
+                "cargo xtask check recovery full-stack <prepare|rate-limit|start|frontend|collect>"
+            );
             return Ok(());
         }
         FullStackCommand::RateLimitHelp => {
@@ -59,6 +63,7 @@ pub(crate) fn run(command: &FullStackCommand, root: &Path) -> Result<()> {
     match command {
         FullStackCommand::Prepare => prepare::run(&context, &mut port),
         FullStackCommand::Start => lifecycle::start(&context, &mut port),
+        FullStackCommand::Frontend => frontend::run(&context, &mut port),
         FullStackCommand::Collect => lifecycle::collect(&context, &mut port),
         FullStackCommand::RateLimit { tool_config_file } => context.rate_limit(tool_config_file),
         _ => unreachable!(),

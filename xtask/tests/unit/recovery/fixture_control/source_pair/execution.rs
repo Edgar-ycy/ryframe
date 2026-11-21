@@ -5,7 +5,7 @@ use std::{
 
 use serde_json::{Value, json};
 
-use super::{assets::MARKER, git, publish, source, verify};
+use super::{assets::MARKER, git, publish, publish_frontend, source, verify};
 
 #[path = "execution_window.rs"]
 mod window_tests;
@@ -239,6 +239,118 @@ fn snapshot(root: &Path) -> Value {
     let value = source::capture(root).unwrap().source.snapshot;
     json!({"head":value.head,"patch_sha256":value.patch_sha256,
         "files":value.files.iter().map(|v| json!({"path":v.path,"sha256":v.sha256})).collect::<Vec<_>>()})
+}
+
+#[test]
+fn frontend_publication_recreates_frozen_generated_sources() {
+    let fixture = Fixture::new();
+    let frontend = &fixture.frontend;
+    let output = fixture.backend.join(".local-tests/isolated-frontend");
+    fs::write(frontend.join("src/lib.rs"), "// 前端跟踪文件的生成差异\n").unwrap();
+    fs::create_dir(frontend.join(".local-tests")).unwrap();
+    fs::write(
+        frontend.join(".local-tests/private.toml"),
+        "private fixture\n",
+    )
+    .unwrap();
+    fs::write(frontend.join("private.ignored"), "private fixture\n").unwrap();
+    let expected = snapshot(frontend);
+    let original = source::capture(frontend).unwrap();
+
+    let published = publish_frontend(frontend, &output, &expected).unwrap();
+    let receipt = published.verify().unwrap();
+    assert_eq!(
+        receipt["path"],
+        json!(super::super::super::portable_path(
+            &fs::canonicalize(&output).unwrap()
+        ))
+    );
+    assert_eq!(receipt["parent"], expected["head"]);
+    assert_eq!(receipt["head"], published.head());
+    assert_ne!(receipt["head"], receipt["parent"]);
+    assert_eq!(
+        git::text(&output, &["rev-list", "--parents", "-n", "1", "HEAD"]).unwrap(),
+        format!(
+            "{} {}",
+            published.head(),
+            expected["head"].as_str().unwrap()
+        )
+    );
+    let actual = source::capture(&output).unwrap();
+    assert!(actual.source.snapshot.clean);
+    assert_eq!(actual.files, original.files);
+    assert_eq!(receipt["inventory"], source::inventory_value(&actual));
+    assert_eq!(
+        receipt["tree"],
+        git::text(&output, &["rev-parse", "HEAD^{tree}"]).unwrap()
+    );
+    for path in ["src/lib.rs", "src/business.txt"] {
+        assert_eq!(
+            fs::read(output.join(path)).unwrap(),
+            fs::read(frontend.join(path)).unwrap()
+        );
+    }
+    assert_eq!(source::capture(frontend).unwrap(), original);
+    assert!(!output.join(".local-tests").exists());
+    assert!(!output.join("private.ignored").exists());
+
+    for name in ["node_modules", "dist", ".local-tests"] {
+        let directory = output.join(name);
+        fs::create_dir(&directory).unwrap();
+        fs::write(directory.join("managed.txt"), "受管环境样本\n").unwrap();
+    }
+    assert_eq!(published.verify().unwrap(), receipt);
+    let unknown = output.join("private.ignored");
+    fs::write(&unknown, "未登记资产\n").unwrap();
+    assert!(published.verify().is_err());
+    fs::remove_file(unknown).unwrap();
+    assert_eq!(published.verify().unwrap(), receipt);
+
+    fs::write(output.join("src/business.txt"), "生成资产漂移\n").unwrap();
+    assert!(published.verify().is_err());
+}
+
+#[test]
+fn frontend_publication_rejects_overlap_mismatch_and_original_drift() {
+    let fixture = Fixture::new();
+    let frontend = &fixture.frontend;
+    let output = fixture.backend.join(".local-tests/isolated-frontend");
+    let expected = snapshot(frontend);
+
+    let nested = frontend.join("nested");
+    for conflicting in [frontend.as_path(), &nested] {
+        assert!(publish_frontend(frontend, conflicting, &expected).is_err());
+    }
+    assert!(!nested.exists());
+    let mut wrong_patch = expected.clone();
+    wrong_patch["patch_sha256"] = json!("a".repeat(64));
+    assert!(publish_frontend(frontend, &output, &wrong_patch).is_err());
+    let mut wrong_new_file = expected.clone();
+    wrong_new_file["files"][0]["sha256"] = json!("b".repeat(64));
+    assert!(publish_frontend(frontend, &output, &wrong_new_file).is_err());
+    assert!(!output.exists());
+
+    let private = frontend.join("config/private.toml");
+    fs::write(&private, "private fixture\n").unwrap();
+    assert!(publish_frontend(frontend, &output, &snapshot(frontend)).is_err());
+    assert!(!output.exists());
+    fs::remove_file(private).unwrap();
+
+    let published = publish_frontend(frontend, &output, &expected).unwrap();
+    let receipt = published.verify().unwrap();
+    assert!(publish_frontend(frontend, &output, &expected).is_err());
+    assert_eq!(published.verify().unwrap(), receipt);
+    fs::write(frontend.join("src/lib.rs"), "// 原跟踪文件漂移\n").unwrap();
+    assert!(published.verify().is_err());
+    let bytes = fs::read(output.join("src/lib.rs")).unwrap();
+    fs::write(frontend.join("src/lib.rs"), bytes).unwrap();
+    assert_eq!(published.verify().unwrap(), receipt);
+
+    fs::remove_file(frontend.join("src/business.txt")).unwrap();
+    assert!(published.verify().is_err());
+    let empty = fixture.backend.join(".local-tests/empty-frontend");
+    assert!(publish_frontend(frontend, &empty, &snapshot(frontend)).is_err());
+    assert!(!empty.exists());
 }
 
 #[cfg(windows)]

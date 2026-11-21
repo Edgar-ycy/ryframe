@@ -9,9 +9,9 @@ use super::super::{
     support::{exact_object, sha256_shape},
 };
 use super::{
-    ARCHIVE_RECEIPT_LIMITS, BUILD_EVIDENCE, BUSINESS_MODEL, FIXTURE_RECEIPT, RUNTIME_EVIDENCE,
-    RUNTIME_RECEIPT, SOURCE_PAIR_RECEIPT, clean_snapshot, file_name, generated_snapshot,
-    join_posix, parent, snapshot, validate_absolute_posix, validate_binding,
+    ARCHIVE_RECEIPT_LIMITS, BUILD_EVIDENCE, BUSINESS_MODEL, FIXTURE_RECEIPT, FRONTEND_BUILD,
+    FRONTEND_SOURCE, RUNTIME_EVIDENCE, RUNTIME_RECEIPT, SOURCE_PAIR_RECEIPT, clean_snapshot,
+    file_name, generated_snapshot, join_posix, parent, validate_absolute_posix, validate_binding,
     validate_relative_member,
 };
 
@@ -29,6 +29,8 @@ pub(super) fn archive_members(
             RUNTIME_RECEIPT,
             RUNTIME_EVIDENCE,
             FIXTURE_RECEIPT,
+            FRONTEND_SOURCE,
+            FRONTEND_BUILD,
         ])
     } else {
         BTreeSet::from([
@@ -161,10 +163,11 @@ pub(super) fn validate_business_source(
         "业务 crate 原始 frontend 来源",
         frontend_sha,
     )?;
-    snapshot(&generated["frontend"], "业务 crate 生成 frontend 来源")?;
-    if generated["frontend"] != original["frontend"] {
-        return Err("业务 crate 生成不得改写前端仓库源码".into());
-    }
+    generated_snapshot(
+        &generated["frontend"],
+        "业务 crate 生成 frontend 来源",
+        frontend_sha,
+    )?;
     exact_object(
         fixture_receipt,
         &[

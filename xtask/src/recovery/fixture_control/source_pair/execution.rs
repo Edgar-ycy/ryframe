@@ -20,6 +20,8 @@ use super::super::{file_binding, read_json, write_new};
 
 #[path = "execution/assets.rs"]
 mod assets;
+#[path = "execution/frontend.rs"]
+mod frontend;
 #[path = "execution/git.rs"]
 mod git;
 #[cfg(windows)]
@@ -31,6 +33,7 @@ mod held_target;
 mod input;
 #[path = "execution/window.rs"]
 mod window;
+pub(in crate::recovery) use frontend::publish_frontend;
 pub(in crate::recovery) use held_target::HeldTargetSource;
 pub(in crate::recovery::fixture_control) use window::Window;
 
