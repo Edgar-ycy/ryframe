@@ -381,7 +381,13 @@ fn validate_snapshot(value: &Value) -> Result<()> {
 }
 
 pub(crate) fn name(value: &str) -> Result<&str> {
-    if Regex::new(r"^[a-z0-9][a-z0-9_-]{2,47}$")?.is_match(value) {
+    let bytes = value.as_bytes();
+    if (3..=48).contains(&bytes.len())
+        && matches!(bytes[0], b'a'..=b'z' | b'0'..=b'9')
+        && bytes[1..]
+            .iter()
+            .all(|&byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-'))
+    {
         Ok(value)
     } else {
         Err("开发复制名称无效".into())
@@ -390,7 +396,11 @@ pub(crate) fn name(value: &str) -> Result<&str> {
 
 pub(crate) fn digest_shape(value: &Value) -> Result<&str> {
     let value = text(value, "SHA-256")?;
-    if Regex::new(r"^[a-f0-9]{64}$")?.is_match(value) {
+    if value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| matches!(byte, b'a'..=b'f' | b'0'..=b'9'))
+    {
         Ok(value)
     } else {
         Err("必须绑定真实 SHA-256".into())
@@ -432,4 +442,70 @@ fn endpoint_url(value: &str) -> Result<()> {
         return Err("恢复运行收据只接受明确的本机 loopback 端点".into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn copy_name_matches_original_regex() {
+        let reference = Regex::new(r"^[a-z0-9][a-z0-9_-]{2,47}$").unwrap();
+        let lengths = (0..=50).map(|length| "a".repeat(length));
+        let characters = (0u8..=127)
+            .map(char::from)
+            .chain(['é', '全', '１', '\u{0085}', '\u{2028}']);
+        let spellings = characters.flat_map(|character| {
+            [
+                format!("{character}a0"),
+                format!("a{character}0"),
+                format!("a0{character}"),
+            ]
+        });
+        for value in lengths.chain(spellings) {
+            let expected = if reference.is_match(&value) {
+                Ok(value.as_str())
+            } else {
+                Err("开发复制名称无效".to_owned())
+            };
+            assert_eq!(
+                name(&value).map_err(|error| error.to_string()),
+                expected,
+                "{value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn copy_digest_shape_matches_original_regex() {
+        let reference = Regex::new(r"^[a-f0-9]{64}$").unwrap();
+        let lengths = (0..=66).map(|length| "a".repeat(length));
+        let characters = (0u8..=127)
+            .map(char::from)
+            .chain(['é', '全', '１', '\u{0085}', '\u{2028}']);
+        let spellings = characters.flat_map(|character| {
+            let tail = "a".repeat(64 - character.len_utf8());
+            [format!("{character}{tail}"), format!("{tail}{character}")]
+        });
+        for value in lengths.chain(spellings).map(Value::String).chain([
+            Value::Null,
+            json!(true),
+            json!(64),
+            json!([]),
+            json!({}),
+        ]) {
+            let expected = text(&value, "SHA-256").and_then(|value| {
+                if reference.is_match(value) {
+                    Ok(value)
+                } else {
+                    Err("必须绑定真实 SHA-256".into())
+                }
+            });
+            assert_eq!(
+                digest_shape(&value).map_err(|error| error.to_string()),
+                expected.map_err(|error| error.to_string()),
+                "{value:?}"
+            );
+        }
+    }
 }
