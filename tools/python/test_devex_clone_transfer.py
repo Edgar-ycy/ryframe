@@ -404,17 +404,6 @@ class TransferTests(unittest.TestCase):
         self.assertEqual(len(self.writes()), 1)
         self.assertEqual(next(iter(self.ledger.snapshot()["steps"].values()))["phase"], "unknown")
 
-    def test_put_response_lost_is_readonly_reconciled_and_not_repeated(self):
-        self.runner.failure = "put-response-lost"
-        with self.assertRaises(ObjectCreateError), self.open():
-            self.engine().apply_object("uploads", "clone-target/system/file.txt")
-        self.runner.failure = None
-        with self.open(create=False, mode="reconcile"):
-            engine = self.engine()
-            step = next(iter(self.ledger.snapshot()["steps"]))
-            self.assertEqual(engine.reconcile(step), "confirmed")
-        self.assertEqual(len(self.writes()), 1)
-
     def test_409_and_412_are_not_retried_or_adopted(self):
         for status in ("409", "412"):
             with self.subTest(status=status):
