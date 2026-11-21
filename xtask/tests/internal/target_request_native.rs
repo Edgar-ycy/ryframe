@@ -176,6 +176,16 @@ impl Fixture {
             &json!({"environment": self.environment}),
         );
         write(
+            &self.local.join("registration.json"),
+            &json!({
+                "format_version": 1,
+                "kind": "devex-clone-fresh-target-registration",
+                "request": bound(&self.local.join("request.json")),
+                "environment": bound(&self.local.join("target-environment.json")),
+                "target_directory": target,
+            }),
+        );
+        write(
             &self.local.join("source-environment.json"),
             &json!({"environment": {}}),
         );

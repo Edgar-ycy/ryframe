@@ -1,4 +1,6 @@
 use super::*;
+use crate::recovery::clone::native::seed::arm_input::history as arm_history;
+use std::fs;
 
 fn row(n: u64, stage: &str, mode: &str, status: &str) -> Value {
     json!({"number":n,"stage":stage,"mode":mode,"status":status,"result":{"attempt":n}})
@@ -66,7 +68,7 @@ fn unknown_failed_duplicate_and_post_rebind_mutations_fail_closed() {
         ("storage-target", "restart", "passed"),
         ("storage-target", "stop", "passed"),
         ("seed-runtime", "source-rebind", "passed"),
-        ("seed-runtime", "arm-input", "failed"),
+        ("seed-runtime", "arm-input", "running"),
         ("seed-runtime", "start", "running"),
     ] {
         let mut rows = rebound();
@@ -76,6 +78,35 @@ fn unknown_failed_duplicate_and_post_rebind_mutations_fail_closed() {
     let mut rows = prefix();
     rows.push(row(54, "seed-runtime", "source-rebind", "failed"));
     rejected(&args(rows));
+}
+
+#[test]
+fn failed_arm_requests_exact_prefix_proof_and_cannot_proceed_without_it() {
+    let mut rows = rebound();
+    let mut failed = row(55, "seed-runtime", "arm-input", "failed");
+    failed["result"] = Value::Null;
+    rows.push(failed.clone());
+    let input = args(rows.clone());
+    assert_eq!(
+        accepted(&input),
+        json!({"later":&rows[1..],"actions":[{"kind":"arm-prefix","record":failed}]})
+    );
+
+    let backend = crate::workspace::root_dir();
+    let local = backend.join(".local-tests");
+    fs::create_dir_all(&local).unwrap();
+    let run = tempfile::tempdir_in(local).unwrap();
+    let error = arm_history::prove(
+        &backend,
+        run.path(),
+        &input,
+        &failed,
+        &input["descriptor"],
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(error.to_string(), "seed 历史包含未受控的 ARM 失败前缀");
+    assert!(fs::read_dir(run.path()).unwrap().next().is_none());
 }
 
 #[test]

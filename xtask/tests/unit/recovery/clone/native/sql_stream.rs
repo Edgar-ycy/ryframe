@@ -278,15 +278,20 @@ fn utf8_chunks_are_bounded_and_cursor_rejection_preserves_result() {
 #[cfg(windows)]
 #[test]
 fn close_reports_partial_local_deletion_without_retry() {
+    use std::{fs::OpenOptions, os::windows::fs::OpenOptionsExt};
+
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
     let fixture = Fixture::new(&body());
     let stream = fixture.create(None);
     let root = PathBuf::from(stream["root"].as_str().unwrap());
     let manifest = root.join("manifest.json");
     let before = fs::read(&fixture.source).unwrap();
-    let original_permissions = fs::metadata(&manifest).unwrap().permissions();
-    let mut permissions = original_permissions.clone();
-    permissions.set_readonly(true);
-    fs::set_permissions(&manifest, permissions).unwrap();
+    // 允许关闭前复核原文件，但持有期间拒绝删除。
+    let manifest_handle = OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(&manifest)
+        .unwrap();
     let error = request("reference-sql-stream-close", &json!({"stream":stream}))
         .unwrap_err()
         .to_string();
@@ -298,5 +303,5 @@ fn close_reports_partial_local_deletion_without_retry() {
     assert!(!root.join("rows.jsonl").exists());
     assert!(manifest.exists() && root.exists());
     assert_eq!(fs::read(&fixture.source).unwrap(), before);
-    fs::set_permissions(&manifest, original_permissions).unwrap();
+    drop(manifest_handle);
 }

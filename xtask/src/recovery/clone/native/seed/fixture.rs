@@ -29,9 +29,13 @@ impl Fixture {
             &json!({"fixture":true}),
         )
         .unwrap();
+        let environment = json!({"environment":{"APP_ENV":"test"}});
+        let target_environment = run.join("target-environment.json");
+        document::write_new(&target_environment, &environment).unwrap();
         document::write_new(
             &run.join("manifest.json"),
-            &json!({"initialized":common::binding(&run.join("target/initialized.json")).unwrap()}),
+            &json!({"initialized":common::binding(&run.join("target/initialized.json")).unwrap(),
+                "target_environment":common::binding(&target_environment).unwrap()}),
         )
         .unwrap();
         state::initialize(&run).unwrap();
@@ -50,12 +54,9 @@ impl Fixture {
             None,
         );
         let generic = fixture.file("historical", &json!({"fixture":true}));
-        let environment = fixture.file(
-            "api-environment",
-            &json!({"environment":{"APP_ENV":"test"}}),
-        );
+        let api_environment = fixture.file("api-environment", &environment);
         let post = json!({"copy_stage_receipt":copied,"copy_result":generic,"ledger_head":generic,
-            "backend_build":generic,"api_environment":environment,"node":{"fixture":true},
+            "backend_build":generic,"api_environment":api_environment,"node":{"fixture":true},
             "frontend_root":fixture.identities.plan["environment"]["frontend_dir"]});
         let descriptor = fixture.file("post-copy", &post);
         fixture.stage(

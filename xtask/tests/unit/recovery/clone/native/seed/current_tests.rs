@@ -88,14 +88,8 @@ fn producer_current_proof_requires_same_live_controller_and_current_outer_attemp
 }
 
 #[test]
-fn current_proof_never_treats_failed_or_cleanup_stage_as_mutation_authority() {
-    for mode in [
-        "stop",
-        "recover",
-        "source-generation-start",
-        "register",
-        "close",
-    ] {
+fn current_proof_requires_live_authority_from_an_allowed_stage() {
+    for mode in ["stop", "recover", "source-generation-start", "register"] {
         let fixture = running(mode);
         assert!(
             Current::load(&fixture.backend, &fixture.run).is_err(),
@@ -110,5 +104,16 @@ fn current_proof_never_treats_failed_or_cleanup_stage_as_mutation_authority() {
         before,
         common::binding(&fixture.run.join("seed-runtime.json")).unwrap()
     );
+    assert!(!fixture.run.join("seed-runtime/identities").exists());
+
+    let fixture = running("close");
+    let proof = Current::load(&fixture.backend, &fixture.run).unwrap();
+    proof.check(&fixture.backend).unwrap();
+    let saved = state::load(&fixture.run, true).unwrap();
+    let close = state::running_attempt(&saved).unwrap().unwrap();
+    let number = close["number"].as_u64().unwrap();
+    state::finish(&fixture.run, number, None, Some("Interrupted")).unwrap();
+    assert!(proof.check(&fixture.backend).is_err());
+    assert!(Current::load(&fixture.backend, &fixture.run).is_err());
     assert!(!fixture.run.join("seed-runtime/identities").exists());
 }

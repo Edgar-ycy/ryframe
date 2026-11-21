@@ -250,7 +250,7 @@ fn observation_and_predecessor_drift_never_publish_a_receipt() {
             let message = error.to_string();
             assert!(message.contains("环境审阅阶段"));
             assert!(message.contains("--review"));
-            assert!(message.contains("verification.linux_observer"));
+            assert!(message.contains("verification.windows_redis"));
             assert!(!message.contains("do-not-echo-credential"));
             assert!(error.source().is_some());
             if change == "failure" {

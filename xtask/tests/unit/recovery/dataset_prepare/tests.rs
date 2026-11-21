@@ -177,7 +177,7 @@ fn protocol_exact_fields_paths_modes_and_input_mutation_fail_closed() {
 fn configuration(directory: &std::path::Path) -> Value {
     let config = directory.join("config");
     fs::create_dir(&config).unwrap();
-    let bytes = b"[bootstrap]\nadmin_password='Initial!Only123'\n[object_storage]\naccess_key='fixture-memory-only-access'\nsecret_key='fixture-memory-only-secret'\n";
+    let bytes = b"[bootstrap]\nadmin_password='Initial!Only123'\n[object_storage]\nendpoint='http://127.0.0.1:9000'\nregion='us-east-1'\naccess_key='fixture-memory-only-access'\nsecret_key='fixture-memory-only-secret'\n";
     fs::write(config.join("app.test.toml"), bytes).unwrap();
     let mut value = json!({"app_env":"test","directory":config,"files":{"app.test.toml":{"bytes":bytes.len(),"sha256":model::sha(bytes)}}});
     value["sha256"] = json!(model::hash(&value).unwrap());

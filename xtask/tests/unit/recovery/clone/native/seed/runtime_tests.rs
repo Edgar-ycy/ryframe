@@ -43,8 +43,10 @@ fn prepared() -> (Fixture, Value) {
     for name in ["binaries.json", "runtime.json"] {
         document::write_new(&runtime.join(name), &json!({"fixture":true})).unwrap();
     }
+    let post = document::read(&fixture.run.join("post-copy.json")).unwrap();
     let handoff = json!({"registration":common::binding(&fixture.run.join("seed-runtime.json")).unwrap(),
         "runtime":common::binding(&runtime.join("runtime.json")).unwrap(),"binaries":common::binding(&runtime.join("binaries.json")).unwrap(),
+        "api_environment":post["api_environment"],
         "scope_id":"native-fixture"});
     document::write_new(&runtime.join("handoff.json"), &handoff).unwrap();
     fixture.stage("seed-runtime","prepare",Some(json!({"status":"seed_runtime_prepared","handoff":common::binding(&runtime.join("handoff.json")).unwrap()})),None);
@@ -90,6 +92,8 @@ fn cleanup_still_rejects_changed_own_handoff_prepare_runtime_binaries_and_regist
         "seed-runtime/runtime/binaries.json",
         "seed-runtime.json",
         "results/0005.json",
+        "api-environment.json",
+        "target-environment.json",
     ] {
         let (fixture, _) = prepared();
         fs::write(fixture.run.join(target), "{}").unwrap();
