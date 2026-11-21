@@ -24,6 +24,8 @@ pub(crate) mod generation_request;
 mod images;
 #[path = "runtime/inventory.rs"]
 mod inventory;
+#[path = "evidence/inventory_configuration.rs"]
+mod inventory_configuration;
 #[path = "evidence/lineage.rs"]
 mod lineage;
 #[path = "evidence/model.rs"]
@@ -92,13 +94,21 @@ pub(crate) fn run_hidden_if_requested() -> Option<i32> {
     let (code, response) = match result {
         Ok(value) => (0, json!({"ok":true,"result":{"value":value}})),
         // 原始输入可能包含登录行或意外凭据；解析错误不能带回输入片段。
-        Err(error) => (
-            1,
-            json!({"ok":false,"error":{
-            "category":"SourceEvidenceRejected",
-            "message":format!("来源证据校验失败：{error}。检查同代路径、已绑定文件及Git来源；保留本地失败现场，创建操作可能留下部分文件，禁止覆盖或自动重放；未执行远端写入。"),
-            "remote_write_may_have_occurred":false,"automatic_retry_permitted":false}}),
-        ),
+        Err(error) => {
+            let message = error
+                .downcast_ref::<inventory_configuration::PathSyntaxError>()
+                .map_or_else(
+                    || format!("来源证据校验失败：{error}。检查同代路径、已绑定文件及Git来源；保留本地失败现场，创建操作可能留下部分文件，禁止覆盖或自动重放；未执行远端写入。"),
+                    |error| error.0.to_owned(),
+                );
+            (
+                1,
+                json!({"ok":false,"error":{
+                "category":"SourceEvidenceRejected",
+                "message":message,
+                "remote_write_may_have_occurred":false,"automatic_retry_permitted":false}}),
+            )
+        }
     };
     let result = (|| -> Result<()> {
         let mut bytes = serde_json::to_vec(&response)?;
@@ -180,6 +190,7 @@ fn dispatch(request: &Value) -> Result<Value> {
             crate::recovery::clone::native::target_verify::database::protocol::request(args)
         }
         Some("copy-side-inventory-verify") => images::inventory::request(args),
+        Some("copy-inventory-configuration") => inventory_configuration::request(args),
         Some("copy-schedule-actions") => crate::recovery::clone::native::schedule::request(args),
         Some(operation @ ("business-catalog" | "business-ledger-columns")) => {
             business_catalog(operation, args)

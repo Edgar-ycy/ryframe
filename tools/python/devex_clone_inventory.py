@@ -72,41 +72,21 @@ def observation_from_inventory(backend: Path, value: dict, declared: dict, scope
     return DatabaseObservation(**result)
 
 
-def configuration(backend: Path, environment: Mapping[str, str], selected: dict, *,
-                  evidence_root: Path | None = None, config_dir: Path | str | None = None) -> dict:
-    if config_dir is None:
-        directory = backend / "config"
-    else:
-        try:
-            raw = os.fspath(config_dir)
-        except (TypeError, ValueError, OSError):
-            raise ValueError("库存配置目录必须为明确文本路径") from None
-        if not isinstance(raw, str) or not raw or raw.strip() != raw:
-            raise ValueError("库存配置目录必须为明确文本路径")
-        directory = Path(raw)
-        if any(ord(char) < 32 or 0x7F <= ord(char) <= 0x9F for char in raw) or ".." in directory.parts:
-            raise ValueError("库存配置目录不能包含控制字符或父目录跳转")
-        directory = directory if directory.is_absolute() else backend / directory
-    if (not any(directory.resolve().is_relative_to(root.resolve()) for root in (backend, evidence_root or backend))
-            or any(linked(p) for p in (directory, *directory.parents))):
-        raise ValueError("库存配置必须位于明确后端内且不能经过链接")
-    if not directory.is_dir():
-        raise ValueError("库存配置目录必须存在")
+def configuration(backend: Path, environment: Mapping[str, str], *, evidence_root: Path | None = None,
+                  config_dir: os.PathLike[str] | str | None = None) -> dict:
+    try:
+        directory = os.fspath(config_dir) if config_dir is not None else None
+    except (TypeError, ValueError, OSError):
+        raise ValueError("库存配置目录必须为明确文本路径") from None
+    if isinstance(directory, bytes):
+        raise ValueError("库存配置目录必须为明确文本路径")
     app_env = environment.get("APP_ENV")
-    if not isinstance(app_env, str) or app_env not in ("dev", "test", "prod"):
-        raise ValueError("库存 APP_ENV 必须明确选择 dev、test 或 prod")
-    selected_file = directory / f"app.{app_env}.toml"
-    if linked(selected_file) or not selected_file.is_file():
-        raise ValueError("库存配置缺少无链接的已选环境文件")
-    files = {}
-    for path in sorted(directory.glob("*.toml")):
-        if linked(path) or not path.is_file():
-            raise ValueError("库存配置文件不能经过链接")
-        files[path.name] = file_digest(path)
-    if not files:
-        raise ValueError("库存配置目录没有 TOML 文件")
-    return {"directory": str(directory.resolve()), "files": files,
-            "environment_sha256": plan_hash({"APP_ENV": app_env})}
+    return _native("copy-inventory-configuration", {
+        "backend": str(backend),
+        "evidence_root": str(evidence_root) if evidence_root is not None else None,
+        "config_dir": directory,
+        "app_env": app_env if isinstance(app_env, str) else None,
+    })
 
 
 def capture_side_inventory(backend: Path, side: str, tools: ExternalTools, maintenance_receipt: Path,

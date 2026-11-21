@@ -96,19 +96,33 @@ pub(crate) fn configuration_files(
     if !directory.starts_with(canonical_path(root)?) {
         return Err("目标配置必须位于明确执行后端内".into());
     }
+    let files = configuration_file_digests(&directory, |path| {
+        path.extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| {
+                if cfg!(windows) {
+                    value.eq_ignore_ascii_case("toml")
+                } else {
+                    value == "toml"
+                }
+            })
+    })?;
+    if !files.contains_key("app.test.toml") {
+        return Err("目标配置目录缺少 app.test.toml；请创建明确选择的测试环境文件，app.toml 为可选公共默认值".into());
+    }
+    Ok((directory, files))
+}
+
+pub(crate) fn configuration_file_digests(
+    directory: &Path,
+    is_toml: impl Fn(&Path) -> bool,
+) -> Result<BTreeMap<String, Value>> {
     let mut files = BTreeMap::new();
-    crate::recovery::runtime::dataset_authority::reads::directory(&directory)?;
-    for entry in fs::read_dir(&directory).map_err(|_| "目标配置目录无法读取")? {
+    crate::recovery::runtime::dataset_authority::reads::directory(directory)?;
+    for entry in fs::read_dir(directory).map_err(|_| "目标配置目录无法读取")? {
         let entry = entry.map_err(|_| "目标配置目录项无法读取")?;
         let path = entry.path();
-        let extension = path.extension().and_then(|value| value.to_str());
-        if extension.is_none_or(|value| {
-            if cfg!(windows) {
-                !value.eq_ignore_ascii_case("toml")
-            } else {
-                value != "toml"
-            }
-        }) {
+        if !is_toml(&path) {
             continue;
         }
         let actual = digest::file(&path)?;
@@ -121,10 +135,7 @@ pub(crate) fn configuration_files(
             json!({"bytes": actual.bytes, "sha256": actual.sha256}),
         );
     }
-    if !files.contains_key("app.test.toml") {
-        return Err("目标配置目录缺少 app.test.toml；请创建明确选择的测试环境文件，app.toml 为可选公共默认值".into());
-    }
-    Ok((directory, files))
+    Ok(files)
 }
 
 /// 应用身份只摘要实际加载的公共文件和已选 test 环境文件。

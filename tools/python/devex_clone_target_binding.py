@@ -298,7 +298,7 @@ def generation(backend: Path, request: dict, run) -> dict:
     for actual in physical["databases"]:
         if any(actual[key] != planned[actual["key"]][key] for key in ("host", "port")):
             raise ValueError("目标 MySQL host/port 不是审阅计划中的地址")
-    configuration = inventory_configuration(execution_root, environment, side, config_dir=config_dir)
+    configuration = inventory_configuration(execution_root, environment, config_dir=config_dir)
     reset_config(execution_root, request, selected)
     verify_api_address(execution_root, selected["api_url"], config_dir=config_dir)
     table = load_app_table(execution_root, environment, config_dir=config_dir)
@@ -316,7 +316,7 @@ def generation(backend: Path, request: dict, run) -> dict:
     secrets = {"bootstrap.admin_password": password}
     if (configuration_binding(execution_root, config_dir) != object_binding
             or configuration_digest(execution_root, config_dir) != request["configuration_sha256"]
-            or inventory_configuration(execution_root, environment, side, config_dir=config_dir) != configuration):
+            or inventory_configuration(execution_root, environment, config_dir=config_dir) != configuration):
         raise ValueError("目标代次观察期间绑定配置发生变化；保留现场并重新核对，不自动重放")
     return {"execution": execution, "maintenance": maintenance, "physical": physical, "configuration": configuration,
             "configuration_sha256": request["configuration_sha256"],

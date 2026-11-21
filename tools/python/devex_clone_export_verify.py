@@ -325,7 +325,7 @@ class _Observation:
             raise ValueError("源对象配置、scope 或显式环境不同")
         self.runtime = registered_runtime(backend, request)
         self.config_dirs = {role: Path(self.runtime[f"{role}_config_dir"]) for role in ("api", "worker")}
-        self.configurations = {role: configuration(self.execution, self.environment, source,
+        self.configurations = {role: configuration(self.execution, self.environment,
             evidence_root=self.backend, config_dir=directory) for role, directory in self.config_dirs.items()}
         if registered_runtime(backend, request) != self.runtime:
             raise ValueError("源观察登记 runtime 或配置在冻结期间变化")
@@ -358,8 +358,7 @@ class _Observation:
     def runtime_unchanged(self):
         if read_json(request_file(self.backend, self.request["runtime"])) != self.runtime:
             raise ValueError("源观察原 runtime descriptor 或收据已变化")
-        source = self.plan["source"]
-        current = {role: configuration(self.execution, self.environment, source,
+        current = {role: configuration(self.execution, self.environment,
             evidence_root=self.backend, config_dir=directory) for role, directory in self.config_dirs.items()}
         if current != self.configurations:
             raise ValueError("源观察绑定的 API/Worker 配置已变化")

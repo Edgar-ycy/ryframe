@@ -1,6 +1,7 @@
-"""库存配置目录和非敏感环境摘要的离线回归，不调用外部工具。"""
+"""通过原生只读协议核对库存配置目录和非敏感环境摘要。"""
 
 from collections.abc import Mapping
+import os
 from pathlib import Path
 import sys
 import unittest
@@ -26,7 +27,6 @@ class ConfigurationTests(unittest.TestCase):
         self.coordinator.mkdir()
         self.directory = self.make_config(self.backend / "config")
         self.environment = {"APP_ENV": "test"}
-        self.selected = {"s3": {"access_key": "fixture-private-access", "secret_key": "fixture-private-secret"}}
 
     def make_config(self, directory, *, app_env="test", common=False):
         directory.mkdir(parents=True)
@@ -37,7 +37,7 @@ class ConfigurationTests(unittest.TestCase):
 
     def call(self, **kwargs):
         return inventory.configuration(
-            self.backend, self.environment, self.selected,
+            self.backend, self.environment,
             evidence_root=self.coordinator, **kwargs,
         )
 
@@ -47,6 +47,7 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(set(result["files"]), {"app.test.toml"})
         self.assertEqual(result["environment_sha256"], plan_hash({"APP_ENV": "test"}))
         self.assertEqual(self.call(config_dir=None), result)
+        self.assertEqual(inventory.configuration(self.backend, self.environment), result)
 
     def test_explicit_relative_unicode_directory_and_absolute_execution_directory(self):
         directory = self.make_config(self.backend / "中文 配置", common=True)
@@ -76,7 +77,7 @@ class ConfigurationTests(unittest.TestCase):
         explicit = self.make_config(self.coordinator / "explicit")
         self.assertEqual(self.call(config_dir=explicit)["directory"], str(explicit.resolve()))
 
-    def test_environment_is_only_queried_for_app_env_and_selected_is_not_read(self):
+    def test_only_app_env_and_explicit_paths_are_sent_to_the_native_protocol(self):
         class AppEnvOnly(Mapping):
             def __getitem__(self, key):
                 if key != "APP_ENV":
@@ -90,8 +91,15 @@ class ConfigurationTests(unittest.TestCase):
                 raise AssertionError("不得遍历环境")
 
         self.environment = AppEnvOnly()
-        self.selected = object()
-        self.assertEqual(self.call()["environment_sha256"], plan_hash({"APP_ENV": "test"}))
+        with mock.patch.object(inventory, "_native", wraps=inventory._native) as native:
+            result = self.call()
+        native.assert_called_once_with("copy-inventory-configuration", {
+            "backend": str(self.backend),
+            "evidence_root": str(self.coordinator),
+            "config_dir": None,
+            "app_env": "test",
+        })
+        self.assertEqual(result["environment_sha256"], plan_hash({"APP_ENV": "test"}))
 
     def test_environment_digest_is_exact_and_file_selection_follows_app_env(self):
         for app_env in ("dev", "test", "prod"):
@@ -103,7 +111,7 @@ class ConfigurationTests(unittest.TestCase):
 
     def test_missing_or_invalid_app_env_cannot_select_an_arbitrary_file(self):
         for environment in ({}, *({"APP_ENV": value} for value in (
-            "", "TEST", " test", "test\n", "../private-value", None, 1, False,
+            "", "TEST", " test", "test\n", "../private-value", None, 1, False, object(),
         ))):
             with self.subTest(environment=environment), self.assertRaisesRegex(ValueError, "APP_ENV"):
                 self.environment = environment
@@ -133,19 +141,39 @@ class ConfigurationTests(unittest.TestCase):
             self.call(config_dir=similar_prefix)
 
     def test_linked_directory_ancestor_selected_and_additional_toml_are_rejected(self):
+        nested = self.make_config(self.backend / "real-parent" / "nested")
+        selected_directory = self.make_config(self.backend / "linked-selected")
+        selected = selected_directory / "app.test.toml"
+        selected.unlink()
+        real_file = self.directory / "app.test.toml"
+        directory_link = self.backend / "linked-config"
+        ancestor_link = self.backend / "linked-parent"
         extra = self.directory / "extra.toml"
-        extra.write_text("# 额外配置\n", encoding="utf-8")
-        for linked in (self.directory, self.backend, self.directory / "app.test.toml", extra):
-            with (
-                self.subTest(linked=linked.name),
-                mock.patch.object(inventory, "linked", side_effect=lambda path: path == linked),
-                self.assertRaisesRegex(ValueError, "链接"),
-            ):
-                self.call()
+        for link, target, config_dir in (
+            (directory_link, self.directory, directory_link),
+            (ancestor_link, nested.parent, ancestor_link / nested.name),
+            (selected, real_file, selected_directory),
+            (extra, real_file, self.directory),
+        ):
+            is_directory = target.is_dir()
+            try:
+                os.symlink(target, link, target_is_directory=is_directory)
+            except OSError as error:
+                if isinstance(error, PermissionError) or getattr(error, "winerror", None) == 1314:
+                    self.skipTest("当前权限不允许创建符号链接")
+                raise
+            self.addCleanup(link.rmdir if is_directory and os.name == "nt" else link.unlink)
+            with self.subTest(link=link.name), self.assertRaisesRegex(ValueError, "链接"):
+                self.call(config_dir=config_dir)
 
     def test_all_toml_digests_are_preserved_without_publishing_file_contents(self):
-        (self.directory / "app.toml").write_text("# fixture-private-value\n", encoding="utf-8")
+        for name in ("app.toml", ".toml", ".hidden.toml", "extra.TOML"):
+            (self.directory / name).write_text("# fixture-private-value\n", encoding="utf-8")
         result = self.call()
+        expected = {"app.test.toml", "app.toml", ".toml", ".hidden.toml"}
+        if os.name == "nt":
+            expected.add("extra.TOML")
+        self.assertEqual(set(result["files"]), expected)
         for name, descriptor in result["files"].items():
             self.assertEqual(descriptor, inventory.file_digest(self.directory / name))
             self.assertEqual(set(descriptor), {"bytes", "sha256"})
