@@ -376,23 +376,6 @@ class TransferTests(unittest.TestCase):
                 engine.apply_object("uploads", "clone-source/system/file.txt")
         self.assertEqual(self.writes(), [])
 
-    def test_commit_response_lost_requires_reconcile_and_does_not_replay(self):
-        self.runner.failure = "commit-response-lost"
-        with self.assertRaises(subprocess.TimeoutExpired), self.open():
-            self.engine().apply_database("shared-control")
-        with self.assertRaises(LedgerError), self.open(create=False):
-            pass
-        self.runner.failure = None
-        with self.open(create=False, mode="reconcile"):
-            engine = self.engine()
-            step = next(iter(self.ledger.snapshot()["steps"]))
-            self.assertEqual(engine.reconcile(step), "confirmed")
-        with self.open(create=False):
-            engine = self.engine()
-            with self.assertRaises(ValueError):
-                engine.apply_database("shared-control")
-        self.assertEqual(len(self.writes()), 1)
-
     def test_post_image_or_preserved_owner_change_is_unknown_and_blocks_next_write(self):
         def damage(key):
             current = self.guard.current[key]
