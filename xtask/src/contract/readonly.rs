@@ -1,5 +1,6 @@
 use std::{
     fs,
+    mem::DropGuard,
     path::{Path, PathBuf},
     process,
 };
@@ -64,13 +65,17 @@ where
     reject_contract_recovery_artifacts(&managed_paths)?;
     let frontend_before = snapshot_managed_files(&managed_paths)?;
 
-    let mut export_dir = ExportDirectory::create(backend_dir)?;
+    let path = create_export_directory(backend_dir)?;
+    let directory = DropGuard::new(path, |path| {
+        let _ = fs::remove_dir_all(path);
+    });
+    let output = directory.join("openapi.json");
     let result = (|| {
-        export(&export_dir.output)?;
-        let exported = fs::read(&export_dir.output).map_err(|error| {
+        export(&output)?;
+        let exported = fs::read(&output).map_err(|error| {
             format!(
                 "无法读取当前后端导出的 OpenAPI {}：{error}",
-                export_dir.output.display()
+                output.display()
             )
         })?;
         let candidate = canonical_contract(&exported)?;
@@ -80,8 +85,8 @@ where
             &candidate,
             "后端提交的 openapi/openapi.json",
         )?;
-        fs::write(&export_dir.output, &candidate)?;
-        verify_current_source(backend_dir, frontend_dir, &export_dir.output)?;
+        fs::write(&output, &candidate)?;
+        verify_current_source(backend_dir, frontend_dir, &output)?;
         verify_readonly_candidate(
             frontend_dir,
             &backend_openapi,
@@ -92,7 +97,11 @@ where
             generate,
         )
     })();
-    finish_with_cleanup(result, export_dir.cleanup(), "OpenAPI 导出临时目录")
+    let cleanup = ensure_removed(&directory);
+    if cleanup.is_ok() {
+        let _ = DropGuard::dismiss(directory);
+    }
+    finish_with_cleanup(result, cleanup, "OpenAPI 导出临时目录")
 }
 
 fn verify_readonly_candidate<G>(
@@ -271,40 +280,11 @@ fn finish_with_cleanup<T>(result: Result<T>, cleanup: Result<()>, label: &str) -
     }
 }
 
-struct ExportDirectory {
-    path: PathBuf,
-    output: PathBuf,
-    active: bool,
-}
-
-impl ExportDirectory {
-    fn create(backend_dir: &Path) -> Result<Self> {
-        let parent = backend_dir.join(".local-tests/contract-export");
-        fs::create_dir_all(&parent)?;
-        let path = parent.join(format!("api-contract-check-{}-{}", process::id(), nonce()?));
-        fs::create_dir(&path).map_err(|error| {
-            format!("无法创建 OpenAPI 导出临时目录 {}：{error}", path.display())
-        })?;
-        Ok(Self {
-            output: path.join("openapi.json"),
-            path,
-            active: true,
-        })
-    }
-
-    fn cleanup(&mut self) -> Result<()> {
-        let result = ensure_removed(&self.path);
-        if result.is_ok() {
-            self.active = false;
-        }
-        result
-    }
-}
-
-impl Drop for ExportDirectory {
-    fn drop(&mut self) {
-        if self.active {
-            let _ = fs::remove_dir_all(&self.path);
-        }
-    }
+fn create_export_directory(backend_dir: &Path) -> Result<PathBuf> {
+    let parent = backend_dir.join(".local-tests/contract-export");
+    fs::create_dir_all(&parent)?;
+    let path = parent.join(format!("api-contract-check-{}-{}", process::id(), nonce()?));
+    fs::create_dir(&path)
+        .map_err(|error| format!("无法创建 OpenAPI 导出临时目录 {}：{error}", path.display()))?;
+    Ok(path)
 }

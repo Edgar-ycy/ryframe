@@ -80,18 +80,23 @@ impl Creation {
         inputs.finish(result.map(|()| true))
     }
 
-    fn same_cut(&self, current: &Self, _control: &Path) -> bool {
+    #[cfg(target_os = "linux")]
+    fn same_cut(&self, current: &Self, control: &Path) -> bool {
         if self == current {
             return true;
         }
-        #[cfg(target_os = "linux")]
-        if let (Some(before), Some(after)) = (&self.0, &current.0) {
-            return before.binding == after.binding
-                && before.request == after.request
-                && before.commands == after.commands
-                && same_control_anchor(&before.directory, &after.directory, _control);
-        }
-        false
+        let (Some(before), Some(after)) = (&self.0, &current.0) else {
+            return false;
+        };
+        before.binding == after.binding
+            && before.request == after.request
+            && before.commands == after.commands
+            && same_control_anchor(&before.directory, &after.directory, control)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn same_cut(&self, current: &Self, _control: &Path) -> bool {
+        self == current
     }
 }
 

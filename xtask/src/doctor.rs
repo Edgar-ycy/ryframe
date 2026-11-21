@@ -69,10 +69,9 @@ fn check_backend_at(root: &Path) -> Result<()> {
         run_process(root, executable, &["--version"])?;
     }
 
-    for (name, path) in [("后端 Git 仓库", root.join(".git"))] {
-        if !path.exists() {
-            return Err(format!("缺少{name}：{}", path.display()).into());
-        }
+    let path = root.join(".git");
+    if !path.exists() {
+        return Err(format!("缺少后端 Git 仓库：{}", path.display()).into());
     }
     Ok(())
 }

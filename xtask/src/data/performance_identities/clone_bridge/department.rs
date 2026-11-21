@@ -329,7 +329,7 @@ fn targets(plan: &Value, identities: &Value) -> Result<(BTreeMap<String, Target>
         let tenant_id = model::text(tenant, "tenant_id")?.to_owned();
         if result
             .insert(
-                tenant_id.clone(),
+                tenant_id,
                 Target {
                     admin: group["admin"].clone(),
                     template: identity.clone(),

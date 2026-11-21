@@ -89,29 +89,7 @@ fn pid(identity: &Value) -> Result<u32> {
 
 #[cfg(windows)]
 fn platform_arguments(pid: u32) -> Result<Vec<String>> {
-    #[derive(serde::Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Row {
-        #[serde(rename = "ProcessId")]
-        pid: u32,
-        #[serde(rename = "CommandLine")]
-        command: Option<String>,
-    }
-    let connection = wmi::WMIConnection::new()
-        .map_err(|_| "进程参数 CIM 连接失败；检查本机读取权限，不能推断进程已退出")?;
-    let rows: Vec<Row> = connection
-        .raw_query(format!(
-            "SELECT ProcessId,CommandLine FROM Win32_Process WHERE ProcessId={pid}"
-        ))
-        .map_err(|_| "进程参数 CIM 查询失败；检查本机读取权限，保留现场")?;
-    if rows.len() != 1 || rows[0].pid != pid {
-        return Err("进程参数观察未返回唯一登记 PID".into());
-    }
-    let line = rows[0]
-        .command
-        .as_deref()
-        .ok_or("进程参数不可读，不能用空参数放行")?;
-    crate::recovery::clone::native::target_verify::storage::kernel::windows_argv(line)
+    crate::process::windows_command_line::arguments(pid)
 }
 
 #[cfg(windows)]

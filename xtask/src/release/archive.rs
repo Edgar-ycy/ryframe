@@ -103,7 +103,7 @@ pub(crate) fn validate_archive_evidence(
             None,
             None,
         )?;
-        if file_name(&binding.path) != *role || !artifact_paths.insert(binding.path.clone()) {
+        if file_name(&binding.path) != *role || !artifact_paths.insert(binding.path) {
             return Err("归档构建产物角色、路径或唯一性无效".into());
         }
     }

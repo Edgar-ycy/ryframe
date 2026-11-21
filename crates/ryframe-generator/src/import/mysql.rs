@@ -75,7 +75,7 @@ pub async fn inspect_existing_table(
             collation: col.collation,
             default: col.column_default,
             extra: col.extra.clone(),
-            rust_type: rust_type.to_string(),
+            rust_type,
             is_nullable: col.is_nullable == "YES",
             is_primary_key: col.column_key == "PRI",
             is_unique: col.column_key == "UNI",

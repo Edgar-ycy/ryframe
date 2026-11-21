@@ -12,7 +12,7 @@ use crate::recovery::clone::native::{
     resources::common,
     target_verify::{
         input::TargetContext,
-        storage::{StorageObserver, generation, kernel, redis_layout, rustfs},
+        storage::{StorageObserver, generation, redis_layout, rustfs},
     },
 };
 
@@ -162,6 +162,8 @@ fn rustfs_launch_rejects_unknown_fields_and_credential_or_argument_changes() {
 
 #[test]
 fn windows_arguments_keep_empty_unicode_space_quotes_and_backslashes() {
+    use crate::process::windows_command_line::windows_argv;
+
     for (raw, expected) in [
         (
             r#""D:\中文 空格\rustfs.exe" server "D:\data dir\\""#,
@@ -172,10 +174,10 @@ fn windows_arguments_keep_empty_unicode_space_quotes_and_backslashes() {
         (" tool", vec!["", "tool"]),
         (r#"tool "a""b""#, vec!["tool", "a\"b"]),
     ] {
-        assert_eq!(kernel::windows_argv(raw).unwrap(), expected, "{raw}");
+        assert_eq!(windows_argv(raw).unwrap(), expected, "{raw}");
     }
-    assert!(kernel::windows_argv("").is_err());
-    assert!(kernel::windows_argv("tool\0server").is_err());
+    assert!(windows_argv("").is_err());
+    assert!(windows_argv("tool\0server").is_err());
 }
 
 #[test]

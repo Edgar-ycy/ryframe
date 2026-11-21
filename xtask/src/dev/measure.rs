@@ -35,8 +35,13 @@ use super::{
 };
 
 const WATCH_EVENT_TIMEOUT: Duration = Duration::from_secs(10);
+#[cfg(windows)]
 const CANCELLATION_DESCENDANT_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) const RESULT_FILE_NAME: &str = "cargo-dev-save-result.json";
+
+#[cfg(test)]
+#[path = "../../tests/unit/dev/measure.rs"]
+mod tests;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -226,8 +231,22 @@ fn measure_cancellation(
         Utc::now().timestamp_millis()
     ));
     fs::create_dir(&target)?;
-    let mut child = spawn_cancellation_build(&group, root, &target)?;
-    wait_for_compile_descendant(&mut child, &target)?;
+    #[cfg(windows)]
+    let compiler = cancellation_stage(
+        cancellation_compiler(root),
+        "定位 Rust 编译器或回收 Rustup 进程树",
+    )?;
+    let build = spawn_cancellation_build(&group, root, &target);
+    #[cfg(windows)]
+    let build = cancellation_stage(build, "启动 Cargo");
+    let mut child = build?;
+    #[cfg(windows)]
+    cancellation_stage(
+        wait_for_compile_descendant(&mut child, &compiler),
+        "观察 Cargo 编译后代",
+    )?;
+    #[cfg(not(windows))]
+    wait_for_compile_descendant(&mut child)?;
 
     let source = SaveCase::Cancellation.source();
     let label = format!(
@@ -235,8 +254,10 @@ fn measure_cancellation(
         std::process::id(),
         Utc::now().timestamp_millis()
     );
-    let (mut edit, started) =
-        SourceEdit::apply(&root.join(source.relative), &label, source.comment_prefix)?;
+    let saved = SourceEdit::apply(&root.join(source.relative), &label, source.comment_prefix);
+    #[cfg(windows)]
+    let saved = cancellation_stage(saved, "原子保存测量源码");
+    let (mut edit, started) = saved?;
     let outcome = (|| {
         let batch = wait_for_save_event(&watcher, &AtomicBool::new(false), source.relative)?;
         if batch.revision <= source_revision || !watcher.is_superseded(source_revision) {
@@ -294,23 +315,102 @@ fn spawn_cancellation_build(
     group.spawn(command)
 }
 
-fn wait_for_compile_descendant(child: &mut ManagedChild, target: &Path) -> Result<()> {
+#[cfg(windows)]
+fn cancellation_stage<T>(result: Result<T>, stage: &str) -> Result<T> {
+    result.map_err(|error| {
+        let exit_code = super::failure_exit_code(error.as_ref())
+            .or_else(|| crate::process::failure_exit_code(error.as_ref()));
+        crate::process::PreservedFailure::new(
+            format!("取消测量无法完成阶段（{stage}）：{error}"),
+            exit_code,
+        )
+        .into()
+    })
+}
+
+#[cfg(windows)]
+fn cancellation_compiler(root: &Path) -> Result<same_file::Handle> {
+    let mut command = child_command("rustup");
+    command
+        .args(["which", "rustc"])
+        .current_dir(root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let output = crate::process::command_output_result_with_timeout(
+        command,
+        CANCELLATION_DESCENDANT_TIMEOUT,
+    )?;
+    if !output.status.success() {
+        return Err(format!(
+            "取消测量无法解析当前工作树的 Rust 编译器：{}",
+            output.status
+        )
+        .into());
+    }
+    let line = std::str::from_utf8(&output.stdout)?.trim();
+    let compiler = Path::new(line);
+    if line.lines().count() != 1 || !compiler.is_absolute() {
+        return Err("取消测量的 Rust 编译器路径无效".into());
+    }
+    Ok(same_file::Handle::from_path(compiler)?)
+}
+
+fn wait_for_compile_descendant(
+    child: &mut ManagedChild,
+    #[cfg(windows)] compiler: &same_file::Handle,
+) -> Result<()> {
     let started = Instant::now();
+    #[cfg(windows)]
+    let deadline = started + CANCELLATION_DESCENDANT_TIMEOUT;
     loop {
         if let Some(status) = child.try_wait()? {
             return Err(format!("取消测量的 Cargo 过早退出：{status}").into());
         }
-        match child.active_process_count()? {
-            Some(count) if count >= 2 && target.join("debug/.fingerprint").is_dir() => {
-                return Ok(());
-            }
-            None if started.elapsed() >= Duration::from_millis(250) => return Ok(()),
-            _ if started.elapsed() >= CANCELLATION_DESCENDANT_TIMEOUT => {
-                return Err("取消测量未观察到 Cargo 编译后代".into());
-            }
-            _ => thread::sleep(Duration::from_millis(10)),
+        #[cfg(windows)]
+        let ready = Instant::now() < deadline
+            && child
+                .active_process_count()?
+                .is_some_and(|count| count >= 2)
+            && child.has_compiling_rustc(compiler, deadline, rustc_compiles)?;
+        #[cfg(windows)]
+        if Instant::now() >= deadline {
+            return Err("取消测量未观察到 Cargo 编译后代".into());
         }
+        #[cfg(not(windows))]
+        let ready = started.elapsed() >= Duration::from_millis(250);
+        if ready {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(10));
     }
+}
+
+#[cfg(any(windows, test))]
+fn rustc_compiles(argv: &[String]) -> bool {
+    let Some((_, arguments)) = argv.split_first() else {
+        return false;
+    };
+    let has_value = |flag: &str| {
+        arguments
+            .windows(2)
+            .any(|pair| pair[0] == flag && !pair[1].is_empty() && !pair[1].starts_with('-'))
+            || arguments.iter().any(|argument| {
+                argument
+                    .strip_prefix(flag)
+                    .and_then(|suffix| suffix.strip_prefix('='))
+                    .is_some_and(|value| !value.is_empty())
+            })
+    };
+
+    // Cargo 探测目标平台时也可能传入 crate 名，必须确认要求实际生成产物。
+    !arguments.iter().any(|argument| {
+        matches!(
+            argument.as_str(),
+            "-vV" | "-Vv" | "-V" | "--version" | "--print"
+        ) || argument.starts_with("--print=")
+    }) && has_value("--crate-name")
+        && has_value("--emit")
 }
 
 fn measure_cycle(

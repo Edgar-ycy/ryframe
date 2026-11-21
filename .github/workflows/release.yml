@@ -58,6 +58,8 @@ jobs:
 
       - name: 安装发布核验 Rust 工具链
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with:
+          toolchain: "1.100.0"
 
       - name: 选择发布配套前端仓库
         id: frontend-source
@@ -167,6 +169,8 @@ jobs:
 
       - name: 安装最终发布核验 Rust 工具链
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with:
+          toolchain: "1.100.0"
 
       - name: Revalidate tag objects
         shell: bash

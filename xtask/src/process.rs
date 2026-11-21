@@ -15,6 +15,9 @@ use crate::{Result, workspace::root_dir};
 #[path = "process/child.rs"]
 mod child;
 #[cfg(any(windows, test))]
+#[path = "process/windows_command_line.rs"]
+pub(crate) mod windows_command_line;
+#[cfg(any(windows, test))]
 #[path = "process/windows_detach.rs"]
 pub(crate) mod windows_detach;
 #[cfg(windows)]

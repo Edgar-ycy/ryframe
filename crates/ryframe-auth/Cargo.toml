@@ -12,7 +12,6 @@ description.workspace = true
 ryframe-kernel = { path = "../ryframe-kernel" }
 jsonwebtoken = { workspace = true, features = ["aws_lc_rs"] }
 argon2 = { workspace = true }
-rand = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 chrono = { workspace = true, features = ["serde"] }
 uuid = { workspace = true, features = ["v4"] }

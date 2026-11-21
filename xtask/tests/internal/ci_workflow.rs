@@ -125,6 +125,34 @@ fn commit_range_expressions_do_not_use_tag_before_as_a_commit_baseline() {
 }
 
 #[test]
+fn workflow_rust_installations_use_the_workspace_toolchain() {
+    let root = crate::workspace::root_dir();
+    let manifest = fs::read_to_string(root.join("rust-toolchain.toml")).unwrap();
+    let toolchain: toml::Value = toml::from_str(&manifest).unwrap();
+    let expected = toolchain["toolchain"]["channel"].as_str().unwrap();
+    for file in ["ci.yml", "extended-ci.yml", "release.yml"] {
+        let workflow = workflow(file);
+        let mut installations = workflow
+            .get("jobs")
+            .unwrap()
+            .as_mapping()
+            .unwrap()
+            .iter()
+            .flat_map(|(_, job)| steps(job))
+            .filter(|step| uses(step, "dtolnay/rust-toolchain@"))
+            .peekable();
+        assert!(installations.peek().is_some(), "{file} 缺少 Rust 安装步骤");
+        for step in installations {
+            assert_eq!(
+                text(step.get("with").unwrap(), "toolchain"),
+                expected,
+                "{file} 的 Rust 安装版本必须与工作区一致"
+            );
+        }
+    }
+}
+
+#[test]
 fn frontend_selection_precedes_checkout_and_the_consumer_uses_exact_source_inputs() {
     for file in ["ci.yml", "extended-ci.yml"] {
         let workflow = workflow(file);

@@ -94,8 +94,7 @@ fn text<'a>(node: Node<'_>, source: &'a str) -> &'a str {
 
 fn functions(path: &str, source: &str, root: Node<'_>, records: &mut Vec<FunctionRecord>) {
     let mut stack = vec![(root, Vec::<String>::new())];
-    while let Some((node, scopes)) = stack.pop() {
-        let mut child_scopes = scopes.clone();
+    while let Some((node, mut child_scopes)) = stack.pop() {
         match node.kind() {
             "mod_item" | "trait_item" => {
                 if let Some(name) = node.child_by_field_name("name") {
