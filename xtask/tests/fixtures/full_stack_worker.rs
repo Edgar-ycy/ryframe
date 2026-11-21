@@ -81,6 +81,7 @@ fn main() {
         }
         match listener.accept() {
             Ok((mut stream, _)) => {
+                stream.set_nonblocking(false).unwrap();
                 let _ = stream.set_read_timeout(Some(Duration::from_secs(1)));
                 let mut bytes = [0; 4096];
                 let _ = stream.read(&mut bytes);

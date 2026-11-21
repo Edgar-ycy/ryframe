@@ -201,6 +201,21 @@ impl ManagedChild {
     }
 
     #[cfg(windows)]
+    pub(crate) fn has_compiling_rustc(
+        &self,
+        compiler: &same_file::Handle,
+        deadline: std::time::Instant,
+        is_compilation: impl Fn(&[String]) -> bool,
+    ) -> Result<bool> {
+        super::windows_members::has_compiling_rustc(
+            self.group(),
+            compiler,
+            deadline,
+            is_compilation,
+        )
+    }
+
+    #[cfg(windows)]
     fn group(&self) -> &processkit::ProcessGroup {
         self.group
             .as_ref()

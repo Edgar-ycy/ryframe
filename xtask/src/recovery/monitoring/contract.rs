@@ -324,7 +324,7 @@ pub(crate) fn validate_runtime_layout(
             format!("{role}-tree-{operation}-control.json"),
             format!("{role}-tree-{operation}-result.json"),
         ] {
-            allowed.insert(expected.clone());
+            allowed.insert(expected);
         }
         for required in [
             format!("{role}.log"),

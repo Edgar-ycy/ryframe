@@ -279,11 +279,30 @@ impl Evidence {
                 Ok(_) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                     verify_ancestors(&ancestors)?;
-                    fs::create_dir(path).map_err(|_| "无法创建 fixture 证据目录")?;
+                    match fs::create_dir(path) {
+                        Ok(()) => {}
+                        // 同伴可能刚创建这一层，仍由下方检查目录类型与身份。
+                        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                        Err(error) => {
+                            return Err(format!(
+                                "无法创建 fixture 证据目录 {}（{}）",
+                                path.display(),
+                                error.kind()
+                            ));
+                        }
+                    }
                 }
-                Err(_) => return Err("无法检查 fixture 证据目录".into()),
+                Err(error) => {
+                    return Err(format!(
+                        "无法检查 fixture 证据目录 {}（{}）",
+                        path.display(),
+                        error.kind()
+                    ));
+                }
             }
-            let metadata = fs::symlink_metadata(path).map_err(|_| "无法检查证据目录")?;
+            let metadata = fs::symlink_metadata(path).map_err(|error| {
+                format!("无法检查证据目录 {}（{}）", path.display(), error.kind())
+            })?;
             if !super::ordinary(&metadata) || !metadata.is_dir() {
                 return Err("fixture 证据祖先不能是链接或重解析点".into());
             }

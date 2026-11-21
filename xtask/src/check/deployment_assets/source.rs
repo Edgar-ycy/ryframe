@@ -15,7 +15,7 @@ const ALERT_RULES: &str = "deploy/prometheus/ryframe-alerts.yml";
 const EXPECTED_BASE_IMAGES: [(&str, &str); 2] = [
     (
         "RUST_IMAGE",
-        "rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e",
+        "rust:1.100.0-bookworm@sha256:ade39a710ef85f3506cffcfec3e8a24ba090badef1dff2fb798f71d878833fea",
     ),
     (
         "RUNTIME_IMAGE",

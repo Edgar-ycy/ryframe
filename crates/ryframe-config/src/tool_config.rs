@@ -462,7 +462,7 @@ sha256='cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
         settings.verification.pnpm_cache_dir = Some(absolute.clone());
         assert_eq!(
             settings.pnpm_cache_dir(root.path()).unwrap(),
-            Some(absolute.clone())
+            Some(absolute)
         );
         for invalid in ["", "  ", "cache/../outside", "cache\nSECRET_SENTINEL"] {
             settings.verification.pnpm_cache_dir = Some(invalid.into());

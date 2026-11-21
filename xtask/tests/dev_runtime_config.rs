@@ -644,7 +644,7 @@ fn normal_and_probe_roles_change_only_the_explicit_overlay_fields() {
         set(&mut expected, "jobs", "mode", "external");
         set(&mut expected, "database", "migration_mode", "verify");
         if worker || probe {
-            expected["jobs"]["worker_id"] = app.jobs.worker_id.clone().unwrap().into();
+            expected["jobs"]["worker_id"] = app.jobs.worker_id.unwrap().into();
         }
         if probe {
             set(&mut expected, "app", "host", "127.0.0.1");

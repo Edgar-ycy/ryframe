@@ -132,6 +132,7 @@ fn observe_routing(
 }
 
 fn answer(mut stream: TcpStream, status: &str) {
+    stream.set_nonblocking(false).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();

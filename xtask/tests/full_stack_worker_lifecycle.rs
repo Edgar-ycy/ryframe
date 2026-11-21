@@ -832,6 +832,7 @@ fn live_unready_worker_and_foreign_ready_listener_are_rejected_with_no_signal() 
         while !done.load(Ordering::Acquire) {
             match listener.accept() {
                 Ok((mut stream, _)) => {
+                    stream.set_nonblocking(false).unwrap();
                     let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(1)));
                     let mut bytes = [0; 4096];
                     let _ = stream.read(&mut bytes);

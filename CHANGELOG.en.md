@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Upgrade the backend Rust toolchain to stable 1.100.0 and raise the minimum Rust version to 1.100. Rust 2024 edition remains in use. Update the production builder image and pin its official digest.
+
 - Include the private bucket ACL header in the S3 SigV4 signature so RustFS 1.0.5 and other services that check signed headers can verify the request.
 
 - On Windows, resuming a copy from a published source to a seed target protects the four source trees under the existing copy lock and reuses their verification results. The tool verifies the complete sources at both ends of that window and continues to verify live ports, runtime configuration, and build artifacts at every checkpoint.

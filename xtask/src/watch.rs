@@ -142,7 +142,7 @@ impl SourceRevisionTracker {
     fn next_revision(&self) -> Option<SourceRevision> {
         match self
             .revision
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |value| {
                 value.checked_add(1)
             }) {
             Ok(previous) => Some(SourceRevision::from_value(previous + 1)),

@@ -52,7 +52,7 @@ impl Ingress {
         if self.closing.load(Ordering::SeqCst) {
             return;
         }
-        let sequence = match self.tracker.raw_arrivals.fetch_update(
+        let sequence = match self.tracker.raw_arrivals.try_update(
             Ordering::SeqCst,
             Ordering::SeqCst,
             |value| value.checked_add(1),

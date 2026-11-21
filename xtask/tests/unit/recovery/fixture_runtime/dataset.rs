@@ -123,7 +123,7 @@ fn reviewed_dataset_plan_keeps_both_sides_scale_current_credentials_and_binding_
         ] {
             assert!(!bytes.contains(secret));
         }
-        let mut collision = result.clone();
+        let mut collision = result;
         collision["target"]["worker_ready_url"] = json!(format!(
             "{}/readyz",
             text(&collision["target"]["api_url"]).unwrap()

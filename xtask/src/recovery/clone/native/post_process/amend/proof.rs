@@ -208,7 +208,7 @@ fn archive(backend: &Path, runtime: &Path, contract: &Value, token: &str) -> Res
                 "preparation-failed",
             ]
             .contains(&name.as_str())
-            || !names.insert(name.clone())
+            || !names.insert(name)
         {
             return Err("角色归档包含未知或重复文件，保留现场".into());
         }

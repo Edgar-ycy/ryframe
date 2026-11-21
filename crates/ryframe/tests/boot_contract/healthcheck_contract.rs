@@ -29,6 +29,7 @@ fn serve_once(status: &str) -> (u16, thread::JoinHandle<()>) {
                 Err(error) => panic!("未收到健康检查连接：{error}"),
             }
         };
+        stream.set_nonblocking(false).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();

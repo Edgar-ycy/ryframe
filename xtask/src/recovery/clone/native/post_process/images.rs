@@ -249,7 +249,7 @@ fn objects(
     for bucket in BUCKETS {
         let mut expected = BTreeMap::new();
         let owner = format!("{scope}/.ryframe-owner");
-        expected.insert(owner.clone(), None);
+        expected.insert(owner, None);
         for item in document::array(&context.plan["objects"], "完整复制对象")?
             .iter()
             .filter(|item| item["bucket"] == *bucket)
@@ -282,7 +282,7 @@ fn objects(
                 configuration,
                 bucket,
                 Operation::Get {
-                    key: key.clone(),
+                    key,
                     if_match: None,
                     version: None,
                     destination: destination.clone(),

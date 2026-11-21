@@ -596,8 +596,7 @@ fn joint_resource_drift_is_recorded_and_blocks_the_affected_phase() {
         ),
     ] {
         let fixture = JointFixture::new();
-        let expected = resource_image(phase);
-        let mut actual = expected.clone();
+        let mut actual = resource_image(phase);
         *actual.pointer_mut(pointer).unwrap() = replacement;
         let mut evidence = Map::new();
         let writes = Cell::new(0);

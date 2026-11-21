@@ -102,7 +102,7 @@ fn merge_generated_catalog(
             menu_type: "C".to_owned(),
             page_key: Some(resource.route.key),
             permission: Some(list_permission),
-            capability: resource.capability.clone(),
+            capability: resource.capability,
         });
     }
 
