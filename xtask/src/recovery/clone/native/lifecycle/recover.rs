@@ -16,6 +16,8 @@ pub(crate) fn run(backend: &Path, run_dir: &Path, owner_binding: &Path) -> Resul
         .map_err(|error| format!("控制器绑定无效：{error}"))?;
     let guard = lock::ProcessGuard::acquire(run_dir)?;
     let descriptor_before = digest::file(owner_binding)?;
+    let state_path = run_dir.join("state.json");
+    let state_before = digest::file(&state_path)?;
     let owner = owner_from_binding(run_dir, owner_binding)?;
     identity::validate(&owner, run_dir)?;
     if owner.get("manifest_sha256").and_then(Value::as_str)
@@ -35,7 +37,14 @@ pub(crate) fn run(backend: &Path, run_dir: &Path, owner_binding: &Path) -> Resul
         return Err("控制进程仍存在或 PID 已复用，拒绝回收".into());
     }
     let controller_number = controller_number(run_dir, owner_binding)?;
-    let state_before = digest::file(&run_dir.join("state.json"))?;
+    let original_lock = lock::lock_snapshot(run_dir)?;
+    if original_lock
+        .as_ref()
+        .is_some_and(|(_, _, observed)| *observed != owner)
+    {
+        return Err("现有控制锁属于其他控制器，不能接管".into());
+    }
+    unchanged(owner_binding, &descriptor_before)?;
     let id = uuid::Uuid::new_v4().simple().to_string();
     let intent_path = run_dir.join(format!("recovery-{id}.intent.json"));
     json_io::write_new(
@@ -43,13 +52,17 @@ pub(crate) fn run(backend: &Path, run_dir: &Path, owner_binding: &Path) -> Resul
         &json!({
             "status": "controller_recovery_started",
             "owner": manifest::binding(owner_binding, &descriptor_before)?,
-            "state_before": manifest::binding(&run_dir.join("state.json"), &state_before)?,
+            "state_before": manifest::binding(&state_path, &state_before)?,
         }),
     )?;
     unchanged(owner_binding, &descriptor_before)?;
+    lock::check_recovery_snapshot(run_dir, &original_lock)?;
+    if digest::file(&state_path)? != state_before {
+        return Err("恢复前阶段状态变化，保留现场".into());
+    }
     let recovered = state::interrupt_owned(run_dir, &owner, controller_number)?;
     unchanged(owner_binding, &descriptor_before)?;
-    lock::recover_dead(run_dir, &owner)?;
+    lock::recover_dead(run_dir, &owner, Some(&original_lock))?;
     guard.check()?;
     let result = json!({
         "status": "controller_recovered",

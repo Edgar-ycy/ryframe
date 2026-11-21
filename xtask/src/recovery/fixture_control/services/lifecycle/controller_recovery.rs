@@ -27,7 +27,7 @@ pub(super) fn run(backend: &Path, run: &Path, descriptor: &Value) -> Result<Valu
         common::process_identity(pid)?.is_none(),
         "控制进程仍存在或 PID 已复用，拒绝回收",
     )?;
-    let original_lock = lock_snapshot(run)?;
+    let original_lock = lock::lock_snapshot(run)?;
     if let Some((_, _, observed)) = &original_lock {
         check(*observed == owner, "现有控制锁属于其他控制器，不能接管")?;
     }
@@ -49,30 +49,19 @@ pub(super) fn run(backend: &Path, run: &Path, descriptor: &Value) -> Result<Valu
     )?;
     super::ledger::write(run, &previous, &saved)?;
     unchanged(run, &path, descriptor, &original_lock)?;
-    lock::recover_dead(run, &owner)?;
+    lock::recover_dead(run, &owner, None)?;
     document::write_new(&run.join(format!("recovered-{id}.json")), &result)?;
     Ok(result)
 }
 
-type LockSnapshot = Option<((u64, u64), Value, Value)>;
-
-fn lock_snapshot(run: &Path) -> Result<LockSnapshot> {
-    let observed = lock::owner_observation(run)?;
-    observed
-        .map(|(descriptor, owner)| {
-            let path = run.join("run.lock");
-            Ok((
-                common::device_inode_for(&path, &std::fs::symlink_metadata(&path)?)?,
-                descriptor,
-                owner,
-            ))
-        })
-        .transpose()
-}
-
-fn unchanged(run: &Path, path: &Path, descriptor: &Value, original: &LockSnapshot) -> Result<()> {
+fn unchanged(
+    run: &Path,
+    path: &Path,
+    descriptor: &Value,
+    original: &lock::LockSnapshot,
+) -> Result<()> {
     check(
-        binding(path)? == *descriptor && lock_snapshot(run)? == *original,
+        binding(path)? == *descriptor && lock::lock_snapshot(run)? == *original,
         "恢复期间控制器绑定或控制锁身份变化；保留现场",
     )
 }

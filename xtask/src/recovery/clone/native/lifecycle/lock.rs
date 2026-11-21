@@ -237,6 +237,29 @@ pub(crate) fn owner_observation(directory: &Path) -> Result<Option<(Value, Value
     )))
 }
 
+pub(crate) type LockSnapshot = Option<((u64, u64), Value, Value)>;
+
+pub(crate) fn lock_snapshot(run: &Path) -> Result<LockSnapshot> {
+    let observed = owner_observation(run)?;
+    observed
+        .map(|(descriptor, owner)| {
+            let path = run.join("run.lock");
+            Ok((
+                common::device_inode_for(&path, &fs::symlink_metadata(&path)?)?,
+                descriptor,
+                owner,
+            ))
+        })
+        .transpose()
+}
+
+pub(crate) fn check_recovery_snapshot(directory: &Path, expected: &LockSnapshot) -> Result<()> {
+    if lock_snapshot(directory)? != *expected {
+        return Err("恢复期间控制锁身份变化，保留现场".into());
+    }
+    Ok(())
+}
+
 pub(crate) fn verify_lock(
     directory: &Path,
     expected_identity: &MetadataIdentity,
@@ -266,11 +289,20 @@ pub(crate) fn verify_lock(
     Ok(())
 }
 
-pub(crate) fn recover_dead(directory: &Path, expected_owner: &Value) -> Result<()> {
+pub(crate) fn recover_dead(
+    directory: &Path,
+    expected_owner: &Value,
+    original: Option<&LockSnapshot>,
+) -> Result<()> {
     let path = directory.join("run.lock");
     let metadata = match fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if original.is_some_and(|snapshot| snapshot.is_some()) {
+                return Err("恢复期间控制锁身份变化，保留现场".into());
+            }
+            return Ok(());
+        }
         Err(error) => return Err(format!("无法核验待恢复控制锁：{error}").into()),
     };
     if digest::linked(&metadata) || !metadata.is_dir() {
@@ -284,6 +316,9 @@ pub(crate) fn recover_dead(directory: &Path, expected_owner: &Value) -> Result<(
         .ok_or("待恢复控制器 PID 无效")?;
     if super::identity::process(pid)?.is_some() {
         return Err("控制进程仍存在或 PID 已复用，拒绝回收".into());
+    }
+    if let Some(snapshot) = original {
+        check_recovery_snapshot(directory, snapshot)?;
     }
     fs::remove_file(path.join("owner.json"))
         .map_err(|error| format!("控制锁 owner 清理失败，保留现场：{error}"))?;

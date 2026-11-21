@@ -86,16 +86,6 @@ class RunStateTests(unittest.TestCase):
         self.assertTrue((self.directory / "run.lock/owner.json").exists())
         self.assertTrue((self.directory / "run.lock/unknown.txt").exists())
 
-    def test_recovery_does_not_remove_owner_when_lock_has_unknown_contents(self):
-        owner = self.dead_lock()
-        original = state.binding(self.directory / "state.json")
-        (self.directory / "run.lock/unknown.txt").write_text("preserve", encoding="utf-8")
-        with patch.object(state, "process_identity", return_value=None), self.assertRaises(ValueError):
-            state.recover_lock(self.backend, self.directory, owner)
-        self.assertEqual(state.binding(self.directory / "state.json"), original)
-        self.assertEqual(state.binding(self.directory / "run.lock/owner.json"), owner)
-        self.assertEqual(list(self.directory.glob("recovered-*.json")), [])
-
     def test_failed_state_publication_keeps_intent_and_allows_explicit_retry(self):
         owner = self.dead_lock()
         with patch.object(state, "process_identity", return_value=None):

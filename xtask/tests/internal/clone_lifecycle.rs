@@ -412,14 +412,21 @@ fn dead_controller_recovery_is_native_and_requires_reconciliation() {
             "manifest_sha256": binding(&fixture.run.join("manifest.json"))["sha256"],
         }),
     );
-    let result = super::recovery::clone::native::lifecycle::run(
-        &CloneCommand::Recover {
-            run_dir: fixture.run.clone(),
-            owner_binding: owner_path,
-        },
-        &fixture.backend,
-    )
-    .unwrap();
+    let command = CloneCommand::Recover {
+        run_dir: fixture.run.clone(),
+        owner_binding: owner_path,
+    };
+    let recover = || native::lifecycle::run(&command, &fixture.backend);
+    let unknown = lock.join("unknown.txt");
+    fs::write(&unknown, b"keep").unwrap();
+    let before = snapshot(&fixture.run);
+    let error = recover().unwrap_err();
+    assert_eq!(error.to_string(), "控制锁目录或内容无法归属");
+    let mut actual = snapshot(&fixture.run);
+    actual.remove(&fixture.run.join("run-control.guard"));
+    assert_eq!(actual, before);
+    fs::remove_file(unknown).unwrap();
+    let result = recover().unwrap();
     assert_eq!(result["status"], "controller_recovered");
     assert_eq!(result["copy_requires_reconciliation"], true);
     assert_eq!(fixture.state()["attempts"][0]["status"], "failed");

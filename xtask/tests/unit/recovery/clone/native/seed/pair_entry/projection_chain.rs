@@ -66,7 +66,7 @@ impl<'a> Fixture<'a> {
                 "start_id":STOP_ID_START,"identity":identity}),
         )?;
         state::interrupt_owned(self.run, &owner, Some(number))?;
-        lock::recover_dead(self.run, &owner)?;
+        lock::recover_dead(self.run, &owner, None)?;
         Ok(number)
     }
 
