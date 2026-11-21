@@ -371,17 +371,6 @@ class TransferTests(unittest.TestCase):
         self.assertEqual(len(self.writes()), 1)
         self.assertEqual(next(iter(self.ledger.snapshot()["steps"].values()))["phase"], "unknown")
 
-    def test_409_and_412_are_not_retried_or_adopted(self):
-        for status in ("409", "412"):
-            with self.subTest(status=status):
-                self.ledger_dir = self.work / ("ledger-" + status)
-                self.runner.failure = status
-                before = len(self.writes())
-                with self.assertRaises(ObjectCreateError), self.open():
-                    self.engine().apply_object("uploads", "clone-target/system/file.txt")
-                self.assertEqual(len(self.writes()), before + 1)
-                self.assertEqual(next(iter(self.ledger.snapshot()["steps"].values()))["phase"], "unknown")
-
     def test_preexisting_object_is_not_adopted_or_overwritten(self):
         self.runner.objects["uploads", "clone-target/system/file.txt"] = b"data", {"ContentType": "text/plain", "Metadata": {}}
         with self.assertRaises(ValueError), self.open():

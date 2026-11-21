@@ -9,6 +9,11 @@ use std::{
     time::Duration,
 };
 
+use crate::recovery::clone::native::copy_ledger::{
+    self,
+    session::{Mode, tests::Fixture as LedgerFixture},
+};
+
 const ENDPOINT: &str = "http://127.0.0.1:9473";
 const GENERATION: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const SECRET: &str = "TEST_SECRET_MUST_NOT_APPEAR";
@@ -161,6 +166,98 @@ fn records_pending_intent_before_put_and_requires_independent_observation() {
         diagnostic["response_sha256"],
         digest::plan_hash(&created()).unwrap()
     );
+}
+
+#[test]
+fn conditional_http_conflicts_leave_one_unknown_copy_intent() {
+    for (status, outcome, reason) in [
+        (409, "needs_reconciliation", "native_put_unconfirmed"),
+        (412, "already_exists", "precondition_rejected"),
+    ] {
+        let response =
+            format!("HTTP/1.1 {status} Conflict\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+        let (endpoint, received, server) = s3::tests::put_server(response.into_bytes(), || {});
+        let mut fixture = Fixture::with_endpoint(&endpoint);
+        let copy = LedgerFixture::in_root(&fixture.backend, &json!({"target":true}));
+        fixture.output = copy.copy.join("object-write");
+        let binding = document::read(&copy.copy.join("session.json")).unwrap();
+        let mut spec = fixture.spec();
+        let generation = binding["generation_sha256"].as_str().unwrap();
+        spec.generation = generation;
+        let artifact = fixture.artifact();
+        let (before, after) = images::object_pair(spec.generation, fixture.spec().object).unwrap();
+        let published = Cell::new(false);
+        let result = copy.run_with_publication(
+            Mode::New,
+            |session, _| {
+                session.intent(spec.step, &before, &after, &artifact.digest.sha256)?;
+                create(&spec, session, &|| Ok(()))
+            },
+            |_| {
+                published.set(true);
+                Ok(())
+            },
+        );
+        let request = received.recv_timeout(Duration::from_secs(10));
+        server.join().unwrap();
+        assert_conflict_request(&request.unwrap());
+        assert!(matches!(
+            received.try_recv(),
+            Err(mpsc::TryRecvError::Disconnected)
+        ));
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            format!("条件创建返回 {outcome}；保持原 intent，必须显式核对")
+        );
+        assert!(!published.get());
+        let diagnostic = fixture.diagnostic();
+        assert_eq!(diagnostic["outcome"], outcome);
+        assert_eq!(diagnostic["reason"], reason);
+        assert_eq!(diagnostic["http_status"], status);
+        assert_eq!(diagnostic["automatic_retry_permitted"], false);
+
+        let ledger = copy.copy.join("ledger");
+        let plan = binding["plan_sha256"].as_str().unwrap();
+        let saved = copy_ledger::inspect(&copy.backend, &ledger, plan, spec.generation).unwrap();
+        assert_eq!(saved["status"], "needs_reconciliation");
+        assert!(saved["completed_at"].is_null());
+        assert_eq!(saved["steps"].as_object().unwrap().len(), 1);
+        let step = &saved["steps"][spec.step];
+        assert_eq!(step["phase"], "unknown");
+        assert_eq!(step["attempt"], 1);
+        assert_eq!((&step["before"], &step["after"]), (&before, &after));
+        assert_eq!(step["artifact_sha256"], artifact.digest.sha256);
+        assert!(!copy.copy.join("result.json").exists());
+        let files = [ledger.join("events.ndjson"), ledger.join("head.json")];
+        let read = || files.each_ref().map(|file| fs::read(file).unwrap());
+        let original = read();
+        assert_eq!(
+            copy_ledger::check_continuation(&copy.backend, &ledger, plan, generation, Mode::Resume)
+                .unwrap_err()
+                .to_string(),
+            "原复制会话未正常关闭或有未知写入，必须先显式核对"
+        );
+        assert_eq!(read(), original);
+    }
+}
+
+fn assert_conflict_request(request: &[u8]) {
+    let header_end = request
+        .windows(4)
+        .position(|part| part == b"\r\n\r\n")
+        .unwrap()
+        + 4;
+    let headers = std::str::from_utf8(&request[..header_end]).unwrap();
+    assert_eq!(
+        headers.lines().next(),
+        Some("PUT /uploads/target-scope/item HTTP/1.1")
+    );
+    assert!(
+        headers
+            .lines()
+            .any(|line| line.eq_ignore_ascii_case("if-none-match: *"))
+    );
+    assert_eq!(&request[header_end..], PAYLOAD);
 }
 
 #[test]
