@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{cell::RefCell, collections::BTreeMap, fs, path::Path};
 
 use super::super::{database_name, snapshot};
 use super::{FakeTransport, Fixture, KEYS, SCOPE, bound, descriptor, raw, write};
@@ -10,7 +10,7 @@ use crate::{
         json as document, maintenance,
         s3::app_configuration,
         target_verify::{
-            database::{SourceBinding, model},
+            database::{self, SourceBinding, model, protocol::TestInputs},
             storage::StorageInputs,
         },
     },
@@ -95,6 +95,80 @@ fn source_inventory_rejects_changed_saved_rows_without_rebinding_the_export() {
     assert_eq!(snapshot(&first_dir), first_snapshot);
     assert_eq!(fs::read(&export_path).unwrap(), original_export);
     assert_eq!(fs::read(&session_path).unwrap(), changed_bytes);
+}
+
+#[test]
+fn late_maintenance_receipt_drift_revokes_only_its_inventory_publication() {
+    let mut fixture = Fixture::new();
+    let configuration = bind_source(&mut fixture);
+    let review = document::read(&fixture.local.join("review.json")).unwrap();
+    for field in ["runtime_dir", "api_url"] {
+        fixture.request["target"][field] = review["scopes"]["seed"][field].clone();
+    }
+    let output = fixture.local.join("late-maintenance-inventory");
+    let inventory = output.join("inventory.json");
+    let args = json!({
+        "evidence_root":fixture.backend, "backend":fixture.backend, "side":"source",
+        "plan":{"source":fixture.request["target"],"tools":fixture.request["tools"]},
+        "maintenance":fixture.request["maintenance_build"], "configuration":configuration,
+        "app_env":"test", "output":output,
+    });
+    let input = TestInputs::load(&args, &fixture.backend).unwrap();
+    let scope = Scope::load(&fixture.backend, &[], &[]).unwrap();
+    let mut source = side(
+        &fixture,
+        &fixture.request,
+        CloneSide::Source,
+        &scope,
+        &configuration,
+    );
+    source.binding.plan = Some(&args["plan"]);
+
+    let maintenance = fixture.local.join("maintenance/build.json");
+    let original_maintenance = fs::read(&maintenance).unwrap();
+    let mut changed_maintenance = original_maintenance.clone();
+    let last = changed_maintenance.last_mut().unwrap();
+    assert_eq!(*last, b'\n');
+    *last = b' ';
+    let original_receipt: Value = serde_json::from_slice(&original_maintenance).unwrap();
+    let published = RefCell::new(None);
+    let transport = FakeTransport::new(&fixture, false, false);
+    let result = database::capture_source_at(
+        &source.storage,
+        &output,
+        &transport,
+        &|| {
+            if inventory.try_exists()? {
+                assert_source_capture(&output, &transport);
+                assert!(published.replace(Some(snapshot(&output))).is_none());
+                fs::write(&maintenance, &changed_maintenance)?;
+                assert_eq!(document::read(&maintenance)?, original_receipt);
+            }
+            input.verify(&args, &fixture.backend)?;
+            scope.assert_unchanged()
+        },
+        &source.binding,
+    );
+
+    let Err(error) = result else {
+        panic!("发布后的维护收据变化必须使采集失败");
+    };
+    assert_eq!(error.to_string(), "库存维护构建与登记摘要不一致");
+    assert_eq!(transport.inventories.get(), 8);
+    assert_eq!(transport.identities.get(), 16);
+    assert_eq!(transport.ownerships.get(), 24);
+    assert_eq!(fs::read(&maintenance).unwrap(), changed_maintenance);
+
+    let mut before = published.into_inner().expect("必须观察到真实库存发布");
+    assert!(before.remove(Path::new("inventory.json")).is_some());
+    let mut after = snapshot(&output);
+    assert!(after.remove(Path::new("failure.json")).is_some());
+    assert_eq!(after, before);
+    assert_eq!(
+        document::read(&output.join("failure.json")).unwrap(),
+        json!({"format_version":1, "status":"side_inventory_failed", "stage":"publish",
+            "error_type":"RustError", "remote_writes":0, "target_ready":false, "clone_verified":false})
+    );
 }
 
 fn bind_source(fixture: &mut Fixture) -> Value {

@@ -16,6 +16,9 @@ use crate::{
 #[path = "protocol/input.rs"]
 mod input;
 
+#[cfg(test)]
+pub(crate) use input::Inputs as TestInputs;
+
 pub(crate) fn request(args: &Value) -> Result<Value> {
     document::exact(
         args,

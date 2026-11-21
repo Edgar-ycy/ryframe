@@ -15,7 +15,7 @@ use crate::{
     },
 };
 
-pub(super) struct Inputs {
+pub(crate) struct Inputs {
     pub(super) backend: PathBuf,
     pub(super) side: CloneSide,
     pub(super) port: Value,
@@ -28,7 +28,7 @@ pub(super) fn directory(value: &Value) -> Result<PathBuf> {
 }
 
 impl Inputs {
-    pub(super) fn load(args: &Value, evidence: &std::path::Path) -> Result<Self> {
+    pub(crate) fn load(args: &Value, evidence: &std::path::Path) -> Result<Self> {
         let backend = directory(&args["backend"])?;
         let side = match args["side"].as_str() {
             Some("source") => CloneSide::Source,
@@ -46,7 +46,7 @@ impl Inputs {
         Ok(value)
     }
 
-    pub(super) fn verify(&self, args: &Value, evidence: &std::path::Path) -> Result<()> {
+    pub(crate) fn verify(&self, args: &Value, evidence: &std::path::Path) -> Result<()> {
         if args["app_env"] != "test" || directory(&args["backend"])? != self.backend {
             return Err("库存必须绑定原执行后端与APP_ENV=test".into());
         }
