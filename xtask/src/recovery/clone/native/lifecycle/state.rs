@@ -287,6 +287,7 @@ pub(crate) fn interrupt_owned(
     directory: &Path,
     owner: &Value,
     controller_number: Option<u64>,
+    prewrite: impl FnOnce(&Value) -> Result<()>,
 ) -> Result<Value> {
     let mut value = load(directory, false)?;
     let attempts = value["attempts"]
@@ -318,6 +319,7 @@ pub(crate) fn interrupt_owned(
     if !changed {
         return Err("死亡控制器没有可恢复的运行中阶段".into());
     }
+    prewrite(&value)?;
     write(directory, &value)?;
     Ok(value)
 }

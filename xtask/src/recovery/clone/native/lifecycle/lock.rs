@@ -1,7 +1,7 @@
 use std::{
     ffi::OsString,
     fs::{self, File, OpenOptions},
-    io::{Read, Seek, SeekFrom, Write},
+    io::{self, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::Mutex,
 };
@@ -221,11 +221,7 @@ pub(crate) fn owner_observation(directory: &Path) -> Result<Option<(Value, Value
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(format!("无法核验控制锁：{error}").into()),
     }
-    let names = lock
-        .read_dir()?
-        .map(|entry| entry.map(|entry| entry.file_name()))
-        .collect::<std::io::Result<Vec<_>>>()?;
-    if names.as_slice() != [OsString::from("owner.json")] {
+    if !has_only_owner(&lock)? {
         return Err("控制锁目录或内容无法归属".into());
     }
     let path = lock.join("owner.json");
@@ -274,14 +270,8 @@ pub(crate) fn verify_lock(
     {
         return Err("验收控制锁身份变化，拒绝删除其他执行者的锁".into());
     }
-    if exact_contents {
-        let names = path
-            .read_dir()?
-            .map(|entry| entry.map(|entry| entry.file_name()))
-            .collect::<std::io::Result<Vec<_>>>()?;
-        if names.as_slice() != [OsString::from("owner.json")] {
-            return Err("验收控制锁内容变化，保留现场".into());
-        }
+    if exact_contents && !has_only_owner(&path)? {
+        return Err("验收控制锁内容变化，保留现场".into());
     }
     if json_io::read(&path.join("owner.json"))? != *expected_owner {
         return Err("验收控制锁内容变化，保留现场".into());
@@ -308,8 +298,10 @@ pub(crate) fn recover_dead(
     if digest::linked(&metadata) || !metadata.is_dir() {
         return Err("待恢复控制锁类型无效，保留现场".into());
     }
-    let identity = metadata_identity(&metadata)?;
-    verify_lock(directory, &identity, expected_owner, true)?;
+    let directory_id = common::device_inode_for(&path, &metadata)?;
+    if !has_only_owner(&path)? {
+        return Err("验收控制锁内容变化，保留现场".into());
+    }
     let pid = expected_owner["identity"]["pid"]
         .as_u64()
         .and_then(|value| u32::try_from(value).ok())
@@ -317,12 +309,98 @@ pub(crate) fn recover_dead(
     if super::identity::process(pid)?.is_some() {
         return Err("控制进程仍存在或 PID 已复用，拒绝回收".into());
     }
-    if let Some(snapshot) = original {
-        check_recovery_snapshot(directory, snapshot)?;
+    let owner_path = path.join("owner.json");
+    let file = open_recovery_owner(&owner_path)?;
+    let handle = same_file::Handle::from_file(file.try_clone()?)?;
+    let mut reader = bounded_owner_reader(file);
+    let mut raw = Vec::new();
+    reader.read_to_end(&mut raw)?;
+    let (_, file_digest) = reader.finish();
+    if file_digest.bytes > json_io::MAX_JSON_BYTES {
+        return Err("控制锁持有人收据超过读取上限".into());
     }
-    fs::remove_file(path.join("owner.json"))
+    let source = std::str::from_utf8(&raw).map_err(|_| "控制锁持有人收据必须是 UTF-8")?;
+    if json_io::parse_fragment(source, "控制锁持有人收据")? != *expected_owner {
+        return Err("验收控制锁内容变化，保留现场".into());
+    }
+    if let Some(snapshot) = original {
+        let binding = manifest::binding(&owner_path, &file_digest)?;
+        if snapshot.as_ref().is_none_or(|(id, descriptor, owner)| {
+            *id != directory_id || descriptor != &binding || owner != expected_owner
+        }) {
+            return Err("恢复期间控制锁身份变化，保留现场".into());
+        }
+    }
+    let file = open_recovery_owner(&owner_path)?;
+    if same_file::Handle::from_file(file.try_clone()?)? != handle {
+        return Err("恢复期间控制锁身份变化，保留现场".into());
+    }
+    let mut reader = bounded_owner_reader(file);
+    io::copy(&mut reader, &mut io::sink())?;
+    if reader.finish().1 != file_digest
+        || !same_directory(&path, directory_id)?
+        || !has_only_owner(&path)?
+        || same_file::Handle::from_file(open_recovery_owner(&owner_path)?)? != handle
+    {
+        return Err("恢复期间控制锁身份变化，保留现场".into());
+    }
+    drop(handle);
+    fs::remove_file(&owner_path)
         .map_err(|error| format!("控制锁 owner 清理失败，保留现场：{error}"))?;
-    fs::remove_dir(&path).map_err(|error| format!("控制锁目录清理失败，保留现场：{error}"))?;
+    if let Err(error) = fs::remove_dir(&path) {
+        let failure = format!("控制锁目录清理失败，保留现场：{error}");
+        return match restore_owner_bytes(&path, &owner_path, directory_id, &raw) {
+            Ok(()) => Err(failure.into()),
+            Err(restore) => Err(format!("{failure}；控制锁原持有人收据恢复失败：{restore}").into()),
+        };
+    }
+    Ok(())
+}
+
+fn has_only_owner(path: &Path) -> Result<bool> {
+    let names = path
+        .read_dir()?
+        .map(|entry| entry.map(|entry| entry.file_name()))
+        .collect::<io::Result<Vec<_>>>()?;
+    Ok(names.as_slice() == [OsString::from("owner.json")])
+}
+
+fn open_recovery_owner(path: &Path) -> Result<File> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.is_file()
+        || digest::linked(&metadata)
+        || common::link_count_for(path, &metadata)? != 1
+    {
+        return Err("控制锁持有人收据必须是无链接的独立普通文件".into());
+    }
+    digest::open(path)
+}
+
+fn bounded_owner_reader(file: File) -> digest::HashingIo<io::Take<File>> {
+    digest::HashingIo::new(file.take(json_io::MAX_JSON_BYTES + 1))
+}
+
+fn same_directory(path: &Path, expected: (u64, u64)) -> Result<bool> {
+    let metadata = fs::symlink_metadata(path)?;
+    Ok(metadata.is_dir()
+        && !digest::linked(&metadata)
+        && common::device_inode_for(path, &metadata)? == expected)
+}
+
+pub(in crate::recovery::clone::native) fn restore_owner_bytes(
+    path: &Path,
+    owner_path: &Path,
+    original_id: (u64, u64),
+    raw: &[u8],
+) -> Result<()> {
+    if !same_directory(path, original_id)? || fs::read_dir(path)?.next().transpose()?.is_some() {
+        return Err("锁目录类型、成员或物理身份已变化，保留现场".into());
+    }
+    let mut temp = tempfile::NamedTempFile::new_in(path)?;
+    temp.write_all(raw)?;
+    temp.as_file().sync_all()?;
+    temp.persist_noclobber(owner_path)
+        .map_err(|error| error.error)?;
     Ok(())
 }
 

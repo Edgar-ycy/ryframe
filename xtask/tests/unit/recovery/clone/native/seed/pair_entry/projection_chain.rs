@@ -65,7 +65,7 @@ impl<'a> Fixture<'a> {
                 "intent":common::binding(&claim)?,"role":"worker","operation_id":STOP_ID,
                 "start_id":STOP_ID_START,"identity":identity}),
         )?;
-        state::interrupt_owned(self.run, &owner, Some(number))?;
+        state::interrupt_owned(self.run, &owner, Some(number), |_| Ok(()))?;
         lock::recover_dead(self.run, &owner, None)?;
         Ok(number)
     }
@@ -183,7 +183,7 @@ fn interrupted_close_stop_projection_reuses_original_archive_without_rewriting_h
             "close_stop_evidence":{"worker":evidence}}});
     document::write_new(&orphan, &stage_result)?;
     let orphan_bytes = fs::read(&orphan)?;
-    let saved = state::interrupt_owned(&run, &first_lock.owner, Some(interrupted))?;
+    let saved = state::interrupt_owned(&run, &first_lock.owner, Some(interrupted), |_| Ok(()))?;
     let interrupted_row = &state::attempts(&saved)?[1];
     assert_eq!(interrupted_row["number"], interrupted);
     assert!(recover_interrupted(interrupted_row));

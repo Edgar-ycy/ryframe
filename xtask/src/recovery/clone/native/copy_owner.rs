@@ -1,7 +1,7 @@
 //! 复制控制器登记、原会话绑定和两个受管复制锁的归属证据。
 use std::{
     fs::{self, File},
-    io::{Read, Write},
+    io::Read,
     path::{Path, PathBuf},
 };
 
@@ -10,7 +10,11 @@ use sha2::{Digest, Sha256};
 
 use super::{
     digest, json as json_io,
-    lifecycle::{identity, lock::ProcessGuard, manifest},
+    lifecycle::{
+        identity,
+        lock::{ProcessGuard, restore_owner_bytes},
+        manifest,
+    },
     resources::common,
     target_verify::{guard::Inputs, publication},
 };
@@ -533,21 +537,11 @@ fn lock_identity(path: &Path) -> Result<Option<(u64, u64)>> {
 }
 
 fn restore_owner(path: &Path, owner_path: &Path, expected: &Value, raw: &[u8]) -> Result<()> {
-    let metadata = fs::symlink_metadata(path)?;
-    let expected_id = (expected["device"].as_u64(), expected["inode"].as_u64());
-    if !metadata.is_dir() || digest::linked(&metadata) || fs::read_dir(path)?.next().is_some() {
-        return Err("锁目录类型或成员已变化，保留现场".into());
-    }
-    let (device, inode) = common::device_inode_for(path, &metadata)?;
-    if expected_id != (Some(device), Some(inode)) {
-        return Err("锁目录文件身份变化，保留现场".into());
-    }
-    let mut temp = tempfile::NamedTempFile::new_in(path)?;
-    temp.write_all(raw)?;
-    temp.as_file().sync_all()?;
-    temp.persist_noclobber(owner_path)
-        .map_err(|error| error.error)?;
-    Ok(())
+    let device = expected["device"]
+        .as_u64()
+        .ok_or("复制锁目录设备身份无效")?;
+    let inode = expected["inode"].as_u64().ok_or("复制锁目录索引身份无效")?;
+    restore_owner_bytes(path, owner_path, (device, inode), raw)
 }
 
 fn require_only_owner(path: &Path) -> Result<()> {

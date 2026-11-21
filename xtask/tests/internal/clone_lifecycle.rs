@@ -14,6 +14,10 @@ use super::{
     workspace,
 };
 
+#[cfg(windows)]
+#[path = "clone_recovery_retry.rs"]
+mod recovery_retry;
+
 static NEXT: AtomicUsize = AtomicUsize::new(1);
 
 struct Fixture {
