@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Include the private bucket ACL header in the S3 SigV4 signature so RustFS 1.0.5 and other services that check signed headers can verify the request.
+
 - On Windows, resuming a copy from a published source to a seed target protects the four source trees under the existing copy lock and reuses their verification results. The tool verifies the complete sources at both ends of that window and continues to verify live ports, runtime configuration, and build artifacts at every checkpoint.
 
 - Fix mixed-separator execution source bindings when publishing a reconciled review on Windows. Review publication and environment planning use the same canonical source path while preserving file digests and checks for path escape and links.

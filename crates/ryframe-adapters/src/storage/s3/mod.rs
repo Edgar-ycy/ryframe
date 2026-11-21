@@ -168,8 +168,12 @@ impl S3ObjectStorage {
         let response = self
             .send_request(
                 StorageOperation::BucketSetAcl,
-                self.signed_request(Method::PUT, acl_url, empty_payload_hash().as_str())?
-                    .header("x-amz-acl", "private"),
+                self.signed_request_with_canned_acl(
+                    Method::PUT,
+                    acl_url,
+                    empty_payload_hash().as_str(),
+                    Some("private"),
+                )?,
             )
             .await?;
         if !response.status().is_success() {
@@ -252,20 +256,36 @@ impl S3ObjectStorage {
         url: Url,
         payload_hash: &str,
     ) -> StorageResult<RequestBuilder> {
+        self.signed_request_with_canned_acl(method, url, payload_hash, None)
+    }
+
+    fn signed_request_with_canned_acl(
+        &self,
+        method: Method,
+        url: Url,
+        payload_hash: &str,
+        canned_acl: Option<&str>,
+    ) -> StorageResult<RequestBuilder> {
         let amz_date = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
         let authorization = SigV4Signer {
             access_key: &self.access_key,
             secret_key: &self.secret_key,
             region: &self.region,
         }
-        .authorization(method.as_str(), &url, payload_hash, &amz_date)?;
+        .authorization(method.as_str(), &url, payload_hash, &amz_date, canned_acl)?;
 
-        Ok(self
+        let request = self
             .client
             .request(method, url)
             .header("x-amz-content-sha256", payload_hash)
             .header("x-amz-date", amz_date)
-            .header("Authorization", authorization))
+            .header("Authorization", authorization);
+
+        // 签名和发出的 ACL 请求头必须使用同一个值。
+        Ok(match canned_acl {
+            Some(acl) => request.header("x-amz-acl", acl),
+            None => request,
+        })
     }
 
     async fn send_request(
