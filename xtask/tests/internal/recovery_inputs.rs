@@ -1,15 +1,55 @@
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use serde_json::{Value, json};
 
-use super::cli::{RecoveryInputsCommand, RestoreInputPublication};
-use super::clone_lifecycle_tests::arm_storage_bindings;
+use super::cli::{
+    BindingsInputOptions, ProductInputOptions, RecoveryInputsCommand, ReferenceInputOptions,
+    RestoreInputPublication, RestoreInputSide,
+};
 use super::recovery::inputs::{
     backup, bindings, chain, document, product, publish, reference, reference_configuration, run,
     target, target_plan,
 };
-use super::recovery_inputs_fixture::Fixture;
+use super::recovery_inputs_fixture::{Fixture, product_options, reference_options};
 use super::recovery_inputs_support::{binding, file_sha, hash, read_value};
+use crate::clone_arm_storage::arm_storage_bindings;
+
+impl Fixture {
+    pub(crate) fn reference_options(&self, publication: Option<PathBuf>) -> ReferenceInputOptions {
+        reference_options(
+            &self.arm_input,
+            &self.fresh_verify,
+            &self.work_dir,
+            RestoreInputSide::Base,
+            publication.map(|output| RestoreInputPublication { output }),
+        )
+    }
+
+    pub(crate) fn product_options(&self, publication: Option<PathBuf>) -> ProductInputOptions {
+        product_options(
+            &self.reference_plan,
+            &self.backup_receipt,
+            &self.comparison_sources,
+            &self.arm_input,
+            &self.fresh_verify,
+            RestoreInputSide::Base,
+            publication.map(|output| RestoreInputPublication { output }),
+        )
+    }
+
+    pub(crate) fn bindings_options(&self, publication: Option<PathBuf>) -> BindingsInputOptions {
+        BindingsInputOptions {
+            reference_plan: self.reference_plan.clone(),
+            target_plan: self.target_plan.clone(),
+            backup_receipt: self.backup_receipt.clone(),
+            record: self.record.clone(),
+            publication: publication.map(|output| RestoreInputPublication { output }),
+        }
+    }
+}
 
 #[test]
 fn reference_product_and_bindings_native_chains_succeed() {

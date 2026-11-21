@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 
 type Object = serde_json::Map<String, Value>;
 
-pub(crate) fn observations(selected: &Value) -> Value {
+pub fn observations(selected: &Value) -> Value {
     let scope = selected["scope_id"].as_str().unwrap();
     let mut result = Object::new();
     for database in selected["databases"].as_array().unwrap() {
@@ -40,7 +40,7 @@ pub(crate) fn observations(selected: &Value) -> Value {
     Value::Object(result)
 }
 
-pub(crate) fn object_ownership(selected: &Value) -> Value {
+pub fn object_ownership(selected: &Value) -> Value {
     let scope = selected["scope_id"].as_str().unwrap();
     let mut result = Object::new();
     for bucket in ["uploads", "avatar", "exports", "imports", "config-packages"] {
@@ -59,7 +59,7 @@ pub(crate) fn object_ownership(selected: &Value) -> Value {
     Value::Object(result)
 }
 
-pub(crate) fn review_binding(path: &Path, review: &Value) -> Value {
+pub fn review_binding(path: &Path, review: &Value) -> Value {
     let mut value = binding(path);
     value
         .as_object_mut()
@@ -68,7 +68,7 @@ pub(crate) fn review_binding(path: &Path, review: &Value) -> Value {
     value
 }
 
-pub(crate) fn write_value(root: &Path, name: &str, value: &Value) -> PathBuf {
+pub fn write_value(root: &Path, name: &str, value: &Value) -> PathBuf {
     let path = root.join(name);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).unwrap();
@@ -77,11 +77,11 @@ pub(crate) fn write_value(root: &Path, name: &str, value: &Value) -> PathBuf {
     path
 }
 
-pub(crate) fn read_value(path: &Path) -> Value {
+pub fn read_value(path: &Path) -> Value {
     serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
 }
 
-pub(crate) fn binding(path: &Path) -> Value {
+pub fn binding(path: &Path) -> Value {
     json!({
         "path": path.to_string_lossy(),
         "bytes": fs::metadata(path).unwrap().len(),
@@ -89,23 +89,23 @@ pub(crate) fn binding(path: &Path) -> Value {
     })
 }
 
-pub(crate) fn file_sha(path: &Path) -> String {
+pub fn file_sha(path: &Path) -> String {
     hex::encode(Sha256::digest(fs::read(path).unwrap()))
 }
 
-pub(crate) fn hash(value: &Value) -> String {
+pub fn hash(value: &Value) -> String {
     hex::encode(Sha256::digest(serde_json::to_vec(value).unwrap()))
 }
 
-pub(crate) fn now() -> String {
+pub fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Micros, true)
 }
 
-pub(crate) fn now_seconds() -> String {
+pub fn now_seconds() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
-pub(crate) fn capture_target_plan(
+pub fn capture_target_plan(
     root: &Path,
     reference: &Path,
     backup: &Path,
@@ -129,7 +129,7 @@ pub(crate) fn capture_target_plan(
 }
 
 // 与正式运行收据共用配置身份算法，测试只创建明确绑定的私有文件。
-pub(crate) fn object_configuration(directory: &Path, side: &str) -> String {
+pub fn object_configuration(directory: &Path, side: &str) -> String {
     fs::create_dir_all(directory).unwrap();
     fs::write(directory.join("app.test.toml"), format!(
         "[object_storage]\nendpoint = 'http://127.0.0.1:19000'\nregion = 'us-east-1'\naccess_key = '{side}-access'\nsecret_key = '{side}-secret'\n"

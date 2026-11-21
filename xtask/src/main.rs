@@ -33,6 +33,28 @@ mod watch;
 mod windows_acl;
 mod workspace;
 
+#[cfg(test)]
+#[path = "../tests/support/clone_arm_storage.rs"]
+pub mod clone_arm_storage;
+#[cfg(test)]
+#[path = "../tests/support/clone_native_fixture.rs"]
+pub mod clone_native_fixture;
+#[cfg(test)]
+#[path = "../tests/support/published_target_fixture.rs"]
+pub mod published_target_fixture;
+#[cfg(test)]
+#[path = "../tests/internal/recovery_inputs_fixture.rs"]
+pub mod recovery_inputs_fixture;
+#[cfg(test)]
+#[path = "../tests/internal/recovery_inputs_support.rs"]
+pub mod recovery_inputs_support;
+#[cfg(test)]
+#[path = "../tests/support/target_fixture_services.rs"]
+pub mod target_fixture_services;
+#[cfg(test)]
+#[path = "../tests/internal/target_verify_fixture.rs"]
+pub mod target_verify_fixture;
+
 use std::{env, error::Error};
 
 use cli::{CheckCommand, Cli, Command, DataCommand, GenerateCommand};

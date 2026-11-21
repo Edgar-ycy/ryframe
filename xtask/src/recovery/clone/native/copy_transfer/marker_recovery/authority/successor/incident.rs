@@ -235,7 +235,7 @@ mod tests {
             *invalid.pointer_mut(pointer).unwrap() = value;
             assert!(check_proof(&result, &invalid, &runtime).is_err());
         }
-        let mut extra = proof.clone();
+        let mut extra = proof;
         extra["observation"]["evidence"]["redis_external"] = json!({});
         assert!(check_proof(&result, &extra, &runtime).is_err());
     }

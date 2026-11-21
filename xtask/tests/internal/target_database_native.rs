@@ -790,7 +790,7 @@ fn native_saved_inventory_reverifies_all_eight_raw_files() {
     let arguments = json!({"backend": context.backend, "descriptor": captured.receipt,
         "selected": {"scope_id": SCOPE, "databases": context.target()["databases"]},
         "execution": context.execution_backend().unwrap()});
-    let mut snapshot = crate::clone_native_tests::snapshot(directory);
+    let mut snapshot = crate::clone_native_fixture::snapshot(directory);
     let invoke =
         || native_inventory_request(&context.backend, "copy-side-inventory-verify", &arguments);
     let (status, actual) = invoke();
@@ -800,7 +800,7 @@ fn native_saved_inventory_reverifies_all_eight_raw_files() {
         json!({"ok":true,"result":{"value":{"receipt":json_io::read(receipt_path).unwrap(),
             "binding":binding,"databases":raw}}})
     );
-    assert_eq!(snapshot, crate::clone_native_tests::snapshot(directory));
+    assert_eq!(snapshot, crate::clone_native_fixture::snapshot(directory));
     let tampered = directory.join("after-target-shared.json");
     let bytes = snapshot.get_mut(&tampered).unwrap();
     assert_eq!(bytes.pop(), Some(b'\n'));
@@ -813,7 +813,7 @@ fn native_saved_inventory_reverifies_all_eight_raw_files() {
     assert_eq!(rejected["error"]["category"], "SourceEvidenceRejected");
     let message = rejected["error"]["message"].as_str().unwrap();
     assert!(message.contains("原始输出摘要变化"), "{message}");
-    assert_eq!(snapshot, crate::clone_native_tests::snapshot(directory));
+    assert_eq!(snapshot, crate::clone_native_fixture::snapshot(directory));
 }
 
 fn expected_inventory_binding(context: &TargetContext) -> Value {

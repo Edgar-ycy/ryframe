@@ -5,7 +5,10 @@ use crate::recovery::clone::native::{
 };
 use crate::target_verify_fixture::Fixture;
 #[cfg(windows)]
-use crate::{target_initialize_restart_fixture as services, target_verify_fixture::snapshot};
+use crate::{
+    target_fixture_services::close, target_initialize_restart_fixture as services,
+    target_verify_fixture::snapshot,
+};
 use serde_json::Value;
 use serde_json::json;
 use std::fs;
@@ -67,7 +70,7 @@ fn service_windows() {
         match phase {
             "initial" => (),
             "closed" => {
-                services::close(&storage);
+                close(&storage);
             }
             _ => {
                 services::restart(&fixture, &storage);

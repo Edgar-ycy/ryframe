@@ -9,7 +9,7 @@ use std::{
 use serde_json::{Value, json};
 
 use super::{Fake, Fixture, KEYS, SCOPE, bound, database, digest, json_io};
-use crate::clone_native_tests::snapshot;
+use crate::clone_native_fixture::snapshot;
 
 const CHECKPOINT_ERROR: &str = "库存发布后的检查点失败";
 const UNKNOWN_BYTES: &[u8] = b"{\"external\":\"unknown publication evidence\"}\n";

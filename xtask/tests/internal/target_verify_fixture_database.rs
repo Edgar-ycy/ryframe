@@ -13,10 +13,7 @@ use crate::{
     },
 };
 
-#[path = "target_verify_fixture_source_rows.rs"]
-mod source_rows;
-
-pub(in super::super) struct FakeTransport<'a> {
+pub struct FakeTransport<'a> {
     fixture: &'a Fixture,
     drift: bool,
     fail: bool,
@@ -26,7 +23,7 @@ pub(in super::super) struct FakeTransport<'a> {
 }
 
 impl<'a> FakeTransport<'a> {
-    pub(in super::super) fn new(fixture: &'a Fixture, drift: bool, fail: bool) -> Self {
+    pub fn new(fixture: &'a Fixture, drift: bool, fail: bool) -> Self {
         Self {
             fixture,
             drift,
@@ -189,7 +186,7 @@ fn status(code: i32) -> ExitStatus {
     ExitStatus::from_raw(code << 8)
 }
 
-fn raw(fixture: &Fixture, key: &str) -> Value {
+pub fn raw(fixture: &Fixture, key: &str) -> Value {
     let db = fixture.request["target"]["databases"]
         .as_array()
         .unwrap()

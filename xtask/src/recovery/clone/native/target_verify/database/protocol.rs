@@ -16,8 +16,7 @@ use crate::{
 #[path = "protocol/input.rs"]
 mod input;
 
-#[cfg(test)]
-pub(crate) use input::Inputs as TestInputs;
+pub(crate) use input::Inputs;
 
 pub(crate) fn request(args: &Value) -> Result<Value> {
     document::exact(
@@ -55,7 +54,7 @@ pub(crate) fn request(args: &Value) -> Result<Value> {
 }
 
 fn collect(args: &Value, evidence: &std::path::Path, output: &std::path::Path) -> Result<Value> {
-    let input = input::Inputs::load(args, evidence)?;
+    let input = Inputs::load(args, evidence)?;
     // Scope 自行观察执行树及真实维护来源，不能使用请求内的摘要替代当前源码核验。
     let scope = Scope::load(&input.backend, &[], &[])?;
     let private = BTreeMap::from([("APP_ENV".into(), "test".into())]);

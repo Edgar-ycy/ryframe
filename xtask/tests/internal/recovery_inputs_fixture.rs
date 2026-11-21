@@ -1,6 +1,3 @@
-#[path = "recovery_inputs_candidate.rs"]
-mod candidate;
-
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -10,11 +7,10 @@ use std::{
 use serde_json::{Value, json};
 
 use super::cli::{
-    BindingsInputOptions, ProductInputOptions, ReferenceInputOptions, RestoreInputPublication,
-    RestoreInputSide,
+    ProductInputOptions, ReferenceInputOptions, RestoreInputPublication, RestoreInputSide,
 };
-use super::clone_lifecycle_tests::arm_storage_bindings;
 use super::recovery::inputs::{product, reference};
+use crate::clone_arm_storage::arm_storage_bindings;
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
 
 static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
@@ -27,35 +23,35 @@ const KEYS: [(&str, &str, &str); 4] = [
 ];
 const TARGET_NAMES: [&str; 4] = ["shared-control", "shared", "dedicated-a", "dedicated-b"];
 
-struct Base {
-    backend: PathBuf,
-    root: PathBuf,
-    tool: PathBuf,
-    defaults: PathBuf,
-    work_dir: PathBuf,
+pub(crate) struct Base {
+    pub(crate) backend: PathBuf,
+    pub(crate) root: PathBuf,
+    pub(crate) tool: PathBuf,
+    pub(crate) defaults: PathBuf,
+    pub(crate) work_dir: PathBuf,
 }
 
-struct TargetState {
-    review: Value,
-    environment: Value,
-    storage_run: Value,
-    registration_binding: Value,
-    initialized_files_binding: Value,
-    initialized_binding: Value,
-    fresh_verify: PathBuf,
+pub(crate) struct TargetState {
+    pub(crate) review: Value,
+    pub(crate) environment: Value,
+    pub(crate) storage_run: Value,
+    pub(crate) registration_binding: Value,
+    pub(crate) initialized_files_binding: Value,
+    pub(crate) initialized_binding: Value,
+    pub(crate) fresh_verify: PathBuf,
 }
 
-struct SourceState {
-    export: Value,
-    generation: Value,
-    request: Value,
+pub(crate) struct SourceState {
+    pub(crate) export: Value,
+    pub(crate) generation: Value,
+    pub(crate) request: Value,
 }
 
-struct ArmState {
-    arm_input: PathBuf,
+pub(crate) struct ArmState {
+    pub(crate) arm_input: PathBuf,
 }
 
-fn setup() -> Base {
+pub(crate) fn setup() -> Base {
     let backend = super::workspace::root_dir();
     let root = backend.join(".local-tests").join(format!(
         "recovery-inputs-native-{}-{}",
@@ -78,7 +74,7 @@ fn setup() -> Base {
     }
 }
 
-fn prepare_target(base: &Base, side: RestoreInputSide) -> TargetState {
+pub(crate) fn prepare_target(base: &Base, side: RestoreInputSide) -> TargetState {
     let review = review(&base.backend, &base.root, &base.defaults, &base.tool);
     let review_path = write_value(&base.root, "review.json", &review);
     let review_binding = review_binding(&review_path, &review);
@@ -226,7 +222,7 @@ fn fresh_verify(root: &Path, selected: &Value, registration: &RegistrationState)
     )
 }
 
-fn prepare_source(base: &Base) -> SourceState {
+pub(crate) fn prepare_source(base: &Base) -> SourceState {
     let source_runtime_dir = base.root.join("source-runtime");
     fs::create_dir_all(&source_runtime_dir).unwrap();
     let bindings = source_input_bindings(&base.root, &source_runtime_dir);
@@ -315,7 +311,7 @@ fn source_input_bindings(root: &Path, runtime_dir: &Path) -> SourceInputBindings
     }
 }
 
-fn prepare_arm(
+pub(crate) fn prepare_arm(
     base: &Base,
     target: &TargetState,
     source: &SourceState,
@@ -503,7 +499,7 @@ pub struct Fixture {
 }
 
 impl Fixture {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let base = setup();
         let target = prepare_target(&base, RestoreInputSide::Base);
         let source = prepare_source(&base);
@@ -527,38 +523,6 @@ impl Fixture {
             review: target.review,
             defaults: base.defaults,
             tool: base.tool,
-        }
-    }
-
-    pub fn reference_options(&self, publication: Option<PathBuf>) -> ReferenceInputOptions {
-        reference_options(
-            &self.arm_input,
-            &self.fresh_verify,
-            &self.work_dir,
-            RestoreInputSide::Base,
-            publication.map(|output| RestoreInputPublication { output }),
-        )
-    }
-
-    pub fn product_options(&self, publication: Option<PathBuf>) -> ProductInputOptions {
-        product_options(
-            &self.reference_plan,
-            &self.backup_receipt,
-            &self.comparison_sources,
-            &self.arm_input,
-            &self.fresh_verify,
-            RestoreInputSide::Base,
-            publication.map(|output| RestoreInputPublication { output }),
-        )
-    }
-
-    pub fn bindings_options(&self, publication: Option<PathBuf>) -> BindingsInputOptions {
-        BindingsInputOptions {
-            reference_plan: self.reference_plan.clone(),
-            target_plan: self.target_plan.clone(),
-            backup_receipt: self.backup_receipt.clone(),
-            record: self.record.clone(),
-            publication: publication.map(|output| RestoreInputPublication { output }),
         }
     }
 }
@@ -922,7 +886,7 @@ fn write_backup(
     )
 }
 
-fn reference_options(
+pub(crate) fn reference_options(
     arm_input: &Path,
     fresh_verify: &Path,
     work_dir: &Path,
@@ -939,7 +903,7 @@ fn reference_options(
     }
 }
 
-fn product_options(
+pub(crate) fn product_options(
     reference_plan: &Path,
     backup_receipt: &Path,
     comparison_sources: &Path,

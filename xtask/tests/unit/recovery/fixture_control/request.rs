@@ -339,7 +339,7 @@ fn request_rejects_redis_runtime_receipt_drift_after_successful_observation() {
     let output = fixture.options(FixtureSide::Seed).output.output;
     let redis = &service.registered["evidence"]["redis_runtime"];
     let runtime = common::bound_file(backend, redis, "当前服务运行收据").unwrap();
-    let mut expected = crate::clone_native_tests::snapshot(&fixture.run);
+    let mut expected = crate::clone_native_fixture::snapshot(&fixture.run);
     let running = json!({"redis":"running","rustfs":"running","termination":null});
 
     service
@@ -348,7 +348,10 @@ fn request_rejects_redis_runtime_receipt_drift_after_successful_observation() {
             Ok(running.clone())
         })
         .unwrap();
-    assert_eq!(crate::clone_native_tests::snapshot(&fixture.run), expected);
+    assert_eq!(
+        crate::clone_native_fixture::snapshot(&fixture.run),
+        expected
+    );
     assert!(!output.exists());
 
     let original = &expected[&runtime];
@@ -376,7 +379,10 @@ fn request_rejects_redis_runtime_receipt_drift_after_successful_observation() {
     assert!(!fixture.run.join("run.lock").exists());
 
     *expected.get_mut(&runtime).unwrap() = changed;
-    assert_eq!(crate::clone_native_tests::snapshot(&fixture.run), expected);
+    assert_eq!(
+        crate::clone_native_fixture::snapshot(&fixture.run),
+        expected
+    );
 }
 
 #[test]
@@ -431,7 +437,7 @@ fn request_refuses_wrong_scope_and_credentials_before_creating_output() {
 fn requests_preserve_the_closed_seed_ledger_and_refuse_a_misbound_seed_bootstrap() {
     let closed = RequestFixture::new();
     closed.register_services();
-    crate::target_initialize_restart_fixture::close(&closed.run);
+    crate::target_fixture_services::close(&closed.run);
     let before = fs::read(closed.run.join("state.json")).unwrap();
     let manifest_before = fs::read(closed.run.join("manifest.json")).unwrap();
     closed.reject(closed.options(FixtureSide::Base), "已关闭或外部终止");
@@ -698,7 +704,7 @@ fn rehashed_toml_with_another_scope_is_rejected_before_request_publication() {
     Product::load(&fixture.sources.backend, &options.environment, "candidate").unwrap();
 
     let review = fs::read(&fixture.review).unwrap();
-    let ledger = crate::clone_native_tests::snapshot(&fixture.run);
+    let ledger = crate::clone_native_fixture::snapshot(&fixture.run);
     let mut receipt = document::read(&options.environment).unwrap();
     let plan = receipt["plan"].clone();
     let config = options.environment.parent().unwrap().join("config");
@@ -715,7 +721,7 @@ fn rehashed_toml_with_another_scope_is_rejected_before_request_publication() {
     fixture.reject(options.clone(), "私有环境未绑定当前 scope 或配置摘要");
     assert_eq!(document::read(&options.environment).unwrap()["plan"], plan);
     assert_eq!(fs::read(&fixture.review).unwrap(), review);
-    assert_eq!(crate::clone_native_tests::snapshot(&fixture.run), ledger);
+    assert_eq!(crate::clone_native_fixture::snapshot(&fixture.run), ledger);
     assert!(!fixture.run.join("run.lock").exists());
 }
 
@@ -726,7 +732,7 @@ fn request_refuses_when_either_registered_service_is_stopped() {
     let backend = &fixture.sources.backend;
     let service = Service::load(backend, &fixture.run, &fixture.review).unwrap();
     let output = fixture.options(FixtureSide::Seed).output.output;
-    let original = crate::clone_native_tests::snapshot(&fixture.run);
+    let original = crate::clone_native_fixture::snapshot(&fixture.run);
 
     for (redis, rustfs) in [("stopped", "running"), ("running", "stopped")] {
         let mut observations = 0;
@@ -748,6 +754,9 @@ fn request_refuses_when_either_registered_service_is_stopped() {
         assert_eq!(observations, 1);
         assert!(!output.exists());
         assert!(!fixture.run.join("run.lock").exists());
-        assert_eq!(crate::clone_native_tests::snapshot(&fixture.run), original);
+        assert_eq!(
+            crate::clone_native_fixture::snapshot(&fixture.run),
+            original
+        );
     }
 }

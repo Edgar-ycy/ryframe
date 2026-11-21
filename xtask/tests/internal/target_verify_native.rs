@@ -24,6 +24,18 @@ use crate::target_verify_fixture as fixture;
 
 use fixture::{Fixture, database::FakeTransport, snapshot};
 
+impl Fixture {
+    pub(crate) fn stage(&self) -> StageRequest<'_> {
+        StageRequest {
+            backend: &self.backend,
+            run_dir: &self.run,
+            stage: "target-verify",
+            mode: "run",
+            attempt: Some(1),
+        }
+    }
+}
+
 fn preflight_with(
     backend: &Path,
     request: &StageRequest<'_>,

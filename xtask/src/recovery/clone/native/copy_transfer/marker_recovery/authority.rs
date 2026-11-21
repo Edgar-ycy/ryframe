@@ -361,7 +361,7 @@ impl Source {
             request_path,
             path.clone(),
             runtime_path.clone(),
-            registry_path.clone(),
+            registry_path,
         ];
         for role in ["api", "worker"] {
             paths.push(common::bound_file(

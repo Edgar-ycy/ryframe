@@ -45,7 +45,7 @@ pub(super) fn files(fixture: &mut Fixture, windows_redis: bool) -> Value {
     let redis = fixture.local.join("redis");
     fs::create_dir(&redis).unwrap();
     let projection = if windows_redis {
-        crate::target_initialize_restart_fixture::windows_redis_files(fixture, &redis)
+        crate::target_fixture_services::windows_redis_files(&fixture.local, &redis)
     } else {
         historical_redis_files(fixture, &redis)
     };
@@ -70,7 +70,7 @@ fn historical_redis_files(fixture: &Fixture, redis: &Path) -> Value {
         "configuration":bound(&configuration)})
 }
 
-pub(in super::super) struct ExternalFacts {
+pub struct ExternalFacts {
     identity: Value,
     arguments: Vec<String>,
     endpoints: BTreeSet<String>,
@@ -123,7 +123,7 @@ impl ExternalFacts {
         }
     }
 
-    pub(in super::super) fn assert_complete(&self) {
+    pub fn assert_complete(&self) {
         assert!(self.identities.get() >= 5);
         assert_eq!(self.arg_reads.get(), 1);
         assert_eq!(*self.listeners.borrow(), self.endpoints);

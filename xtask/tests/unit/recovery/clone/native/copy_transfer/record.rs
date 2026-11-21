@@ -1,6 +1,6 @@
 use std::fs;
 
-use crate::clone_native_tests::{Fixture, snapshot};
+use crate::clone_native_fixture::{Fixture, snapshot};
 
 use super::super::proofs::Proofs;
 use super::*;

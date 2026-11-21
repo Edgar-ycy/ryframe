@@ -112,7 +112,7 @@ fn save_config_binds_only_metadata_and_verifies_exact_restoration() {
     }
     let dirs = SaveConfigDirs {
         baseline: baseline.clone(),
-        candidate: candidate.clone(),
+        candidate,
     };
     let source = root.path().join("source");
     fs::create_dir(&source).unwrap();

@@ -1,5 +1,7 @@
 use std::io::Write;
 
+use sha2::{Digest, Sha256};
+
 use super::*;
 use crate::recovery::clone::native::{json as document, lifecycle::recover};
 

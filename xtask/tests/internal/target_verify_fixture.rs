@@ -15,42 +15,42 @@ use crate::{
         lifecycle::stage::StageRequest,
         target_verify::{
             authority,
-            input::{request, request_configuration},
+            input::{configuration_fixture::toml_text, request, request_configuration},
             tree,
         },
     },
 };
 
 #[path = "target_verify_fixture_database.rs"]
-pub(super) mod database;
+pub mod database;
 #[path = "target_verify_fixture_history.rs"]
 mod history;
 #[path = "target_verify_fixture_observations.rs"]
-pub(super) mod observations;
+pub mod observations;
 #[path = "target_verify_fixture_storage.rs"]
-mod storage;
+pub mod storage;
 
 pub(super) const UUID: &str = "67cd8d4a-fe90-11ef-98fd-5847ca786499";
-pub(super) const SCOPE: &str = "seed-scope";
+pub use crate::target_fixture_services::SCOPE;
 pub(super) const KEYS: [&str; 4] = ["shared-control", "shared", "dedicated-a", "dedicated-b"];
 
-pub(super) struct Fixture {
+pub struct Fixture {
     _directory: tempfile::TempDir,
-    pub(super) backend: PathBuf,
-    pub(super) local: PathBuf,
-    pub(super) target: PathBuf,
-    pub(super) run: PathBuf,
-    pub(super) request: Value,
-    pub(super) environment: BTreeMap<String, String>,
-    pub(super) legacy_reset: bool,
+    pub backend: PathBuf,
+    pub local: PathBuf,
+    pub target: PathBuf,
+    pub run: PathBuf,
+    pub request: Value,
+    pub environment: BTreeMap<String, String>,
+    pub legacy_reset: bool,
 }
 
 impl Fixture {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::build(false, false, "fixture", false, "seed", false)
     }
 
-    pub(super) fn for_status() -> Self {
+    pub fn for_status() -> Self {
         let fixture = Self::build(true, false, "fixture", false, "seed", false);
         crate::recovery::clone::native::target_verify::published::unlocked_history(
             &fixture.backend,
@@ -60,21 +60,21 @@ impl Fixture {
         fixture
     }
 
-    pub(super) fn for_initialization() -> Self {
+    pub fn for_initialization() -> Self {
         Self::build(true, true, "fixture", false, "seed", false)
     }
 
     #[cfg(windows)]
-    pub(super) fn for_registration() -> Self {
+    pub fn for_registration() -> Self {
         // 此处测试登记执行窗口，prepare 的历史观察继续由原夹具覆盖。
         Self::build(false, false, "fixture", false, "seed", true)
     }
 
-    pub(super) fn for_legacy_status() -> Self {
+    pub fn for_legacy_status() -> Self {
         Self::build(true, false, "fixture", true, "seed", false)
     }
 
-    pub(super) fn for_recovery() -> Self {
+    pub fn for_recovery() -> Self {
         Self::build(
             true,
             true,
@@ -85,7 +85,7 @@ impl Fixture {
         )
     }
 
-    pub(super) fn for_arm_authority() -> Self {
+    pub fn for_arm_authority() -> Self {
         Self::build(true, false, "fixture", false, "base", false)
     }
 
@@ -195,11 +195,7 @@ impl Fixture {
             table["reset"]["services_stopped"] = json!(true);
             table["reset"]["state_directory"] = json!(self.target.join("reset-state"));
         }
-        fs::write(
-            self.local.join("config/app.toml"),
-            crate::target_configuration_fixture::toml_text(&table),
-        )
-        .unwrap();
+        fs::write(self.local.join("config/app.toml"), toml_text(&table)).unwrap();
     }
 
     fn seal_configuration(&mut self) {
@@ -213,34 +209,24 @@ impl Fixture {
             json!(request_configuration::configuration_identity(&directory, &files).unwrap());
     }
 
-    pub(super) fn stage(&self) -> StageRequest<'_> {
-        StageRequest {
-            backend: &self.backend,
-            run_dir: &self.run,
-            stage: "target-verify",
-            mode: "run",
-            attempt: Some(1),
-        }
-    }
-
-    pub(super) fn authority(&self) -> Authority {
+    pub fn authority(&self) -> Authority {
         Authority {
             calls: Cell::new(0),
         }
     }
-    pub(super) fn storage_observer(&self) -> storage::ExternalFacts {
+    pub fn storage_observer(&self) -> storage::ExternalFacts {
         storage::ExternalFacts::new(self)
     }
 }
 
-pub(super) struct MaintenanceFixture {
+pub struct MaintenanceFixture {
     _directory: tempfile::TempDir,
-    pub(super) backend: PathBuf,
-    pub(super) local: PathBuf,
+    pub backend: PathBuf,
+    pub local: PathBuf,
 }
 
 impl MaintenanceFixture {
-    pub(super) fn new_in(parent: &Path) -> Self {
+    pub fn new_in(parent: &Path) -> Self {
         fs::create_dir_all(parent).unwrap();
         let directory = tempfile::tempdir_in(parent).unwrap();
         let backend = directory.path().join("backend");
@@ -256,7 +242,7 @@ impl MaintenanceFixture {
     }
 }
 
-pub(super) struct Authority {
+pub struct Authority {
     pub(super) calls: Cell<usize>,
 }
 
@@ -314,7 +300,7 @@ fn review(fixture: &Fixture, services: &Value) -> Value {
         "reference":{"source":{"databases":[{"server_uuid":UUID,"database":"protected_source"}]},"protected_target":{"databases":[{"server_uuid":UUID,"database":"protected_target"}]}}})
 }
 
-pub(super) fn database_name(side: &str, key: &str) -> String {
+pub fn database_name(side: &str, key: &str) -> String {
     format!("{side}_{}", key.replace('-', "_"))
 }
 pub(super) fn tool(path: &Path) -> Value {
@@ -332,7 +318,7 @@ pub(super) fn write(path: &Path, value: &Value) {
     json_io::write_new(path, value).unwrap();
 }
 
-pub(super) fn snapshot(root: &Path) -> BTreeMap<PathBuf, Option<(u64, String)>> {
+pub fn snapshot(root: &Path) -> BTreeMap<PathBuf, Option<(u64, String)>> {
     let mut result = BTreeMap::new();
     let mut pending = vec![root.to_path_buf()];
     while let Some(directory) = pending.pop() {

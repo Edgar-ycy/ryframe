@@ -63,7 +63,7 @@ fn active_redis_only_restart_requires_three_previous_complete_restarts_and_uniqu
         restarts(&history, &rows).unwrap(),
         (&first, Some(&second), Some(&third), Some(&redis))
     );
-    assert!(restarts(&history, &[first.clone(), second.clone(), redis.clone()]).is_err());
+    assert!(restarts(&history, &[first, second, redis.clone()]).is_err());
     let mut earlier = rows.clone();
     earlier[3]["number"] = json!(7);
     assert!(restarts(&history, &earlier).is_err());
@@ -116,7 +116,7 @@ fn windows_successor_accepts_exact_original_endpoint_and_requires_bound_external
             .is_err()
         );
     }
-    let mut invalid = proof.clone();
+    let mut invalid = proof;
     invalid["kind"] = json!("reference-fixture-normal-close");
     assert!(
         check_first(

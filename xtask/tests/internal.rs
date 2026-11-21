@@ -8,6 +8,10 @@ mod check;
 mod ci;
 #[path = "../src/cli.rs"]
 mod cli;
+#[path = "support/clone_arm_storage.rs"]
+mod clone_arm_storage;
+#[path = "support/clone_native_fixture.rs"]
+mod clone_native_fixture;
 #[path = "../src/contract.rs"]
 mod contract;
 #[path = "../src/dev.rs"]
@@ -32,6 +36,8 @@ mod migration;
 mod process;
 #[path = "support/process_liveness.rs"]
 mod process_liveness;
+#[path = "support/published_target_fixture.rs"]
+mod published_target_fixture;
 #[path = "../src/rate_limit.rs"]
 mod rate_limit;
 #[path = "../src/recovery.rs"]
@@ -46,6 +52,8 @@ mod session_pacing;
 mod source_edit;
 #[path = "../src/source_scan.rs"]
 mod source_scan;
+#[path = "support/target_fixture_services.rs"]
+mod target_fixture_services;
 #[path = "../src/watch.rs"]
 mod watch;
 #[path = "../src/workspace.rs"]
@@ -238,6 +246,8 @@ mod rate_limit_protocol_tests;
 mod rate_limit_tests;
 #[path = "internal/recovery_cli.rs"]
 mod recovery_cli_tests;
+#[path = "internal/recovery_inputs_candidate.rs"]
+mod recovery_inputs_candidate_tests;
 #[path = "internal/recovery_inputs_fixture.rs"]
 mod recovery_inputs_fixture;
 #[path = "internal/recovery_inputs_fresh.rs"]
@@ -322,6 +332,8 @@ mod target_storage_redis;
 mod target_storage_redis_state;
 #[path = "internal/target_verify_fixture.rs"]
 mod target_verify_fixture;
+#[path = "internal/target_verify_fixture_source_rows.rs"]
+mod target_verify_fixture_source_rows_tests;
 #[path = "internal/target_verify_native.rs"]
 mod target_verify_native_tests;
 #[path = "internal/target_verify_published.rs"]

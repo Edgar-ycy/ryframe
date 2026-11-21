@@ -11,7 +11,7 @@ use super::{
     *,
 };
 use crate::{
-    clone_native_tests::{Fixture as OfflineFixture, snapshot},
+    clone_native_fixture::{Fixture as OfflineFixture, snapshot},
     recovery::clone::native::{
         copy_transfer::{
             Runner,

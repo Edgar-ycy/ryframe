@@ -2,8 +2,6 @@ use std::{path::Path, process::Command};
 
 use serde_json::json;
 
-pub(crate) use crate::recovery::clone::native::target_verify::input::configuration_fixture::toml_text;
-
 pub(crate) fn python_command(script: &str) -> Command {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let mut command = Command::new(crate::process::resolved_executable(root, "python").unwrap());

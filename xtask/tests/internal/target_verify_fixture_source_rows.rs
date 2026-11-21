@@ -1,7 +1,10 @@
 use std::{cell::RefCell, collections::BTreeMap, fs, path::Path};
 
-use super::super::{database_name, snapshot};
-use super::{FakeTransport, Fixture, KEYS, SCOPE, bound, descriptor, raw, write};
+use crate::target_verify_fixture::{
+    Fixture, KEYS, SCOPE, bound,
+    database::{FakeTransport, raw},
+    database_name, descriptor, snapshot, write,
+};
 use crate::{
     cli::CloneSide,
     recovery::clone::native::{
@@ -10,7 +13,7 @@ use crate::{
         json as document, maintenance,
         s3::app_configuration,
         target_verify::{
-            database::{self, SourceBinding, model, protocol::TestInputs},
+            database::{self, SourceBinding, model, protocol::Inputs},
             storage::StorageInputs,
         },
     },
@@ -113,7 +116,7 @@ fn late_maintenance_receipt_drift_revokes_only_its_inventory_publication() {
         "maintenance":fixture.request["maintenance_build"], "configuration":configuration,
         "app_env":"test", "output":output,
     });
-    let input = TestInputs::load(&args, &fixture.backend).unwrap();
+    let input = Inputs::load(&args, &fixture.backend).unwrap();
     let scope = Scope::load(&fixture.backend, &[], &[]).unwrap();
     let mut source = side(
         &fixture,

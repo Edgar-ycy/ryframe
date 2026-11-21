@@ -199,7 +199,7 @@ mod tests {
 
     #[test]
     fn published_history_rejects_directory_added_during_observation() {
-        let fixture = crate::target_verify_published_tests::complete();
+        let fixture = crate::published_target_fixture::complete();
         let filename = fixture.target.join("initialized.json");
         let added = fixture.target.join("late-directory");
         let error = observe_unlocked_history(&fixture.backend, &filename, |_, _| {

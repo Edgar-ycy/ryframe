@@ -341,7 +341,7 @@ fn observed_authority(
 
 #[test]
 fn native_authority_recomputes_the_generation_and_keeps_complete_history_readonly() {
-    let fixture = crate::target_verify_published_tests::complete();
+    let fixture = crate::published_target_fixture::complete();
     let manifest_path = fixture.run.join("manifest.json");
     #[cfg(windows)]
     {
@@ -400,7 +400,7 @@ fn native_authority_recomputes_the_generation_and_keeps_complete_history_readonl
 
 #[test]
 fn native_authority_rejects_actual_config_start_history_and_changes_during_observation() {
-    let fixture = crate::target_verify_published_tests::complete();
+    let fixture = crate::published_target_fixture::complete();
     let config = Path::new(fixture.request["config_dir"].as_str().unwrap()).join("app.test.toml");
     let original = fs::read(&config).unwrap();
     let mut changed = original.clone();

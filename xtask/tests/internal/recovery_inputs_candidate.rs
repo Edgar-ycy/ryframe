@@ -5,12 +5,17 @@ use std::{
 
 use serde_json::Value;
 
-use super::{
-    Base, Fixture, RestoreInputSide, SourceState, capture_target_plan, prepare_arm, prepare_target,
-    product, product_options, reference, reference_options, write_value,
-};
 use crate::recovery::inputs::{document, target_plan};
 use crate::recovery_inputs_support::{binding, hash, read_value};
+use crate::{
+    cli::RestoreInputSide,
+    recovery::inputs::{product, reference},
+    recovery_inputs_fixture::{
+        Base, Fixture, SourceState, prepare_arm, prepare_source, prepare_target, product_options,
+        reference_options, setup,
+    },
+    recovery_inputs_support::{capture_target_plan, review_binding, write_value},
+};
 
 impl Fixture {
     fn candidate_plans(&self) -> (PathBuf, PathBuf) {
@@ -286,10 +291,10 @@ fn product_input_rejects_unknown_reference_fields_at_each_nested_boundary() {
 
 #[test]
 fn reference_input_rejects_substituted_arm_exports_and_maintenance_root() {
-    let base = super::setup();
+    let base = setup();
     let side = RestoreInputSide::Base;
     let mut target = prepare_target(&base, side);
-    let source = super::prepare_source(&base);
+    let source = prepare_source(&base);
     let arm = prepare_arm(&base, &target, &source, side);
     let options = reference_options(
         &arm.arm_input,
@@ -337,7 +342,7 @@ fn reference_input_rejects_substituted_arm_exports_and_maintenance_root() {
         Value::String(base.root.join("other-backend").to_string_lossy().into());
     let review_path = write_value(&base.root, "review.json", &target.review);
     let mut request = read_value(&base.root.join("target-request.json"));
-    request["review"] = super::review_binding(&review_path, &target.review);
+    request["review"] = review_binding(&review_path, &target.review);
     let request_path = write_value(&base.root, "target-request.json", &request);
     let mut registration = read_value(Path::new(
         target.registration_binding["path"].as_str().unwrap(),
