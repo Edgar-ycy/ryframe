@@ -63,17 +63,17 @@ http-body-util = "0.1"
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 
 image = { version = "0.25", default-features = false }
-calamine = { version = "0.36" }
-rust_xlsxwriter = { version = "0.99.1" }
+calamine = { version = "0.38.0" }
+rust_xlsxwriter = { version = "0.100.0" }
 utoipa = { version = "6.0.0", features = ["axum_extras", "chrono"] }
-utoipa-swagger-ui = { version = "10.0.1", default-features = false, features = ["vendored"] }
+utoipa-swagger-ui = { version = "10.0.2", default-features = false, features = ["vendored"] }
 redis = { version = "1.4", default-features = false, features = ["tokio-rustls-comp", "connection-manager"] }
 
 regex = "1"
 tower-http = { version = "0.7" }
 tower = { version = "0.5", default-features = false }
 dashmap = "6"
-zip = { version = "8.6", default-features = false, features = [
+zip = { version = "9.0.5", default-features = false, features = [
     "deflate-flate2-zlib-rs",
 ] }
 quick-xml = "0.41.0"

@@ -134,7 +134,8 @@ fn validate_entry<R: Read>(
     let enclosed = file
         .enclosed_name()
         .ok_or_else(|| AppError::Validation("配置包包含非法路径".into()))?;
-    if enclosed.to_str() != Some(file.name()) {
+    let name = file.name().map_err(validation_zip_error)?;
+    if enclosed.to_str() != Some(name.as_ref()) {
         return Err(AppError::Validation("配置包包含非法路径".into()));
     }
     let compressed = file.compressed_size().max(1);

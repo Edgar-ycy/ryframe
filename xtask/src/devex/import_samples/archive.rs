@@ -93,7 +93,7 @@ pub(crate) fn render_workbook(
     let mut replaced = false;
     for index in 0..archive.len() {
         let file = archive.by_index(index)?;
-        if file.name() == WORKSHEET {
+        if file.name()?.as_ref() == WORKSHEET {
             if replaced {
                 return Err("模板包含重复工作表成员".into());
             }
