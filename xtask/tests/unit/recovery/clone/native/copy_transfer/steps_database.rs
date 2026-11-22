@@ -1,7 +1,11 @@
-use std::{collections::BTreeSet, fs};
+use std::{collections::BTreeSet, fs, path::Path};
 
 use super::*;
-use crate::recovery::clone::native::copy_owner::Role;
+use crate::recovery::clone::native::{
+    copy_owner::{Owner, Role},
+    lifecycle::identity,
+    resources::common,
+};
 
 fn declaration() -> Value {
     let databases = ["shared-control", "shared", "dedicated-a", "dedicated-b"]
@@ -178,6 +182,9 @@ fn mixed_database_intents_are_reconciled_from_one_full_vector_without_replay() {
                 Ok(())
             })
             .unwrap();
+        if phase == "mismatch" {
+            assert_mismatched_resume_rejected(&fixture);
+        }
         assert_eq!(
             io.database_events,
             [DatabaseEvent::Observe(io.database_ids.clone())],
@@ -185,6 +192,61 @@ fn mixed_database_intents_are_reconciled_from_one_full_vector_without_replay() {
         );
         assert_eq!(io.writes, io.database_ids[..2]);
     }
+}
+
+fn assert_mismatched_resume_rejected(fixture: &Fixture) {
+    let ledger = fixture.copy.join("ledger");
+    let files = ["events.ndjson", "head.json"].map(|name| ledger.join(name));
+    let read = || files.each_ref().map(|path| fs::read(path).unwrap());
+    let entries = |dir: &Path| {
+        fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<BTreeSet<_>>()
+    };
+    let original = read();
+    let ledger_entries = entries(&ledger);
+    let copy_entries = entries(&fixture.copy);
+    let session = document::read(&fixture.copy.join("session.json")).unwrap();
+    let error = fixture
+        .run_with_publication::<()>(
+            Mode::Resume,
+            |_, _| panic!("数据库像不匹配时不能执行续跑步骤"),
+            |_| panic!("数据库像不匹配时不能发布续跑结果"),
+        )
+        .unwrap_err();
+    assert_eq!(error.to_string(), "未知结果必须先显式核对，不能继续写入");
+    assert_eq!(read(), original);
+    assert_eq!(entries(&ledger), ledger_entries);
+
+    // 账本拒绝前会登记本次控制器，除此之外复制目录不应有变化。
+    let current = entries(&fixture.copy);
+    assert!(copy_entries.is_subset(&current));
+    let mut added = current.difference(&copy_entries);
+    let name = added.next().unwrap().to_str().unwrap();
+    assert!(added.next().is_none());
+    let suffix = name
+        .strip_prefix("copy-owner-")
+        .and_then(|name| name.strip_suffix(".json"))
+        .unwrap();
+    assert_eq!(
+        uuid::Uuid::parse_str(suffix).unwrap().simple().to_string(),
+        suffix
+    );
+    let owner = Owner::read(
+        &fixture.backend,
+        &fixture.copy,
+        &common::binding(&fixture.copy.join(name)).unwrap(),
+        &session["source_export"],
+        &session["initialized"],
+    )
+    .unwrap();
+    assert_eq!(owner.session_id(), format!("session-{suffix}"));
+    assert_eq!(owner.controller(), &identity::current().unwrap());
+    for role in [Role::Target, Role::Ledger] {
+        assert!(!owner.lock_path(role).try_exists().unwrap());
+    }
+    assert!(!fixture.copy.join("result.json").try_exists().unwrap());
 }
 
 #[test]
