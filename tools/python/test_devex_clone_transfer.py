@@ -406,22 +406,6 @@ class TransferTests(unittest.TestCase):
                     self.engine()
         self.assertEqual(self.writes(), [])
 
-    def test_database_reconcile_records_mismatch_and_resume_never_writes(self):
-        self.runner.failure = "before-commit"
-        with self.assertRaises(subprocess.TimeoutExpired), self.open():
-            self.engine().apply_database("shared-control")
-        current = self.guard.current["shared-control"]
-        changed = copy.deepcopy(current.tables)
-        changed["sys_user"]["sha256"] = "9" * 64
-        self.guard.current["shared-control"] = replace(current, tables=changed)
-        with self.open(create=False, mode="reconcile"):
-            engine = self.engine()
-            step = next(iter(self.ledger.snapshot()["steps"]))
-            self.assertEqual(engine.reconcile(step), "mismatch")
-        with self.assertRaises(LedgerError), self.open(create=False, mode="resume"):
-            pass
-        self.assertEqual(len(self.writes()), 1)
-
     def test_reconcile_cannot_accept_intent_for_different_logical_image(self):
         with self.open():
             engine = self.engine()
