@@ -1,8 +1,6 @@
 """消费已审计的启动前失败历史；不执行旧代码，不将缺树自动认定为未启动。"""
 from __future__ import annotations
 
-from devex_clone_seed_generation_runtime import configuration_directory
-
 import hashlib
 from pathlib import Path
 import subprocess
@@ -445,7 +443,11 @@ def execute(backend: Path, directory: Path, request_path: Path, number: int, pre
     binaries.update({"ryframe-" + role: maintenance["artifacts"][role]["executable"] for role in ("reset", "migrate")})
     write_json(runtime.runtime / "binaries.json", binaries)
     with runtime.environment() as environment:
-        register_runtime(runtime.execution, runtime.runtime, source_config_dir=configuration_directory(runtime.backend, runtime.request))
+        configuration = runtime.output / "runtime-configuration"
+        register_runtime(
+            runtime.execution, runtime.runtime,
+            api_config_dir=configuration / "config", worker_config_dir=configuration / "worker-config",
+        )
         images = {}
         for field in ("before", "after"):
             checkpoint()

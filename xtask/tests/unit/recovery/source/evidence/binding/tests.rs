@@ -236,6 +236,51 @@ fn explicit_configuration_root_and_evidence_root_are_independent_and_reloaded() 
 }
 
 #[test]
+fn generation_v1_selects_the_historical_execution_backend_configuration_read_only() {
+    use crate::recovery::clone::native::target_verify::input::request_configuration::canonical_path;
+
+    let f = Fixture::new();
+    f.write();
+    let coordinator = f.root.join("config");
+    let execution = f.root.join("historical-execution");
+    let directory = execution.join("config");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("app.toml"), "# 历史公共配置\n").unwrap();
+    fs::write(
+        directory.join("app.test.toml"),
+        "scope_id='historical-execution'\n",
+    )
+    .unwrap();
+    let snapshot = |config: &Path| {
+        fs::read_dir(config)
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                (entry.file_name(), fs::read(entry.path()).unwrap())
+            })
+            .collect::<BTreeMap<_, _>>()
+    };
+    let before = [snapshot(&coordinator), snapshot(&directory)];
+    assert_ne!(before[0], before[1]);
+
+    let request = json!({"format_version":1,"kind":"devex-clone-seed-source-generation","id":"fixed-request",
+        "source_registration":{"path":"registration"},"source_rebind":{"path":"rebind"},
+        "review_successor":{"path":"successor"},"current_storage":{"attempt":65},
+        "execution_backend":execution,"expected_backend_sha":"a".repeat(40),
+        "adapter_contract":null,"product_backend":null,"backend_build":{"path":"old-runtime"},
+        "maintenance_build":{"path":"old-maintenance"},"source_environment":{"path":"environment"}});
+    let envelope = json!({"operation":"generation-request-configuration","write":false,
+        "arguments":{"backend":f.root,"request":request}});
+    let binding = super::super::execute(&serde_json::to_vec(&envelope).unwrap()).unwrap();
+    assert_eq!(
+        binding["directory"],
+        json!(canonical_path(&directory).unwrap())
+    );
+    assert_eq!(binding["app_env"], "test");
+    assert_eq!([snapshot(&coordinator), snapshot(&directory)], before);
+}
+
+#[test]
 fn generation_v2_consumes_bound_sidecar_configuration_and_freezes_absent_common_file() {
     use crate::recovery::source::evidence::generation_request::configuration;
     let f = Fixture::new();

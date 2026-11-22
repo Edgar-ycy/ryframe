@@ -275,7 +275,11 @@ class GenerationRuntime:
                     "ryframe-worker": self.build["artifacts"]["worker"]["executable"],
                     **{"ryframe-" + role: maintenance["artifacts"][role]["executable"] for role in ("reset", "migrate")}}
         write_json(self.runtime / "binaries.json", binaries)
-        self.contract = register_runtime(self.execution, self.runtime, source_config_dir=configuration_directory(self.backend, self.request))
+        configuration = self.output / "runtime-configuration"
+        self.contract = register_runtime(
+            self.execution, self.runtime,
+            api_config_dir=configuration / "config", worker_config_dir=configuration / "worker-config",
+        )
         self.urls = {"api": self.selected["api_url"].rstrip("/") + "/readyz", "worker": self.contract["worker_ready_url"]}
         for url in self.urls.values():
             require_closed_port(url)

@@ -6,7 +6,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -107,48 +106,11 @@ def runtime_contract(backend: Path, directory: Path, *, api_config_dir: Path | N
     }
 
 
-def prepare_runtime_configuration(backend: Path, directory: Path, source_config_dir: Path) -> None:
-    """显式登记阶段复制已选配置；只读验证和预览不调用本入口。"""
-    from full_stack_ci_support import instance_text, configuration_directory
-
-    if not source_config_dir.is_absolute() or source_config_dir.is_symlink():
-        raise ValueError("运行配置来源必须是明确的无链接绝对目录")
-    table = load_app_table(backend, {"APP_ENV": os.environ.get("APP_ENV")}, config_dir=source_config_dir)
-    api_id = table.get("snowflake_worker_id")
-    if type(api_id) is not int or not 0 <= api_id <= 1023 or api_id == 2:
-        raise ValueError("API 实例编号无效或与 Worker 编号 2 冲突")
-    files = [source_config_dir / "app.toml", source_config_dir / "app.test.toml"]
-    before = {path.name: file_digest(path) for path in files}
-    for name, worker_id in (("config", api_id), ("worker-config", 2)):
-        destination = directory / name
-        if destination.exists() or destination.is_symlink():
-            raise ValueError("运行配置快照已存在，拒绝覆盖或自动重放")
-        configuration_directory(destination)
-        for source in files:
-            if source.is_symlink() or not source.is_file():
-                raise ValueError("配置来源必须是无链接的普通文件")
-            target = destination / source.name
-            shutil.copyfile(source, target)
-            target.chmod(0o600)
-        environment = destination / "app.test.toml"
-        environment.write_text(instance_text(environment.read_text(encoding="utf-8"), worker_id), encoding="utf-8")
-    if {path.name: file_digest(path) for path in files} != before:
-        raise ValueError("来源配置在快照期间漂移；保留快照并停止登记")
-
-
-def register_runtime(backend: Path, directory: Path, *, source_config_dir: Path | None = None,
+def register_runtime(backend: Path, directory: Path, *,
                      api_config_dir: Path | None = None, worker_config_dir: Path | None = None) -> dict:
     source = full_stack_source_evidence(backend, directory)
     if source is not None and verify_build_evidence(backend, directory)["source"] != source:
         raise ValueError("运行登记使用的源码与构建来源不匹配")
-    if source_config_dir is not None:
-        if api_config_dir is not None or worker_config_dir is not None:
-            raise ValueError("来源配置复制与已绑定双配置目录不能同时指定")
-        from full_stack_ci_support import configuration_directory
-        configuration = directory.parent / f"{directory.name}-configuration"
-        configuration_directory(configuration)
-        prepare_runtime_configuration(backend, configuration, source_config_dir)
-        api_config_dir, worker_config_dir = configuration / "config", configuration / "worker-config"
     contract = runtime_contract(backend, directory, api_config_dir=api_config_dir, worker_config_dir=worker_config_dir)
     path = directory / "runtime.json"
     if path.exists():
