@@ -754,9 +754,9 @@ fn source_registration_context_rejects_wrong_stage_environment_and_tool_drift() 
     );
 }
 
-// 此处只验证正式父入口拒绝未完成的 C69，不把最小导出夹具当作有效 START。
+// 仅验证正式父入口的早拒绝，不把最小导出夹具当作有效 START。
 #[test]
-fn native_generation_recovery_rejects_unqualified_c69_before_claiming_a_new_attempt() {
+fn native_generation_recovery_rejects_c69_replay_before_claiming_a_new_attempt() {
     use crate::cli::{SeedSourceOperation, SeedSourceOptions};
     use crate::recovery::source::evidence::control;
 
@@ -765,9 +765,10 @@ fn native_generation_recovery_rejects_unqualified_c69_before_claiming_a_new_atte
         (Some("StageError"), false),
         (Some("SourceChanged"), true),
         (None, false),
+        (Some("ValueError"), false),
     ] {
         let fixture = Fixture::new();
-        append_unqualified_c69(&fixture, &sources, error_type, published);
+        append_c69(&fixture, &sources, error_type, published);
         let before = snapshot(&fixture.run);
         let options = SeedSourceOptions {
             operation: SeedSourceOperation::GenerationRecover,
@@ -776,10 +777,12 @@ fn native_generation_recovery_rejects_unqualified_c69_before_claiming_a_new_atte
             write: true,
         };
         let error = control::run(&fixture.backend, &options).unwrap_err();
-        let expected = if error_type.is_some() {
-            "C69 谱系恢复失败或未发布，不能授权重试"
-        } else {
-            "源控制预检不能接管正在运行的阶段，保留控制器现场"
+        let expected = match error_type {
+            Some("ValueError") => {
+                "C69 已形成固定只读授权证据；禁止重复采集，下一阶段只能执行 C70 START"
+            }
+            Some(_) => "C69 谱系恢复失败或未发布，不能授权重试",
+            None => "源控制预检不能接管正在运行的阶段，保留控制器现场",
         };
         assert_eq!(error.to_string(), expected);
         assert_eq!(snapshot(&fixture.run), before);
@@ -791,28 +794,11 @@ fn native_generation_recovery_rejects_unqualified_c69_before_claiming_a_new_atte
         );
         assert!(!fixture.run.join("run.lock").exists());
         assert!(!fixture.run.join("results/0070.json").exists());
+        assert!(!fixture.run.join("g0070").exists());
     }
 }
 
-fn append_unqualified_c69(
-    fixture: &Fixture,
-    sources: &Value,
-    error_type: Option<&str>,
-    published: bool,
-) {
-    for expected in 1..=68 {
-        let (number, _) = state::begin(&fixture.run, "post-copy", "run", sources).unwrap();
-        assert_eq!(number, expected);
-        state::finish(&fixture.run, number, None, Some("StageError")).unwrap();
-    }
-    let (number, _) = state::begin(
-        &fixture.run,
-        "seed-runtime",
-        "source-generation-recover",
-        sources,
-    )
-    .unwrap();
-    assert_eq!(number, 69);
+fn append_c69(fixture: &Fixture, sources: &Value, error_type: Option<&str>, published: bool) {
     let output = fixture.run.join("seed-runtime/attempt-0069");
     fs::create_dir_all(&output).unwrap();
     fs::write(
@@ -820,15 +806,28 @@ fn append_unqualified_c69(
         b"{\"partial\":true}\n",
     )
     .unwrap();
-    if let Some(error_type) = error_type {
-        let receipt = json!({"status":"unqualified-local-result"});
-        state::finish(
-            &fixture.run,
-            number,
-            published.then_some(&receipt),
-            Some(error_type),
-        )
-        .unwrap();
+    for expected in 1..=69 {
+        let (stage, mode, failure) = match expected {
+            68 if error_type == Some("ValueError") => {
+                let start = fixture.run.join("g0068");
+                fs::create_dir(&start).unwrap();
+                fs::write(start.join("intent.json"), b"must not be read\n").unwrap();
+                (
+                    "seed-runtime",
+                    "source-generation-start",
+                    Some("ValueError"),
+                )
+            }
+            69 => ("seed-runtime", "source-generation-recover", error_type),
+            _ => ("post-copy", "run", Some("StageError")),
+        };
+        let (number, _) = state::begin(&fixture.run, stage, mode, sources).unwrap();
+        assert_eq!(number, expected);
+        if let Some(failure) = failure {
+            let result =
+                (number == 69 && published).then(|| json!({"status":"unqualified-local-result"}));
+            state::finish(&fixture.run, number, result.as_ref(), Some(failure)).unwrap();
+        }
     }
 }
 
