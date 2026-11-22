@@ -10,6 +10,7 @@ mod model;
 mod redis_store;
 
 use ryframe_kernel::{AppError, AppResult};
+use time::OffsetDateTime;
 
 use crate::RedisClient;
 
@@ -76,7 +77,7 @@ impl RefreshSessionStore {
         if sid.is_empty() {
             return Ok(false);
         }
-        let now = chrono::Utc::now().timestamp();
+        let now = OffsetDateTime::now_utc().unix_timestamp();
         match &self.redis {
             Some(redis) => redis.revoke(sid, now).await,
             None => self.memory.revoke(sid, now),
@@ -91,7 +92,7 @@ impl RefreshSessionStore {
         if tenant_id.is_empty() || sid.is_empty() {
             return Ok(false);
         }
-        let now = chrono::Utc::now().timestamp();
+        let now = OffsetDateTime::now_utc().unix_timestamp();
         match &self.redis {
             Some(redis) => redis.revoke_for_tenant(tenant_id, sid, now).await,
             None => self.memory.revoke_for_tenant(tenant_id, sid, now),
@@ -110,7 +111,7 @@ impl RefreshSessionStore {
         if tenant_id.is_empty() || sid.is_empty() {
             return Ok(RefreshSessionRevocation::NotFoundOrForeign);
         }
-        let now = chrono::Utc::now().timestamp();
+        let now = OffsetDateTime::now_utc().unix_timestamp();
         match &self.redis {
             Some(redis) => redis.revoke_for_user(tenant_id, user_id, sid, now).await,
             None => self.memory.revoke_for_user(tenant_id, user_id, sid, now),
@@ -143,7 +144,7 @@ impl RefreshSessionStore {
                 "一次最多撤销 {MAX_BULK_SESSION_CANDIDATES} 个登录设备"
             )));
         }
-        let now = chrono::Utc::now().timestamp();
+        let now = OffsetDateTime::now_utc().unix_timestamp();
         match &self.redis {
             Some(redis) => {
                 redis
@@ -168,7 +169,7 @@ impl RefreshSessionStore {
         if sid.is_empty() {
             return Ok(None);
         }
-        let now = chrono::Utc::now().timestamp();
+        let now = OffsetDateTime::now_utc().unix_timestamp();
         match &self.redis {
             Some(redis) => redis.identity(sid, now).await,
             None => self.memory.identity(sid, now),
@@ -185,7 +186,7 @@ impl RefreshSessionStore {
         if sid.is_empty() || tenant_id.is_empty() {
             return Ok(false);
         }
-        let now = chrono::Utc::now().timestamp();
+        let now = OffsetDateTime::now_utc().unix_timestamp();
         match &self.redis {
             Some(redis) => {
                 redis
@@ -209,7 +210,7 @@ impl RefreshSessionStore {
         if tenant_id.is_empty() {
             return Ok(Vec::new());
         }
-        let now = chrono::Utc::now().timestamp();
+        let now = OffsetDateTime::now_utc().unix_timestamp();
         match &self.redis {
             Some(redis) => redis.session_sids_for_user(tenant_id, user_id, now).await,
             None => self.memory.session_sids_for_user(tenant_id, user_id, now),
@@ -221,7 +222,7 @@ impl RefreshSessionStore {
         if tenant_id.is_empty() {
             return Ok(Vec::new());
         }
-        let now = chrono::Utc::now().timestamp();
+        let now = OffsetDateTime::now_utc().unix_timestamp();
         match &self.redis {
             Some(redis) => redis.session_sids_for_tenant(tenant_id, now).await,
             None => self.memory.session_sids_for_tenant(tenant_id, now),

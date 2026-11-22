@@ -1,7 +1,8 @@
 use ryframe_kernel::{AppError, AppResult};
+use time::OffsetDateTime;
 
 pub(super) fn ensure_not_expired(absolute_exp: i64) -> AppResult<()> {
-    if absolute_exp <= chrono::Utc::now().timestamp() {
+    if absolute_exp <= OffsetDateTime::now_utc().unix_timestamp() {
         return Err(AppError::Authentication("refresh session expired".into()));
     }
     Ok(())

@@ -1,11 +1,11 @@
 use std::{fmt, io::SeekFrom, path::Path, time::Duration};
 
 use async_trait::async_trait;
-use chrono::Utc;
 use futures_util::{StreamExt, stream};
 use reqwest::{Body, Method, RequestBuilder, Response, Url};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use time::OffsetDateTime;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tracing::Instrument;
 mod object_storage;
@@ -266,7 +266,7 @@ impl S3ObjectStorage {
         payload_hash: &str,
         canned_acl: Option<&str>,
     ) -> StorageResult<RequestBuilder> {
-        let amz_date = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+        let amz_date = format_sigv4_date(OffsetDateTime::now_utc());
         let authorization = SigV4Signer {
             access_key: &self.access_key,
             secret_key: &self.secret_key,
@@ -375,5 +375,31 @@ impl S3ObjectStorage {
             body.extend_from_slice(&chunk);
         }
         Ok(body)
+    }
+}
+
+fn format_sigv4_date(now: OffsetDateTime) -> String {
+    format!(
+        "{:04}{:02}{:02}T{:02}{:02}{:02}Z",
+        now.year(),
+        u8::from(now.month()),
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second()
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_sigv4_date;
+    use time::{Date, Month};
+
+    #[test]
+    fn sigv4_date_uses_fixed_width_utc_components() {
+        let date = Date::from_calendar_date(2027, Month::January, 5).unwrap();
+        let timestamp = date.with_hms(3, 4, 5).unwrap().assume_utc();
+
+        assert_eq!(format_sigv4_date(timestamp), "20270105T030405Z");
     }
 }

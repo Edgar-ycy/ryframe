@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use dashmap::DashMap;
 use ryframe_kernel::{AppError, AppResult};
+use time::OffsetDateTime;
 
 use super::{
     CONCURRENT_GRACE_SECONDS, MAX_BULK_SESSION_CANDIDATES, RefreshFamily, RefreshRotation,
@@ -36,7 +37,7 @@ impl MemoryRefreshSessionStore {
 
     pub(super) fn register(&self, family: RefreshFamily) -> AppResult<()> {
         let _mutation_guard = self.lock_mutations()?;
-        let now = chrono::Utc::now().timestamp();
+        let now = OffsetDateTime::now_utc().unix_timestamp();
         let already_active = self.families.get(&family.sid).is_some_and(|existing| {
             !existing.revoked
                 && existing.absolute_exp > now
