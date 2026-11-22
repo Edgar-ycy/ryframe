@@ -118,6 +118,9 @@ enum Fault {
     HeadRawChanged,
     RepeatedCursor,
     ExtraAfter,
+    MissingBefore,
+    ExtraBefore,
+    DuplicateBefore,
 }
 
 const HEAD_BATCH_SIZE: usize = 4;
@@ -238,7 +241,10 @@ impl<'a> FakeS3<'a> {
             return json!({"IsTruncated":false,"Contents":[owner]});
         }
         if continuation.is_none() {
-            self.uploads_pass.fetch_add(1, Ordering::SeqCst);
+            let first_listing = self.uploads_pass.fetch_add(1, Ordering::SeqCst) == 0;
+            if first_listing && self.fault == Fault::DuplicateBefore {
+                return json!({"IsTruncated":true,"Contents":[owner.clone(),owner],"NextContinuationToken":"page+2"});
+            }
             return json!({"IsTruncated":true,"Contents":[owner],"NextContinuationToken":"page+2"});
         }
         assert_eq!(continuation.as_deref(), Some("page+2"));
@@ -251,6 +257,13 @@ impl<'a> FakeS3<'a> {
             .collect::<Vec<_>>();
         if self.fault == Fault::ExtraAfter && self.uploads_pass.load(Ordering::SeqCst) == 2 {
             contents.push(json!({"Key":format!("{SCOPE}/unexpected")}));
+        }
+        if self.uploads_pass.load(Ordering::SeqCst) == 1 {
+            match self.fault {
+                Fault::MissingBefore => contents.clear(),
+                Fault::ExtraBefore => contents.push(json!({"Key":format!("{SCOPE}/unexpected")})),
+                _ => {}
+            }
         }
         json!({"IsTruncated":false,"Contents":contents})
     }
@@ -681,6 +694,81 @@ fn duplicate_cursor_and_changed_final_key_set_fail_with_raw_proofs() {
         assert_eq!(fixture.proof("failure.json")["stage"], stage);
         assert!(fixture.directory.join(name).exists());
         assert!(!fixture.directory.join("observation.json").exists());
+    }
+}
+
+#[test]
+fn first_source_listing_rejects_missing_extra_and_repeated_keys_before_heads() {
+    let owner = json!({"Key":format!("{SCOPE}/.ryframe-owner")});
+    for (fault, index, page) in [
+        (
+            Fault::MissingBefore,
+            1,
+            json!({"IsTruncated":false,"Contents":[]}),
+        ),
+        (
+            Fault::ExtraBefore,
+            1,
+            json!({"IsTruncated":false,"Contents":[{"Key":key(0)},{"Key":format!("{SCOPE}/unexpected")}]}),
+        ),
+        (
+            Fault::DuplicateBefore,
+            0,
+            json!({"IsTruncated":true,"Contents":[owner.clone(),owner],"NextContinuationToken":"page+2"}),
+        ),
+    ] {
+        let fixture = Fixture::new(1);
+        let fake = FakeS3::new(&fixture, fault);
+        let error = observe(
+            fixture.request(),
+            Selection::All {
+                verify_proofs: &|| panic!("首次清单失败必须停止后续核验"),
+            },
+            &fake,
+            &|| Ok(()),
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().starts_with(
+                "源对象只读观察未通过（complete_listing_before），保留已写证据，禁止重试："
+            ),
+            "{error}"
+        );
+        assert_eq!(
+            fixture.proof("failure.json"),
+            json!({"status":"source_object_observation_failed","stage":"complete_listing_before",
+                "error_type":"SourceObjectObservationError","export_binding":fixture.export,
+                "remote_writes":0,"clone_verified":false,"restore_qualified":false})
+        );
+        let raw = format!("list-before-{BUCKET}-{index}");
+        assert_eq!(fixture.proof(&format!("{raw}.json")), page);
+        assert_eq!(
+            fixture.proof(&format!("{raw}.diagnostic.json")),
+            json!({"operation":"list-objects-v2","returned":true,"checkpoint_passed":true})
+        );
+        assert!(!fixture.directory.join("observation.json").exists());
+
+        // 夹具遇到任何写入会立即失败，首次清单失败时应只有归属读取与分页。
+        let calls = fake.calls.lock().unwrap();
+        assert!(
+            calls
+                .iter()
+                .all(|call| matches!(call, Call::Owner(_) | Call::List(..)))
+        );
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|call| matches!(call, Call::Owner(_)))
+                .count(),
+            BUCKETS.len()
+        );
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|call| matches!(call, Call::List(bucket, _) if bucket == BUCKET))
+                .count(),
+            index + 1
+        );
     }
 }
 

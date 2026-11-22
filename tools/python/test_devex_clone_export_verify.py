@@ -54,8 +54,7 @@ class ExportVerificationTests(unittest.TestCase):
         self.binding = {"path": str(item.output / "export.json"), **file_digest(item.output / "export.json")}
         self.environment = dict(item.environment)
         self.calls, self.effect = [], None
-        self.missing = self.extra = self.duplicate = self.cycle = False
-        self.paginated = self.wrong_owner = self.head_changed = False
+        self.wrong_owner = self.head_changed = False
         self.outcome = None
         self.observation = item.local / "source-observation"
         self.tools = ExternalTools({"source": copy.deepcopy(item.request["source"]), "tools": item.request["tools"]}, item.local, self.run_read)
@@ -102,17 +101,8 @@ class ExportVerificationTests(unittest.TestCase):
         if operation == "list-objects-v2":
             self.assertEqual(command[-1], "__s3-inspect")
             self.assertEqual(request["prefix"], scope)
-            keys = [scope + ".ryframe-owner"] + ([scope + "system/file.txt"] if bucket == "uploads" and not self.missing else [])
-            if self.extra and bucket == "uploads":
-                keys.append(scope + "system/unregistered.txt")
-            if self.duplicate:
-                keys.append(keys[0])
+            keys = [scope + ".ryframe-owner"] + ([scope + "system/file.txt"] if bucket == "uploads" else [])
             page = {"IsTruncated": False, "Contents": [{"Key": key} for key in keys]}
-            if self.paginated and bucket == "uploads":
-                continued = request["continuation"] is not None
-                page["Contents"] = [{"Key": keys[-1] if continued else keys[0]}]
-                if not continued or self.cycle:
-                    page.update(IsTruncated=True, NextContinuationToken="next-page")
             return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "result": page}).encode(), b"")
         key = request["key"]
         self.assertTrue(key.startswith(scope))
@@ -467,16 +457,6 @@ class ExportVerificationTests(unittest.TestCase):
         self.calls = []
         self.failed_observation(loaded, single=True)
         self.assertEqual(self.calls, [])
-
-    def test_missing_extra_duplicate_and_looping_source_lists_fail(self):
-        loaded = self.load()
-        for index, flag in enumerate(("missing", "extra", "duplicate", "cycle")):
-            with self.subTest(flag=flag):
-                self.observation = self.fixture.local / f"list-failure-{index}"
-                self.paginated = flag == "cycle"
-                setattr(self, flag, True)
-                self.failed_observation(loaded)
-                setattr(self, flag, False)
 
     def test_changed_head_metadata_is_never_adopted(self):
         self.head_changed = True
