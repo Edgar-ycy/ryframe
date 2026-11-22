@@ -398,15 +398,6 @@ class TransferTests(unittest.TestCase):
                 engine.finish()
         self.assertEqual(len(self.writes()), 1)
 
-    def test_finished_ledger_receipt_failure_cannot_publish_data_success(self):
-        with self.assertRaises(ExceptionGroup), self.open():
-            engine = self.engine()
-            self.apply_all(engine)
-            engine.finish()
-            self.ledger._publish = lambda: (_ for _ in ()).throw(OSError("fixture receipt failure"))
-        with self.assertRaises(ValueError):
-            engine.result()
-
     def test_target_started_or_source_running_denies_write(self):
         original = self.guard.generation
         with self.open():

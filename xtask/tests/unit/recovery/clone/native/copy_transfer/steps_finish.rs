@@ -1,8 +1,8 @@
-use std::{collections::BTreeSet, fs, path::Path};
+use std::{collections::BTreeSet, fs, io::Write, path::Path};
 
 use super::*;
 use crate::recovery::clone::native::{
-    copy_ledger::check_continuation,
+    copy_ledger::{check_continuation, inspect},
     copy_owner::{Owner, Role},
     copy_transfer::{publication::Attempt, record::Prepared},
 };
@@ -140,6 +140,17 @@ pub(super) fn run_published_copy(
     mode: Mode,
     io: &mut FixtureIo,
 ) -> Result<(Value, Value)> {
+    run_published_copy_after_steps(fixture, prepared, plan, mode, io, |_| Ok(()))
+}
+
+fn run_published_copy_after_steps(
+    fixture: &Fixture,
+    prepared: &Prepared,
+    plan: &Plan<'_>,
+    mode: Mode,
+    io: &mut FixtureIo,
+    after_steps: impl FnOnce(&Owner) -> Result<()>,
+) -> Result<(Value, Value)> {
     let target_lock = fixture.backend.join(".local-tests/target/initialize.lock");
     let ledger_lock = fixture.copy.join("ledger/clone.lock");
     let attempt = Attempt::new(mode, &fixture.copy);
@@ -151,7 +162,9 @@ pub(super) fn run_published_copy(
                 assert_eq!(owner.lock_path(role), lock.as_path());
                 assert!(lock.is_dir());
             }
-            run(plan, session, mode, io)
+            let outcome = run(plan, session, mode, io)?;
+            after_steps(owner)?;
+            Ok(outcome)
         },
         |(outcome, ledger)| {
             assert!(!target_lock.try_exists()?);
@@ -172,6 +185,93 @@ pub(super) fn run_published_copy(
     }
     let (_, ledger) = attempt.failure(&fixture.backend, &fixture.copy, transfer, "transfer")?;
     Ok((published.unwrap(), ledger))
+}
+
+#[test]
+fn finished_copy_cannot_publish_data_success_after_ledger_receipt_failure() {
+    let fixture = Fixture::new();
+    let mut declaration = four_database_declaration(1);
+    declaration["pending_target_actions"] = json!([]);
+    let prepared = Prepared::from_test_session(&fixture.copy, declaration).unwrap();
+    let plan = Plan::from_verified(&prepared.plan).unwrap();
+    let mut io = FixtureIo::new(&plan);
+    database_writes(&mut io, &plan.databases[..2]);
+    let expected_writes = [
+        plan.databases[0].id.clone(),
+        plan.databases[1].id.clone(),
+        plan.objects[0].id.clone(),
+    ];
+    let ledger = fixture.copy.join("ledger");
+    let original_receipt = b"original conflicting receipt\n";
+    let mut conflict = None;
+    run_published_copy_after_steps(&fixture, &prepared, &plan, Mode::New, &mut io, |owner| {
+        let path = ledger.join(format!("complete-{}.json", owner.session_id()));
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)?
+            .write_all(original_receipt)?;
+        conflict = Some(path);
+        Ok(())
+    })
+    .unwrap_err();
+
+    assert_eq!(fs::read(conflict.unwrap()).unwrap(), original_receipt);
+    assert_eq!(completion_count(&ledger), 1);
+    assert_eq!(io.writes, expected_writes);
+    assert_eq!(io.complete_checks, 1);
+    let saved = inspect(
+        &fixture.backend,
+        &ledger,
+        prepared.record["plan_sha256"].as_str().unwrap(),
+        prepared.record["generation_sha256"].as_str().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved["status"], "needs_reconciliation");
+    assert!(saved["completed_at"].is_null());
+    assert_eq!(
+        saved["steps"].as_object().unwrap().len(),
+        expected_writes.len()
+    );
+    for id in expected_writes {
+        assert_eq!(saved["steps"][&id]["phase"], "confirmed");
+        assert_eq!(saved["steps"][&id]["attempt"], 1);
+        assert_eq!(io.current[&id], io.bases[&id]["after"]);
+    }
+
+    let journal = fs::read_to_string(ledger.join("events.ndjson")).unwrap();
+    let mut events = journal
+        .lines()
+        .rev()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap());
+    assert_eq!(
+        events.next().unwrap()["event"],
+        json!({"type":"fault","stage":"receipt_write"})
+    );
+    let closed = &events.next().unwrap()["event"];
+    assert_eq!(closed["type"], "closed");
+    assert_eq!(closed["outcome"], "publishing");
+    assert!(!ledger.join("clone.lock").try_exists().unwrap());
+    assert!(
+        !fixture
+            .backend
+            .join(".local-tests/target/initialize.lock")
+            .try_exists()
+            .unwrap()
+    );
+    assert!(!fixture.copy.join("result.json").try_exists().unwrap());
+    let failure = document::read(&fixture.copy.join("failure.json")).unwrap();
+    assert_eq!(failure["kind"], "devex-copy-failure");
+    assert_eq!(failure["phase"], "transfer");
+    assert_eq!(failure["status"], "needs_reconciliation");
+    for field in [
+        "automatic_retry",
+        "automatic_resource_cleanup",
+        "target_ready",
+        "restore_success",
+    ] {
+        assert_eq!(failure[field], false);
+    }
 }
 
 #[test]
