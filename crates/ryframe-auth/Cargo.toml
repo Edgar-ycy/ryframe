@@ -13,7 +13,7 @@ ryframe-kernel = { path = "../ryframe-kernel" }
 jsonwebtoken = { workspace = true, features = ["aws_lc_rs"] }
 argon2 = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-chrono = { workspace = true, features = ["serde"] }
+time = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 lazy_static = { workspace = true }
 sha2 = { workspace = true }

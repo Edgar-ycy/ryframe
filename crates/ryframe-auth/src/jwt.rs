@@ -1,8 +1,8 @@
-use chrono::Utc;
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use ryframe_kernel::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 use std::{num::IntErrorKind, sync::Arc};
+use time::OffsetDateTime;
 
 /// JWT 签名与有效期设置。
 ///
@@ -181,7 +181,7 @@ fn expiration_at(now: usize, ttl: usize, source: &str) -> AppResult<usize> {
 }
 
 fn current_timestamp() -> usize {
-    Utc::now().timestamp() as usize
+    OffsetDateTime::now_utc().unix_timestamp() as usize
 }
 
 fn new_jti() -> String {

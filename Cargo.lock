@@ -3335,13 +3335,13 @@ name = "ryframe-auth"
 version = "0.13.1"
 dependencies = [
  "argon2",
- "chrono",
  "hex",
  "jsonwebtoken",
  "lazy_static",
  "ryframe-kernel",
  "serde",
  "sha2 0.11.0",
+ "time",
  "uuid",
 ]
 
