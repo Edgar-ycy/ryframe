@@ -4,7 +4,10 @@ use crate::{
     Result,
     ci::databases::files,
     local_test_path::{LocalTestPathKind, validate_absolute_path},
-    recovery::{clone::native::json as document, fixture_control},
+    recovery::{
+        clone::native::json as document, fixture_control,
+        source::evidence::generation_request::configuration as source_configuration,
+    },
 };
 use serde_json::{Value, json};
 use std::{
@@ -12,6 +15,10 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
 };
+
+#[cfg(test)]
+#[path = "../../../../../tests/unit/recovery/source/runtime/control/configuration.rs"]
+mod tests;
 
 pub(super) enum Selection<'a> {
     Copy(&'a Path),
@@ -52,6 +59,12 @@ pub(super) fn register(
 
 fn copy(guard: &Path, output: &Path, source: &Path) -> Result<(PathBuf, PathBuf)> {
     validate_absolute_path(source, LocalTestPathKind::ExistingDirectory)?;
+    let before = source_configuration::capture(guard, source)?;
+    copy_captured(guard, output, &before)
+}
+
+fn copy_captured(guard: &Path, output: &Path, before: &Value) -> Result<(PathBuf, PathBuf)> {
+    let source = Path::new(document::text(&before["directory"], "来源配置目录")?);
     let backend = source.parent().ok_or("源配置缺少执行根")?;
     let table = crate::rate_limit::load_app_table(backend, Some(source), "test")
         .map_err(|_| "源配置读取失败；检查显式 app.test.toml，不回显配置正文")?;
@@ -61,9 +74,6 @@ fn copy(guard: &Path, output: &Path, source: &Path) -> Result<(PathBuf, PathBuf)
         .filter(|value| (0..=1023).contains(value) && *value != 2)
         .ok_or("源 API 实例编号无效或与 Worker 编号2冲突")?;
     let names = ["app.toml", "app.test.toml"];
-    let before = crate::recovery::source::evidence::generation_request::configuration::capture(
-        guard, source,
-    )?;
     files::private_directory(output)
         .map_err(|_| "无法创建私有恢复配置目录；检查已有现场、路径和权限，禁止覆盖")?;
     for (name, id) in [("config", u64::try_from(api_id)?), ("worker-config", 2)] {
@@ -94,9 +104,7 @@ fn copy(guard: &Path, output: &Path, source: &Path) -> Result<(PathBuf, PathBuf)
             write(&destination.join(filename), &bytes)?;
         }
     }
-    if crate::recovery::source::evidence::generation_request::configuration::capture(guard, source)?
-        != before
-    {
+    if source_configuration::capture(guard, source)? != *before {
         return Err(
             "源配置在快照期间漂移，包括原缺省app.toml的出现；保留私有快照，禁止继续或重放".into(),
         );
