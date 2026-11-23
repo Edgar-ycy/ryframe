@@ -3,7 +3,7 @@ use super::evidence::{binding, check, exact, text};
 use crate::{Result, recovery::clone::native::lifecycle::state};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::path::Path;
+use std::{path::Path, rc::Rc};
 
 #[cfg(windows)]
 use crate::recovery::clone::native::target_verify::guard::Inputs;
@@ -82,7 +82,7 @@ impl Ledger {
 pub(super) struct Snapshot<'a> {
     run: &'a Path,
     ledger: Ledger,
-    prefixes: state::prefix::PrefixIndex,
+    prefixes: Rc<state::prefix::PrefixIndex>,
     #[cfg(windows)]
     protection: Inputs,
 }
@@ -95,7 +95,7 @@ impl<'a> Snapshot<'a> {
         ledger.check_binding(run)?;
         #[cfg(windows)]
         protection.check()?;
-        let prefixes = state::prefix::PrefixIndex::new(&ledger.raw)?;
+        let prefixes = state::prefix::PrefixIndex::shared(&ledger.raw)?;
         Ok(Self {
             run,
             ledger,
