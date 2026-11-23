@@ -55,14 +55,7 @@ impl<T: Transport> Collector<'_, T> {
         args.extend(["--execute".into(), sql.into()]);
         let result = self.transport.run(self.spec(args, None, stdout.target()?)?);
         let snapshot = stdout.snapshot();
-        let mut receipt = evidence::mysql_receipt(db, check, &stdout, &result, &snapshot);
-        if result.as_ref().is_ok_and(|output| output.status.success())
-            && snapshot
-                .as_ref()
-                .is_ok_and(|snapshot| std::str::from_utf8(&snapshot.raw).is_err())
-        {
-            receipt["error_type"] = json!("UnicodeDecodeError");
-        }
+        let receipt = evidence::mysql_receipt(db, check, &stdout, &result, &snapshot);
         let receipt_path = self.inputs.work.join(format!("{name}.json"));
         native::json::write_new(&receipt_path, &receipt)?;
         let binding = native::resources::common::binding(&receipt_path)?;

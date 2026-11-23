@@ -29,6 +29,7 @@ mod publication;
 const SCOPE: &str = "database-native-fixture";
 const KEYS: [&str; 4] = ["shared-control", "shared", "dedicated-a", "dedicated-b"];
 const UUID: &str = "67cd8d4a-fe90-11ef-98fd-5847ca786499";
+const INVALID_UTF8: &[u8] = b"fixture-secret\xff\n";
 
 struct Fixture {
     _directory: tempfile::TempDir,
@@ -268,6 +269,8 @@ impl Transport for Fake<'_> {
                     Vec::new()
                 } else if self.effect == "whitespace" {
                     b"\n".to_vec()
+                } else if self.effect == "invalid-utf8" {
+                    INVALID_UTF8.to_vec()
                 } else {
                     format!(
                         "{}\t{name}\n",
@@ -558,6 +561,30 @@ fn only_exact_empty_success_gets_one_identity_retry() {
             .count(),
         1
     );
+}
+
+#[test]
+fn invalid_utf8_keeps_raw_stdout_and_failure_receipt_without_retry() {
+    let fixture = Fixture::new();
+    let transport = Fake::new(&fixture, "invalid-utf8");
+    let Err(error) = database::capture_with(&fixture.context, &transport, &|| Ok(())) else {
+        panic!("无效 UTF-8 不能通过库存核验");
+    };
+    assert_eq!(error.to_string(), "MySQL 核验输出不是 UTF-8");
+    assert_eq!(transport.identities.get(), 1);
+    let mysql = fs::read_dir(fixture.context.observation_dir.join("inventory"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .map(|path| json_io::read(&path).unwrap())
+        .find(|receipt| receipt["kind"] == "mysql-verification-output")
+        .unwrap();
+    assert_eq!(mysql["returncode"], 0);
+    assert_eq!(mysql["error_type"], "UnicodeDecodeError");
+    assert!(!mysql.to_string().contains("fixture-secret"));
+    let raw = Path::new(mysql["stdout_file"]["path"].as_str().unwrap());
+    assert_eq!(fs::read(raw).unwrap(), INVALID_UTF8);
+    assert_eq!(mysql["stdout_file"], bound(raw));
 }
 
 fn native_inventory_request(

@@ -487,7 +487,12 @@ pub(crate) fn mysql_receipt(
     };
     let mut receipt = json!({"format_version": 1, "kind": "mysql-verification-output", "check": check, "target_key": database["key"], "returncode": code, "error_type": error_type, "stderr_bytes": stderr.map(<[u8]>::len), "stderr_sha256": stderr.map(|bytes| bytes_descriptor(bytes)["sha256"].clone()), "stdout_file": {"path": output.path()}});
     match snapshot {
-        Ok(snapshot) => receipt["stdout_file"] = snapshot.artifact.clone(),
+        Ok(snapshot) => {
+            receipt["stdout_file"] = snapshot.artifact.clone();
+            if error_type.is_none() && std::str::from_utf8(&snapshot.raw).is_err() {
+                receipt["error_type"] = json!("UnicodeDecodeError");
+            }
+        }
         Err(error) => {
             receipt["stdout_capture_error"] = json!(error.kind());
             if error_type.is_none() {
