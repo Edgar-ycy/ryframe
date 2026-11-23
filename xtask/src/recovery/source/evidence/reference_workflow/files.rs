@@ -15,8 +15,7 @@ pub(super) fn work(args: &Value, create: bool) -> Result<Value> {
     let work = path(&plan["work_dir"])?;
     inputs::domain::identifier(text(&plan["id"])?)?;
     unlinked(work)?;
-    let owner =
-        json!({"format_version":1,"id":plan["id"],"plan_sha256":native::digest::plan_hash(plan)?});
+    let owner = work_owner(plan)?;
     if work.exists() {
         if native::json::read(&work.join("reference-owner.json"))? != owner {
             return Err("演练目录已存在且ownership不匹配".into());
@@ -31,6 +30,10 @@ pub(super) fn work(args: &Value, create: bool) -> Result<Value> {
         return Err("参考环境目录没有对应的计划ownership".into());
     }
     Ok(json!(work))
+}
+
+pub(super) fn work_owner(plan: &Value) -> Result<Value> {
+    Ok(json!({"format_version":1,"id":plan["id"],"plan_sha256":native::digest::plan_hash(plan)?}))
 }
 
 fn roots(args: &Value) -> Result<(&Path, &Path)> {

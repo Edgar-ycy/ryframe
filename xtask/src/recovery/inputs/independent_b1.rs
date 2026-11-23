@@ -8,7 +8,7 @@ use super::{
     comparison,
     document::{self, Document, exact, object, text},
     fresh::{self, Fresh},
-    reference,
+    reference::{self, IndependentWork},
 };
 use crate::{
     Result, cli::RestoreInputSide,
@@ -17,6 +17,7 @@ use crate::{
 
 pub(in crate::recovery) struct Verified<'a> {
     backend: &'a Path,
+    work: IndependentWork<'a>,
     pub(super) envelope: &'a Document,
     pub(super) reference: Value,
     pub(in crate::recovery) backup: Backup,
@@ -32,9 +33,27 @@ impl<'a> Verified<'a> {
     pub(in crate::recovery) fn load(
         backend: &'a Path,
         reference_file: &'a Document,
+        inputs: [&Path; 4],
+        side: RestoreInputSide,
+        output: Option<&Path>,
+    ) -> Result<Self> {
+        Self::load_with_work(
+            backend,
+            reference_file,
+            inputs,
+            side,
+            output,
+            IndependentWork::Absent,
+        )
+    }
+
+    pub(super) fn load_with_work(
+        backend: &'a Path,
+        reference_file: &'a Document,
         [backup, comparison, arm, fresh]: [&Path; 4],
         side: RestoreInputSide,
         output: Option<&Path>,
+        work: IndependentWork<'a>,
     ) -> Result<Self> {
         let envelope = independent_reference(&reference_file.value, side)?;
         let (id, work_dir) = reference_location(&envelope["reference_plan"])?;
@@ -49,7 +68,7 @@ impl<'a> Verified<'a> {
         if let Some(output) = output {
             arm.require_disjoint(output)?;
         }
-        let reference = reference::project_independent_b1(backend, id, work_dir, &arm)?;
+        let reference = reference::project_independent_b1(backend, id, work_dir, &arm, work)?;
         if reference != envelope["reference_plan"] {
             return Err("独立 B1 参考计划与原 ARM 重新投影不同".into());
         }
@@ -69,6 +88,7 @@ impl<'a> Verified<'a> {
         )?;
         Ok(Self {
             backend,
+            work,
             envelope: reference_file,
             reference,
             backup,
@@ -91,7 +111,7 @@ impl<'a> Verified<'a> {
 
     pub(in crate::recovery) fn check(&self) -> Result<()> {
         let (id, work_dir) = reference_location(&self.reference)?;
-        if reference::project_independent_b1(self.backend, id, work_dir, &self.arm)?
+        if reference::project_independent_b1(self.backend, id, work_dir, &self.arm, self.work)?
             != self.reference
         {
             return Err("独立 B1 参考计划在核验期间变化".into());

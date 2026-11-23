@@ -15,6 +15,118 @@ pub(super) fn temporary() -> tempfile::TempDir {
     tempfile::tempdir_in(base).unwrap()
 }
 
+fn independent_work_fixture() -> Result<(tempfile::TempDir, PathBuf, Value)> {
+    let fixture = temporary();
+    let backend = crate::recovery::fixture_control::portable_path(&fixture.path().canonicalize()?);
+    let local = backend.join(".local-tests");
+    fs::create_dir(&local)?;
+    let plan = json!({
+        "id":"independent-b1",
+        "target_side":"candidate",
+        "work_dir":local.join("reference"),
+    });
+    Ok((fixture, backend, plan))
+}
+
+#[test]
+fn independent_begin_work_rejects_existing_owner_and_active_preview() -> Result<()> {
+    let (_fixture, backend, plan) = independent_work_fixture()?;
+    let work = path(&plan["work_dir"])?;
+    let window = crate::recovery::runtime::dataset_authority::reads::Window::direct()?;
+    assert!(local::OwnedWork::claim(&backend, &plan).is_err());
+    assert!(!work.exists());
+    window.finish(Ok(()))?;
+    drop(window);
+    files::work(&json!({"plan":plan}), true)?;
+    let owner = work.join("reference-owner.json");
+    let before = fs::read(&owner)?;
+    assert!(local::OwnedWork::claim(&backend, &plan).is_err());
+    assert_eq!(fs::read(owner)?, before);
+    assert!(!work.join(".reference-lock").exists());
+    Ok(())
+}
+
+#[test]
+fn independent_begin_work_rechecks_the_original_owner_and_live_lock() -> Result<()> {
+    let (_fixture, backend, plan) = independent_work_fixture()?;
+    let work = path(&plan["work_dir"])?;
+    let claim = local::OwnedWork::claim(&backend, &plan)?;
+    let owner_path = work.join("reference-owner.json");
+    let owner = json!({
+        "format_version":1, "id":plan["id"], "plan_sha256":native::digest::plan_hash(&plan)?,
+    });
+    assert_eq!(
+        fs::read(&owner_path)?,
+        inputs::document::canonical_bytes(&owner)?
+    );
+    claim.check(work, &plan)?;
+    let directory_identity =
+        native::resources::common::device_inode_for(work, &fs::metadata(work)?)?;
+    let owner_identity =
+        native::resources::common::device_inode_for(&owner_path, &fs::metadata(&owner_path)?)?;
+    let original = inputs::document::read(&owner_path, &backend, "夹具原归属")?;
+    assert_eq!(
+        claim.binding(&backend, &plan)?,
+        json!({
+            "work_dir":work,
+            "directory_identity":{"device":directory_identity.0,"inode":directory_identity.1},
+            "owner":inputs::document::binding(&original),
+            "owner_identity":{"device":owner_identity.0,"inode":owner_identity.1},
+        })
+    );
+    let mut changed = plan.clone();
+    changed["id"] = json!("other");
+    assert!(claim.check(work, &changed).is_err());
+    assert!(claim.binding(&backend, &changed).is_err());
+    assert!(claim.check(&work.join("other"), &plan).is_err());
+
+    let lock = work.join(".reference-lock");
+    fs::rename(&lock, work.join("previous-reference-lock"))?;
+    fs::create_dir(&lock)?;
+    assert!(claim.check(work, &plan).is_err());
+    assert!(claim.binding(&backend, &plan).is_err());
+    drop(claim);
+    assert!(lock.is_dir());
+    assert!(local::OwnedWork::claim(&backend, &plan).is_err());
+    Ok(())
+}
+
+#[test]
+fn independent_begin_work_guards_against_owner_and_directory_replacement() -> Result<()> {
+    let (_fixture, backend, plan) = independent_work_fixture()?;
+    let work = path(&plan["work_dir"])?;
+    let claim = local::OwnedWork::claim(&backend, &plan)?;
+    let owner = work.join("reference-owner.json");
+    let owner_bytes = fs::read(&owner)?;
+    match fs::rename(&owner, work.join("previous-owner.json")) {
+        Ok(()) => {
+            fs::write(&owner, &owner_bytes)?;
+            assert!(claim.check(work, &plan).is_err());
+        }
+        Err(error) if cfg!(windows) && matches!(error.raw_os_error(), Some(5 | 32)) => {
+            claim.check(work, &plan)?;
+        }
+        Err(error) => return Err(error.into()),
+    }
+    drop(claim);
+
+    let (_fixture, backend, plan) = independent_work_fixture()?;
+    let work = path(&plan["work_dir"])?;
+    let claim = local::OwnedWork::claim(&backend, &plan)?;
+    match fs::rename(work, work.with_file_name("previous-reference")) {
+        Ok(()) => {
+            files::work(&json!({"plan":plan}), true)?;
+            let _other = local::Lock::claim(work)?;
+            assert!(claim.check(work, &plan).is_err());
+        }
+        Err(error) if cfg!(windows) && matches!(error.raw_os_error(), Some(5 | 32)) => {
+            claim.check(work, &plan)?;
+        }
+        Err(error) => return Err(error.into()),
+    }
+    Ok(())
+}
+
 pub(super) struct Fixture {
     _directory: tempfile::TempDir,
     pub(super) plan: Value,

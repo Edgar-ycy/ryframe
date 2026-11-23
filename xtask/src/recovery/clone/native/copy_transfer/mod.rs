@@ -19,4 +19,5 @@ pub(crate) mod verify_target_objects;
 
 pub(crate) use marker_recovery::MarkerRecovery;
 pub(crate) use runner::Runner;
+pub(in crate::recovery) use target_port::IndependentTargetBinding;
 pub(crate) use target_port::ReferenceTarget;

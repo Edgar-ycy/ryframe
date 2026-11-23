@@ -82,6 +82,28 @@ fn registered_inputs_require_the_exact_target_descriptor() {
 }
 
 #[test]
+fn independent_stopped_runtime_refuses_an_ordinary_registered_reference() -> Result<()> {
+    let fixture = Fixture::new();
+    let mut inputs = Inputs::new(&fixture.backend);
+    let bound = Bound::read(
+        &fixture.backend,
+        &fixture.registration,
+        &fixture.binding["target_plan"],
+        &mut inputs,
+    )?;
+    let error = bound.check_independent(&fixture.backend, &inputs, None, &|_, _| {
+        panic!("普通登记不能调用独立工作目录归属回调")
+    });
+    assert_eq!(
+        error.unwrap_err().to_string(),
+        "独立 B1 开始登记必须使用原独立参考计划"
+    );
+    assert!(!crate::recovery::runtime::dataset_authority::reads::is_active());
+    assert!(!fixture.control.join(REGISTRATION_LOCK).exists());
+    Ok(())
+}
+
+#[test]
 fn checkpoints_hold_the_exact_restore_owner_and_repeat_on_exit() {
     let fixture = Fixture::new();
     let owner_path = fixture.control.join(REGISTRATION_LOCK).join("owner.json");
@@ -116,6 +138,47 @@ fn checkpoints_hold_the_exact_restore_owner_and_repeat_on_exit() {
     assert_eq!(calls.get(), 3);
     assert_eq!(reply, fixture.binding);
     assert!(!owner_path.exists());
+}
+
+#[test]
+fn independent_stopped_runtime_rechecks_the_same_owner_before_during_and_after() -> Result<()> {
+    let fixture = Fixture::new();
+    let owner_path = fixture.control.join(REGISTRATION_LOCK).join("owner.json");
+    let owner_bytes = std::cell::RefCell::new(None);
+    let checks = Cell::new(0);
+    let result = with_independent_owner(
+        &fixture.control,
+        &fixture.binding,
+        |owner| {
+            owner.check()?;
+            let bytes = fs::read(&owner_path)?;
+            let mut previous = owner_bytes.borrow_mut();
+            if let Some(expected) = previous.as_ref() {
+                assert_eq!(&bytes, expected);
+            } else {
+                let receipt: Value = serde_json::from_slice(&bytes)?;
+                let registration = fixture.binding["registration"]["sha256"].as_str().unwrap();
+                let target = fixture.binding["target_plan"]["sha256"].as_str().unwrap();
+                assert_eq!(
+                    receipt["operation"],
+                    format!("restore:{registration}:{target}")
+                );
+                *previous = Some(bytes);
+            }
+            checks.set(checks.get() + 1);
+            Ok(())
+        },
+        |checkpoint| {
+            assert_eq!(checks.get(), 1);
+            assert_eq!(checkpoint()?, fixture.binding);
+            assert_eq!(checks.get(), 2);
+            Ok("完成")
+        },
+    )?;
+    assert_eq!(result, "完成");
+    assert_eq!(checks.get(), 3);
+    assert!(!owner_path.exists());
+    Ok(())
 }
 
 #[test]

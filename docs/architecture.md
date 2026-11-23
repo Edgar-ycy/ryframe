@@ -133,7 +133,11 @@ seed 的 source-register 由统一 Rust 阶段控制器直接执行。它实际�
 
 用 `cargo xtask check recovery plan --plan <b1-reference-plan.json> --backup-receipt <same-backup.json> --comparison-sources <comparison-sources.json> --arm-input <independent-run/result.json> --fresh-target-verify <b1-observation/verify.json> --product-plan <b1-product-plan.json>` 预览完整目标计划。追加 `--output <new-b1-target-plan.json> --write` 可独占发布。用 `cargo xtask check recovery plan --plan <b1-reference-plan.json> --target-plan <b1-target-plan.json>` 回读，工具按原五件输入重新投影并核对完整参考计划封装、同一备份、双版本来源、原 ARM 和 fresh 库存历史。参考工作目录及复制目录须保持未创建。
 
-发布目标计划后，用 `cargo xtask check recovery runtime register --plan <b1-reference-plan.json> --target-plan <b1-target-plan.json> --output <new-b1-runtime-registration.json> --write` 登记尚未启动的产品运行环境。工具沿用同一锁内的登记复核和私有配置侧件，绑定两份原计划文件并核对 API、Worker 和前端端口空闲。登记与侧件须位于原证据、运行目录和预留路径之外，参考工作目录及复制目录继续保持未创建。正式恢复及业务验收仍需接线与验证。
+发布目标计划后，用 `cargo xtask check recovery runtime register --plan <b1-reference-plan.json> --target-plan <b1-target-plan.json> --output <new-b1-runtime-registration.json> --write` 登记尚未启动的产品运行环境。工具沿用同一锁内的登记复核和私有配置侧件，绑定两份原计划文件并核对 API、Worker 和前端端口空闲。登记与侧件须位于原证据、运行目录和预留路径之外，参考工作目录及复制目录继续保持未创建。
+
+本侧开始登记使用运维文档中的 `cargo xtask data restore begin`，提供同一正式备份、独立参考计划、原目标计划和运行登记。输出使用参考工作目录下的新文件，例如 `running.json`。控制器独占创建参考工作目录，持有本次目录归属、原运行控制锁和真实目标存储锁，再核对实际目标代次和四库、对象、Redis 前像。开始登记发布产品运行记录并保存原工作目录和归属文件身份。
+
+用 `cargo xtask check recovery reference restore --plan <b1-reference-plan.json> --target-plan <b1-target-plan.json> --runtime-registration <b1-runtime-registration.json> --backup-root <same-backup-directory> --record <b1-reference-work-dir/running.json> --write` 继续还原。控制器在原工作目录取得新阶段锁，核对开始登记的原文件和运行记录，在同一运行控制锁与目标存储锁内采集完整前后像并按原备份写入四库和对象。失败时保留阶段收据、已采集的资源像和写入证据。成功后进入产品数据核验，继续完成独立侧的运行与业务验收。
 
 ## 非生产重建
 

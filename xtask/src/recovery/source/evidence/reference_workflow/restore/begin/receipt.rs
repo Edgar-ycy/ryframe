@@ -5,29 +5,31 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use super::{
-    Document, Inputs, Result, TargetSnapshot, VerifiedCopy, begin_proof, document, expected_images,
-    native, path, text,
+    BeginInputs, Document, Inputs, Result, TargetSnapshot, VerifiedCopy, begin_proof, document,
+    expected_images, native, path, text,
 };
 use native::{export::transport::CommandOutput, resources::common};
 
-pub(super) fn directory(snapshot: &TargetSnapshot) -> Result<PathBuf> {
-    let side = text(&snapshot.target.value["target_side"])?;
-    if !matches!(side, "base" | "candidate")
-        || snapshot.chain.reference.value["target_side"] != side
-    {
-        return Err("开始登记必须绑定同一明确恢复目标侧".into());
-    }
-    Ok(path(&snapshot.chain.reference.value["work_dir"])?.join(format!("restore-begin-{side}")))
+pub(super) fn directory(inputs: &BeginInputs<'_>) -> Result<PathBuf> {
+    directory_for(inputs.plan, &inputs.target.value)
 }
 
-fn bindings(snapshot: &TargetSnapshot) -> Value {
+pub(super) fn directory_for(plan: &Value, target: &Value) -> Result<PathBuf> {
+    let side = text(&target["target_side"])?;
+    if !matches!(side, "base" | "candidate") || plan["target_side"] != side {
+        return Err("开始登记必须绑定同一明确恢复目标侧".into());
+    }
+    Ok(path(&plan["work_dir"])?.join(format!("restore-begin-{side}")))
+}
+
+fn bindings(inputs: &BeginInputs<'_>) -> Value {
     json!({
-        "reference_plan":document::binding(&snapshot.chain.reference),
-        "target_plan":document::binding(&snapshot.target),
-        "product_plan":document::binding(&snapshot.product_plan),
-        "backup_receipt":document::binding(&snapshot.chain.backup_document),
-        "manifest":document::binding(&snapshot.manifest),
-        "runtime_registration":document::binding(&snapshot.registration),
+        "reference_plan":document::binding(inputs.reference),
+        "target_plan":document::binding(inputs.target),
+        "product_plan":document::binding(inputs.product_plan),
+        "backup_receipt":document::binding(inputs.backup_receipt),
+        "manifest":document::binding(inputs.manifest),
+        "runtime_registration":document::binding(inputs.registration),
     })
 }
 
@@ -43,13 +45,14 @@ pub(super) struct Evidence<'a> {
     pub(super) proof: &'a Value,
     pub(super) copy: Option<&'a VerifiedCopy>,
     pub(super) product_plan: &'a Document,
+    pub(super) work_binding: Option<&'a Value>,
 }
 
 impl Intent {
     pub(super) fn publish(
         backend: &Path,
         directory: &Path,
-        snapshot: &TargetSnapshot,
+        inputs: &BeginInputs<'_>,
         output: &Path,
         maintenance: &Value,
         evidence: Evidence<'_>,
@@ -62,10 +65,13 @@ impl Intent {
         let preimage = publish(backend, &directory.join("preimage.json"), evidence.proof)?;
         let mut value = json!({
             "format_version":1, "kind":"reference-restore-begin-intent",
-            "bindings":bindings(snapshot), "preimage":document::binding(&preimage),
+            "bindings":bindings(inputs), "preimage":document::binding(&preimage),
             "resource_image":document::binding(&image), "maintenance":maintenance, "record_path":output,
         });
         let mut paths = vec![preimage.path.clone(), image.path.clone()];
+        if let Some(binding) = evidence.work_binding {
+            value["reference_work"] = binding.clone();
+        }
         if let Some(copy) = evidence.copy {
             value["negative_copy"] = json!({
                 "id":copy.manifest.value["id"], "original_copy_receipt":document::binding(&copy.receipt),
@@ -110,6 +116,9 @@ impl Intent {
         record.assert_unchanged()?;
         command.assert_unchanged()?;
         let negative = self.intent.value.get("negative_copy").is_some();
+        if let Some(binding) = self.intent.value.get("reference_work") {
+            outcome["reference_work"] = binding.clone();
+        }
         if negative {
             let registration = document::read(
                 &directory.join("copy-registration.json"),
@@ -205,7 +214,7 @@ fn maintenance_exit_preserves_only_a_fixed_failure_classification() {
     );
 }
 
-fn check_command(value: &Value) -> Result<()> {
+pub(super) fn check_command(value: &Value) -> Result<()> {
     document::exact(
         value,
         &[
@@ -240,22 +249,47 @@ pub(in super::super) fn verify_record(
     snapshot: &TargetSnapshot,
     record: &Document,
 ) -> Result<Document> {
-    let directory = directory(snapshot)?;
+    let directory = directory(&BeginInputs::from(snapshot))?;
     if directory.join("failure.json").try_exists()? {
         return Err("开始登记曾留下未确认结果，必须先只读核对原登记库".into());
     }
     let receipt = document::read(&directory.join("result.json"), backend, "持锁开始登记结果")?;
     let value = &receipt.value;
+    check_result(value, record, false)?;
+    let intent = bound(backend, &directory.join("intent.json"), &value["intent"])?;
+    let command = bound(backend, &directory.join("command.json"), &value["command"])?;
+    check_command(&command.value)?;
+    verify_intent(
+        backend,
+        &directory,
+        &BeginInputs::from(snapshot),
+        record,
+        &intent,
+        None,
+    )?;
+    command.assert_unchanged()?;
+    intent.assert_unchanged()?;
+    receipt.assert_unchanged()?;
+    Ok(receipt)
+}
+
+pub(super) fn check_result(value: &Value, record: &Document, independent: bool) -> Result<()> {
+    let fields = [
+        "format_version",
+        "kind",
+        "status",
+        "intent",
+        "command",
+        "record",
+        "reference_work",
+    ];
     document::exact(
         value,
-        &[
-            "format_version",
-            "kind",
-            "status",
-            "intent",
-            "command",
-            "record",
-        ],
+        &fields[..if independent {
+            fields.len()
+        } else {
+            fields.len() - 1
+        }],
         "开始登记结果",
     )?;
     if value["format_version"] != 1
@@ -265,42 +299,55 @@ pub(in super::super) fn verify_record(
     {
         return Err("参考恢复必须消费同一持锁开始登记发布的产品运行记录".into());
     }
-    let intent = bound(backend, &directory.join("intent.json"), &value["intent"])?;
-    let command = bound(backend, &directory.join("command.json"), &value["command"])?;
-    check_command(&command.value)?;
-    verify_intent(backend, &directory, snapshot, record, &intent)?;
-    command.assert_unchanged()?;
-    intent.assert_unchanged()?;
-    receipt.assert_unchanged()?;
-    Ok(receipt)
+    Ok(())
 }
 
-fn verify_intent(
-    backend: &Path,
-    directory: &Path,
-    snapshot: &TargetSnapshot,
-    record: &Document,
-    intent: &Document,
-) -> Result<()> {
-    let value = &intent.value;
+pub(super) fn check_intent(value: &Value, record: &Document, work: Option<&Value>) -> Result<()> {
+    let fields = [
+        "format_version",
+        "kind",
+        "bindings",
+        "preimage",
+        "resource_image",
+        "maintenance",
+        "record_path",
+        "reference_work",
+    ];
     document::exact(
         value,
-        &[
-            "format_version",
-            "kind",
-            "bindings",
-            "preimage",
-            "resource_image",
-            "maintenance",
-            "record_path",
-        ],
+        &fields[..if work.is_some() {
+            fields.len()
+        } else {
+            fields.len() - 1
+        }],
         "开始登记意图",
     )?;
     if value["format_version"] != 1
         || value["kind"] != "reference-restore-begin-intent"
-        || value["bindings"] != bindings(snapshot)
         || path(&value["record_path"])? != record.path
+        || work.is_some_and(|work| value["reference_work"] != *work)
     {
+        return Err("开始登记意图的原备份、计划、运行登记或产物路径不同".into());
+    }
+    Ok(())
+}
+
+pub(super) struct Images {
+    pub(super) preimage: Document,
+    pub(super) resource: Document,
+}
+
+pub(super) fn verify_intent(
+    backend: &Path,
+    directory: &Path,
+    inputs: &BeginInputs<'_>,
+    record: &Document,
+    intent: &Document,
+    work: Option<&Value>,
+) -> Result<Images> {
+    let value = &intent.value;
+    check_intent(value, record, work)?;
+    if value["bindings"] != bindings(inputs) {
         return Err("开始登记意图的原备份、计划、运行登记或产物路径不同".into());
     }
     let preimage = bound(
@@ -313,25 +360,32 @@ fn verify_intent(
         &directory.join("resource-image.json"),
         &value["resource_image"],
     )?;
-    let descriptor = &snapshot.target.value["fresh_target"]["initialized"];
+    let descriptor = &inputs.target.value["fresh_target"]["initialized"];
     let (_, initialized) = document::bound_file(backend, descriptor, "原目标初始化")?;
-    let (before, _) = expected_images::expected_images(
-        &snapshot.chain.reference.value,
-        &snapshot.manifest.value,
-        &initialized.value,
-    )?;
+    let (before, _) =
+        expected_images::expected_images(inputs.plan, &inputs.manifest.value, &initialized.value)?;
     if image.value != before
         || preimage.value
             != begin_proof::build(
-                &snapshot.product_plan.value,
-                &snapshot.target.sha256(),
+                &inputs.product_plan.value,
+                &inputs.target.sha256(),
                 &initialized.sha256(),
                 &before,
             )?
     {
         return Err("开始登记前像不等于本次恢复绑定的原初始化".into());
     }
-    let maintenance = &value["maintenance"];
+    verify_maintenance(&value["maintenance"])?;
+    preimage.assert_unchanged()?;
+    image.assert_unchanged()?;
+    initialized.assert_unchanged()?;
+    Ok(Images {
+        preimage,
+        resource: image,
+    })
+}
+
+fn verify_maintenance(maintenance: &Value) -> Result<()> {
     document::exact(
         maintenance,
         &["root", "build", "executable", "source"],
@@ -349,12 +403,10 @@ fn verify_intent(
     {
         return Err("开始登记维护程序来源和已登记产物不同".into());
     }
-    preimage.assert_unchanged()?;
-    image.assert_unchanged()?;
-    initialized.assert_unchanged()
+    Ok(())
 }
 
-fn bound(backend: &Path, path: &Path, binding: &Value) -> Result<Document> {
+pub(super) fn bound(backend: &Path, path: &Path, binding: &Value) -> Result<Document> {
     let (_, file) = document::bound_file(backend, binding, "开始登记阶段原文件")?;
     if file.path != path {
         return Err("开始登记阶段原文件路径不同".into());

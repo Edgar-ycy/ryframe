@@ -20,7 +20,7 @@ pub(super) fn capture(
     checkpoint: &(dyn Fn() -> Result<()> + Sync),
     evidence: &mut Map<String, Value>,
 ) -> Result<()> {
-    let side = text(&window.snapshot.target.value["target_side"])?;
+    let side = text(&window.inputs.target.value["target_side"])?;
     let backend = window.stage.backend;
     let directory = window
         .stage
@@ -70,9 +70,9 @@ fn observe(
     checkpoint: &(dyn Fn() -> Result<()> + Sync),
 ) -> Result<(bool, Value)> {
     let target = window.target;
-    let snapshot = window.snapshot;
+    let inputs = &window.inputs;
     let storage = target.inputs();
-    let reference = &snapshot.chain.reference.value;
+    let reference = inputs.plan;
     let initialized = target.initialized();
     let configuration = target.configuration();
     let database = database_images::capture(
@@ -98,7 +98,7 @@ fn observe(
             scope: text(&reference["target"]["scope_id"])?,
             endpoint: text(&objects["endpoint"])?,
             region: text(&objects["region"])?,
-            manifest: &snapshot.manifest.value,
+            manifest: &inputs.manifest.value,
             expected: &expected["objects"],
             plan_sha256: &plan_hash(reference)?,
             generation_sha256: &plan_hash(&initialized["generation"])?,
@@ -110,7 +110,7 @@ fn observe(
     Publication {
         backend: window.stage.backend,
         directory,
-        target: &snapshot.target,
+        target: inputs.target,
         phase,
         expected,
     }

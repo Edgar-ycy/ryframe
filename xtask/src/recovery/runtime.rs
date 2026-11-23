@@ -35,6 +35,7 @@ mod probes;
 mod recover;
 #[path = "runtime/registration.rs"]
 mod registration;
+pub(in crate::recovery) use registration::verify_independent_projection;
 #[path = "runtime/restore_guard.rs"]
 pub(in crate::recovery) mod restore_guard;
 #[path = "runtime/start.rs"]

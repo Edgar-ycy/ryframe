@@ -130,6 +130,13 @@ impl<'a> IndependentB1Receipt<'a> {
         &self.observed.target
     }
 
+    pub(in crate::recovery) fn build_bridges(&self) -> Result<&[Value]> {
+        crate::recovery::clone::native::json::array(
+            &self.bound.request.value["build_bridges"],
+            "独立 B1 原构建桥接",
+        )
+    }
+
     pub(in crate::recovery) fn copy_directory(&self) -> &Path {
         &self.bound.copy
     }

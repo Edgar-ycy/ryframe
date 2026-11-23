@@ -12,19 +12,22 @@ use super::super::{
     cache::handoff::locks::Storage,
     export::transport::SystemTransport,
     json as document,
-    lifecycle::manifest,
     resources::common,
     s3::app_configuration,
     target_verify::{
         fresh::{self, resources::Resources, selection::Selected},
         guard::{Generation, Inputs},
         input::request_configuration,
-        published, redis,
+        redis,
         storage::{self, StorageInputs, SystemObserver},
         tree,
     },
 };
 use crate::Result;
+
+mod history;
+pub(in crate::recovery) use history::IndependentTargetBinding;
+use history::{History, TargetBinding, verify_arm_storage};
 
 #[cfg(test)]
 #[path = "../../../../../tests/unit/recovery/clone/native/copy_transfer/target_port.rs"]
@@ -42,7 +45,7 @@ pub(in crate::recovery::clone::native) struct Target<S = Scope> {
     pub(in crate::recovery::clone::native) environment: BTreeMap<String, String>,
     pub(in crate::recovery::clone::native) temporary: PathBuf,
     pub(in crate::recovery::clone::native) storage: Selected,
-    manifest: Value,
+    binding: TargetBinding,
     storage_run: PathBuf,
     observation_directory: PathBuf,
     temporary_identity: Value,
@@ -78,18 +81,21 @@ impl Target {
         &self,
         observation: &Path,
     ) -> Result<Value> {
+        let TargetBinding::Copy(manifest) = &self.binding else {
+            return Err("首次复制复验要求原复制清单".into());
+        };
         self.check_inputs()?;
         let history = self.history(None)?;
         let active =
-            history.active_storage(&self.evidence_root, &self.manifest, &self.storage_run, None)?;
+            history.active_storage(&self.evidence_root, &self.binding, &self.storage_run, None)?;
         let observed = fresh::verify::binding(
             &self.evidence_root,
             &json!({
-                "initialized":self.manifest["initialized"],"observation":observation,
+                "initialized":manifest["initialized"],"observation":observation,
                 "storage_run":active,"temporary_directory":self.temporary,"app_env":"test","write":true,
             }),
         )?;
-        if observed["initialized"] != self.manifest["initialized"] {
+        if observed["initialized"] != manifest["initialized"] {
             return Err("复制首次复验不属于原目标初始化".into());
         }
         self.check_current(None)?;
@@ -123,8 +129,26 @@ impl<S: Borrow<Scope>> Target<S> {
         owner: Option<&Generation>,
         scope: impl FnOnce() -> Result<S>,
     ) -> Result<Self> {
-        let history = History::read(backend, manifest, owner)?;
-        let environment = common::environment(backend, &manifest["target_environment"])?;
+        Self::bind_history(
+            backend,
+            TargetBinding::Copy(manifest.clone()),
+            storage_run,
+            observation_directory,
+            owner,
+            scope,
+        )
+    }
+
+    fn bind_history(
+        backend: &Path,
+        binding: TargetBinding,
+        storage_run: &Path,
+        observation_directory: &Path,
+        owner: Option<&Generation>,
+        scope: impl FnOnce() -> Result<S>,
+    ) -> Result<Self> {
+        let history = History::read(backend, &binding, owner)?;
+        let environment = common::environment(backend, binding.environment())?;
         let (temporary, temporary_identity) = temporary(backend, &environment)?;
         let storage_run = common::local_directory(backend, storage_run, "父控制器锁定的目标存储")?;
         let observation_directory =
@@ -139,21 +163,21 @@ impl<S: Borrow<Scope>> Target<S> {
         let (configuration, endpoint, region) = object_binding(&inputs, &execution)?;
         let before = tree::protected_snapshot(backend, &history.target, owner)?;
         let protected = fresh::verify::inputs::protect(&inputs, &history.target, &before)?;
-        let registered = Inputs::open(history.descriptors(backend, manifest)?)?;
+        let registered = Inputs::open(history.descriptors(backend, &binding)?)?;
         let scope = scope()?;
         let (observed_generation, storage, cache) = observe(
             &inputs,
-            manifest,
+            &binding,
             &history,
             scope.borrow(),
             &storage_run,
             owner,
         )?;
-        history.unchanged(backend, manifest, owner)?;
+        history.unchanged(backend, &binding, owner)?;
         if tree::protected_snapshot(backend, &history.target, owner)? != before
             || object_binding(&inputs, &execution)?
                 != (configuration.clone(), endpoint.clone(), region.clone())
-            || common::environment(backend, &manifest["target_environment"])? != environment
+            || common::environment(backend, binding.environment())? != environment
         {
             return Err("建立复制目标读窗期间输入或初始化树变化".into());
         }
@@ -169,7 +193,7 @@ impl<S: Borrow<Scope>> Target<S> {
             environment,
             temporary,
             storage,
-            manifest: manifest.clone(),
+            binding,
             storage_run,
             observation_directory,
             temporary_identity,
@@ -213,7 +237,7 @@ impl<S: Borrow<Scope>> Target<S> {
     }
 
     fn history(&self, owner: Option<&Generation>) -> Result<History> {
-        let history = History::read(&self.evidence_root, &self.manifest, owner)?;
+        let history = History::read(&self.evidence_root, &self.binding, owner)?;
         if history.target != self.target_directory
             || history.initialized != self.initialized
             || history.request != self.request
@@ -228,7 +252,7 @@ impl<S: Borrow<Scope>> Target<S> {
         let history = self.history(owner)?;
         let (generation, selected, cache) = observe(
             &self.storage_inputs(&self.observation_directory),
-            &self.manifest,
+            &self.binding,
             &history,
             self.scope.borrow(),
             &self.storage_run,
@@ -241,7 +265,7 @@ impl<S: Borrow<Scope>> Target<S> {
         {
             return Err("复制目标停止证明、配置或已登记存储代次变化".into());
         }
-        history.unchanged(&self.evidence_root, &self.manifest, owner)?;
+        history.unchanged(&self.evidence_root, &self.binding, owner)?;
         self.protected.check()?;
         self.registered.check()?;
         self.check_inputs()
@@ -265,6 +289,42 @@ impl<'a> ReferenceTarget<'a> {
     ) -> Result<Self> {
         let (observation, observation_identity) =
             reference_observation(backend, manifest, observation)?;
+        Self::open_bound(
+            backend,
+            TargetBinding::Copy(manifest.clone()),
+            storage,
+            observation,
+            observation_identity,
+            scope,
+        )
+    }
+
+    pub(in crate::recovery) fn open_independent(
+        backend: &Path,
+        binding: IndependentTargetBinding,
+        storage: &'a Storage,
+        observation: &Path,
+        scope: &'a Scope,
+    ) -> Result<Self> {
+        let (observation, observation_identity) = reference_directory(backend, observation)?;
+        Self::open_bound(
+            backend,
+            TargetBinding::Independent(Box::new(binding)),
+            storage,
+            observation,
+            observation_identity,
+            scope,
+        )
+    }
+
+    fn open_bound(
+        backend: &Path,
+        binding: TargetBinding,
+        storage: &'a Storage,
+        observation: PathBuf,
+        observation_identity: Value,
+        scope: &'a Scope,
+    ) -> Result<Self> {
         let target = reference_fence(
             || {
                 storage.check()?;
@@ -273,9 +333,9 @@ impl<'a> ReferenceTarget<'a> {
             },
             || {
                 scope.assert_unchanged()?;
-                let target = Target::bind(
+                let target = Target::bind_history(
                     backend,
-                    manifest,
+                    binding,
                     &storage.directory,
                     &observation,
                     None,
@@ -353,6 +413,10 @@ fn reference_observation(
     if manifest["copy_stage"] != "seed_to_arm" {
         return Err("参考恢复目标仅接受已验证的 seed_to_arm 清单".into());
     }
+    reference_directory(backend, observation)
+}
+
+fn reference_directory(backend: &Path, observation: &Path) -> Result<(PathBuf, Value)> {
     let directory = common::local_directory(backend, observation, "参考恢复当前观察目录")?;
     let identity = directory_identity(backend, &directory)?;
     Ok((directory, identity))
@@ -370,128 +434,16 @@ fn reference_fence<T>(
     }
 }
 
-struct History {
-    target: PathBuf,
-    initialized: Value,
-    request: Value,
-    registration: Value,
-}
-
-impl History {
-    fn read(backend: &Path, run: &Value, owner: Option<&Generation>) -> Result<Self> {
-        let filename = common::bound_file(backend, &run["initialized"], "原复制目标初始化")?;
-        let target = filename.parent().ok_or("复制目标缺少初始化目录")?;
-        let workspace = target.parent().ok_or("复制目标缺少 fresh 工作区")?;
-        if filename != target.join("initialized.json") || target != workspace.join("target") {
-            return Err("复制目标初始化不属于固定 fresh 工作区".into());
-        }
-        let (initialized, request) = if let Some(owner) = owner {
-            published::owned_history(backend, &filename, owner)?
-        } else {
-            published::unlocked_history(backend, &filename)?
-        };
-        let registration = document::read(&workspace.join("registration.json"))?;
-        let prepared = document::read(&target.join("prepare.json"))?;
-        if registration["format_version"] != 1
-            || registration["kind"] != "devex-clone-fresh-target-registration"
-            || registration["target_directory"] != json!(target)
-            || prepared["request"] != registration["request"]
-        {
-            return Err("复制目标初始化与原 fresh 登记或请求不同".into());
-        }
-        if run["copy_stage"] == "seed_to_arm"
-            && (run["target_registration"]
-                != common::binding(&workspace.join("registration.json"))?
-                || run["target_initialized_files"]
-                    != common::binding(&workspace.join("initialized-files.json"))?
-                || run["target_environment"] != registration["environment"])
-        {
-            return Err("arm 复制目标未绑定原 fresh 登记、初始化树和环境".into());
-        }
-        common::bound_file(backend, &run["initialized"], "原复制目标初始化")?;
-        Ok(Self {
-            target: target.to_owned(),
-            initialized,
-            request,
-            registration,
-        })
-    }
-
-    fn descriptors(&self, backend: &Path, run: &Value) -> Result<Vec<PathBuf>> {
-        let workspace = self.target.parent().ok_or("复制目标缺少 fresh 工作区")?;
-        Ok(vec![
-            workspace.join("registration.json"),
-            workspace.join("prepared-files.json"),
-            workspace.join("initialized-files.json"),
-            common::bound_file(backend, &run["target_environment"], "目标私有环境")?,
-            common::bound_file(backend, &self.request["maintenance_build"], "目标维护构建")?,
-        ])
-    }
-
-    fn unchanged(&self, backend: &Path, run: &Value, owner: Option<&Generation>) -> Result<()> {
-        let observed = Self::read(backend, run, owner)?;
-        if observed.target != self.target
-            || observed.initialized != self.initialized
-            || observed.request != self.request
-            || observed.registration != self.registration
-        {
-            return Err("复制目标完整初始化历史在代次观察期间变化".into());
-        }
-        Ok(())
-    }
-
-    fn active_storage(
-        &self,
-        backend: &Path,
-        run: &Value,
-        storage_run: &Path,
-        owner: Option<&Generation>,
-    ) -> Result<Option<PathBuf>> {
-        match run["copy_stage"].as_str() {
-            Some("seed_to_arm") => {
-                let registered = manifest::target_storage_path(backend, run)?
-                    .ok_or("arm 复制缺少已登记目标存储")?;
-                if registered != storage_run
-                    || fresh::storage_run(backend, &self.registration["storage_run"], owner)?
-                        != registered
-                {
-                    return Err("arm 目标存储不是父控制器锁定的登记目录".into());
-                }
-                Ok(Some(registered))
-            }
-            Some("source_to_seed") => {
-                let descriptor = &self.registration["storage_run"];
-                if descriptor.is_null()
-                    || descriptor.as_object().is_some_and(|value| value.is_empty())
-                {
-                    return Ok(None);
-                }
-                let registered = fresh::storage_run(backend, descriptor, owner)?;
-                if document::read(&registered.join("manifest.json"))?["kind"]
-                    != "reference-fixture-service-run"
-                {
-                    return Ok(None);
-                }
-                if registered != storage_run {
-                    return Err("seed 夹具存储不是父控制器锁定的登记目录".into());
-                }
-                Ok(Some(registered))
-            }
-            _ => Err("目标读窗不支持未登记的复制阶段".into()),
-        }
-    }
-}
-
 fn observe(
     inputs: &StorageInputs<'_>,
-    run: &Value,
+    binding: &TargetBinding,
     history: &History,
     scope: &Scope,
     storage_run: &Path,
     owner: Option<&Generation>,
 ) -> Result<(Value, Selected, Option<Value>)> {
     let backend = inputs.backend;
-    let active = history.active_storage(backend, run, storage_run, owner)?;
+    let active = history.active_storage(backend, binding, storage_run, owner)?;
     let resources = Resources {
         inputs: StorageInputs {
             backend,
@@ -510,20 +462,24 @@ fn observe(
         selected.runtime.as_ref(),
         cache.as_ref(),
     )?;
-    if run["copy_stage"] == "seed_to_arm" {
-        let descriptor = &run["target_storage_run"];
-        if let Some(fixture) = manifest::fixture_storage::resolve(
+    match binding {
+        TargetBinding::Copy(run) if run["copy_stage"] == "seed_to_arm" => verify_arm_storage(
             backend,
             &run["target_registration"],
-            Some(descriptor),
-            true,
-        )? {
-            fixture.check(backend)?;
-        } else if selected.runtime.as_ref() != Some(&descriptor["storage"])
-            || cache.as_ref() != Some(&descriptor["cache"])
-        {
-            return Err("arm 当前 RustFS 或 Redis 代次与复制清单不同".into());
-        }
+            &run["target_storage_run"],
+            &selected,
+            cache.as_ref(),
+            None,
+        )?,
+        TargetBinding::Independent(bound) => verify_arm_storage(
+            backend,
+            &bound.registration,
+            &bound.generation,
+            &selected,
+            cache.as_ref(),
+            Some(bound),
+        )?,
+        TargetBinding::Copy(_) => {}
     }
     scope.assert_unchanged()?;
     Ok((generation, selected, cache))

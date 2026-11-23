@@ -27,7 +27,7 @@ use crate::{
             RestoreChecks,
             document::{self, Document},
             publish::publish_verified,
-            reference,
+            reference::{self, CheckWorkOwner},
             target::TargetRequest,
             target_plan::{self, evidence::Frame, independent},
         },
@@ -84,18 +84,62 @@ pub(super) fn verify_not_started_with_checks(
     registration: &Value,
     checks: RestoreChecks<'_>,
 ) -> Result<()> {
-    let mut observed = Snapshot::observe(backend, reference, target, checks)?;
-    let environment = &registration["runtime_environment"];
-    observed.receipt["runtime_environment"] = environment.clone();
-    if observed.receipt != *registration {
-        return Err("fresh target 运行目录或三端口不再保持登记的零进程状态".into());
-    }
-    configuration_registration::verify(
+    Snapshot::observe(backend, reference, target, checks)?.verify_registered(
         backend,
         registration_path,
-        environment,
-        &observed.configuration,
+        registration,
     )
+}
+
+pub(super) fn verify_independent_not_started(
+    backend: &Path,
+    reference: &Document,
+    target: &Document,
+    registration: &Document,
+    check_owner: &CheckWorkOwner<'_>,
+) -> Result<()> {
+    if !reference::is_independent_b1(&reference.value) {
+        return Err("独立 B1 开始登记必须使用原独立参考计划".into());
+    }
+    let frame = Frame::published(backend, reference, target.clone())?;
+    let (evidence, _) = independent::verify_owned(backend, &frame, check_owner)?;
+    verify_independent_projection(
+        backend,
+        reference,
+        target,
+        registration,
+        evidence.reference_plan(),
+        &evidence.arm.target_request,
+    )?;
+    evidence.check()?;
+    frame.check()
+}
+
+pub(in crate::recovery) fn verify_independent_projection(
+    backend: &Path,
+    reference: &Document,
+    target: &Document,
+    registration: &Document,
+    plan: &Value,
+    request: &TargetRequest,
+) -> Result<()> {
+    Snapshot::from_verified(backend, reference, target, plan, request, require_closed)?
+        .verify_registered(backend, &registration.path, &registration.value)?;
+    verify_runtime_observation(backend, plan, &target.value, &registration.value)
+}
+
+pub(super) fn verify_runtime_observation(
+    backend: &Path,
+    reference: &Value,
+    target: &Value,
+    registration: &Value,
+) -> Result<()> {
+    let (runtime, _) = runtime_target(reference, target)?;
+    let (_, observed) = runtime_observation(backend, &runtime)?;
+    if observed != registration["observation"]["runtime"] {
+        return Err("恢复运行目录在三端口核验期间偏离原登记".into());
+    }
+    Ok(())
 }
 
 fn register(
@@ -173,6 +217,25 @@ fn register_locked(
 }
 
 impl Snapshot {
+    fn verify_registered(
+        mut self,
+        backend: &Path,
+        registration_path: &Path,
+        registration: &Value,
+    ) -> Result<()> {
+        let environment = &registration["runtime_environment"];
+        self.receipt["runtime_environment"] = environment.clone();
+        if self.receipt != *registration {
+            return Err("fresh target 运行目录或三端口不再保持登记的零进程状态".into());
+        }
+        configuration_registration::verify(
+            backend,
+            registration_path,
+            environment,
+            &self.configuration,
+        )
+    }
+
     fn observe(
         backend: &Path,
         reference: &Path,

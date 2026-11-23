@@ -24,6 +24,45 @@ use crate::{
 
 pub(super) const INDEPENDENT_B1_KIND: &str = "restore-reference-independent-b1-plan";
 
+pub(in crate::recovery) type CheckWorkOwner<'a> = dyn Fn(&Path, &Value) -> Result<()> + 'a;
+
+#[derive(Clone, Copy)]
+pub(in crate::recovery) enum IndependentWork<'a> {
+    Absent,
+    Owned(&'a CheckWorkOwner<'a>),
+}
+
+impl IndependentWork<'_> {
+    fn directory(self, backend: &Path, work: &Path) -> Result<PathBuf> {
+        match self {
+            Self::Absent => {
+                let directory = new_independent_work_dir(backend, work)?;
+                reads::optional(&directory)?;
+                Ok(directory)
+            }
+            Self::Owned(_) => {
+                validate_local_test_path(work, backend, LocalTestPathKind::ExistingDirectory)?;
+                canonical_path_from_parent(work, "独立 B1 参考计划 work_dir")
+            }
+        }
+    }
+
+    fn check(self, directory: &Path, reference: &Value) -> Result<()> {
+        match self {
+            Self::Absent => Ok(()),
+            Self::Owned(check) => check(directory, reference),
+        }
+    }
+}
+
+pub(in crate::recovery) fn new_independent_work_dir(
+    backend: &Path,
+    work: &Path,
+) -> Result<PathBuf> {
+    validate_local_test_path(work, backend, LocalTestPathKind::NewDirectory)?;
+    new_path(backend, work, "独立 B1 参考计划 work_dir")
+}
+
 pub(in crate::recovery) fn is_independent_b1(value: &Value) -> bool {
     value["kind"] == INDEPENDENT_B1_KIND
 }
@@ -84,7 +123,13 @@ fn build_independent_b1(backend: &Path, options: &ReferenceInputOptions) -> Resu
             // 通用发布器会在写后重建计划，此时输出已存在。
             arm.require_disjoint(&publication.output)?;
         }
-        let reference = project_independent_b1(backend, &options.id, &options.work_dir, &arm)?;
+        let reference = project_independent_b1(
+            backend,
+            &options.id,
+            &options.work_dir,
+            &arm,
+            IndependentWork::Absent,
+        )?;
         arm.check()?;
         Ok(json!({
             "format_version":1, "kind":INDEPENDENT_B1_KIND,
@@ -100,11 +145,10 @@ pub(super) fn project_independent_b1(
     id: &str,
     work_dir: &Path,
     arm: &IndependentB1Receipt<'_>,
+    work: IndependentWork<'_>,
 ) -> Result<Value> {
     identifier(id)?;
-    validate_local_test_path(work_dir, backend, LocalTestPathKind::NewDirectory)?;
-    let directory = new_path(backend, work_dir, "独立 B1 参考计划 work_dir")?;
-    reads::optional(&directory)?;
+    let directory = work.directory(backend, work_dir)?;
     arm.require_disjoint(&directory)?;
     let source = SourceProjection::load(backend, &arm.source_request)?;
     let target = TargetProjection::load(&arm.target_request)?;
@@ -126,6 +170,7 @@ pub(super) fn project_independent_b1(
     }
     source.assert_unchanged(backend, &arm.source_request)?;
     target.assert_unchanged(&arm.target_request)?;
+    work.check(&directory, &reference)?;
     Ok(reference)
 }
 
@@ -268,4 +313,42 @@ fn plain_path(path: PathBuf) -> PathBuf {
         return PathBuf::from(value);
     }
     path
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn independent_reference_work_separates_absence_and_owned_read_windows() -> Result<()> {
+        let local = crate::workspace::root_dir().join(".local-tests");
+        fs::create_dir_all(&local)?;
+        let fixture = tempfile::tempdir_in(local)?;
+        let backend = plain_path(fixture.path().canonicalize()?);
+        let local = backend.join(".local-tests");
+        fs::create_dir(&local)?;
+        let work = local.join("reference");
+        let window = Window::direct()?;
+        assert_eq!(IndependentWork::Absent.directory(&backend, &work)?, work);
+        assert!(!work.exists());
+        window.finish(Ok(()))?;
+        drop(window);
+
+        fs::create_dir(&work)?;
+        assert!(IndependentWork::Absent.directory(&backend, &work).is_err());
+        let reference = json!({"id":"original"});
+        let owner = |selected: &Path, candidate: &Value| -> Result<()> {
+            if selected == work && candidate == &reference {
+                return Ok(());
+            }
+            Err("测试归属与本次计划不同".into())
+        };
+        let mode = IndependentWork::Owned(&owner);
+        let window = Window::direct()?;
+        let selected = mode.directory(&backend, &work)?;
+        mode.check(&selected, &reference)?;
+        assert!(mode.check(&selected, &json!({"id":"different"})).is_err());
+        window.finish(Ok(()))?;
+        Ok(())
+    }
 }

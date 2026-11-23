@@ -1,6 +1,6 @@
 use std::fs;
 
-use super::*;
+use super::{history::verify_fixture_generation, *};
 
 fn workspace() -> Result<(tempfile::TempDir, PathBuf)> {
     let local = crate::workspace::root_dir().join(".local-tests");
@@ -97,6 +97,86 @@ fn reference_uses_the_existing_observation_directory_without_a_copy_directory() 
         reference_observation(&root, &json!({"copy_stage":"source_to_seed"}), &observation)
             .is_err()
     );
+    Ok(())
+}
+
+#[test]
+fn independent_target_uses_original_history_and_the_locked_storage_state() -> Result<()> {
+    let fixture = crate::target_verify_fixture::Fixture::for_status();
+    let root = &fixture.backend;
+    let registration = fixture.local.join("registration.json");
+    let registered = document::read(&registration)?;
+    let original = &registered["storage_run"];
+    let current = fixture.local.join("independent-reference");
+    fs::create_dir(&current)?;
+    let (observed, identity) = reference_directory(root, &current)?;
+    assert_eq!(observed, current);
+    assert_eq!(common::directory_identity(root, &identity)?, current);
+    let binding = IndependentTargetBinding {
+        initialized: common::binding(&fixture.target.join("initialized.json"))?,
+        registration: common::binding(&registration)?,
+        initialized_files: common::binding(&fixture.local.join("initialized-files.json"))?,
+        environment: registered["environment"].clone(),
+        generation: json!({"path":original["path"],"manifest":original["manifest"],
+            "storage":null,"cache":null}),
+        state: original["state"].clone(),
+    };
+    let mut binding = TargetBinding::Independent(Box::new(binding));
+    let copy = TargetBinding::Copy(document::read(&fixture.run.join("manifest.json"))?);
+    let history = History::read(root, &binding, None)?;
+    assert_eq!(
+        history.initialized,
+        History::read(root, &copy, None)?.initialized
+    );
+    let TargetBinding::Independent(bound) = &mut binding else {
+        unreachable!();
+    };
+    let storage = Storage::acquire_independent_target(
+        root,
+        &current,
+        &bound.registration,
+        &bound.generation,
+    )?;
+    assert_eq!(
+        bound.locked_storage(root, &storage.directory)?,
+        storage.directory
+    );
+    assert!(bound.locked_storage(root, &current).is_err());
+    let original_generation = bound.generation.clone();
+    bound.generation["manifest"] = bound.registration.clone();
+    assert!(bound.locked_storage(root, &storage.directory).is_err());
+    bound.generation = original_generation;
+    let original_state = common::binding(&storage.directory.join("state.json"))?;
+    let substitute = current.join("state.json");
+    fs::copy(storage.directory.join("state.json"), &substitute)?;
+    bound.state = common::binding(&substitute)?;
+    assert!(bound.locked_storage(root, &storage.directory).is_err());
+    bound.state = original_state.clone();
+    bound.state["sha256"] = json!("c".repeat(64));
+    assert!(bound.locked_storage(root, &storage.directory).is_err());
+    storage.finish(Ok(()))?;
+    assert_eq!(
+        common::binding(path(&original_state["path"], "原账本")?)?,
+        original_state
+    );
+    bound.initialized_files = bound.registration.clone();
+    assert!(History::read(root, &binding, None).is_err());
+    Ok(())
+}
+
+#[test]
+fn independent_fixture_requires_both_projected_services_from_the_same_arm_generation() -> Result<()>
+{
+    let initial = json!({"kind":"initial"});
+    verify_fixture_generation(&initial, None, None)?;
+    let restart = json!({"kind":"restart","attempt":4});
+    let storage = json!({"generation":restart,"storage":{"identity":{"pid":1}}});
+    let cache = json!({"generation":restart,"redis":{"pid":2}});
+    let other_cache = json!({"generation":{"kind":"restart","attempt":5},"redis":{"pid":2}});
+    verify_fixture_generation(&restart, Some(&storage), Some(&cache))?;
+    assert!(verify_fixture_generation(&restart, Some(&storage), Some(&other_cache)).is_err());
+    assert!(verify_fixture_generation(&restart, Some(&storage), None).is_err());
+    assert!(verify_fixture_generation(&initial, Some(&storage), Some(&cache)).is_err());
     Ok(())
 }
 

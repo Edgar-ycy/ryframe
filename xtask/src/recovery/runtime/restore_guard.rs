@@ -4,10 +4,7 @@ use std::{error::Error, fmt, path::Path};
 use serde_json::{Value, json};
 
 use super::{
-    bind::{
-        control::runtime_target,
-        ownership::{Owner, control_root},
-    },
+    bind::ownership::{Owner, control_root},
     dataset_authority::{inputs::Inputs, reads::Window, registration::read_binding},
     registration,
 };
@@ -17,6 +14,7 @@ use crate::{
     recovery::inputs::{
         RestoreChecks,
         document::{self, Document},
+        reference::CheckWorkOwner,
     },
 };
 
@@ -36,6 +34,27 @@ pub(in crate::recovery) fn registered_stopped_runtime<T>(
         &control,
         &bound.binding,
         |owner, checks| bound.check(&backend, &inputs, Some(owner), checks),
+        body,
+    )
+}
+
+/// 独立 B1 开始登记在同一次本地目录归属和原运行控制锁内核验停机状态。
+pub(in crate::recovery) fn registered_stopped_independent_runtime<T>(
+    backend: &Path,
+    registration_path: &Path,
+    target_binding: &Value,
+    check_work_owner: &CheckWorkOwner<'_>,
+    body: impl FnOnce(&dyn Fn() -> Result<Value>) -> Result<T>,
+) -> Result<T> {
+    let backend = registration::backend_root(backend)?;
+    let mut inputs = Inputs::new(&backend);
+    let bound = Bound::read(&backend, registration_path, target_binding, &mut inputs)?;
+    bound.check_independent(&backend, &inputs, None, check_work_owner)?;
+    let control = control_root(&backend)?;
+    with_independent_owner(
+        &control,
+        &bound.binding,
+        |owner| bound.check_independent(&backend, &inputs, Some(owner), check_work_owner),
         body,
     )
 }
@@ -78,13 +97,7 @@ impl Bound {
         owner: Option<&Owner>,
         checks: RestoreChecks<'_>,
     ) -> Result<()> {
-        // 每次只保护本次观测的文件，恢复正文可独占发布自己的阶段证据。
-        let window = Window::direct()?;
-        let result = (|| {
-            if let Some(owner) = owner {
-                owner.check()?;
-            }
-            inputs.finish(Ok(()))?;
+        self.check_with(inputs, owner, || {
             registration::verify_not_started_with_checks(
                 backend,
                 &self.reference.path,
@@ -93,11 +106,47 @@ impl Bound {
                 &self.registration.value,
                 checks,
             )?;
-            let (runtime, _) = runtime_target(&self.reference.value, &self.target.value)?;
-            let (_, observed) = registration::runtime_observation(backend, &runtime)?;
-            if observed != self.registration.value["observation"]["runtime"] {
-                return Err("恢复运行目录在三端口核验期间偏离原登记".into());
+            registration::verify_runtime_observation(
+                backend,
+                &self.reference.value,
+                &self.target.value,
+                &self.registration.value,
+            )
+        })
+    }
+
+    fn check_independent(
+        &self,
+        backend: &Path,
+        inputs: &Inputs,
+        owner: Option<&Owner>,
+        check_work_owner: &CheckWorkOwner<'_>,
+    ) -> Result<()> {
+        self.check_with(inputs, owner, || {
+            registration::verify_independent_not_started(
+                backend,
+                &self.reference,
+                &self.target,
+                &self.registration,
+                check_work_owner,
+            )
+        })
+    }
+
+    fn check_with(
+        &self,
+        inputs: &Inputs,
+        owner: Option<&Owner>,
+        verify: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
+        // 每次只保护本次观测的文件，恢复正文可独占发布自己的阶段证据。
+        let window = Window::direct()?;
+        let result = (|| {
+            if let Some(owner) = owner {
+                owner.check()?;
             }
+            inputs.finish(Ok(()))?;
+            verify()?;
             inputs.finish(Ok(()))
         })();
         match owner {
@@ -135,6 +184,20 @@ fn with_checked_owner<T>(
     )
 }
 
+fn with_independent_owner<T>(
+    control: &Path,
+    binding: &Value,
+    verify: impl Fn(&Owner) -> Result<()>,
+    body: impl FnOnce(&dyn Fn() -> Result<Value>) -> Result<T>,
+) -> Result<T> {
+    with_checked_owner(
+        control,
+        binding,
+        |owner, _| verify(owner),
+        |checkpoint| body(&|| checkpoint(RestoreChecks::default())),
+    )
+}
+
 #[cfg(test)]
 pub(crate) fn with_fixture_owner<T>(
     control: &Path,
@@ -142,14 +205,14 @@ pub(crate) fn with_fixture_owner<T>(
     verify: impl Fn() -> Result<()>,
     body: impl FnOnce(&dyn Fn() -> Result<Value>) -> Result<T>,
 ) -> Result<T> {
-    with_checked_owner(
+    with_independent_owner(
         control,
         binding,
-        |owner, _| {
+        |owner| {
             owner.check()?;
             verify()
         },
-        |checkpoint| body(&|| checkpoint(RestoreChecks::default())),
+        body,
     )
 }
 

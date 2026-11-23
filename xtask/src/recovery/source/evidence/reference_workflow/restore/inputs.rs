@@ -38,50 +38,55 @@ pub(super) struct TargetSnapshot {
 }
 
 impl TargetSnapshot {
-    pub(super) fn read(backend: &Path, request: &Value, read_only: bool) -> Result<Self> {
-        let snapshot = Self::load(backend, request)?;
+    pub(super) fn read(
+        backend: &Path,
+        request: &Value,
+        selection: RegisteredSelection,
+        read_only: bool,
+    ) -> Result<Self> {
+        let snapshot = Self::from_registered(backend, request, selection)?;
         snapshot.verify_source(backend, read_only)?;
         Ok(snapshot)
     }
 
     fn load(backend: &Path, request: &Value) -> Result<Self> {
-        let registration_path = validate_local_test_path(
-            path(&request["runtime_registration"])?,
+        Self::from_registered(
             backend,
-            LocalTestPathKind::ExistingFile,
-        )?;
-        let registration_path = portable_path(&fs::canonicalize(registration_path)?);
-        let registration_guard = ProtectedInputs::open([registration_path.clone()])?;
-        let registration = document::read(&registration_path, backend, "恢复运行登记")?;
-        let selected = Selected::read(backend, request, &registration)?;
+            request,
+            RegisteredSelection::read(backend, request)?,
+        )
+    }
+
+    fn from_registered(
+        backend: &Path,
+        request: &Value,
+        selection: RegisteredSelection,
+    ) -> Result<Self> {
+        let RegisteredSelection {
+            registration,
+            registration_guard,
+            selected,
+        } = selection;
         let (chain, verified, product_plan) =
             target_plan::verify(backend, selected.reference, &selected.target.path)?;
         if verified != selected.target.value {
             return Err("恢复目标计划在读取与核验之间发生变化".into());
         }
         let provenance = hold_provenance(&chain.comparison_document, &product_plan)?;
-        let manifest_binding = &chain.backup.result["manifest"];
-        let manifest_path = document::binding_shape(manifest_binding, "正式备份清单")?.path;
-        let backup_guard =
-            ProtectedInputs::open([chain.backup_document.path.clone(), manifest_path])?;
-        let (_, manifest) = document::bound_file(backend, manifest_binding, "正式备份清单")?;
-        if manifest.value != chain.backup.manifest {
-            return Err("备份清单在读取与核验之间发生变化".into());
-        }
-        let root = backup_root(
+        let backup = BoundBackup::read(
             backend,
             path(&request["backup_root"])?,
-            &chain.backup.result,
-            &manifest.path,
+            &chain.backup_document,
+            &chain.backup,
         )?;
         Ok(Self {
-            root,
+            root: backup.root,
             chain,
             target: selected.target,
-            manifest,
+            manifest: backup.manifest,
             registration,
             product_plan,
-            protected: [registration_guard, selected.guard, backup_guard],
+            protected: [registration_guard, selected.guard, backup.guard],
             provenance,
         })
     }
@@ -190,7 +195,7 @@ impl Snapshot {
     }
 }
 
-fn hold_provenance(comparison: &Document, product: &Document) -> Result<Inputs> {
+pub(super) fn hold_provenance(comparison: &Document, product: &Document) -> Result<Inputs> {
     let held = Inputs::open([comparison.path.clone(), product.path.clone()])?;
     // 防止在正式计划验证和保护句柄打开之间接受新字节。
     comparison.assert_unchanged()?;
@@ -207,10 +212,35 @@ fn check_provenance(held: &Inputs) -> Result<()> {
     held.check()
 }
 
-struct Selected {
-    reference: Document,
-    target: Document,
-    guard: ProtectedInputs,
+pub(super) struct RegisteredSelection {
+    pub(super) registration: Document,
+    pub(super) registration_guard: ProtectedInputs,
+    pub(super) selected: Selected,
+}
+
+impl RegisteredSelection {
+    pub(super) fn read(backend: &Path, request: &Value) -> Result<Self> {
+        let registration_path = validate_local_test_path(
+            path(&request["runtime_registration"])?,
+            backend,
+            LocalTestPathKind::ExistingFile,
+        )?;
+        let registration_path = portable_path(&fs::canonicalize(registration_path)?);
+        let registration_guard = ProtectedInputs::open([registration_path.clone()])?;
+        let registration = document::read(&registration_path, backend, "恢复运行登记")?;
+        let selected = Selected::read(backend, request, &registration)?;
+        Ok(Self {
+            registration,
+            registration_guard,
+            selected,
+        })
+    }
+}
+
+pub(super) struct Selected {
+    pub(super) reference: Document,
+    pub(super) target: Document,
+    pub(super) guard: ProtectedInputs,
 }
 
 impl Selected {
@@ -230,7 +260,10 @@ impl Selected {
     }
 }
 
-fn running_record(backend: &Path, request: &Value) -> Result<(Document, ProtectedInputs)> {
+pub(super) fn running_record(
+    backend: &Path,
+    request: &Value,
+) -> Result<(Document, ProtectedInputs)> {
     let path = validate_local_test_path(
         path(&request["record"])?,
         backend,
@@ -249,13 +282,46 @@ fn registered_path(backend: &Path, selected: &Path, descriptor: &Value) -> Resul
     Ok(binding.path)
 }
 
-fn check_runtime(registration: &Document, target: &Document, checkpoint: &Value) -> Result<()> {
+pub(super) fn check_runtime(
+    registration: &Document,
+    target: &Document,
+    checkpoint: &Value,
+) -> Result<()> {
     if *checkpoint
         != json!({"registration":document::binding(registration),"target_plan":document::binding(target)})
     {
         return Err("恢复守卫检查点未绑定同一登记和目标计划".into());
     }
     Ok(())
+}
+
+pub(super) struct BoundBackup {
+    pub(super) root: PathBuf,
+    pub(super) manifest: Document,
+    pub(super) guard: ProtectedInputs,
+}
+
+impl BoundBackup {
+    pub(super) fn read(
+        backend: &Path,
+        selected: &Path,
+        receipt: &Document,
+        backup: &backup::Backup,
+    ) -> Result<Self> {
+        let descriptor = &backup.result["manifest"];
+        let manifest_path = document::binding_shape(descriptor, "正式备份清单")?.path;
+        let guard = ProtectedInputs::open([receipt.path.clone(), manifest_path])?;
+        let (_, manifest) = document::bound_file(backend, descriptor, "正式备份清单")?;
+        if manifest.value != backup.manifest {
+            return Err("备份清单在读取与核验之间发生变化".into());
+        }
+        let root = backup_root(backend, selected, &backup.result, &manifest.path)?;
+        Ok(Self {
+            root,
+            manifest,
+            guard,
+        })
+    }
 }
 
 fn backup_root(
@@ -276,7 +342,12 @@ fn backup_root(
     Ok(registered.to_owned())
 }
 
-fn output(backend: &Path, reference: &Value, target: &Value, root: &Path) -> Result<PathBuf> {
+pub(super) fn output(
+    backend: &Path,
+    reference: &Value,
+    target: &Value,
+    root: &Path,
+) -> Result<PathBuf> {
     let side = match reference["target_side"].as_str() {
         Some(side @ ("base" | "candidate")) if target["target_side"] == side => side,
         _ => return Err("恢复收据必须绑定同一 base 或 candidate 目标侧".into()),

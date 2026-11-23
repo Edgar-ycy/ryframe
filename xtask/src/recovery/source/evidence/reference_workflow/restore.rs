@@ -9,8 +9,10 @@ use crate::{
     recovery::{
         fixture_control::source_pair::execution::HeldTargetSource,
         inputs::{
-            RestoreChecks, document,
+            RestoreChecks,
+            document::{self, Document},
             inventory::{self, HeldArtifacts},
+            reference,
         },
         runtime::restore_guard::registered_stopped_runtime,
     },
@@ -32,6 +34,8 @@ mod database_images;
 mod expected_images;
 #[path = "restore/images.rs"]
 mod images;
+#[path = "restore/independent.rs"]
+mod independent;
 #[path = "restore/inputs.rs"]
 mod inputs;
 #[path = "restore/object_images.rs"]
@@ -62,6 +66,10 @@ impl Phase {
 }
 
 pub(super) fn run(backend: &Path, request: &Value) -> Result<Value> {
+    let reference = document::read(path(&request["plan"])?, backend, "参考恢复计划")?;
+    if reference::is_independent_b1(&reference.value) {
+        return independent::run(backend, request);
+    }
     let before = Snapshot::read(backend, request, true)?;
     let output = before.output(backend)?;
     let plan = &before.chain.reference.value;
@@ -80,7 +88,7 @@ pub(super) fn run(backend: &Path, request: &Value) -> Result<Value> {
     let stage = Stage {
         backend,
         work,
-        lock: &lock,
+        check_owner: &|| lock.check(),
         started: &started,
     };
     let mut evidence = Map::new();
@@ -124,13 +132,13 @@ fn finish(started: &Value, result: Result<Value>, evidence: Map<String, Value>) 
 struct Stage<'a> {
     backend: &'a Path,
     work: &'a Path,
-    lock: &'a Lock,
+    check_owner: &'a (dyn Fn() -> Result<()> + Sync),
     started: &'a Value,
 }
 
 impl Stage<'_> {
     fn check(&self) -> Result<()> {
-        self.lock.check()?;
+        (self.check_owner)()?;
         receipts::check_started(self.started)?;
         Ok(())
     }
@@ -164,7 +172,13 @@ impl Stage<'_> {
                 ReferenceTarget::open(self.backend, manifest, &storage, self.work, &scope)?;
             let window = Execution {
                 stage: self,
-                snapshot: &snapshot,
+                inputs: CopyInputs {
+                    plan,
+                    root: &snapshot.root,
+                    target: &snapshot.target,
+                    manifest: &snapshot.manifest,
+                },
+                check_inputs: &|| snapshot.assert_unchanged(),
                 target: &target,
                 scope: &scope,
             };
@@ -184,7 +198,13 @@ impl Stage<'_> {
                     backup: backup.as_ref(),
                     source: source.as_ref(),
                 };
-                let result = window.run(&tasks, request, checkpoint, checks, evidence);
+                let result = window.run(
+                    &tasks,
+                    &|checks| snapshot.check_runtime(&checkpoint(checks)?),
+                    checks,
+                    evidence,
+                    || self.verify_final(request, &snapshot),
+                );
                 combine(
                     result,
                     source.as_ref().map_or(Ok(()), HeldTargetSource::check_end),
@@ -200,6 +220,14 @@ impl Stage<'_> {
             }))
         })();
         storage.finish(combine(result, scope.assert_unchanged()))
+    }
+
+    fn verify_final(&self, request: &Value, snapshot: &Snapshot) -> Result<()> {
+        let final_input = Snapshot::read(self.backend, request, true)?;
+        if final_input.bindings() != snapshot.bindings() {
+            return Err("恢复完成复核时来源或输入绑定发生变化".into());
+        }
+        snapshot.check_final()
     }
 }
 
@@ -219,9 +247,17 @@ fn hold_source(backend: &Path, snapshot: &Snapshot) -> Result<Option<HeldTargetS
         .transpose()
 }
 
+struct CopyInputs<'a> {
+    plan: &'a Value,
+    root: &'a Path,
+    target: &'a Document,
+    manifest: &'a Document,
+}
+
 struct Execution<'a> {
     stage: &'a Stage<'a>,
-    snapshot: &'a Snapshot,
+    inputs: CopyInputs<'a>,
+    check_inputs: &'a (dyn Fn() -> Result<()> + Sync),
     target: &'a ReferenceTarget<'a>,
     scope: &'a Scope,
 }
@@ -229,27 +265,24 @@ struct Execution<'a> {
 impl Execution<'_> {
     fn check(&self) -> Result<()> {
         self.stage.check()?;
-        self.snapshot.assert_unchanged()?;
+        (self.check_inputs)()?;
         self.target.checkpoint()
     }
 
     fn run(
         &self,
         tasks: &Value,
-        request: &Value,
-        checkpoint: &dyn Fn(RestoreChecks<'_>) -> Result<Value>,
+        checkpoint: &dyn Fn(RestoreChecks<'_>) -> Result<()>,
         checks: RestoreChecks<'_>,
         evidence: &mut Map<String, Value>,
+        verify_final: impl FnOnce() -> Result<()>,
     ) -> Result<()> {
         let (before, after) = expected_images::expected_images(
-            &self.snapshot.chain.reference.value,
-            &self.snapshot.manifest.value,
+            self.inputs.plan,
+            &self.inputs.manifest.value,
             self.target.initialized(),
         )?;
-        let runtime = || {
-            self.snapshot
-                .check_runtime(&checkpoint(RestoreChecks::default())?)
-        };
+        let runtime = || checkpoint(RestoreChecks::default());
         capture_around_write(
             |phase, evidence| {
                 let expected = if phase == Phase::Before {
@@ -263,24 +296,20 @@ impl Execution<'_> {
                 writes::Writes {
                     storage: self.target.inputs(),
                     work: self.stage.work,
-                    backup_root: &self.snapshot.root,
-                    plan: &self.snapshot.chain.reference.value,
-                    manifest: &self.snapshot.manifest.value,
+                    backup_root: self.inputs.root,
+                    plan: self.inputs.plan,
+                    manifest: &self.inputs.manifest.value,
                 }
                 .run(tasks, &SystemTransport, s3::put_if_absent, &|| {
-                    self.snapshot.check_runtime(&checkpoint(checks)?)?;
+                    checkpoint(checks)?;
                     self.check()
                 })?;
-                inventory::verify_artifacts(&self.snapshot.root, &self.snapshot.manifest.value)
+                inventory::verify_artifacts(self.inputs.root, &self.inputs.manifest.value)
             },
             evidence,
         )?;
         runtime()?;
-        let final_input = Snapshot::read(self.stage.backend, request, true)?;
-        if final_input.bindings() != self.snapshot.bindings() {
-            return Err("恢复完成复核时来源或输入绑定发生变化".into());
-        }
-        self.snapshot.check_final()?;
+        verify_final()?;
         self.check()
     }
 

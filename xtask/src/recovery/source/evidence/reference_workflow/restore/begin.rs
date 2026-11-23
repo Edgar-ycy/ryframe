@@ -24,6 +24,7 @@ use crate::{
         inputs::{
             RestoreChecks,
             document::{self, Document},
+            reference,
         },
         runtime::restore_guard::registered_stopped_runtime,
     },
@@ -37,9 +38,40 @@ use native::{
     target_verify::guard::Inputs,
 };
 
+#[path = "begin/apply_inputs.rs"]
+mod apply_inputs;
+#[path = "begin/independent.rs"]
+mod independent;
 #[path = "begin/receipt.rs"]
 mod receipt;
+pub(super) use apply_inputs::{ApplySnapshot, PendingApply};
 pub(super) use receipt::verify_record;
+
+struct BeginInputs<'a> {
+    root: &'a Path,
+    reference: &'a Document,
+    plan: &'a Value,
+    backup_receipt: &'a Document,
+    target: &'a Document,
+    manifest: &'a Document,
+    registration: &'a Document,
+    product_plan: &'a Document,
+}
+
+impl<'a> From<&'a TargetSnapshot> for BeginInputs<'a> {
+    fn from(snapshot: &'a TargetSnapshot) -> Self {
+        Self {
+            root: &snapshot.root,
+            reference: &snapshot.chain.reference,
+            plan: &snapshot.chain.reference.value,
+            backup_receipt: &snapshot.chain.backup_document,
+            target: &snapshot.target,
+            manifest: &snapshot.manifest,
+            registration: &snapshot.registration,
+            product_plan: &snapshot.product_plan,
+        }
+    }
+}
 
 pub(in super::super) fn run(backend: &Path, options: &RestoreBeginOptions) -> Result<Value> {
     let request = json!({
@@ -48,17 +80,22 @@ pub(in super::super) fn run(backend: &Path, options: &RestoreBeginOptions) -> Re
         "runtime_registration": options.runtime_registration,
         "backup_root": options.backup_root,
     });
-    let snapshot = TargetSnapshot::read(backend, &request, true)?;
-    let work = path(&snapshot.chain.reference.value["work_dir"])?;
+    let selection = super::inputs::RegisteredSelection::read(backend, &request)?;
+    if reference::is_independent_b1(&selection.selected.reference.value) {
+        return independent::run(backend, options, &request, selection);
+    }
+    let snapshot = TargetSnapshot::read(backend, &request, selection, true)?;
+    let inputs = BeginInputs::from(&snapshot);
+    let work = path(&inputs.plan["work_dir"])?;
     let maintenance = Maintenance::open(&options.maintenance_root, &options.maintenance_build)?;
-    let normal_directory = receipt::directory(&snapshot)?;
+    let normal_directory = receipt::directory(&inputs)?;
     let directory = if let Some(copy) = &options.copy {
         begin_copy::directory(normal_directory, copy, &snapshot.product_plan.value)?
     } else {
         normal_directory
     };
-    let output = output_file(backend, work, &snapshot, &directory, &options.output)?;
-    files::work(&json!({"plan":snapshot.chain.reference.value}), true)?;
+    let output = output_file(backend, work, &inputs, &directory, &options.output)?;
+    files::work(&json!({"plan":inputs.plan}), true)?;
     if !output.parent().is_some_and(Path::is_dir) {
         return Err("恢复运行记录必须写到受管参考演练目录中".into());
     }
@@ -85,12 +122,13 @@ pub(in super::super) fn run(backend: &Path, options: &RestoreBeginOptions) -> Re
                 work,
                 output: &output,
                 directory: &directory,
-                target_snapshot: &snapshot,
+                inputs: &inputs,
                 maintenance: &maintenance,
                 directory_created: &directory_created,
                 copy,
+                work_binding: None,
             };
-            active.run(&|| {
+            active.run_copy_target(&snapshot, &|| {
                 lock.check()?;
                 if let Some(window) = &copy_window {
                     window.check()?;
@@ -103,10 +141,24 @@ pub(in super::super) fn run(backend: &Path, options: &RestoreBeginOptions) -> Re
         lock.check(),
         copy_window.as_ref().map_or(Ok(()), CopyWindow::check),
     );
-    match combine(registered, checked) {
+    finish(
+        backend,
+        &directory,
+        &directory_created,
+        combine(registered, checked),
+    )
+}
+
+fn finish(
+    backend: &Path,
+    directory: &Path,
+    directory_created: &Cell<bool>,
+    result: Result<(receipt::Intent, Document)>,
+) -> Result<Value> {
+    match result {
         Ok((intent, record)) => intent.finish(backend, &record),
         Err(error) if directory_created.get() => {
-            combine(Err(error), receipt::record_unconfirmed(backend, &directory))
+            combine(Err(error), receipt::record_unconfirmed(backend, directory))
         }
         Err(error) => Err(error),
     }
@@ -115,15 +167,15 @@ pub(in super::super) fn run(backend: &Path, options: &RestoreBeginOptions) -> Re
 fn output_file(
     backend: &Path,
     work: &Path,
-    snapshot: &TargetSnapshot,
+    inputs: &BeginInputs<'_>,
     evidence: &Path,
     output: &Path,
 ) -> Result<PathBuf> {
     let output = validate_local_test_path(output, backend, LocalTestPathKind::OutputFile)?;
-    let initialized = path(&snapshot.target.value["fresh_target"]["initialized"]["path"])?;
+    let initialized = path(&inputs.target.value["fresh_target"]["initialized"]["path"])?;
     let initialized = initialized.parent().ok_or("原目标初始化证据缺少目录")?;
     if !output.starts_with(&work)
-        || output.starts_with(&snapshot.root)
+        || output.starts_with(inputs.root)
         || output.starts_with(initialized)
         || output.starts_with(evidence)
     {
@@ -137,15 +189,19 @@ struct Begin<'a> {
     work: &'a Path,
     output: &'a Path,
     directory: &'a Path,
-    target_snapshot: &'a TargetSnapshot,
+    inputs: &'a BeginInputs<'a>,
     maintenance: &'a Maintenance,
     directory_created: &'a Cell<bool>,
     copy: Option<&'a VerifiedCopy>,
+    work_binding: Option<&'a Value>,
 }
 
 impl Begin<'_> {
-    fn run(&self, stopped: &dyn Fn() -> Result<()>) -> Result<(receipt::Intent, Document)> {
-        let snapshot = self.target_snapshot;
+    fn run_copy_target(
+        &self,
+        snapshot: &TargetSnapshot,
+        stopped: &dyn Fn() -> Result<()>,
+    ) -> Result<(receipt::Intent, Document)> {
         let arm = &snapshot.chain.arm;
         let bridges = native::json::array(&arm.request.value["build_bridges"], "恢复原构建桥接")?;
         let scope = Scope::load(self.backend, bridges, &[])?;
@@ -163,18 +219,26 @@ impl Begin<'_> {
                 target.check()?;
                 self.maintenance.check()
             };
-            check()?;
-            let (before, _) = expected_images::expected_images(
-                &snapshot.chain.reference.value,
-                &snapshot.manifest.value,
-                target.initialized(),
-            )?;
-            common::ensure_new_directory(self.backend, self.directory, "正式登记证据目录")?;
-            self.directory_created.set(true);
-            let image = self.observe_before(&target, before, &check)?;
-            self.register(&target, &image, &check)
+            self.prepare(&target, &check)
         })();
         storage.finish(combine(result, scope.assert_unchanged()))
+    }
+
+    fn prepare(
+        &self,
+        target: &ReferenceTarget<'_>,
+        check: &dyn Fn() -> Result<()>,
+    ) -> Result<(receipt::Intent, Document)> {
+        check()?;
+        let (before, _) = expected_images::expected_images(
+            self.inputs.plan,
+            &self.inputs.manifest.value,
+            target.initialized(),
+        )?;
+        common::ensure_new_directory(self.backend, self.directory, "正式登记证据目录")?;
+        self.directory_created.set(true);
+        let image = self.observe_before(target, before, check)?;
+        self.register(target, &image, check)
     }
 
     fn observe_before(
@@ -183,7 +247,7 @@ impl Begin<'_> {
         before: Value,
         check: &dyn Fn() -> Result<()>,
     ) -> Result<Value> {
-        let reference = &self.target_snapshot.chain.reference.value;
+        let reference = self.inputs.plan;
         let objects = &reference["target"]["s3"];
         let storage = target.inputs();
         let object_directory = self.directory.join("objects");
@@ -198,7 +262,7 @@ impl Begin<'_> {
                 scope: text(&reference["target"]["scope_id"])?,
                 endpoint: text(&objects["endpoint"])?,
                 region: text(&objects["region"])?,
-                manifest: &self.target_snapshot.manifest.value,
+                manifest: &self.inputs.manifest.value,
                 expected: &before["objects"],
                 plan_sha256: &native::digest::plan_hash(reference)?,
                 generation_sha256: &native::digest::plan_hash(&target.initialized()["generation"])?,
@@ -222,16 +286,16 @@ impl Begin<'_> {
         before: &Value,
         check: &dyn Fn() -> Result<()>,
     ) -> Result<(receipt::Intent, Document)> {
-        let snapshot = self.target_snapshot;
-        let selected = &snapshot.chain.reference.value["source"]["s3"]["configuration"];
+        let inputs = self.inputs;
+        let selected = &inputs.plan["source"]["s3"]["configuration"];
         let registry = Configuration::open(self.backend, selected)?;
         let target_backend = target.inputs().execution_backend()?;
         let target_config = Configuration::open(&target_backend, target.configuration())?;
         let product_plan = self.execution_plan()?;
         let proof = begin_proof::build(
             &product_plan.value,
-            &snapshot.target.sha256(),
-            text(&snapshot.target.value["fresh_target"]["initialized"]["sha256"])?,
+            &inputs.target.sha256(),
+            text(&inputs.target.value["fresh_target"]["initialized"]["sha256"])?,
             before,
         )?;
         if registry.environment != target_config.environment {
@@ -247,7 +311,7 @@ impl Begin<'_> {
         let intent = receipt::Intent::publish(
             self.backend,
             self.directory,
-            snapshot,
+            inputs,
             self.output,
             &self.maintenance.binding,
             receipt::Evidence {
@@ -255,18 +319,13 @@ impl Begin<'_> {
                 proof: &proof,
                 copy: self.copy,
                 product_plan: &product_plan,
+                work_binding: self.work_binding,
             },
         )?;
         let record = (|| -> Result<Document> {
             checkpoint()?;
             intent.check()?;
-            output_file(
-                self.backend,
-                self.work,
-                snapshot,
-                self.directory,
-                self.output,
-            )?;
+            output_file(self.backend, self.work, inputs, self.directory, self.output)?;
             if let Some(copy) = self.copy {
                 self.register_copy(&registry, copy)?;
                 checkpoint()?;
@@ -284,13 +343,13 @@ impl Begin<'_> {
     }
 
     fn verify_running(&self, product_plan: &Document) -> Result<Document> {
-        let snapshot = self.target_snapshot;
-        let mut reference = snapshot.chain.reference.value.clone();
+        let inputs = self.inputs;
+        let mut reference = inputs.plan.clone();
         let manifest = if let Some(copy) = self.copy {
             reference["id"] = copy.manifest.value["id"].clone();
             &copy.manifest
         } else {
-            &snapshot.manifest
+            inputs.manifest
         };
         let record = document::read(self.output, self.backend, "恢复运行记录")?;
         proof::record(&json!({
@@ -303,7 +362,7 @@ impl Begin<'_> {
     }
 
     fn execution_plan(&self) -> Result<Document> {
-        let original = &self.target_snapshot.product_plan;
+        let original = self.inputs.product_plan;
         let Some(copy) = self.copy else {
             return Ok(original.clone());
         };

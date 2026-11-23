@@ -170,7 +170,7 @@ impl BackupInputs {
 }
 
 impl Inputs {
-    pub(in crate::recovery::clone::native) fn directory(path: &Path) -> Result<Self> {
+    pub(in crate::recovery) fn directory(path: &Path) -> Result<Self> {
         Ok(Self {
             entries: vec![FrozenEntry::open(path, true, false)?],
         })

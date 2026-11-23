@@ -14,7 +14,7 @@ use crate::{
             backup,
             document::{self, Document},
             independent_b1::Verified,
-            reference,
+            reference::{self, CheckWorkOwner, IndependentWork},
         },
         source::evidence::comparison,
     },
@@ -30,11 +30,32 @@ pub(in crate::recovery) fn verify<'a>(
     frame: &Frame<'a>,
     output: Option<&Path>,
 ) -> Result<(Verified<'a>, Value)> {
+    verify_with_work(backend, frame, output, IndependentWork::Absent)
+}
+
+/// 开始登记控制器只重读已发布目标，回调借用本次占有的目录。
+pub(in crate::recovery) fn verify_owned<'a>(
+    backend: &'a Path,
+    frame: &Frame<'a>,
+    check_owner: &'a CheckWorkOwner<'a>,
+) -> Result<(Verified<'a>, Value)> {
+    if frame.target.is_none() {
+        return Err("独立 B1 已占有工作目录只允许重验原正式目标计划".into());
+    }
+    verify_with_work(backend, frame, None, IndependentWork::Owned(check_owner))
+}
+
+fn verify_with_work<'a>(
+    backend: &'a Path,
+    frame: &Frame<'a>,
+    output: Option<&Path>,
+    work: IndependentWork<'a>,
+) -> Result<(Verified<'a>, Value)> {
     frame.check()?;
     let [backup_file, comparison_file, arm, fresh, product] = frame.evidence.as_slice() else {
         return Err("参考目标计划必须绑定五项原证据".into());
     };
-    let evidence = Verified::load(
+    let evidence = Verified::load_with_work(
         backend,
         frame.reference,
         [
@@ -45,6 +66,7 @@ pub(in crate::recovery) fn verify<'a>(
         ],
         RestoreInputSide::Candidate,
         output,
+        work,
     )?;
     let value = capture_independent_b1(backend, &evidence, product)?;
     require_readback(frame.target.as_ref(), &value)?;
