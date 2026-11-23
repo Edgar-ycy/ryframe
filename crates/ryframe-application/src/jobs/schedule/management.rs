@@ -64,17 +64,10 @@ impl JobScheduleService {
     ) -> AppResult<JobSchedulePreview> {
         let parsed = ParsedSchedule::parse(cron_expression, timezone)?;
         let now = self.persistence.database_now().await?;
-        let occurrences = parsed
-            .future_occurrences(now, 5)?
-            .into_iter()
-            .map(|utc| JobScheduleOccurrence {
-                utc,
-                schedule_time: utc.with_timezone(&parsed.timezone).to_rfc3339(),
-            })
-            .collect();
+        let occurrences = parsed.future_occurrences(now, 5)?;
         Ok(JobSchedulePreview {
             calculated_at: now,
-            timezone: parsed.timezone.name().to_owned(),
+            timezone: parsed.timezone_name().to_owned(),
             occurrences,
         })
     }
@@ -443,7 +436,7 @@ impl JobScheduleService {
             name,
             handler_key,
             cron_expression: parsed.expression.clone(),
-            timezone: parsed.timezone.name().to_owned(),
+            timezone: parsed.timezone_name().to_owned(),
             enabled: command.enabled,
             misfire_policy,
             concurrency_policy,
