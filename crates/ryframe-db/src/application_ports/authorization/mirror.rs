@@ -1,7 +1,10 @@
+use chrono::DateTime;
+use time::OffsetDateTime;
+
 use super::super::transaction::DatabasePortTransaction;
 use crate::{
-    CacheNamespaceVersionRepository, OutboxEventRepository, RecordOutboxEvent, TenantRepository,
-    UserRepository,
+    CacheNamespaceVersionRepository, DbResultExt, OutboxEventRepository, RecordOutboxEvent,
+    TenantRepository, UserRepository,
 };
 
 use ryframe_application::{
@@ -50,12 +53,20 @@ impl AuthorizationMirrorTransaction for DatabasePortTransaction {
             .await
     }
 
-    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
-        crate::repositories::database_utc_now(self).await
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime> {
+        let now = crate::repositories::database_utc_now(self).await?;
+        OffsetDateTime::from_unix_timestamp(now.timestamp())
+            .and_then(|time| time.replace_nanosecond(now.timestamp_subsec_nanos()))
+            .db_context("读取授权镜像数据库 UTC 时间")
     }
 
     async fn record(&self, event: AuthorizationMirrorEvent) -> ryframe_kernel::AppResult<()> {
-        let available_at = event.available_at;
+        let available_at = DateTime::from_timestamp(
+            event.available_at.unix_timestamp(),
+            event.available_at.nanosecond(),
+        )
+        .ok_or("时间超出 UTC 表示范围")
+        .db_context("写入授权镜像 Outbox UTC 时间")?;
         OutboxEventRepository
             .record_in_transaction(
                 self,

@@ -1,4 +1,5 @@
 use ryframe_kernel::{AppError, AppResult};
+use time::OffsetDateTime;
 
 use super::*;
 use crate::ports::authorization::{AuthorizationMirrorEvent, AuthorizationMirrorTransaction};
@@ -147,7 +148,7 @@ fn mirror_event(
     aggregate_id: &str,
     version: i64,
     payload: AuthorizationMirrorUpdate,
-    available_at: chrono::DateTime<chrono::Utc>,
+    available_at: OffsetDateTime,
 ) -> AppResult<AuthorizationMirrorEvent> {
     let trace_context = crate::trace_context::current_trace_context();
     Ok(AuthorizationMirrorEvent {

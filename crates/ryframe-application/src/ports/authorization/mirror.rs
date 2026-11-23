@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use time::OffsetDateTime;
 
 /// 写入授权镜像 Outbox 的应用事件。
 #[derive(Debug)]
@@ -7,7 +7,7 @@ pub struct AuthorizationMirrorEvent {
     pub aggregate_type: String,
     pub aggregate_id: String,
     pub payload: serde_json::Value,
-    pub available_at: DateTime<Utc>,
+    pub available_at: OffsetDateTime,
     pub max_attempts: i32,
     pub dedupe_key: String,
     pub traceparent: Option<String>,
@@ -40,7 +40,7 @@ pub trait AuthorizationMirrorTransaction: Send + Sync {
         namespace: &'a str,
     ) -> ryframe_kernel::AppResult<i64>;
 
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime>;
 
     async fn record(&self, event: AuthorizationMirrorEvent) -> ryframe_kernel::AppResult<()>;
 }

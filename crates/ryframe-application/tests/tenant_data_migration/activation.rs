@@ -14,6 +14,7 @@ use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, AtomicI32, Ordering},
 };
+use time::OffsetDateTime;
 
 #[path = "activation_stage.rs"]
 mod stage;
@@ -72,7 +73,7 @@ impl Drop for Work {
 }
 
 fn fixture(failure: Failure) -> (Arc<Shared>, AuthorizationCache) {
-    let now = chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    let now = chrono::DateTime::from_timestamp(1_800_000_000, 123_456_000).unwrap();
     let migration = TenantDataMigrationRecord {
         id: 55,
         tenant_id: "migration-tenant".into(),
@@ -292,14 +293,24 @@ impl AuthorizationMirrorTransaction for Work {
         state.epoch += 1;
         Ok(state.epoch)
     }
-    async fn database_now(&self) -> AppResult<chrono::DateTime<Utc>> {
-        Ok(self.pending.lock().unwrap().migration.updated_at)
+    async fn database_now(&self) -> AppResult<OffsetDateTime> {
+        let now = self.pending.lock().unwrap().migration.updated_at;
+        Ok(OffsetDateTime::from_unix_timestamp(now.timestamp())
+            .and_then(|time| time.replace_nanosecond(now.timestamp_subsec_nanos()))
+            .unwrap())
     }
     async fn record(&self, event: AuthorizationMirrorEvent) -> AppResult<()> {
         if self.shared.failure == Failure::Outbox {
             return Err(AppError::Database("合成 outbox 失败".into()));
         }
-        self.pending.lock().unwrap().mirrors.push(event.payload);
+        let mut pending = self.pending.lock().unwrap();
+        let now = pending.migration.updated_at;
+        assert_eq!(event.available_at.unix_timestamp(), now.timestamp());
+        assert_eq!(
+            event.available_at.nanosecond(),
+            now.timestamp_subsec_nanos()
+        );
+        pending.mirrors.push(event.payload);
         Ok(())
     }
     async fn increment_user_versions<'a>(&'a self, _: &'a str, _: &'a [i64]) -> AppResult<u64> {
