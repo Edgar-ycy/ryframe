@@ -290,6 +290,35 @@ fn restore_record_publication_is_create_new_and_canonical() {
     assert!(output::verify_published(&output, &value, &original).is_err());
 }
 
+#[cfg(windows)]
+mod windows_output {
+    use super::output::{publish_json, validate_new_output};
+    use std::{fs, path::Path};
+
+    #[test]
+    fn publishes_a_long_windows_filename_without_leaving_staging() {
+        let local = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local-tests");
+        fs::create_dir_all(&local).unwrap();
+        let directory = tempfile::tempdir_in(local).unwrap();
+        let parent = directory.path().canonicalize().unwrap();
+        let name = format!("{}.json", "x".repeat(245));
+        let output = parent.join(&name);
+        let value = serde_json::json!({"status": "running"});
+
+        assert_eq!(validate_new_output(&output).unwrap(), output);
+        assert_eq!(publish_json(&output, &value).unwrap(), output);
+        assert_eq!(
+            fs::read(&output).unwrap(),
+            b"{\n  \"status\": \"running\"\n}\n"
+        );
+        let files = fs::read_dir(&parent)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>();
+        assert_eq!(files, [std::ffi::OsString::from(name)]);
+    }
+}
+
 #[test]
 fn business_failure_keeps_original_error_and_does_not_publish_a_record() {
     let directory = tempfile::tempdir().unwrap();

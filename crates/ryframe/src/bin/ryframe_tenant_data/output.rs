@@ -144,32 +144,3 @@ pub fn publish_result<T: Serialize>(
     println!("{label}已写入不可覆盖的新文件：{}", target.display());
     Ok(())
 }
-
-#[cfg(all(test, windows))]
-mod tests {
-    use super::*;
-    use std::fs;
-
-    #[test]
-    fn publishes_a_long_windows_filename_without_leaving_staging() {
-        let local = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local-tests");
-        fs::create_dir_all(&local).unwrap();
-        let directory = tempfile::tempdir_in(local).unwrap();
-        let parent = directory.path().canonicalize().unwrap();
-        let name = format!("{}.json", "x".repeat(245));
-        let output = parent.join(&name);
-        let value = serde_json::json!({"status": "running"});
-
-        assert_eq!(validate_new_output(&output).unwrap(), output);
-        assert_eq!(publish_json(&output, &value).unwrap(), output);
-        assert_eq!(
-            fs::read(&output).unwrap(),
-            b"{\n  \"status\": \"running\"\n}\n"
-        );
-        let files = fs::read_dir(&parent)
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name())
-            .collect::<Vec<_>>();
-        assert_eq!(files, [std::ffi::OsString::from(name)]);
-    }
-}
