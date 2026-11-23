@@ -9,6 +9,7 @@ use serde_json::{Map, Value, json};
 use super::{
     catalog::{self, Catalog},
     digest,
+    held_plan::HeldPlanObjects,
     input::{self, ArtifactBinding, ValidatedInput},
     json::{array, exact, object, text},
     schedule, sql,
@@ -24,11 +25,15 @@ pub(super) struct Output {
     pub(super) source_policy: SourcePolicy,
 }
 
-pub(super) fn create(value: &Value, backend: &Path) -> Result<Output> {
-    let validated = input::validate(value, backend)?;
+pub(super) fn create(
+    value: &Value,
+    backend: &Path,
+    held: Option<&HeldPlanObjects>,
+) -> Result<Output> {
+    let validated = input::validate_with_objects(value, backend, held)?;
     let policy_before = source_policy(&validated.sources)?;
     let (databases, pending) = database_plan(value, &validated)?;
-    rebind_all(value, &validated.artifact_root)?;
+    rebind_all(value, &validated.artifact_root, held)?;
     if source_policy(&validated.sources)? != policy_before {
         return Err("离线核验期间 schema、生成目录或业务目录发生变化".into());
     }
@@ -99,7 +104,7 @@ pub(super) fn recheck_inputs(
         return Err("离线核验期间 schema、生成目录或业务目录发生变化".into());
     }
     // SQL 行已按实际消费的原件字节核验。发布后重新检查绑定并再次核对目录来源。
-    rebind_all(value, &validated.artifact_root)?;
+    rebind_all(value, &validated.artifact_root, None)?;
     if source_policy(&validated.sources)? != policy_before {
         return Err("离线核验期间 schema、生成目录或业务目录发生变化".into());
     }
@@ -270,28 +275,20 @@ fn forbidden(value: &Value, input: &ValidatedInput) -> Vec<String> {
     result
 }
 
-fn rebind_all(value: &Value, root: &Path) -> Result<()> {
-    for binding in value["evidence"]
-        .as_object()
-        .unwrap()
-        .values()
-        .chain(
-            value["databases"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|item| &item["artifact"]),
-        )
-        .chain(
-            value["objects"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .flat_map(|bucket| bucket["entries"].as_array().unwrap())
-                .map(|item| &item["artifact"]),
-        )
-    {
+fn rebind_all(value: &Value, root: &Path, held: Option<&HeldPlanObjects>) -> Result<()> {
+    for binding in value["evidence"].as_object().unwrap().values().chain(
+        value["databases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| &item["artifact"]),
+    ) {
         input::bound_file(root, binding)?;
+    }
+    for bucket in value["objects"].as_array().unwrap() {
+        for item in bucket["entries"].as_array().unwrap() {
+            input::bound_object(root, &item["artifact"], held)?;
+        }
     }
     Ok(())
 }

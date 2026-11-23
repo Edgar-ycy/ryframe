@@ -32,8 +32,15 @@ impl ProcessGuard {
     }
 
     pub(crate) fn acquire_existing(directory: &Path) -> Result<Self> {
+        Self::acquire_existing_named(directory, "run-control.guard")
+    }
+
+    pub(crate) fn acquire_existing_named(directory: &Path, name: &str) -> Result<Self> {
+        if name.is_empty() || name.contains(['/', '\\']) || name.contains("..") {
+            return Err("控制互斥文件名称无效".into());
+        }
         let parent = guard_parent(directory)?;
-        let path = directory.join("run-control.guard");
+        let path = directory.join(name);
         guard_metadata(&path, 1)?;
         let existing = same_file::Handle::from_path(&path)?;
         let file = guard_options().open(&path)?;
@@ -42,6 +49,27 @@ impl ProcessGuard {
             return Err("控制互斥文件已被替换或改变，拒绝继续".into());
         }
         Ok(guard)
+    }
+
+    pub(crate) fn require_existing_named_held(directory: &Path, name: &str) -> Result<()> {
+        if name.is_empty() || name.contains(['/', '\\']) || name.contains("..") {
+            return Err("控制互斥文件名称无效".into());
+        }
+        let parent = guard_parent(directory)?;
+        let path = directory.join(name);
+        guard_metadata(&path, 1)?;
+        let file = guard_options().open(&path)?;
+        let handle = same_file::Handle::from_file(file.try_clone()?)?;
+        match file.try_lock() {
+            Err(fs::TryLockError::WouldBlock) => {}
+            Err(fs::TryLockError::Error(error)) => return Err(error.into()),
+            Ok(()) => return Err("原控制器尚未持有对应互斥文件".into()),
+        }
+        guard_metadata(&path, 1)?;
+        if guard_parent(directory)? != parent || same_file::Handle::from_path(&path)? != handle {
+            return Err("观察期间互斥文件身份变化".into());
+        }
+        Ok(())
     }
 
     pub(crate) fn acquire_named(directory: &Path, name: &str) -> Result<Self> {

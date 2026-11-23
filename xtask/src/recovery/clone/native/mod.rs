@@ -19,6 +19,7 @@ pub(crate) mod copy_transfer;
 pub(crate) mod department;
 pub(crate) mod digest;
 pub(crate) mod export;
+pub(in crate::recovery::clone::native) mod held_plan;
 pub(crate) mod input;
 pub(crate) mod json;
 pub(crate) mod lifecycle;
@@ -47,6 +48,14 @@ pub(crate) fn run(command: &CloneCommand, backend: &Path) -> Result<()> {
         | CloneCommand::Status { .. }
         | CloneCommand::Stage { .. }
         | CloneCommand::Recover { .. } => lifecycle::run(command, backend)?,
+        CloneCommand::ObservePrepareTargetLock {
+            run_dir,
+            owner_binding,
+            output,
+        } => lifecycle::prepare_target_lock::observe(backend, run_dir, owner_binding, output)?,
+        CloneCommand::RecoverPrepareTargetLock { run_dir, receipt } => {
+            lifecycle::prepare_target_lock::recover(backend, run_dir, receipt)?
+        }
         CloneCommand::RecoverCopy {
             run_dir,
             owner_binding,
@@ -150,11 +159,19 @@ pub(crate) struct InspectedInput {
 }
 
 pub(crate) fn inspect_input(backend: &Path, input: &Path) -> Result<InspectedInput> {
+    inspect_input_with_objects(backend, input, None)
+}
+
+fn inspect_input_with_objects(
+    backend: &Path,
+    input: &Path,
+    held: Option<&held_plan::HeldPlanObjects>,
+) -> Result<InspectedInput> {
     validate_local_test_path(input, backend, LocalTestPathKind::ExistingFile)
         .map_err(|error| format!("复制输入无效：{error}"))?;
     let before = digest::file(input)?;
     let declaration = json::read(input)?;
-    let output = plan::create(&declaration, backend)?;
+    let output = plan::create(&declaration, backend, held)?;
     if digest::file(input)? != before {
         return Err("离线核验期间输入清单变化".into());
     }
@@ -204,11 +221,20 @@ pub(crate) fn finish_new_plan(
 }
 
 pub(crate) fn issue(backend: &Path, plan: &Path, wrapper: &Value) -> Result<Value> {
+    issue_with_objects(backend, plan, wrapper, None)
+}
+
+fn issue_with_objects(
+    backend: &Path,
+    plan: &Path,
+    wrapper: &Value,
+    held: Option<&held_plan::HeldPlanObjects>,
+) -> Result<Value> {
     let before = verify_published_plan(plan, wrapper)?;
     let input = wrapper["input_path"]
         .as_str()
         .ok_or("计划缺少完整输入路径")?;
-    if inspect_input(backend, Path::new(input))?.wrapper != *wrapper {
+    if inspect_input_with_objects(backend, Path::new(input), held)?.wrapper != *wrapper {
         return Err("已写计划与当前完整输入、源码策略或导出证据不一致".into());
     }
     verify_plan_digest(plan, &before)?;

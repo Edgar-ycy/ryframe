@@ -34,6 +34,8 @@ mod input;
 #[path = "execution/window.rs"]
 mod window;
 pub(in crate::recovery) use frontend::publish_frontend;
+#[cfg(windows)]
+pub(in crate::recovery) use held_target::HeldSourceRoot;
 pub(in crate::recovery) use held_target::HeldTargetSource;
 pub(in crate::recovery::fixture_control) use window::Window;
 

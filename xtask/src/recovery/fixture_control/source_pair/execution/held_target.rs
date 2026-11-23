@@ -25,13 +25,13 @@ pub(in crate::recovery) struct HeldTargetSource {
     #[cfg(windows)]
     window: super::Window,
     #[cfg(windows)]
-    roots: Vec<SourceRoot>,
+    roots: Vec<HeldSourceRoot>,
     #[cfg(not(windows))]
     impossible: std::convert::Infallible,
 }
 
 #[cfg(windows)]
-struct SourceRoot {
+pub(in crate::recovery) struct HeldSourceRoot {
     worktree: HeldSourceTree,
     git: HeldGit,
 }
@@ -52,13 +52,13 @@ impl HeldTargetSource {
         }
         let mut roots = Vec::with_capacity(4);
         for name in ["backend", "frontend"] {
-            roots.push(SourceRoot::open(
+            roots.push(HeldSourceRoot::open(
                 &publication["original"]["paths"][name],
                 &publication["original"]["current"][name],
                 (name == "frontend").then_some(&publication["original"]["contract_assets"]),
                 name,
             )?);
-            roots.push(SourceRoot::open(
+            roots.push(HeldSourceRoot::open(
                 &publication["published"][name]["path"],
                 &publication["published"][name]["inventory"],
                 None,
@@ -156,16 +156,13 @@ impl HeldTargetSource {
         }
         self.window.check_documents()?;
         // 四个根的句柄只读且各自独立；以现有有界线程能力并行观测。
-        crate::source_scan::ordered(&self.roots, true, |root| {
-            root.worktree.checkpoint()?;
-            root.git.checkpoint()
-        })?;
+        crate::source_scan::ordered(&self.roots, true, HeldSourceRoot::checkpoint)?;
         self.window.check_documents()
     }
 }
 
 #[cfg(windows)]
-impl SourceRoot {
+impl HeldSourceRoot {
     fn open(path: &Value, inventory: &Value, asset: Option<&Value>, role: &str) -> Result<Self> {
         let root = Path::new(path.as_str().ok_or("维护来源清单缺少源码根")?);
         let inventory = source::validate_inventory(inventory)?;
@@ -173,8 +170,29 @@ impl SourceRoot {
             Some(asset) => assets::expected(&inventory.files, asset)?,
             None => inventory.files,
         };
+        Self::open_tree(root, &inventory.source.snapshot.head, &files, role)
+    }
+
+    pub(in crate::recovery) fn open_backend(
+        root: &Path,
+        inventory: &source::Inventory,
+    ) -> Result<Self> {
+        Self::open_tree(
+            root,
+            &inventory.source.snapshot.head,
+            &inventory.files,
+            "backend",
+        )
+    }
+
+    fn open_tree(
+        root: &Path,
+        head: &str,
+        files: &[source::FileRecord],
+        role: &str,
+    ) -> Result<Self> {
         let git = HeldGit::open(root)?;
-        if git.head() != inventory.source.snapshot.head {
+        if git.head() != head {
             return Err("受保护 Git HEAD 与登记的维护来源不同".into());
         }
         let mut files: Vec<_> = files.iter().map(|item| root.join(&item.path)).collect();
@@ -191,5 +209,10 @@ impl SourceRoot {
         }
         let worktree = HeldSourceTree::open(root, files, &skipped)?;
         Ok(Self { worktree, git })
+    }
+
+    pub(in crate::recovery) fn checkpoint(&self) -> Result<()> {
+        self.worktree.checkpoint()?;
+        self.git.checkpoint()
     }
 }
