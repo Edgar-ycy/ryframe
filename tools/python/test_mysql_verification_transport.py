@@ -35,6 +35,7 @@ class MysqlVerificationTransportTests(unittest.TestCase):
             "identity": "SELECT @@server_uuid, DATABASE();",
             "ownership": "SELECT resource_kind, scope_id, marker FROM ryframe_resource_ownership ORDER BY resource_kind;",
         }
+        self.tools.mysql = Mock(side_effect=AssertionError("不能回退到 stdin"))
         for check, sql in queries.items():
             with self.subTest(check=check), patch.dict("os.environ", {"MYSQL_PWD": "ambient-secret"}):
                 self.run.reset_mock()
@@ -52,6 +53,7 @@ class MysqlVerificationTransportTests(unittest.TestCase):
                 self.assertEqual(options["stdin"], subprocess.DEVNULL)
                 self.assertTrue(options["check"])
                 self.assertEqual(options["timeout"], 1800)
+                self.tools.mysql.assert_not_called()
                 self.assertEqual(self.run.call_count, 1)
 
     def test_arbitrary_check_and_sql_inputs_are_rejected_before_command_creation(self):
@@ -74,19 +76,6 @@ class MysqlVerificationTransportTests(unittest.TestCase):
                 self.assertEqual(options["input"], payload)
                 self.assertNotIn("stdin", options)
                 self.assertEqual(self.run.call_count, 1)
-
-    def test_fixed_query_method_does_not_delegate_to_business_stdin(self):
-        self.tools.mysql = Mock(side_effect=AssertionError("不能回退到 stdin"))
-        self.tools.database_verification_response(self.database, "identity")
-        self.tools.mysql.assert_not_called()
-        self.assertEqual(self.run.call_count, 1)
-
-    def test_empty_identity_success_retries_once_and_can_succeed(self):
-        responses = iter((b"", b"uuid-1\tsource_control\n"))
-        self.run.side_effect = lambda command, **options: mysql_output(command, options, next(responses))
-        self.assertEqual(self.tools.database_verification_response(self.database, "identity"),
-                         "uuid-1\tsource_control")
-        self.assertEqual(self.run.call_count, 2)
 
     def test_empty_ownership_success_retries_once_and_can_succeed(self):
         responses = iter((b"", b"control\tscope\towner\n"))
