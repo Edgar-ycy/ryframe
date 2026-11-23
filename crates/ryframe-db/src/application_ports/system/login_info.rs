@@ -1,21 +1,23 @@
-use crate::DbResultExt;
 use std::sync::Arc;
 
-use crate::{
-    ControlDatabaseCluster, LoginInfoFilter as DatabaseLoginInfoFilter, LoginInfoRepository,
-    ReadConsistency, Repository, entities::login_info,
-};
 use async_trait::async_trait;
+use chrono::DateTime;
 use ryframe_kernel::{
     AppResult, DataScopeContextRef, ExportCursorWindow, PageResult, ValidatedPageQuery,
 };
 use sea_orm::TransactionTrait;
+use time::OffsetDateTime;
 
 use ryframe_application::{
     PersistenceTransaction, TransactionAuditMode,
     ports::system::{
         LoginInfoFilter, LoginInfoPersistencePort, LoginInfoRecord, LoginInfoTransaction,
     },
+};
+
+use crate::{
+    ControlDatabaseCluster, DbResultExt, LoginInfoFilter as DatabaseLoginInfoFilter,
+    LoginInfoRepository, ReadConsistency, Repository, entities::login_info,
 };
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn LoginInfoPersistencePort> {
@@ -37,7 +39,7 @@ impl LoginInfoPersistencePort for DatabaseLoginInfoPersistence {
             .insert(
                 self.database.write(),
                 tenant_id,
-                to_entity(tenant_id, record),
+                to_entity(tenant_id, record)?,
             )
             .await
             .map(|_| ())
@@ -63,11 +65,12 @@ impl LoginInfoPersistencePort for DatabaseLoginInfoPersistence {
                 data_scope,
             )
             .await?;
-        Ok(PageResult::new(
-            result.records.into_iter().map(to_record).collect(),
-            result.total,
-            &page,
-        ))
+        let records = result
+            .records
+            .into_iter()
+            .map(to_record)
+            .collect::<AppResult<Vec<_>>>()?;
+        Ok(PageResult::new(records, result.total, &page))
     }
 
     async fn find_export_batch(
@@ -89,8 +92,10 @@ impl LoginInfoPersistencePort for DatabaseLoginInfoPersistence {
                 data_scope,
                 window,
             )
-            .await
-            .map(|records| records.into_iter().map(to_record).collect())
+            .await?
+            .into_iter()
+            .map(to_record)
+            .collect()
     }
 
     async fn begin(&self) -> AppResult<Box<dyn LoginInfoTransaction>> {
@@ -133,8 +138,11 @@ fn to_database_filter(filter: LoginInfoFilter<'_>) -> DatabaseLoginInfoFilter<'_
     }
 }
 
-fn to_record(model: login_info::Model) -> LoginInfoRecord {
-    LoginInfoRecord {
+fn to_record(model: login_info::Model) -> AppResult<LoginInfoRecord> {
+    let login_time = OffsetDateTime::from_unix_timestamp(model.login_time.timestamp())
+        .and_then(|time| time.replace_nanosecond(model.login_time.timestamp_subsec_nanos()))
+        .db_context("读取登录日志 UTC 时间")?;
+    Ok(LoginInfoRecord {
         id: model.id,
         user_name: model.user_name,
         ipaddr: model.ipaddr,
@@ -143,12 +151,18 @@ fn to_record(model: login_info::Model) -> LoginInfoRecord {
         os: model.os,
         status: model.status,
         message: model.msg,
-        login_time: model.login_time,
-    }
+        login_time,
+    })
 }
 
-fn to_entity(tenant_id: &str, record: LoginInfoRecord) -> login_info::Model {
-    login_info::Model {
+fn to_entity(tenant_id: &str, record: LoginInfoRecord) -> AppResult<login_info::Model> {
+    let login_time = DateTime::from_timestamp(
+        record.login_time.unix_timestamp(),
+        record.login_time.nanosecond(),
+    )
+    .ok_or("时间超出 UTC 表示范围")
+    .db_context("写入登录日志 UTC 时间")?;
+    Ok(login_info::Model {
         id: record.id,
         tenant_id: tenant_id.to_owned(),
         user_name: record.user_name,
@@ -158,6 +172,54 @@ fn to_entity(tenant_id: &str, record: LoginInfoRecord) -> login_info::Model {
         os: record.os,
         status: record.status,
         msg: record.message,
-        login_time: record.login_time,
+        login_time,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+    use ryframe_kernel::AppError;
+
+    #[test]
+    fn login_time_round_trips_between_sql_and_the_application_in_utc() {
+        let login_time = DateTime::from_timestamp(-1, 123_456_000).unwrap();
+        let entity = login_info::Model {
+            id: 1,
+            tenant_id: "tenant-a".into(),
+            user_name: "tester".into(),
+            ipaddr: "127.0.0.1".into(),
+            login_location: None,
+            browser: None,
+            os: None,
+            status: "1".into(),
+            msg: None,
+            login_time,
+        };
+        let mut record = to_record(entity.clone()).unwrap();
+        assert_eq!(record.login_time.unix_timestamp(), -1);
+        assert_eq!(record.login_time.nanosecond(), 123_456_000);
+        assert_eq!(record.login_time.offset(), time::UtcOffset::UTC);
+
+        record.login_time = record
+            .login_time
+            .to_offset(time::UtcOffset::from_hms(8, 0, 0).unwrap());
+        assert_eq!(to_entity("tenant-a", record.clone()).unwrap(), entity);
+
+        let earlier = Utc.with_ymd_and_hms(999, 12, 31, 23, 59, 59).unwrap();
+        record.login_time = OffsetDateTime::from_unix_timestamp(earlier.timestamp()).unwrap();
+        assert_eq!(to_entity("tenant-a", record).unwrap().login_time, earlier);
+
+        for login_time in [
+            Utc.with_ymd_and_hms(10000, 1, 1, 0, 0, 0).unwrap(),
+            DateTime::from_timestamp(-1, 1_123_456_000).unwrap(),
+        ] {
+            let invalid = login_info::Model {
+                login_time,
+                ..entity.clone()
+            };
+            assert!(matches!(to_record(invalid), Err(AppError::Database(_))));
+        }
     }
 }

@@ -6,6 +6,7 @@ use ryframe_kernel::DataScope;
 use super::*;
 use ryframe_application::{
     PersistenceTransaction, TransactionAuditMode, ports::system::LoginInfoTransaction,
+    system::operations::LoginInfoVo,
 };
 
 struct FakePersistence {
@@ -105,4 +106,24 @@ async fn clean_is_committed_by_application_use_case() {
 fn login_status_keeps_persisted_codes() {
     assert_eq!(LoginStatus::Success.as_str(), "1");
     assert_eq!(LoginStatus::Failure.as_str(), "0");
+}
+
+#[test]
+fn login_history_view_keeps_utc_seconds_format() {
+    let log = LoginInfoRecord {
+        id: 1,
+        user_name: "tester".into(),
+        ipaddr: "127.0.0.1".into(),
+        login_location: None,
+        browser: None,
+        os: None,
+        status: LoginStatus::Success.as_str().into(),
+        message: None,
+        login_time: time::macros::datetime!(2026-11-24 08:03:04.123456 +08:00),
+    };
+
+    let view = LoginInfoVo::try_from(log).unwrap();
+    assert_eq!(view.login_time, "2026-11-24 00:03:04");
+    let json = serde_json::to_value(&view).unwrap();
+    assert_eq!(json["login_time"].as_str(), Some("2026-11-24 00:03:04"));
 }

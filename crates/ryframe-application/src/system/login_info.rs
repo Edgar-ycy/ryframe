@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
-use chrono::Utc;
-use ryframe_kernel::{ActorContext, AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery};
+use ryframe_kernel::{
+    ActorContext, AppError, AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery,
+};
 use serde::Serialize;
+use time::{OffsetDateTime, UtcOffset, macros::format_description};
 
 use crate::ports::system::{LoginInfoFilter, LoginInfoPersistencePort, LoginInfoRecord};
 use crate::{TransactionAuditMode, complete_transaction};
@@ -24,9 +26,19 @@ pub struct LoginInfoVo {
     pub login_time: String,
 }
 
-impl From<LoginInfoRecord> for LoginInfoVo {
-    fn from(log: LoginInfoRecord) -> Self {
-        Self {
+impl TryFrom<LoginInfoRecord> for LoginInfoVo {
+    type Error = AppError;
+
+    fn try_from(log: LoginInfoRecord) -> AppResult<Self> {
+        let login_time = log
+            .login_time
+            .checked_to_offset(UtcOffset::UTC)
+            .ok_or_else(|| AppError::Internal("登录时间超出 UTC 表示范围".into()))?
+            .format(format_description!(
+                "[year]-[month]-[day] [hour]:[minute]:[second]"
+            ))
+            .map_err(|error| AppError::Internal(format!("格式化登录时间失败：{error}")))?;
+        Ok(Self {
             id: log.id.to_string(),
             user_name: log.user_name,
             ipaddr: log.ipaddr,
@@ -35,8 +47,8 @@ impl From<LoginInfoRecord> for LoginInfoVo {
             os: log.os,
             status: log.status,
             msg: log.message,
-            login_time: log.login_time.format("%Y-%m-%d %H:%M:%S").to_string(),
-        }
+            login_time,
+        })
     }
 }
 
@@ -96,7 +108,7 @@ impl LoginInfoService {
             os: command.os,
             status: command.status.as_str().to_owned(),
             message: command.message,
-            login_time: Utc::now(),
+            login_time: OffsetDateTime::now_utc(),
         };
         self.persistence.insert(&tenant_id, record).await
     }
@@ -120,11 +132,12 @@ impl LoginInfoService {
             .persistence
             .find_by_page(tenant_id, query.page, filter, &data_scope)
             .await?;
-        Ok(PageResult::new(
-            result.records.into_iter().map(LoginInfoVo::from).collect(),
-            result.total,
-            &query.page,
-        ))
+        let records = result
+            .records
+            .into_iter()
+            .map(LoginInfoVo::try_from)
+            .collect::<AppResult<Vec<_>>>()?;
+        Ok(PageResult::new(records, result.total, &query.page))
     }
 
     /// 按稳定主键窗口读取一批登录日志，并延续当前数据范围约束。
@@ -136,13 +149,12 @@ impl LoginInfoService {
     ) -> AppResult<Vec<LoginInfoVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let data_scope = actor.data_scope_context();
-        Ok(self
-            .persistence
+        self.persistence
             .find_export_batch(tenant_id, filter, &data_scope, window)
             .await?
             .into_iter()
-            .map(LoginInfoVo::from)
-            .collect())
+            .map(LoginInfoVo::try_from)
+            .collect()
     }
 
     pub async fn clean(&self, actor: &ActorContext) -> AppResult<u64> {

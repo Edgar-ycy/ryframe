@@ -3,6 +3,7 @@ use chrono::{DateTime, Utc};
 use ryframe_kernel::{
     AppResult, DataScopeContextRef, ExportCursorWindow, PageResult, ValidatedPageQuery,
 };
+use time::OffsetDateTime;
 
 use crate::PersistenceTransaction;
 
@@ -16,7 +17,7 @@ pub struct LoginInfoRecord {
     pub os: Option<String>,
     pub status: String,
     pub message: Option<String>,
-    pub login_time: DateTime<Utc>,
+    pub login_time: OffsetDateTime,
 }
 
 #[derive(Clone, Copy, Debug)]
