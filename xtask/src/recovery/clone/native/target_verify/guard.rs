@@ -15,6 +15,8 @@ use crate::{
     local_test_path::{LocalTestPathKind, validate_absolute_path, validate_local_test_path},
 };
 
+pub(in crate::recovery::clone::native) mod prepare_lock;
+
 #[cfg(windows)]
 mod source;
 #[cfg(windows)]

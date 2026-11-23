@@ -229,6 +229,66 @@ fn independent_execution_root_keeps_exact_source_rule_without_reusing_coordinato
     );
 }
 
+#[cfg(windows)]
+#[test]
+fn held_scope_uses_nested_audit_and_still_reads_frozen_artifact() {
+    let coordinator = Fixture::new();
+    let nested = Fixture::at(coordinator.local.join("held-audited-product"));
+    for root in [&coordinator.root, &nested.root] {
+        git(root, &["checkout", "--quiet", "--detach", "HEAD"]);
+    }
+    let (build, inventory) = nested.restore_inputs();
+    let tool = nested.root.join("tools/python/check.py");
+    write(&tool, "audited tool differs from the original build\n");
+    let audit = nested.local.join("held-audit.json");
+    bridge::write(&nested.root, &build, &inventory, &audit).unwrap();
+    let binding = json!({"path":audit,"sha256":digest::file(&audit).unwrap().sha256});
+    let mut scope = bridge::scope::Scope::load(&coordinator.root, &[binding], &[]).unwrap();
+    scope.hold_windows_sources(&[]).unwrap();
+    assert!(fs::write(&tool, b"cannot change the held audited file").is_err());
+    scope.assert_unchanged_full().unwrap();
+
+    let receipt = read_json(&build);
+    fs::write(
+        Path::new(receipt["artifacts"]["api"]["executable"].as_str().unwrap()),
+        b"changed artifact",
+    )
+    .unwrap();
+    assert!(scope.assert_unchanged().is_err());
+    drop(scope);
+    fs::write(&tool, b"write after release").unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn held_scope_checks_actual_execution_members_and_rejects_unheld_roots() {
+    let coordinator = Fixture::new();
+    let execution = Fixture::new();
+    let unheld = Fixture::new();
+    for root in [&coordinator.root, &execution.root, &unheld.root] {
+        git(root, &["checkout", "--quiet", "--detach", "HEAD"]);
+    }
+    let (build, _) = execution.restore_inputs();
+    let receipt = read_json(&build);
+    let expected = &receipt["sources"]["full"]["source"];
+    let fingerprint = expected["worktree_fingerprint"].as_str().unwrap();
+    let mut scope = bridge::scope::Scope::load(&coordinator.root, &[], &[]).unwrap();
+    scope.hold_windows_sources(&[&execution.root]).unwrap();
+    assert_eq!(
+        scope
+            .verify_source(&execution.root, &build, &receipt, fingerprint, None)
+            .unwrap(),
+        *expected,
+    );
+    let error = scope
+        .verify_source(&unheld.root, &build, &receipt, fingerprint, None)
+        .unwrap_err();
+    assert!(error.to_string().contains("不在已持有的范围内"));
+    fs::write(execution.root.join("new-member.txt"), b"new file").unwrap();
+    assert!(scope.assert_unchanged().is_err());
+    assert!(scope.assert_unchanged_full().is_err());
+}
+
 #[test]
 fn product_entry_observes_current_toolchain_instead_of_trusting_recorded_context() {
     let fixture = Fixture::new();

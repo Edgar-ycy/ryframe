@@ -3,7 +3,9 @@ use crate::{
     Result,
     recovery::clone::native::{
         bridge::scope::Scope,
-        cache, copy_ledger, export, json as document,
+        cache, copy_ledger, export,
+        held_plan::HeldPlanObjects,
+        json as document,
         lifecycle::{identity, stage::StageRequest, state},
         resources::common,
         seed,
@@ -45,6 +47,7 @@ pub(super) struct Context<'a> {
     state: Value,
     protected: Inputs,
     runtime_tree: Option<Value>,
+    held_plan: Option<HeldPlanObjects>,
 }
 
 impl<'a> Context<'a> {
@@ -128,6 +131,7 @@ impl<'a> Context<'a> {
             state: saved,
             protected,
             runtime_tree,
+            held_plan: None,
         };
         result.check()?;
         Ok(result)
@@ -160,8 +164,12 @@ impl<'a> Context<'a> {
             common::bound_file(self.backend, &self.manifest["initialized"], "初始化后像")?;
         if target_verify::published::owned_history(self.backend, &initialized, self.owner)?
             != (self.initial.clone(), self.target.clone())
-            || seed::source_registration::copied::require(self.backend, self.run, &self.manifest)?
-                != self.plan
+            || seed::source_registration::copied::require_with_held_objects(
+                self.backend,
+                self.run,
+                &self.manifest,
+                self.held_plan.as_ref(),
+            )? != self.plan
         {
             return Err("原初始化、完整计划或复制结果漂移".into());
         }
@@ -207,6 +215,34 @@ impl<'a> Context<'a> {
         quiet(self.backend, self.run, self.number, self.mode, &self.state)?;
         self.protected.check()?;
         self.owner.check()
+    }
+
+    #[cfg(windows)]
+    pub(super) fn hold_plan(&mut self) -> Result<()> {
+        if self.stage != "post-copy"
+            || self.mode != "prepare"
+            || self.manifest["copy_stage"] != "source_to_seed"
+            || self.held_plan.is_some()
+        {
+            return Err("对象原件持有须在同一 source_to_seed 准备阶段建立一次".into());
+        }
+        let path = self.copy.join("plan.json");
+        let wrapper = document::read(&path)?;
+        if wrapper["plan"] != self.plan {
+            return Err("持有对象前复制计划与本阶段检查结果不同".into());
+        }
+        self.held_plan = Some(HeldPlanObjects::open(self.backend, &path, &wrapper)?);
+        self.check()
+    }
+
+    pub(super) fn check_end(&self) -> Result<()> {
+        self.check()?;
+        #[cfg(windows)]
+        if let Some(held) = &self.held_plan {
+            self.scope.assert_unchanged_full()?;
+            held.check_end()?;
+        }
+        Ok(())
     }
 
     pub(super) fn product_root(&self) -> Result<PathBuf> {

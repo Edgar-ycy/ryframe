@@ -11,6 +11,7 @@ pub(super) fn parse_post_copy(args: &[String]) -> Result<CloneCommand, CliError>
         &[
             "--run-dir",
             "--operation",
+            "--originals",
             "--request",
             "--producer-binding",
         ],
@@ -31,6 +32,15 @@ pub(super) fn parse_post_copy(args: &[String]) -> Result<CloneCommand, CliError>
         }
     };
     require_write("post-copy", &options, operation.effect().requires_write())?;
+    let hold_originals = match options.values.get("--originals").map(String::as_str) {
+        None => false,
+        Some("held") if cfg!(windows) && operation == PostCopyOperation::Prepare => true,
+        Some(_) => {
+            return Err(CliError::new(
+                "--originals held 仅适用于 Windows post-copy prepare",
+            ));
+        }
+    };
     let request = optional_path(&options, "--request")?;
     let producer_binding = optional_path(&options, "--producer-binding")?;
     if request.is_some()
@@ -47,6 +57,7 @@ pub(super) fn parse_post_copy(args: &[String]) -> Result<CloneCommand, CliError>
     Ok(CloneCommand::PostCopy(PostCopyOptions {
         run_dir: run_dir(&options)?,
         operation,
+        hold_originals,
         request,
         producer_binding,
     }))

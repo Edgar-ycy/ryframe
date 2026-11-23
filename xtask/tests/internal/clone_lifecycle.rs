@@ -17,6 +17,10 @@ use super::{
 #[path = "clone_recovery_retry.rs"]
 mod recovery_retry;
 
+#[cfg(windows)]
+#[path = "clone_prepare_target_lock.rs"]
+mod prepare_target_lock;
+
 static NEXT: AtomicUsize = AtomicUsize::new(1);
 
 struct Fixture {
@@ -25,6 +29,7 @@ struct Fixture {
     manifest: PathBuf,
     run: PathBuf,
     copy: PathBuf,
+    retain_evidence: bool,
 }
 
 impl Fixture {
@@ -70,6 +75,7 @@ impl Fixture {
             local,
             manifest,
             copy,
+            retain_evidence: false,
         }
     }
 
@@ -101,6 +107,9 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
+        if self.retain_evidence {
+            return;
+        }
         assert!(
             self.local
                 .starts_with(workspace::root_dir().join(".local-tests"))

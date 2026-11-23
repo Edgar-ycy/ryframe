@@ -294,6 +294,74 @@ fn parses_service_controls_without_ambiguous_roles_or_requests() {
 }
 
 #[test]
+fn held_prepare_and_lock_recovery_require_explicit_bound_operations() {
+    let fixture = Fixture::new();
+    let run = Fixture::value(&fixture.run);
+    let owner = Fixture::value(&fixture.first);
+    let output = fixture.directory.join("prepare-lock.json");
+    let prepare = fixture.parse(&[
+        "post-copy",
+        "--run-dir",
+        run,
+        "--operation",
+        "prepare",
+        "--originals",
+        "held",
+        "--write",
+    ]);
+    if cfg!(windows) {
+        assert!(matches!(
+            prepare,
+            Ok(CloneCommand::PostCopy(options)) if options.hold_originals
+        ));
+    } else {
+        assert!(prepare.is_err());
+    }
+    assert!(
+        fixture
+            .parse(&[
+                "post-copy",
+                "--run-dir",
+                run,
+                "--operation",
+                "schedules",
+                "--originals",
+                "held",
+                "--write"
+            ])
+            .is_err()
+    );
+    let observe = [
+        "prepare-lock-observe",
+        "--run-dir",
+        run,
+        "--owner-binding",
+        owner,
+        "--output",
+        Fixture::value(&output),
+        "--write",
+    ];
+    assert!(matches!(
+        fixture.parse(&observe),
+        Ok(CloneCommand::ObservePrepareTargetLock { output: path, .. }) if path == output
+    ));
+    assert!(fixture.parse(&observe[..observe.len() - 1]).is_err());
+    let recover = [
+        "prepare-lock-recover",
+        "--run-dir",
+        run,
+        "--request",
+        owner,
+        "--write",
+    ];
+    assert!(matches!(
+        fixture.parse(&recover),
+        Ok(CloneCommand::RecoverPrepareTargetLock { receipt, .. }) if receipt == fixture.first
+    ));
+    assert!(fixture.parse(&recover[..recover.len() - 1]).is_err());
+}
+
+#[test]
 fn parses_post_copy_and_non_source_seed_operations_with_exact_inputs() {
     let fixture = Fixture::new();
     let post = fixture

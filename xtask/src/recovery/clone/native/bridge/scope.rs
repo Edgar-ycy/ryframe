@@ -1,5 +1,6 @@
 //! 显式来源审计窗口；产品来源与本轮工具来源分开验证。
 use std::{
+    borrow::Cow,
     collections::BTreeSet,
     path::{Path, PathBuf},
 };
@@ -8,6 +9,11 @@ use serde_json::Value;
 
 use super::{build_source, digest, native_json as document, source, verify_build};
 use crate::Result;
+
+#[cfg(windows)]
+use crate::recovery::fixture_control::source_pair::execution::HeldSourceRoot;
+#[cfg(windows)]
+use std::collections::{BTreeMap, btree_map::Entry};
 
 #[path = "scope/registration.rs"]
 mod registration;
@@ -19,6 +25,8 @@ struct Registered {
     build_sha256: String,
     build_identity: String,
     inventory: source::Inventory,
+    #[cfg(windows)]
+    audited: Option<source::Inventory>,
     root: PathBuf,
     inherited: bool,
 }
@@ -27,6 +35,8 @@ pub(crate) struct Scope {
     root: PathBuf,
     current: source::Inventory,
     entries: Vec<(Value, bool, Registered)>,
+    #[cfg(windows)]
+    held: Option<HeldSources>,
 }
 
 impl Scope {
@@ -119,7 +129,7 @@ impl Scope {
             .map(|v| (v, false))
             .chain(inherited.iter().map(|v| (v, true)))
         {
-            let value = registration::load(&root, &current, binding, inherited)?;
+            let value = registration::load(&root, &current, binding, inherited, capture_matches)?;
             if !receipts.insert(value.receipt_hash.clone())
                 || !identities.insert(value.build_identity.clone())
             {
@@ -131,21 +141,77 @@ impl Scope {
             root,
             current,
             entries,
+            #[cfg(windows)]
+            held: None,
         };
         scope.assert_unchanged()?;
         Ok(scope)
     }
 
     pub(crate) fn assert_unchanged(&self) -> Result<()> {
-        for (binding, inherited, expected) in &self.entries {
-            if registration::load(&self.root, &self.current, binding, *inherited)? != *expected {
-                return Err("阶段结束时构建桥接或冻结产物发生变化".into());
-            }
+        #[cfg(windows)]
+        if let Some(held) = &self.held {
+            HeldSources::require_independent_window()?;
+            self.check_registrations(|root, expected| held.matches(root, expected))?;
+            return held.checkpoint();
         }
+        self.check_registrations(capture_matches)?;
         if source::capture(&self.root)? != self.current {
             return Err("阶段结束时完整源码变化，不能发布成功结果".into());
         }
         Ok(())
+    }
+
+    /// 按原字节和 Git 规则复核所有持有根，直到完整观察结束都保留原句柄。
+    pub(crate) fn assert_unchanged_full(&self) -> Result<()> {
+        #[cfg(windows)]
+        if let Some(held) = &self.held {
+            held.verify_full()?;
+        }
+        self.assert_unchanged()
+    }
+
+    /// 在原审计结束后持有协调根、非继承审计根及明确的独立执行根。
+    #[cfg(windows)]
+    pub(crate) fn hold_windows_sources(&mut self, execution_roots: &[&Path]) -> Result<()> {
+        if self.held.is_some() {
+            return Err("源码窗口已经持有，不能替换已核验的根".into());
+        }
+        let held = HeldSources::open(self, execution_roots)?;
+        self.check_registrations(|root, expected| held.matches(root, expected))?;
+        held.verify_full()?;
+        self.held = Some(held);
+        Ok(())
+    }
+
+    fn check_registrations(
+        &self,
+        matches_source: impl Fn(&Path, &source::Inventory) -> Result<bool>,
+    ) -> Result<()> {
+        for (binding, inherited, expected) in &self.entries {
+            if registration::load(
+                &self.root,
+                &self.current,
+                binding,
+                *inherited,
+                &matches_source,
+            )? != *expected
+            {
+                return Err("阶段结束时构建桥接或冻结产物发生变化".into());
+            }
+        }
+        Ok(())
+    }
+
+    fn observe_source(&self, root: &Path) -> Result<Cow<'_, source::Inventory>> {
+        #[cfg(windows)]
+        if let Some(held) = &self.held {
+            HeldSources::require_independent_window()?;
+            let source = held.get(root)?;
+            source.handles.checkpoint()?;
+            return Ok(Cow::Borrowed(&source.inventory));
+        }
+        source::capture(root).map(Cow::Owned)
     }
 
     /// current_context 由本次原生工具链观察生成；不能使用构建收据自证当前上下文。
@@ -159,7 +225,7 @@ impl Scope {
     ) -> Result<Value> {
         let execution_root = registration::canonical(execution_root)?;
         let external = if execution_root != self.root {
-            Some(source::capture(&execution_root)?)
+            Some(self.observe_source(&execution_root)?)
         } else {
             None
         };
@@ -173,7 +239,7 @@ impl Scope {
         let selected = match original {
             Some(value) => value,
             None => {
-                let current = external.as_ref().unwrap_or(&self.current);
+                let current = external.as_deref().unwrap_or(&self.current);
                 let actual = source::binding_value(&current.source);
                 if expected["snapshot"] != actual["snapshot"] {
                     return Err("实际源码与本侧精确构建快照不同".into());
@@ -188,7 +254,7 @@ impl Scope {
             return Err("来源验证期间构建收据变化；保留证据，禁止自动重放".into());
         }
         if let Some(previous) = external
-            && source::capture(&execution_root)? != previous
+            && self.observe_source(&execution_root)? != previous
         {
             return Err("独立执行后端的完整来源在核验期间变化".into());
         }
@@ -250,5 +316,91 @@ impl Scope {
             return Err("维护构建的产品输入已经变化，必须重新编译".into());
         }
         Ok(Some(source::binding_value(&inventory.source)))
+    }
+}
+
+fn capture_matches(root: &Path, expected: &source::Inventory) -> Result<bool> {
+    Ok(&source::capture(root)? == expected)
+}
+
+#[cfg(windows)]
+struct HeldSources(BTreeMap<PathBuf, HeldInventory>);
+
+#[cfg(windows)]
+struct HeldInventory {
+    inventory: source::Inventory,
+    handles: HeldSourceRoot,
+}
+
+#[cfg(windows)]
+impl HeldSources {
+    fn open(scope: &Scope, execution_roots: &[&Path]) -> Result<Self> {
+        Self::require_independent_window()?;
+        let mut inventories = BTreeMap::from([(scope.root.clone(), scope.current.clone())]);
+        for (_, inherited, entry) in &scope.entries {
+            if *inherited {
+                continue;
+            }
+            let audited = entry.audited.as_ref().ok_or("待持有来源缺少实际审计库存")?;
+            match inventories.entry(entry.root.clone()) {
+                Entry::Occupied(previous) if previous.get() != audited => {
+                    return Err("同一待持有源码根的实际审计库存不同".into());
+                }
+                Entry::Occupied(_) => {}
+                Entry::Vacant(slot) => {
+                    slot.insert(audited.clone());
+                }
+            }
+        }
+        for root in execution_roots {
+            let root = registration::canonical(root)?;
+            if let Entry::Vacant(slot) = inventories.entry(root) {
+                let inventory = source::capture(slot.key())?;
+                slot.insert(inventory);
+            }
+        }
+        let roots = inventories
+            .into_iter()
+            .map(|(root, inventory)| {
+                let handles = HeldSourceRoot::open_backend(&root, &inventory)?;
+                Ok((root, HeldInventory { inventory, handles }))
+            })
+            .collect::<Result<_>>()?;
+        Ok(Self(roots))
+    }
+
+    fn get(&self, root: &Path) -> Result<&HeldInventory> {
+        self.0
+            .get(root)
+            .ok_or_else(|| "请求的执行源码根不在已持有的范围内".into())
+    }
+
+    fn matches(&self, root: &Path, expected: &source::Inventory) -> Result<bool> {
+        Ok(&self.get(root)?.inventory == expected)
+    }
+
+    fn require_independent_window() -> Result<()> {
+        if crate::recovery::runtime::dataset_authority::reads::is_active() {
+            return Err("已持有来源不能替代另一静态读取窗口要求的原完整文件登记".into());
+        }
+        Ok(())
+    }
+
+    fn checkpoint(&self) -> Result<()> {
+        for source in self.0.values() {
+            source.handles.checkpoint()?;
+        }
+        Ok(())
+    }
+
+    fn verify_full(&self) -> Result<()> {
+        Self::require_independent_window()?;
+        self.checkpoint()?;
+        for (root, source) in &self.0 {
+            if !capture_matches(root, &source.inventory)? {
+                return Err("持有期间原完整源码观察与已登记库存不一致".into());
+            }
+        }
+        self.checkpoint()
     }
 }

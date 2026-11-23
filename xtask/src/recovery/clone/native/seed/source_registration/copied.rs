@@ -9,7 +9,8 @@ use serde_json::{Value, json};
 use crate::{
     Result,
     recovery::clone::native::{
-        self, copy_ledger, digest, json as document, lifecycle::state, resources::common,
+        self, copy_ledger, digest, held_plan::HeldPlanObjects, json as document, lifecycle::state,
+        resources::common,
     },
 };
 
@@ -45,6 +46,15 @@ impl Reads<'_> {
 }
 
 pub(crate) fn require(backend: &Path, run: &Path, manifest: &Value) -> Result<Value> {
+    require_with_held_objects(backend, run, manifest, None)
+}
+
+pub(in crate::recovery::clone::native) fn require_with_held_objects(
+    backend: &Path,
+    run: &Path,
+    manifest: &Value,
+    held: Option<&HeldPlanObjects>,
+) -> Result<Value> {
     let output = common::local_directory(
         backend,
         Path::new(document::text(&manifest["copy_directory"], "复制目录")?),
@@ -71,7 +81,15 @@ pub(crate) fn require(backend: &Path, run: &Path, manifest: &Value) -> Result<Va
     let exported = export_binding(&mut reads, manifest, &saved)?;
     let plan_path = output.join("plan.json");
     let wrapper = reads.read(&plan_path)?;
-    let verified = native::issue(backend, &plan_path, &wrapper)?;
+    let issue = || {
+        #[cfg(windows)]
+        if let Some(held) = held {
+            return held.issue_bound(backend, &plan_path, &wrapper);
+        }
+        let _ = held;
+        native::issue(backend, &plan_path, &wrapper)
+    };
+    let verified = issue()?;
     let plan = &verified["plan"];
     let plan_hash = document::text(&session["plan_sha256"], "复制计划摘要")?;
     let generation = document::text(&session["generation_sha256"], "复制代次摘要")?;
@@ -85,7 +103,7 @@ pub(crate) fn require(backend: &Path, run: &Path, manifest: &Value) -> Result<Va
         &manifest["initialized"],
         &exported,
     )?;
-    if native::issue(backend, &plan_path, &wrapper)? != verified
+    if issue()? != verified
         || copy_ledger::inspect(backend, &output.join("ledger"), plan_hash, generation)? != ledger
         || state::load(run, true)? != saved
     {
