@@ -140,7 +140,7 @@ cargo xtask check recovery clone seed-runtime --operation source-register --run-
 
 对已完成初始化的独立 Windows B1 测量目标，运行上述 `arm-request` 时使用 `--side candidate --independent-b1`，通过 `--workspace` 选择其隔离工作区。`--successor` 和 `--source-export-result` 绑定原比较关系及其唯一共享导出结果。默认只预览。追加 `--output <new-request.json> --write` 后，工具将隔离目标、原共享导出、独立审阅和碰撞投影的绑定写入新请求文件。此命令的写入范围限于该请求文件。
 
-用 `cargo xtask check recovery fixture successor arm-input --request <independent-b1-request.json> --run-dir <new-independent-run-directory> --write` 消费已发布的独立请求。登记目录必须位于当前协调工作树的 `.local-tests` 下，父目录已存在，登记目录与复制路径分离。工具持本地登记锁及原独立目标存储锁，核对同一共享导出、原目标初始化和当前存储代次，发布 `manifest.json`、`intent.json` 和 `result.json`，并保留未确认状态的失败证据。登记目录已存在时保留原件并拒绝重跑。此阶段不创建复制目录，也不具备恢复资格。后续实际复制须先独占声明请求绑定的新复制目录。
+用 `cargo xtask check recovery fixture successor arm-input --request <independent-b1-request.json> --run-dir <new-independent-run-directory> --write` 消费已发布的独立请求。登记目录必须位于当前协调工作树的 `.local-tests` 下，父目录已存在，登记目录与复制路径分离。等原共享导出账本中的进行中阶段收尾后再登记。工具持本地登记锁及原独立目标存储锁，核对同一共享导出、原目标初始化和当前存储代次，发布 `manifest.json`、原账本字节快照 `source-state.json`、`intent.json` 和 `result.json`，并保留未确认状态的失败证据。登记目录已存在时保留原件并拒绝重跑。 登记成功后可[预览并发布独立 B1 参考计划](architecture.md#独立-b1-参考计划)。
 
 | 阶段 | 操作与输出 |
 | --- | --- |

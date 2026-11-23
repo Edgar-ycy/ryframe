@@ -3,7 +3,7 @@ use super::cli::{
     FixtureDatasetCommand, FixtureExpectedSources, FixturePrepareCommand, FixturePrepareOptions,
     FixtureRetentionCommand, FreshTargetCommand, FreshTargetOperation, FreshTargetOptions,
     FullStackCommand, RecoveryCommand, RecoveryInputsCommand, RecoveryReferenceCommand,
-    ReferencePlanAction, RestoreInputSide, parse,
+    ReferenceInputMode, ReferencePlanAction, RestoreInputSide, parse,
 };
 
 fn strings(values: &[&str]) -> Vec<String> {
@@ -260,6 +260,47 @@ fn reference_parser_rejects_ambiguous_or_unsafe_arguments_before_execution() {
             "{arguments:?}"
         );
     }
+}
+
+#[test]
+fn independent_b1_reference_input_requires_candidate_and_excludes_ordinary_fresh_verify() {
+    let fixture = RecoveryArgumentFixture::new("independent-b1-reference");
+    let arm = fixture.file("result.json");
+    let fresh = fixture.file("fresh.json");
+    let work = fixture.new_path("work");
+    let mut input = strings(&[
+        "inputs",
+        "reference",
+        "--independent-b1",
+        "--arm-input",
+        &arm,
+        "--side",
+        "candidate",
+        "--id",
+        "independent-b1",
+        "--work-dir",
+        &work,
+    ]);
+    assert!(matches!(
+        parse_recovery_owned(input.clone()),
+        Ok(RecoveryCommand::Inputs(RecoveryInputsCommand::Reference(options)))
+            if options.side == RestoreInputSide::Candidate
+                && options.mode == ReferenceInputMode::IndependentB1 && options.publication.is_none()
+    ));
+    let output = fixture.new_path("independent-reference.json");
+    assert!(
+        parse_recovery_owned([input.clone(), strings(&["--output", &output, "--write"])].concat())
+            .is_ok()
+    );
+    for extra in [
+        strings(&["--independent-b1"]),
+        strings(&["--fresh-target-verify", &fresh]),
+        strings(&["--output", &output]),
+    ] {
+        assert!(parse_recovery_owned([input.clone(), extra].concat()).is_err());
+    }
+    input[6] = "base".into();
+    assert!(parse_recovery_owned(input).is_err());
 }
 
 #[test]

@@ -149,6 +149,22 @@ pub(crate) fn canonical_endpoint(value: &Value, path: &str, label: &str) -> Resu
 }
 
 pub(crate) fn validate_plan(plan: &Value, backend: &Path) -> Result<()> {
+    validate_with_target_configuration(plan, backend, backend)
+}
+
+pub(super) fn validate_independent_b1_plan(
+    plan: &Value,
+    backend: &Path,
+    target: &super::target::TargetRequest,
+) -> Result<()> {
+    validate_with_target_configuration(plan, backend, &target.execution)
+}
+
+fn validate_with_target_configuration(
+    plan: &Value,
+    backend: &Path,
+    target_configuration: &Path,
+) -> Result<()> {
     let mut fields = vec![
         "format_version",
         "id",
@@ -185,8 +201,20 @@ pub(crate) fn validate_plan(plan: &Value, backend: &Path) -> Result<()> {
         "演练目录",
     )?;
     validate_tools(root.get("tools").unwrap())?;
-    let source = side(root.get("source").unwrap(), "source", backend, &local)?;
-    let target = side(root.get("target").unwrap(), "target", backend, &local)?;
+    let source = side(
+        root.get("source").unwrap(),
+        "source",
+        backend,
+        &local,
+        backend,
+    )?;
+    let target = side(
+        root.get("target").unwrap(),
+        "target",
+        backend,
+        &local,
+        target_configuration,
+    )?;
     if source.scope == target.scope
         || source.keys != target.keys
         || !source.physical.is_disjoint(&target.physical)
@@ -224,6 +252,7 @@ fn side<'a>(
     name: &str,
     backend: &Path,
     local: &Path,
+    configuration_root: &Path,
 ) -> Result<SideIdentity<'a>> {
     let mut fields = if name == "target" {
         vec![
@@ -251,7 +280,7 @@ fn side<'a>(
     )?;
     endpoint(s3.get("endpoint").unwrap(), "对象存储端点", None)?;
     crate::recovery::clone::native::s3::Configuration::read_app_binding(
-        backend,
+        configuration_root,
         side.get("s3").unwrap(),
     )?;
     endpoint(side.get("api_url").unwrap(), "API 端点", None)?;
@@ -281,6 +310,41 @@ fn side<'a>(
         physical: databases.physical,
         modes: databases.modes,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        recovery::clone::native::s3::app_configuration::configuration_value,
+        recovery_inputs_fixture::Fixture, recovery_inputs_support::object_configuration,
+    };
+
+    #[test]
+    fn independent_b1_reference_target_configuration_requires_the_bound_execution_root()
+    -> Result<()> {
+        let fixture = Fixture::new();
+        let execution = fixture.root.join("independent-execution");
+        let other_execution = fixture.root.join("other-execution");
+        let directory = execution.join("config");
+        let foreign = other_execution.join("config");
+        object_configuration(&directory, "target");
+        object_configuration(&foreign, "target");
+
+        let mut plan = fixture.reference_value.clone();
+        plan["target_side"] = Value::String("candidate".into());
+        plan["target"]["s3"]["configuration"] =
+            configuration_value(&execution, &directory, "test")?;
+        validate_with_target_configuration(&plan, &fixture.backend, &execution)?;
+        assert!(
+            validate_with_target_configuration(&plan, &fixture.backend, &other_execution).is_err()
+        );
+        plan["target"]["s3"]["configuration"] =
+            configuration_value(&other_execution, &foreign, "test")?;
+        assert!(validate_with_target_configuration(&plan, &fixture.backend, &execution).is_err());
+        validate_plan(&fixture.reference_value, &fixture.backend)?;
+        Ok(())
+    }
 }
 
 struct Databases<'a> {

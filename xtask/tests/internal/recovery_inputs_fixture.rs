@@ -895,7 +895,9 @@ pub(crate) fn reference_options(
 ) -> ReferenceInputOptions {
     ReferenceInputOptions {
         arm_input: arm_input.to_path_buf(),
-        fresh_target_verify: fresh_verify.to_path_buf(),
+        mode: crate::cli::ReferenceInputMode::Successor {
+            fresh_target_verify: fresh_verify.to_path_buf(),
+        },
         side,
         id: "backup-case-a".into(),
         work_dir: work_dir.to_path_buf(),

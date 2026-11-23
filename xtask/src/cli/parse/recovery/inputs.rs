@@ -5,7 +5,7 @@ use chrono::DateTime;
 use crate::{
     cli::{
         BindingsInputOptions, CliError, ProductInputOptions, RecoveryInputsCommand,
-        ReferenceInputOptions, RestoreInputPublication, RestoreInputSide,
+        ReferenceInputMode, ReferenceInputOptions, RestoreInputPublication, RestoreInputSide,
     },
     local_test_path::{LocalTestPathKind, validate_local_test_path},
     workspace::root_dir,
@@ -26,6 +26,7 @@ struct Options {
     record: Option<PathBuf>,
     output: Option<PathBuf>,
     write: bool,
+    independent_b1: bool,
 }
 
 pub(super) fn parse(args: &[String]) -> Result<RecoveryInputsCommand, CliError> {
@@ -57,11 +58,12 @@ fn parse_options(args: &[String]) -> Result<Options, CliError> {
     let mut index = 0;
     while index < args.len() {
         let name = args[index].as_str();
-        if name == "--write" {
-            if options.write {
-                return Err(CliError::new("--write 不能重复"));
-            }
-            options.write = true;
+        if let Some(flag) = match name {
+            "--write" => Some(&mut options.write),
+            "--independent-b1" => Some(&mut options.independent_b1),
+            _ => None,
+        } {
+            super::super::set_once(flag, name)?;
             index += 1;
             continue;
         }
@@ -95,8 +97,19 @@ fn set_value(options: &mut Options, name: &str, value: &str) -> Result<(), CliEr
 
 fn build_reference(mut options: Options) -> Result<RecoveryInputsCommand, CliError> {
     let arm_input = input(&mut options.arm_input, "--arm-input")?;
-    let fresh_target_verify = input(&mut options.fresh_target_verify, "--fresh-target-verify")?;
     let side = required(&mut options.side, "--side")?;
+    let mode = if std::mem::take(&mut options.independent_b1) {
+        if side != RestoreInputSide::Candidate || options.fresh_target_verify.is_some() {
+            return Err(CliError::new(
+                "--independent-b1 只允许 --side candidate，不能同时指定 --fresh-target-verify",
+            ));
+        }
+        ReferenceInputMode::IndependentB1
+    } else {
+        ReferenceInputMode::Successor {
+            fresh_target_verify: input(&mut options.fresh_target_verify, "--fresh-target-verify")?,
+        }
+    };
     let id = identifier(&mut options.id, "--id")?;
     let work_dir = path(
         required(&mut options.work_dir, "--work-dir")?,
@@ -107,7 +120,7 @@ fn build_reference(mut options: Options) -> Result<RecoveryInputsCommand, CliErr
     ensure_empty(&options, "reference")?;
     Ok(RecoveryInputsCommand::Reference(ReferenceInputOptions {
         arm_input,
-        fresh_target_verify,
+        mode,
         side,
         id,
         work_dir,
@@ -189,6 +202,7 @@ fn ensure_empty(options: &Options, operation: &str) -> Result<(), CliError> {
         ("--record", options.record.is_some()),
         ("--output", options.output.is_some()),
         ("--write", options.write),
+        ("--independent-b1", options.independent_b1),
     ];
     if let Some((name, _)) = present.into_iter().find(|(_, value)| *value) {
         Err(CliError::new(format!(

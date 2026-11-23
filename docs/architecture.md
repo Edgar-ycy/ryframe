@@ -125,6 +125,10 @@ seed 的 source-register 由统一 Rust 阶段控制器直接执行。它实际�
 
 测试覆盖全部恢复核心场景并通过控制台、网络和 axe 断言后，结果写入 runner 的 `.local-tests/playwright-real/restore-<drill-id>.json`，测试明细和运行收据副本使用同一前缀相邻保存。证明明确记录备份来源、后端产品与执行来源、适配合同、产品前端、测试 runner 和当前后端核验器 SHA；测试明细以 `sources.coordinator`、`sources.verifier` 和 `sources.runner` 分别绑定协调证据、核验工具和测试源码的根及精确 SHA，并绑定演练、目标计划、运行收据、产品来源与测试时间，并保存唯一 STOP source-generation 与派生 dataset-lineage 的完整文件描述；证明保存这两份文件的 SHA-256。已有结果不会覆盖；有失败、跳过、重试、缺场景、源码不匹配、明细不一致或数据验证尚未完成时不生成成功证明。最终 `restore verify` 必须同时收到三份相邻证据、原目标计划、协调根与 SHA、runner 根目录；维护 CLI 会从登记库构造权威上下文，由当前核验工具从原协调根内 runtime launch 绑定的 registration 读取本侧参考计划，重新核验目标计划、运行中三进程、完整构建来源、runner 以及全部摘要，再登记成功。数据血缘必须与同一备份的 STOP、START、当前 source-runtime 全部一致；另一份独立 lineage 或另一侧参考计划不能替代此链。这一步仍会重新检查服务就绪和恢复时间，浏览器通过不等于最终恢复登记成功。最终核验使用统一 data 入口在编译时绑定核验源码 SHA，并在同一活构建锁内登记独立协调来源与核验器的路径、字节数和摘要；直接运行旧维护二进制会失败。浏览器测试在打开首个会话前调用 Rust 只读入口 `restore-dataset-authority`，获取绑定的运行收据、目标计划、STOP 与 dataset-lineage，以及本侧隔离范围和端点。最终 `restore verify` 以版本 2 权威上下文将数据库记录、正式备份清单和工具绑定交给同一原生工具的 `restore-business-proof`。维护 CLI 和原生工具在核验前后复核证据、程序身份和源码。
 
+### 独立 B1 参考计划
+
+用 `cargo xtask check recovery inputs reference --independent-b1 --arm-input <independent-run/result.json> --side candidate --id <backup-id> --work-dir <new-b1-reference-work-dir>` 预览独立 B1 参考计划。追加 `--output <new-b1-reference-plan.json> --write` 可发布计划，输出文件和工作目录须使用不同位置。原运行须已收尾，且请求中的复制目录仍须不存在。工具重新核对独立目标和原共享导出，允许来源账本在原记录逐项保持一致的基础上追加已核验的终态阶段。计划绑定独立 ARM 结果及原共享导出，写入范围限于指定的新计划文件。登记结果保持 `restore_qualified=false`，实际复制须先独占声明请求绑定的复制目录。
+
 ## 非生产重建
 
 MySQL 重建预检接受覆盖清单中精确库名的库级授权。每个迁移连接须具备目标库所需的 DDL/DML 权限，同一物理服务器的持锁连接也须对它负责的每个库具备 `SELECT`、`CREATE` 和 `DROP`。权限核对通过后才进入资源写入阶段。

@@ -31,6 +31,17 @@ use crate::{
     },
 };
 
+#[path = "arm_input/receipt.rs"]
+mod receipt;
+#[path = "arm_input/source_history.rs"]
+mod source_history;
+pub(in crate::recovery) use receipt::IndependentB1Receipt;
+
+const RUN_KIND: &str = "devex-clone-independent-b1-arm-run";
+const INTENT_KIND: &str = "devex-clone-independent-b1-arm-intent";
+const RESULT_KIND: &str = "devex-clone-independent-b1-arm-result";
+const RESULT_STATUS: &str = "independent_b1_arm_input_registered";
+
 const REQUEST_FIELDS: &[&str] = &[
     "format_version",
     "kind",
@@ -57,6 +68,7 @@ pub(in crate::recovery::fixture_control) fn run(
 ) -> Result<Value> {
     let directory = new_directory(backend, &options.run_dir)?;
     let bound = Bound::read(backend, &options.request)?;
+    source_history::require_ready(&bound)?;
     let initial = bound.observe(false)?;
     let storage = registered_target(
         backend,
@@ -200,6 +212,32 @@ impl<'a> Bound<'a> {
         }
         Ok(())
     }
+
+    fn intent(
+        &self,
+        manifest: &Document,
+        owner: &Value,
+        observed: &Observation,
+        original_state: &Value,
+        history: &source_history::SourceHistory,
+    ) -> Value {
+        let target = &observed.target;
+        json!({
+            "format_version":1, "kind":INTENT_KIND,
+            "registration":document::binding(manifest), "controller":owner,
+            "request":document::binding(&self.request),
+            "source_export":self.source.identity, "source_state":original_state,
+            "source_state_snapshot":document::binding(&history.snapshot),
+            "source_run":history.directory,
+            "target_side":target.side, "target_registration":target.registration,
+            "initialized":target.initialized, "target_initialized_files":target.files,
+            "target_environment":target.environment, "target_storage_run":target.generation,
+            "target_storage_state":target.state, "independent_b1_review":observed.review.binding,
+            "independent_b1_collision_projection":observed.review.collision_projection,
+            "copy_directory":self.request.value["copy_directory"],
+            "remote_writes":0, "restore_qualified":false,
+        })
+    }
 }
 
 struct Registration {
@@ -214,7 +252,7 @@ impl Registration {
             bound.backend,
             &self.directory.join("manifest.json"),
             &json!({
-                "format_version":1, "kind":"devex-clone-independent-b1-arm-run",
+                "format_version":1, "kind":RUN_KIND,
                 "directory":self.identity, "id":bound.request.value["id"],
                 "request":document::binding(&bound.request),
                 "request_canonical_sha256":digest::plan_hash(&bound.request.value)?,
@@ -276,31 +314,28 @@ impl Registration {
         check: &dyn Fn() -> Result<()>,
     ) -> Result<Value> {
         let target = &observed.target;
+        let source_history = source_history::capture(bound, &self.directory)?;
+        check()?;
         let intent = publish(
             bound.backend,
             &self.directory.join("intent.json"),
-            &json!({
-                "format_version":1, "kind":"devex-clone-independent-b1-arm-intent",
-                "registration":document::binding(manifest), "controller":owner,
-                "request":document::binding(&bound.request),
-                "source_export":bound.source.identity, "source_state":bound.source.state,
-                "target_side":target.side, "target_registration":target.registration,
-                "initialized":target.initialized, "target_initialized_files":target.files,
-                "target_environment":target.environment, "target_storage_run":target.generation,
-                "target_storage_state":target.state, "independent_b1_review":observed.review.binding,
-                "independent_b1_collision_projection":observed.review.collision_projection,
-                "copy_directory":bound.request.value["copy_directory"],
-                "remote_writes":0, "restore_qualified":false,
-            }),
+            &bound.intent(
+                manifest,
+                owner,
+                observed,
+                &bound.source.state,
+                &source_history,
+            ),
         )?;
         check()?;
         intent.assert_unchanged()?;
+        source_history.check(bound.backend)?;
         let result = publish(
             bound.backend,
             &self.directory.join("result.json"),
             &json!({
-                "format_version":1, "kind":"devex-clone-independent-b1-arm-result",
-                "status":"independent_b1_arm_input_registered",
+                "format_version":1, "kind":RESULT_KIND,
+                "status":RESULT_STATUS,
                 "registration":document::binding(manifest), "intent":document::binding(&intent),
                 "request":document::binding(&bound.request), "target_side":target.side,
                 "remote_writes":0, "restore_qualified":false,
@@ -308,6 +343,7 @@ impl Registration {
         )?;
         check()?;
         intent.assert_unchanged()?;
+        source_history.check(bound.backend)?;
         result.assert_unchanged()?;
         Ok(
             json!({"status":result.value["status"], "receipt":document::binding(&result),

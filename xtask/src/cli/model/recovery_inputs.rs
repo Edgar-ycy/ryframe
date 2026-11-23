@@ -21,9 +21,15 @@ pub(crate) struct RestoreInputPublication {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ReferenceInputMode {
+    Successor { fresh_target_verify: PathBuf },
+    IndependentB1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ReferenceInputOptions {
     pub(crate) arm_input: PathBuf,
-    pub(crate) fresh_target_verify: PathBuf,
+    pub(crate) mode: ReferenceInputMode,
     pub(crate) side: RestoreInputSide,
     pub(crate) id: String,
     pub(crate) work_dir: PathBuf,

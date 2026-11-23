@@ -15,7 +15,7 @@ use super::output_value;
 #[path = "successor/arm.rs"]
 pub(super) mod arm;
 #[path = "successor/arm_input.rs"]
-pub(super) mod arm_input;
+pub(in crate::recovery) mod arm_input;
 #[path = "successor/arm_target.rs"]
 pub(crate) mod arm_target;
 

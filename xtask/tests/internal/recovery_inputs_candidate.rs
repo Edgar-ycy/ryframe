@@ -8,8 +8,8 @@ use serde_json::Value;
 use crate::recovery::inputs::{document, target_plan};
 use crate::recovery_inputs_support::{binding, hash, read_value};
 use crate::{
-    cli::RestoreInputSide,
-    recovery::inputs::{product, reference},
+    cli::{RecoveryInputsCommand, ReferenceInputMode, RestoreInputSide},
+    recovery::inputs::{product, reference, run},
     recovery_inputs_fixture::{
         Base, Fixture, SourceState, prepare_arm, prepare_source, prepare_target, product_options,
         reference_options, setup,
@@ -287,6 +287,57 @@ fn product_input_rejects_unknown_reference_fields_at_each_nested_boundary() {
         product::build(&fixture.backend, &options).unwrap(),
         expected
     );
+}
+
+#[test]
+fn reference_rejects_aliased_work_dir_and_output_before_reading_arm() {
+    let fixture = Fixture::new();
+    let work_dir = fixture.work_dir.with_file_name("reference-output-alias");
+    assert!(!work_dir.exists());
+    assert!(fixture.reference_plan.is_file());
+    let mut separate = fixture.reference_options(Some(fixture.reference_plan.clone()));
+    separate.work_dir = work_dir.clone();
+    let mut expected = fixture.reference_value.clone();
+    let expected_work_dir = Path::new(expected["work_dir"].as_str().unwrap())
+        .with_file_name(work_dir.file_name().unwrap());
+    expected["work_dir"] = Value::String(expected_work_dir.to_string_lossy().into_owned());
+    assert_eq!(
+        reference::build(&fixture.backend, &separate).unwrap(),
+        expected
+    );
+    #[cfg(not(windows))]
+    let outputs = [work_dir.clone()];
+    #[cfg(windows)]
+    let outputs = {
+        let name = work_dir.file_name().unwrap().to_str().unwrap();
+        let parent = work_dir.parent().unwrap().canonicalize().unwrap();
+        [
+            work_dir.clone(),
+            work_dir.with_file_name(name.to_uppercase()),
+            work_dir.with_file_name(format!("{name}.")),
+            parent.join(name),
+        ]
+    };
+    for independent in [false, true] {
+        for output in &outputs {
+            let mut options = fixture.reference_options(Some(output.clone()));
+            options.arm_input = fixture.root.join("missing-arm.json");
+            options.work_dir = work_dir.clone();
+            if independent {
+                options.side = RestoreInputSide::Candidate;
+                options.mode = ReferenceInputMode::IndependentB1;
+            }
+            let error = run(&RecoveryInputsCommand::Reference(options), &fixture.backend)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("--work-dir 与 --output 必须使用不同位置"),
+                "{error}"
+            );
+            assert!(!output.exists());
+        }
+    }
+    assert!(!work_dir.exists());
 }
 
 #[test]

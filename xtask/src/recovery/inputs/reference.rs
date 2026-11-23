@@ -8,9 +8,19 @@ use serde_json::{Map, Value, json};
 use super::{
     arm,
     document::object,
-    domain::{identifier, validate_plan},
+    domain::{identifier, validate_independent_b1_plan, validate_plan},
+    reference_configuration::{SourceProjection, TargetProjection},
+    target::TargetRequest,
 };
-use crate::{Result, cli::ReferenceInputOptions};
+use crate::{
+    Result,
+    cli::{ReferenceInputMode, ReferenceInputOptions, RestoreInputSide},
+    local_test_path::{LocalTestPathKind, validate_local_test_path},
+    recovery::{
+        fixture_control::successor::arm_input::IndependentB1Receipt,
+        runtime::dataset_authority::reads::Window,
+    },
+};
 
 pub(crate) fn source_projection(backend: &Path, descriptor: &Value) -> Result<Value> {
     let request = super::source::load(backend, descriptor)?;
@@ -21,55 +31,32 @@ pub(crate) fn source_projection(backend: &Path, descriptor: &Value) -> Result<Va
 
 pub(crate) fn build(backend: &Path, options: &ReferenceInputOptions) -> Result<Value> {
     identifier(&options.id)?;
-    let (arm, _fresh) = arm::load(
-        backend,
-        &options.arm_input,
-        &options.fresh_target_verify,
-        options.side.as_str(),
-    )?;
+    if let Some(publication) = &options.publication {
+        validate_publication_path(&options.work_dir, &publication.output)?;
+    }
+    match &options.mode {
+        ReferenceInputMode::Successor {
+            fresh_target_verify,
+        } => build_successor(backend, options, fresh_target_verify),
+        ReferenceInputMode::IndependentB1 => build_independent_b1(backend, options),
+    }
+}
+
+fn build_successor(backend: &Path, options: &ReferenceInputOptions, fresh: &Path) -> Result<Value> {
+    let (arm, _fresh) = arm::load(backend, &options.arm_input, fresh, options.side.as_str())?;
     let source_request = object(&arm.source_request.value, "共享源导出请求")?;
-    let request = object(&arm.target.document.value, "新目标请求")?;
-    let request_target = object(
-        request.get("target").ok_or("新目标请求缺少 target")?,
-        "新目标",
-    )?;
     let selected = object(&arm.target.selected, "审阅单侧资源")?;
-    let mut target = request_target.clone();
-    for field in ["runtime_dir", "api_url", "worker_ready_url", "frontend_url"] {
-        target.insert(
-            field.to_owned(),
-            selected
-                .get(field)
-                .cloned()
-                .ok_or_else(|| format!("审阅单侧资源缺少 {field}"))?,
-        );
-    }
     let configuration = super::reference_configuration::Projection::load(backend, &arm)?;
-    let source = configuration.source.source.clone();
-    target.insert("s3".into(), configuration.target.target["s3"].clone());
     let directory = new_path(backend, &options.work_dir, "参考计划 work_dir")?;
-    independent_work_dir(
+    independent_work_dir(&directory, source_request, selected, &arm, fresh)?;
+    let plan = project(
+        backend,
+        options,
         &directory,
-        source_request,
-        selected,
-        &arm,
-        &options.fresh_target_verify,
+        &arm.target,
+        &configuration.source,
+        &configuration.target,
     )?;
-    let plan = json!({
-        "format_version": 1,
-        "id": options.id,
-        "target_side": options.side.as_str(),
-        "work_dir": directory.to_string_lossy(),
-        "tools": configuration.source.tools,
-        "source": source,
-        "target": Value::Object(target),
-    });
-    validate_plan(&plan, backend)?;
-    if request_target.get("scope_id") != plan["target"].get("scope_id")
-        || request_target.get("databases") != plan["target"].get("databases")
-    {
-        return Err("参考计划没有绑定当前 source-generation 或 fresh 物理目标".into());
-    }
     configuration.assert_unchanged(backend, &arm)?;
     arm.target.document.assert_unchanged()?;
     arm.result.assert_unchanged()?;
@@ -79,10 +66,106 @@ pub(crate) fn build(backend: &Path, options: &ReferenceInputOptions) -> Result<V
     Ok(plan)
 }
 
-fn new_path(backend: &Path, value: &Path, label: &str) -> Result<PathBuf> {
-    if value.exists() {
-        return Err(format!("{label}已存在，拒绝覆盖").into());
+fn build_independent_b1(backend: &Path, options: &ReferenceInputOptions) -> Result<Value> {
+    if options.side != RestoreInputSide::Candidate {
+        return Err("独立 B1 参考计划只允许 candidate 侧".into());
     }
+    let window = Window::direct()?;
+    let result = (|| {
+        let arm = IndependentB1Receipt::read(backend, &options.arm_input)?;
+        validate_local_test_path(&options.work_dir, backend, LocalTestPathKind::NewDirectory)?;
+        let directory = new_path(backend, &options.work_dir, "独立 B1 参考计划 work_dir")?;
+        arm.require_disjoint(&directory)?;
+        if let Some(publication) = &options.publication {
+            // 通用发布器会在写后重建计划，此时输出已存在。
+            arm.require_disjoint(&publication.output)?;
+        }
+        let source = SourceProjection::load(backend, &arm.source_request)?;
+        let target = TargetProjection::load(&arm.target_request)?;
+        let reference = project(
+            backend,
+            options,
+            &directory,
+            &arm.target_request,
+            &source,
+            &target,
+        )?;
+        for side in ["source", "target"] {
+            let runtime = Path::new(super::document::text(
+                &reference[side]["runtime_dir"],
+                "参考运行目录",
+            )?);
+            disjoint_work_dir(&directory, [runtime.to_owned()])?;
+        }
+        source.assert_unchanged(backend, &arm.source_request)?;
+        target.assert_unchanged(&arm.target_request)?;
+        arm.check()?;
+        Ok(json!({
+            "format_version":1, "kind":"restore-reference-independent-b1-plan",
+            "reference_plan":reference,
+            "arm_input":arm.result_binding(), "source_export":arm.source_export(),
+        }))
+    })();
+    window.finish(result)
+}
+
+fn project(
+    backend: &Path,
+    options: &ReferenceInputOptions,
+    directory: &Path,
+    request: &TargetRequest,
+    source: &SourceProjection,
+    configuration: &TargetProjection,
+) -> Result<Value> {
+    let declared = object(&request.document.value["target"], "新目标")?;
+    let selected = object(&request.selected, "审阅单侧资源")?;
+    let mut target = declared.clone();
+    for field in ["runtime_dir", "api_url", "worker_ready_url", "frontend_url"] {
+        target.insert(
+            field.to_owned(),
+            selected
+                .get(field)
+                .cloned()
+                .ok_or_else(|| format!("审阅单侧资源缺少 {field}"))?,
+        );
+    }
+    target.insert("s3".into(), configuration.target["s3"].clone());
+    let plan = json!({
+        "format_version":1, "id":options.id, "target_side":options.side.as_str(),
+        "work_dir":directory.to_string_lossy(), "tools":source.tools, "source":source.source, "target":target,
+    });
+    match &options.mode {
+        ReferenceInputMode::IndependentB1 => validate_independent_b1_plan(&plan, backend, request)?,
+        ReferenceInputMode::Successor { .. } => validate_plan(&plan, backend)?,
+    }
+    if declared.get("scope_id") != plan["target"].get("scope_id")
+        || declared.get("databases") != plan["target"].get("databases")
+    {
+        return Err("参考计划没有绑定当前 source-generation 或 fresh 物理目标".into());
+    }
+    Ok(plan)
+}
+
+fn validate_publication_path(work_dir: &Path, output: &Path) -> Result<()> {
+    let work_dir = canonical_path_from_parent(work_dir, "参考计划 work_dir")?;
+    let output = canonical_path_from_parent(output, "参考计划输出")?;
+    let same = if cfg!(windows) {
+        let key = |path: &Path| {
+            path.to_string_lossy()
+                .trim_end_matches([' ', '.'])
+                .to_lowercase()
+        };
+        key(&work_dir) == key(&output)
+    } else {
+        work_dir == output
+    };
+    if same {
+        return Err("参考计划 --work-dir 与 --output 必须使用不同位置".into());
+    }
+    Ok(())
+}
+
+fn canonical_path_from_parent(value: &Path, label: &str) -> Result<PathBuf> {
     let parent = value.parent().ok_or_else(|| format!("{label}缺少父目录"))?;
     if !parent.is_dir() {
         return Err(format!("{label}的父目录必须已经存在").into());
@@ -91,7 +174,14 @@ fn new_path(backend: &Path, value: &Path, label: &str) -> Result<PathBuf> {
     let name = value
         .file_name()
         .ok_or_else(|| format!("{label}缺少文件名"))?;
-    let result = parent.join(name);
+    Ok(parent.join(name))
+}
+
+fn new_path(backend: &Path, value: &Path, label: &str) -> Result<PathBuf> {
+    if value.exists() {
+        return Err(format!("{label}已存在，拒绝覆盖").into());
+    }
+    let result = canonical_path_from_parent(value, label)?;
     if !result.starts_with(plain_path(fs::canonicalize(backend.join(".local-tests"))?)) {
         return Err(format!("{label}必须位于当前后端 .local-tests").into());
     }
@@ -130,6 +220,10 @@ fn independent_work_dir(
     {
         protected.push(PathBuf::from(value));
     }
+    disjoint_work_dir(directory, protected)
+}
+
+fn disjoint_work_dir(directory: &Path, protected: impl IntoIterator<Item = PathBuf>) -> Result<()> {
     let resolved = plain_path(fs::canonicalize(
         directory.parent().ok_or("工作目录缺少父目录")?,
     )?)
