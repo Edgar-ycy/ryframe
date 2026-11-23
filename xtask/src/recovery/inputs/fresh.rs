@@ -18,7 +18,7 @@ pub(crate) struct Fresh {
 pub(crate) fn validate(
     backend: &Path,
     path: &Path,
-    result: &serde_json::Map<String, Value>,
+    initialized_binding: &Value,
     initialized: &Value,
     target_request: &Value,
 ) -> Result<Fresh> {
@@ -45,7 +45,7 @@ pub(crate) fn validate(
         "fresh target 库存绑定",
     )?;
     if fresh.get("status").and_then(Value::as_str) != Some("fresh_target_reverified")
-        || fresh.get("initialized") != result.get("initialized")
+        || fresh.get("initialized") != Some(initialized_binding)
         || integer(fresh.get("remote_writes").unwrap(), "fresh target 远端写入")? != 0
         || ["target_ready", "clone_verified", "restore_qualified"]
             .iter()

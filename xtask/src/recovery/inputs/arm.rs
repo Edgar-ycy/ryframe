@@ -198,7 +198,7 @@ pub(super) fn load_with_source(
     let fresh = fresh::validate(
         backend,
         fresh_path,
-        result_object,
+        &result_object["initialized"],
         &initialized,
         &target.document.value,
     )?;

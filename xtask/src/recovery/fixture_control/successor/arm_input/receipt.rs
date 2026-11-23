@@ -116,6 +116,13 @@ impl<'a> IndependentB1Receipt<'a> {
     pub(in crate::recovery) fn source_export(&self) -> &Value {
         &self.bound.source.identity
     }
+
+    pub(in crate::recovery) fn initialized(&self) -> Result<(&Value, document::Document)> {
+        let binding = &self.observed.target.initialized;
+        let (_, initialized) =
+            document::bound_file(self.bound.backend, binding, "独立 B1 目标初始化")?;
+        Ok((binding, initialized))
+    }
 }
 
 struct Recorded {

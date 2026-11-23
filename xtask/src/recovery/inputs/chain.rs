@@ -22,6 +22,7 @@ pub(crate) struct Chain {
     pub(crate) fresh: Fresh,
 }
 
+#[cfg(test)]
 pub(crate) fn load(
     backend: &Path,
     reference_path: &Path,

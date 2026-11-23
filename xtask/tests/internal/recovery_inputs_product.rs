@@ -3,8 +3,71 @@ use std::{fs, path::PathBuf};
 use chrono::{DateTime, Duration, SecondsFormat, Timelike, Utc};
 use serde_json::{Value, json};
 
+use super::cli::RestoreInputSide;
 use super::recovery_inputs_fixture::Fixture;
 use super::recovery_inputs_support::{binding, capture_target_plan, read_value};
+use crate::recovery::inputs::product;
+
+#[test]
+fn independent_b1_product_rejects_wrong_side_or_envelope_before_reading_arm() {
+    let fixture = Fixture::new();
+    let mut options = fixture.product_options(None);
+    options.reference_plan = fixture.root.join("independent-reference.json");
+    options.arm_input = fixture.root.join("must-not-read-arm.json");
+    let mut envelope = json!({
+        "format_version":1, "kind":"restore-reference-independent-b1-plan",
+        "reference_plan":fixture.reference_value, "arm_input":null, "source_export":null,
+    });
+
+    for (side, target_side, extra, version, diagnostic) in [
+        (
+            RestoreInputSide::Base,
+            "candidate",
+            false,
+            1,
+            "只允许 candidate",
+        ),
+        (
+            RestoreInputSide::Candidate,
+            "base",
+            false,
+            1,
+            "只允许 candidate",
+        ),
+        (
+            RestoreInputSide::Candidate,
+            "candidate",
+            true,
+            1,
+            "独立 B1 参考计划封装",
+        ),
+        (
+            RestoreInputSide::Candidate,
+            "candidate",
+            false,
+            2,
+            "封装类型或版本无效",
+        ),
+    ] {
+        options.side = side;
+        envelope["reference_plan"]["target_side"] = json!(target_side);
+        envelope["format_version"] = json!(version);
+        if extra {
+            envelope["unregistered"] = json!(true);
+        } else {
+            envelope.as_object_mut().unwrap().remove("unregistered");
+        }
+        fs::write(
+            &options.reference_plan,
+            serde_json::to_vec(&envelope).unwrap(),
+        )
+        .unwrap();
+        let error = product::build(&fixture.backend, &options)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(diagnostic), "{error}");
+    }
+}
 
 #[test]
 fn saved_product_plan_rejects_substituted_fields_and_database_order() {

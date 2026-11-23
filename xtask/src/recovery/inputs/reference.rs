@@ -22,6 +22,8 @@ use crate::{
     },
 };
 
+pub(super) const INDEPENDENT_B1_KIND: &str = "restore-reference-independent-b1-plan";
+
 pub(crate) fn source_projection(backend: &Path, descriptor: &Value) -> Result<Value> {
     let request = super::source::load(backend, descriptor)?;
     let projection = super::reference_configuration::SourceProjection::load(backend, &request)?;
@@ -50,13 +52,14 @@ fn build_successor(backend: &Path, options: &ReferenceInputOptions, fresh: &Path
     let directory = new_path(backend, &options.work_dir, "参考计划 work_dir")?;
     independent_work_dir(&directory, source_request, selected, &arm, fresh)?;
     let plan = project(
-        backend,
-        options,
+        &options.id,
+        options.side,
         &directory,
         &arm.target,
         &configuration.source,
         &configuration.target,
     )?;
+    validate_plan(&plan, backend)?;
     configuration.assert_unchanged(backend, &arm)?;
     arm.target.document.assert_unchanged()?;
     arm.result.assert_unchanged()?;
@@ -73,35 +76,14 @@ fn build_independent_b1(backend: &Path, options: &ReferenceInputOptions) -> Resu
     let window = Window::direct()?;
     let result = (|| {
         let arm = IndependentB1Receipt::read(backend, &options.arm_input)?;
-        validate_local_test_path(&options.work_dir, backend, LocalTestPathKind::NewDirectory)?;
-        let directory = new_path(backend, &options.work_dir, "独立 B1 参考计划 work_dir")?;
-        arm.require_disjoint(&directory)?;
         if let Some(publication) = &options.publication {
             // 通用发布器会在写后重建计划，此时输出已存在。
             arm.require_disjoint(&publication.output)?;
         }
-        let source = SourceProjection::load(backend, &arm.source_request)?;
-        let target = TargetProjection::load(&arm.target_request)?;
-        let reference = project(
-            backend,
-            options,
-            &directory,
-            &arm.target_request,
-            &source,
-            &target,
-        )?;
-        for side in ["source", "target"] {
-            let runtime = Path::new(super::document::text(
-                &reference[side]["runtime_dir"],
-                "参考运行目录",
-            )?);
-            disjoint_work_dir(&directory, [runtime.to_owned()])?;
-        }
-        source.assert_unchanged(backend, &arm.source_request)?;
-        target.assert_unchanged(&arm.target_request)?;
+        let reference = project_independent_b1(backend, &options.id, &options.work_dir, &arm)?;
         arm.check()?;
         Ok(json!({
-            "format_version":1, "kind":"restore-reference-independent-b1-plan",
+            "format_version":1, "kind":INDEPENDENT_B1_KIND,
             "reference_plan":reference,
             "arm_input":arm.result_binding(), "source_export":arm.source_export(),
         }))
@@ -109,9 +91,42 @@ fn build_independent_b1(backend: &Path, options: &ReferenceInputOptions) -> Resu
     window.finish(result)
 }
 
-fn project(
+pub(super) fn project_independent_b1(
     backend: &Path,
-    options: &ReferenceInputOptions,
+    id: &str,
+    work_dir: &Path,
+    arm: &IndependentB1Receipt<'_>,
+) -> Result<Value> {
+    identifier(id)?;
+    validate_local_test_path(work_dir, backend, LocalTestPathKind::NewDirectory)?;
+    let directory = new_path(backend, work_dir, "独立 B1 参考计划 work_dir")?;
+    arm.require_disjoint(&directory)?;
+    let source = SourceProjection::load(backend, &arm.source_request)?;
+    let target = TargetProjection::load(&arm.target_request)?;
+    let reference = project(
+        id,
+        RestoreInputSide::Candidate,
+        &directory,
+        &arm.target_request,
+        &source,
+        &target,
+    )?;
+    validate_independent_b1_plan(&reference, backend, &arm.target_request)?;
+    for side in ["source", "target"] {
+        let runtime = Path::new(super::document::text(
+            &reference[side]["runtime_dir"],
+            "参考运行目录",
+        )?);
+        disjoint_work_dir(&directory, [runtime.to_owned()])?;
+    }
+    source.assert_unchanged(backend, &arm.source_request)?;
+    target.assert_unchanged(&arm.target_request)?;
+    Ok(reference)
+}
+
+fn project(
+    id: &str,
+    side: RestoreInputSide,
     directory: &Path,
     request: &TargetRequest,
     source: &SourceProjection,
@@ -131,13 +146,9 @@ fn project(
     }
     target.insert("s3".into(), configuration.target["s3"].clone());
     let plan = json!({
-        "format_version":1, "id":options.id, "target_side":options.side.as_str(),
+        "format_version":1, "id":id, "target_side":side.as_str(),
         "work_dir":directory.to_string_lossy(), "tools":source.tools, "source":source.source, "target":target,
     });
-    match &options.mode {
-        ReferenceInputMode::IndependentB1 => validate_independent_b1_plan(&plan, backend, request)?,
-        ReferenceInputMode::Successor { .. } => validate_plan(&plan, backend)?,
-    }
     if declared.get("scope_id") != plan["target"].get("scope_id")
         || declared.get("databases") != plan["target"].get("databases")
     {
@@ -146,7 +157,7 @@ fn project(
     Ok(plan)
 }
 
-fn validate_publication_path(work_dir: &Path, output: &Path) -> Result<()> {
+pub(super) fn validate_publication_path(work_dir: &Path, output: &Path) -> Result<()> {
     let work_dir = canonical_path_from_parent(work_dir, "参考计划 work_dir")?;
     let output = canonical_path_from_parent(output, "参考计划输出")?;
     let same = if cfg!(windows) {
