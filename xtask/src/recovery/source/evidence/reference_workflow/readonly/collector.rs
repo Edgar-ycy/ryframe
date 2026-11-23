@@ -2,7 +2,10 @@ use super::{Result, binding::Inputs, native, text};
 use native::{
     export::{
         database::dump_arguments,
-        transport::{CommandOutput, CommandSpec, StdoutTarget, Transport},
+        transport::{
+            CommandOutput, CommandSpec, CommandTimeout, StdoutTarget, Transport,
+            mysql_verification_response,
+        },
     },
     target_verify::database::evidence::{self, stdout::VerifiedStdout},
 };
@@ -19,7 +22,7 @@ impl<T: Transport> Collector<'_, T> {
         let mut receipts = Vec::new();
         let first = self.attempt(db, check, &mut receipts)?;
         if !first.stdout.is_empty() || !first.stderr.is_empty() {
-            return response(&first);
+            return mysql_verification_response(&first);
         }
         let second = self.attempt(db, check, &mut receipts);
         // 第二次失败也保留关系；attempt 在错误前已发布该次收据。
@@ -27,15 +30,18 @@ impl<T: Transport> Collector<'_, T> {
             "mysql-{check}-retry-{}.json",
             uuid::Uuid::new_v4().simple()
         ));
-        if receipts.len() == 2 {
+        let written = if receipts.len() == 2 {
             native::json::write_new(
                 &receipt,
                 &json!({"format_version":1,
                     "kind":"mysql-verification-retry","check":check,"target_key":db["key"],
                     "reason":"first_returncode_zero_stdout_stderr_exactly_empty",
                     "first":receipts[0],"second":receipts[1]}),
-            )?;
-        }
+            )
+        } else {
+            Ok(())
+        };
+        let (second, ()) = CommandTimeout::preserve(second, written)?;
         let output = second?;
         if receipts.len() != 2 {
             return Err("MySQL 重试缺少两次原始输出收据".into());
@@ -43,7 +49,7 @@ impl<T: Transport> Collector<'_, T> {
         if output.stdout.is_empty() {
             return Err("MySQL 固定核验第二次仍为空；保留两次输出，禁止继续重试".into());
         }
-        response(&output)
+        mysql_verification_response(&output)
     }
 
     fn attempt(&self, db: &Value, check: &str, receipts: &mut Vec<Value>) -> Result<CommandOutput> {
@@ -53,15 +59,25 @@ impl<T: Transport> Collector<'_, T> {
         let mut stdout = VerifiedStdout::create(&self.inputs.work.join(format!("{name}.stdout")))?;
         let mut args = arguments(db)?;
         args.extend(["--execute".into(), sql.into()]);
-        let result = self.transport.run(self.spec(args, None, stdout.target()?)?);
+        let result = self
+            .transport
+            .run_mysql_verification(self.spec(args, None, stdout.target()?)?)
+            .map(|(output, stderr)| (output, Some(stderr)));
         let snapshot = stdout.snapshot();
         let receipt = evidence::mysql_receipt(db, check, &stdout, &result, &snapshot);
         let receipt_path = self.inputs.work.join(format!("{name}.json"));
-        native::json::write_new(&receipt_path, &receipt)?;
-        let binding = native::resources::common::binding(&receipt_path)?;
+        let written = native::json::write_new(&receipt_path, &receipt)
+            .and_then(|()| native::resources::common::binding(&receipt_path));
+        let (result, binding) = CommandTimeout::preserve(result, written)?;
         receipts.push(binding);
-        self.inputs.unchanged()?;
-        let mut output = result.map_err(|_| "MySQL 只读观察执行失败；保留部分原始输出和收据")?;
+        let (result, ()) = CommandTimeout::preserve(result, self.inputs.unchanged())?;
+        let (mut output, _) = result.map_err(|error| {
+            if error.is::<CommandTimeout>() {
+                error
+            } else {
+                "MySQL 只读观察执行失败；保留部分原始输出和收据".into()
+            }
+        })?;
         output.stdout = snapshot?.raw;
         if !output.status.success() {
             return Err("MySQL 只读观察返回非零状态；保留原始输出和收据，不自动重试".into());
@@ -81,7 +97,7 @@ impl<T: Transport> Collector<'_, T> {
         if !output.status.success() {
             return Err("源租户数量只读查询返回非零状态".into());
         }
-        response(&output)
+        mysql_verification_response(&output)
     }
 
     pub(super) fn dump(&self, db: &Value, tables: &[&str], output: &Path) -> Result<()> {
@@ -167,11 +183,4 @@ fn arguments(db: &Value) -> Result<Vec<String>> {
         "--binary-mode".into(),
         "--default-character-set=utf8mb4".into(),
     ])
-}
-
-fn response(output: &CommandOutput) -> Result<String> {
-    Ok(std::str::from_utf8(&output.stdout)
-        .map_err(|_| "MySQL 核验输出不是 UTF-8")?
-        .trim()
-        .to_owned())
 }

@@ -1,7 +1,7 @@
 //! 用于会话生命周期测试的原生客户端夹具，不连接数据库。
 
 use std::{
-    io::{self, BufRead, Write},
+    io::{self, BufRead, Read, Write},
     time::Duration,
 };
 
@@ -11,6 +11,24 @@ fn main() {
         .file_stem()
         .and_then(|name| name.to_str())
         .unwrap_or_default();
+    match mode {
+        "mysql-verification-stderr" => {
+            verify_fixed_query();
+            io::stderr()
+                .write_all(b"\xffmysql-verification-secret\n")
+                .unwrap();
+            return;
+        }
+        "mysql-verification-timeout" => {
+            verify_fixed_query();
+            let mut stdout = io::stdout().lock();
+            stdout.write_all(b"partial-private-mysql\n").unwrap();
+            stdout.flush().unwrap();
+            std::thread::sleep(Duration::from_secs(60));
+            return;
+        }
+        _ => {}
+    }
     let first = std::env::args_os().nth(1).expect("首参数");
     let options = first
         .to_str()
@@ -68,6 +86,35 @@ fn main() {
     if mode.ends_with("close-hang") {
         std::thread::sleep(Duration::from_secs(60));
     }
+}
+
+fn verify_fixed_query() {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let defaults = args[0]
+        .strip_prefix("--defaults-file=")
+        .expect("首参数必须是明确的连接文件");
+    assert!(std::path::Path::new(defaults).is_file());
+    assert!(matches!(
+        args[1].as_str(),
+        "--database=fixture" | "--database=source_control"
+    ));
+    assert_eq!(
+        args[2..],
+        [
+            "--batch",
+            "--raw",
+            "--skip-column-names",
+            "--binary-mode",
+            "--default-character-set=utf8mb4",
+            "--execute",
+            "SELECT @@server_uuid, DATABASE();",
+        ]
+    );
+    assert!(
+        std::env::vars_os()
+            .all(|(key, _)| !key.as_encoded_bytes().eq_ignore_ascii_case(b"MYSQL_PWD"))
+    );
+    assert_eq!(io::stdin().read(&mut [0]).unwrap(), 0);
 }
 
 fn respond(line: &str) {

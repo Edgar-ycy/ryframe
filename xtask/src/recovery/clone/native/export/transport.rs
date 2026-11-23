@@ -9,6 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{
@@ -42,6 +43,78 @@ pub(crate) struct CommandOutput {
     pub(crate) stderr: Vec<u8>,
 }
 
+#[derive(Debug)]
+pub(crate) struct StderrDigest {
+    pub(crate) bytes: usize,
+    pub(crate) sha256: String,
+}
+
+impl StderrDigest {
+    fn from_bytes(bytes: &[u8]) -> Self {
+        Self {
+            bytes: bytes.len(),
+            sha256: hex::encode(Sha256::digest(bytes)),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct CommandTimeout {
+    label: String,
+    timeout: Duration,
+    stderr_path: Option<PathBuf>,
+    stop: Result<()>,
+}
+
+impl CommandTimeout {
+    pub(crate) const RECEIPT_KIND: &str = "TimeoutExpired";
+
+    pub(crate) fn tree_reclaimed(&self) -> bool {
+        cfg!(any(windows, unix)) && self.stop.is_ok()
+    }
+
+    pub(crate) fn preserve<T, E>(
+        command: Result<T>,
+        evidence: Result<E>,
+    ) -> Result<(Result<T>, E)> {
+        match evidence {
+            Ok(evidence) => Ok((command, evidence)),
+            Err(error) => Err(Self::prefer_timeout(command.err(), error)),
+        }
+    }
+
+    pub(crate) fn prefer_timeout(
+        command: Option<Box<dyn std::error::Error>>,
+        evidence: Box<dyn std::error::Error>,
+    ) -> Box<dyn std::error::Error> {
+        command
+            .filter(|error| error.is::<Self>())
+            .unwrap_or(evidence)
+    }
+}
+
+impl std::fmt::Display for CommandTimeout {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let state = if self.tree_reclaimed() {
+            "已回收完整子进程树"
+        } else {
+            "子进程树回收未证实"
+        };
+        write!(
+            formatter,
+            "{} 超过 {} 秒，{state}",
+            self.label,
+            self.timeout.as_secs()
+        )?;
+        if let Some(path) = &self.stderr_path {
+            write!(formatter, "；诊断保留在 {}", path.display())?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for CommandTimeout {}
+
 impl CommandOutput {
     pub(crate) fn success(mut self, label: &str) -> Result<Self> {
         if self.status.success() {
@@ -68,6 +141,13 @@ impl CommandOutput {
 
 pub(crate) trait Transport {
     fn run(&self, spec: CommandSpec) -> Result<CommandOutput>;
+
+    /// 固定 MySQL 核验额外记录脱敏前 stderr 的长度和摘要。
+    fn run_mysql_verification(&self, spec: CommandSpec) -> Result<(CommandOutput, StderrDigest)> {
+        let output = self.run(spec)?;
+        let stderr = StderrDigest::from_bytes(&output.stderr);
+        Ok((output, stderr))
+    }
     /// 私有 SQL 只保留退出状态。模拟传输可以沿用同一受控 run。
     fn run_private(&self, spec: CommandSpec) -> Result<CommandOutput> {
         if cfg!(test) {
@@ -121,6 +201,19 @@ impl Transport for SystemTransport {
     }
 
     fn run(&self, spec: CommandSpec) -> Result<CommandOutput> {
+        Self::run_captured(spec, |_| ()).map(|(output, ())| output)
+    }
+
+    fn run_mysql_verification(&self, spec: CommandSpec) -> Result<(CommandOutput, StderrDigest)> {
+        Self::run_captured(spec, StderrDigest::from_bytes)
+    }
+}
+
+impl SystemTransport {
+    fn run_captured<T>(
+        spec: CommandSpec,
+        stderr_metadata: impl FnOnce(&[u8]) -> T,
+    ) -> Result<(CommandOutput, T)> {
         let mut command = prepare_command(&spec)?;
         fs::create_dir_all(&spec.work_dir).map_err(|error| {
             format!(
@@ -164,6 +257,7 @@ impl Transport for SystemTransport {
             Vec::new()
         };
         let stderr_bytes = read_limited(&stderr_path, &spec.label)?;
+        let metadata = stderr_metadata(&stderr_bytes);
         let secret_values = secret_values(&spec.environment);
         let stderr_bytes =
             redact(&String::from_utf8_lossy(&stderr_bytes), &secret_values).into_bytes();
@@ -172,11 +266,14 @@ impl Transport for SystemTransport {
         }
         let _ = fs::remove_file(stderr_path);
         let _ = fs::remove_file(stdin_path);
-        Ok(CommandOutput {
-            status,
-            stdout: stdout_bytes,
-            stderr: stderr_bytes,
-        })
+        Ok((
+            CommandOutput {
+                status,
+                stdout: stdout_bytes,
+                stderr: stderr_bytes,
+            },
+            metadata,
+        ))
     }
 }
 
@@ -252,27 +349,22 @@ fn wait_status(
             Some(status) => return Ok(status),
             None if Instant::now() < deadline => thread::sleep(Duration::from_millis(25)),
             None => {
-                let stopped = stop_child(child);
-                if let Some(stderr) = stderr {
-                    return Err(format!(
-                        "{} 超过 {} 秒，已回收完整子进程树；诊断保留在 {}",
-                        spec.label,
-                        spec.timeout.as_secs(),
-                        stderr.display()
-                    )
-                    .into());
-                }
-                let state = if stopped.is_ok() {
-                    "已回收子进程树"
-                } else {
-                    "子进程树回收未证实"
-                };
-                return Err(
-                    format!("{} 超过 {} 秒，{state}", spec.label, spec.timeout.as_secs()).into(),
-                );
+                return Err(Box::new(CommandTimeout {
+                    label: spec.label.clone(),
+                    timeout: spec.timeout,
+                    stderr_path: stderr.map(Path::to_owned),
+                    stop: stop_child(child),
+                }));
             }
         }
     }
+}
+
+pub(crate) fn mysql_verification_response(output: &CommandOutput) -> Result<String> {
+    Ok(std::str::from_utf8(&output.stdout)
+        .map_err(|_| "MySQL 核验输出不是 UTF-8")?
+        .trim()
+        .to_owned())
 }
 
 fn create_stdin(path: &Path, input: Option<&[u8]>) -> Result<Option<File>> {

@@ -9,13 +9,20 @@ use std::{
 };
 
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use super::{CommandFailure, Evidence, Port, mysql_receipt, stdout::VerifiedStdout};
 use crate::{
     Result,
+    job_evidence_process_tests::{
+        MYSQL_TIMEOUT_PARTIAL_STDOUT, MYSQL_VERIFICATION_STDERR, MysqlTimeoutTransport,
+        compile_mysql_timeout_client, compile_mysql_verification_client,
+    },
     recovery::clone::native::{
         digest,
-        export::transport::{CommandOutput, CommandSpec, StdoutTarget, SystemTransport, Transport},
+        export::transport::{
+            CommandOutput, CommandSpec, CommandTimeout, StdoutTarget, SystemTransport, Transport,
+        },
         json as json_io,
         target_verify::input::TargetContext,
     },
@@ -83,6 +90,16 @@ impl Fixture {
             .collect::<Vec<_>>();
         paths.sort();
         paths
+    }
+
+    fn use_timeout_client(&mut self) {
+        let mysql = compile_mysql_timeout_client(&self.context.target_dir);
+        self.context.request["tools"]["mysql"] =
+            json!({"path":mysql,"sha256":digest::file(&mysql).unwrap().sha256});
+        self.context.environment.insert(
+            "MYSQL_TIMEOUT_FIXTURE_TOKEN".into(),
+            "partial-private-mysql".into(),
+        );
     }
 
     fn system_spec(&self, stdout: StdoutTarget, code: &str) -> CommandSpec {
@@ -342,6 +359,131 @@ fn system_transport_retains_existing_capture_and_file_behavior() {
 }
 
 #[test]
+fn mysql_target_stderr_digest_uses_raw_child_bytes_before_redaction() {
+    let mut fixture = Fixture::new();
+    let mysql = compile_mysql_verification_client(&fixture.context.target_dir);
+    fixture.context.request["tools"]["mysql"] =
+        json!({"path":mysql,"sha256":digest::file(&mysql).unwrap().sha256});
+    fixture.context.environment.insert(
+        "MYSQL_VERIFICATION_TEST_TOKEN".into(),
+        "mysql-verification-secret".into(),
+    );
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        while fixture
+            .context
+            .observation_dir
+            .as_os_str()
+            .encode_wide()
+            .count()
+            <= 260
+        {
+            fixture
+                .context
+                .observation_dir
+                .push("mysql-evidence-long-directory");
+        }
+        fs::create_dir_all(&fixture.context.observation_dir).unwrap();
+    }
+    let port = Port {
+        configuration: None,
+        side: crate::cli::CloneSide::Target,
+        context: &fixture.context.storage_inputs(),
+        transport: &SystemTransport,
+        checkpoint: &|| Ok(()),
+        directory: &fixture.context.observation_dir,
+    };
+    assert_eq!(
+        Evidence::default()
+            .mysql(&port, &fixture.database, "identity")
+            .unwrap(),
+        ""
+    );
+    let [command]: [PathBuf; 1] = fixture.files("command-").try_into().unwrap();
+    let command = json_io::read(&command).unwrap();
+    let receipts = fixture
+        .files("mysql-")
+        .into_iter()
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .collect::<Vec<_>>();
+    let [mysql]: [PathBuf; 1] = receipts.try_into().unwrap();
+    let mysql = json_io::read(&mysql).unwrap();
+    assert_eq!(mysql["returncode"], 0);
+    assert!(mysql["error_type"].is_null());
+    assert_eq!(mysql["stderr_bytes"], MYSQL_VERIFICATION_STDERR.len());
+    assert_eq!(
+        mysql["stderr_sha256"],
+        hex::encode(Sha256::digest(MYSQL_VERIFICATION_STDERR))
+    );
+    assert_eq!(command["stderr"], "\u{fffd}[REDACTED]\n");
+    assert_eq!(command["stdout_file"], mysql["stdout_file"]);
+    assert_eq!(mysql["stdout_file"]["bytes"], 0);
+    assert!(!mysql.to_string().contains("mysql-verification-secret"));
+    assert!(
+        fixture
+            .files(".")
+            .iter()
+            .all(|path| path.extension().is_none_or(|ext| ext != "stderr"))
+    );
+}
+
+#[test]
+fn mysql_target_timeout_keeps_typed_failure_and_partial_stdout() {
+    let mut fixture = Fixture::new();
+    fixture.use_timeout_client();
+    let transport = MysqlTimeoutTransport::default();
+    let port = Port {
+        configuration: None,
+        side: crate::cli::CloneSide::Target,
+        context: &fixture.context.storage_inputs(),
+        transport: &transport,
+        checkpoint: &|| Ok(()),
+        directory: &fixture.context.observation_dir,
+    };
+    let error = Evidence::default()
+        .mysql(&port, &fixture.database, "identity")
+        .unwrap_err();
+    assert!(
+        error
+            .downcast_ref::<CommandTimeout>()
+            .unwrap()
+            .tree_reclaimed()
+    );
+    assert!(!error.to_string().contains("partial-private-mysql"));
+    let error =
+        CommandTimeout::preserve::<(), ()>(Err(error), Err("模拟收据写入失败".into())).unwrap_err();
+    assert!(error.is::<CommandTimeout>());
+    assert_eq!(transport.calls.get(), 1);
+    let [command]: [PathBuf; 1] = fixture.files("command-").try_into().unwrap();
+    let command = json_io::read(&command).unwrap();
+    let receipts = fixture
+        .files("mysql-")
+        .into_iter()
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .collect::<Vec<_>>();
+    let [mysql]: [PathBuf; 1] = receipts.try_into().unwrap();
+    let mysql = json_io::read(&mysql).unwrap();
+    assert_eq!(mysql["error_type"], "TimeoutExpired");
+    assert_eq!(command["error_type"], "TimeoutExpired");
+    assert!(mysql["returncode"].is_null());
+    assert!(mysql["stderr_sha256"].is_null());
+    assert!(mysql["stderr_bytes"].is_null());
+    assert_eq!(command["stdout"], "[REDACTED]\n");
+    assert_eq!(command["stdout_file"], mysql["stdout_file"]);
+    let stdout = Path::new(mysql["stdout_file"]["path"].as_str().unwrap());
+    assert_eq!(fs::read(stdout).unwrap(), MYSQL_TIMEOUT_PARTIAL_STDOUT);
+    assert_eq!(
+        mysql["stdout_file"]["bytes"],
+        MYSQL_TIMEOUT_PARTIAL_STDOUT.len()
+    );
+    assert_eq!(
+        mysql["stdout_file"]["sha256"],
+        hex::encode(Sha256::digest(MYSQL_TIMEOUT_PARTIAL_STDOUT))
+    );
+}
+
+#[test]
 fn nonzero_exit_keeps_raw_stdout_and_both_receipts_without_retry() {
     let fixture = Fixture::new();
     let fake = Fake::new(7, false);
@@ -411,6 +553,8 @@ fn transport_failure_keeps_successful_capture_without_fake_capture_error() {
     let mysql = json_io::read(&mysql).unwrap();
     assert_eq!(command["error_type"], "TransportError");
     assert_eq!(mysql["error_type"], "TransportError");
+    assert!(mysql["stderr_bytes"].is_null());
+    assert!(mysql["stderr_sha256"].is_null());
     assert_eq!(command["stdout_file"], mysql["stdout_file"]);
     assert_eq!(mysql["stdout_file"]["bytes"], RAW.len());
     assert!(command.get("stdout_capture_error").is_none());
@@ -440,7 +584,13 @@ fn capture_failure_is_preserved_in_command_and_mysql_receipts() {
         .unwrap();
     assert_eq!(error.kind(), "StdoutIntegrityError");
     let snapshot = output.snapshot();
-    let mysql = mysql_receipt(&fixture.database, "identity", &output, &result, &snapshot);
+    let mysql = mysql_receipt(
+        &fixture.database,
+        "identity",
+        &output,
+        &result.map(|output| (output, None)),
+        &snapshot,
+    );
     evidence
         .write(&fixture.context.observation_dir, "failed.json", &mysql)
         .unwrap();
@@ -466,11 +616,27 @@ fn capture_failure_is_preserved_in_command_and_mysql_receipts() {
 fn drift_between_outer_and_inner_capture_fails_before_response_is_used() {
     let fixture = Fixture::new();
     let fake = Fake::new(0, false);
+    check_drift_between_captures(&fixture, &fake, &fake.writer, "StdoutIntegrityError");
+    assert_eq!(fake.calls.get(), 1);
+
+    let mut fixture = Fixture::new();
+    fixture.use_timeout_client();
+    let timeout = MysqlTimeoutTransport::default();
+    check_drift_between_captures(&fixture, &timeout, &timeout.writer, "TimeoutExpired");
+    assert_eq!(timeout.calls.get(), 1);
+}
+
+fn check_drift_between_captures(
+    fixture: &Fixture,
+    transport: &impl Transport,
+    writer: &RefCell<Option<File>>,
+    expected_kind: &str,
+) {
     let checkpoints = Cell::new(0);
     let checkpoint = || {
         checkpoints.set(checkpoints.get() + 1);
         if checkpoints.get() == 2 {
-            let mut writer = fake.writer.borrow_mut();
+            let mut writer = writer.borrow_mut();
             let writer = writer.as_mut().unwrap();
             writer.seek(SeekFrom::Start(0))?;
             writer.set_len(0)?;
@@ -483,16 +649,17 @@ fn drift_between_outer_and_inner_capture_fails_before_response_is_used() {
         configuration: None,
         side: crate::cli::CloneSide::Target,
         context: &fixture.context.storage_inputs(),
-        transport: &fake,
+        transport,
         checkpoint: &checkpoint,
         directory: &fixture.context.observation_dir,
     };
-    assert!(
-        Evidence::default()
-            .mysql(&port, &fixture.database, "identity")
-            .is_err()
+    let error = Evidence::default()
+        .mysql(&port, &fixture.database, "identity")
+        .unwrap_err();
+    assert_eq!(
+        error.is::<CommandTimeout>(),
+        expected_kind == "TimeoutExpired"
     );
-    assert_eq!(fake.calls.get(), 1);
     let command = json_io::read(&fixture.files("command-")[0]).unwrap();
     let mysql = fixture
         .files("mysql-identity-")
@@ -505,5 +672,5 @@ fn drift_between_outer_and_inner_capture_fails_before_response_is_used() {
     let mysql = json_io::read(&mysql).unwrap();
     assert!(command["stdout_file"].get("sha256").is_some());
     assert_eq!(mysql["stdout_capture_error"], "StdoutIntegrityError");
-    assert_eq!(mysql["error_type"], "StdoutIntegrityError");
+    assert_eq!(mysql["error_type"], expected_kind);
 }

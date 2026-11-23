@@ -1,12 +1,14 @@
 use std::{collections::BTreeMap, fs, path::Path, time::Duration};
 
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 
 use super::super::{
     super::{
         digest,
-        export::transport::{CommandOutput, CommandSpec, StdoutTarget, Transport},
+        export::transport::{
+            CommandOutput, CommandSpec, CommandTimeout, StderrDigest, StdoutTarget, Transport,
+            mysql_verification_response,
+        },
         json::{self as json_io, text},
     },
     input::request_physical,
@@ -66,30 +68,29 @@ struct CommandFailure {
     cause: Box<dyn std::error::Error>,
     kind: &'static str,
     returncode: Option<i32>,
-    stderr: Option<Vec<u8>>,
+    stderr: Option<StderrDigest>,
 }
 
 impl CommandFailure {
     fn boxed(
         cause: Box<dyn std::error::Error>,
         kind: &'static str,
-        result: &Result<CommandOutput>,
+        returncode: Option<i32>,
+        stderr: Option<StderrDigest>,
     ) -> Box<dyn std::error::Error> {
         Box::new(Self {
             cause,
             kind,
-            returncode: result.as_ref().ok().and_then(|output| output.status.code()),
-            stderr: result.as_ref().ok().map(|output| output.stderr.clone()),
+            returncode,
+            stderr,
         })
     }
 
     fn transport(cause: Box<dyn std::error::Error>) -> Box<dyn std::error::Error> {
-        Box::new(Self {
-            cause,
-            kind: "TransportError",
-            returncode: None,
-            stderr: None,
-        })
+        if cause.is::<CommandTimeout>() {
+            return cause;
+        }
+        Self::boxed(cause, "TransportError", None, None)
     }
 }
 
@@ -171,10 +172,6 @@ pub(super) fn descriptor(path: &Path) -> Result<Value> {
     Ok(json!({"bytes": actual.bytes, "sha256": actual.sha256}))
 }
 
-fn bytes_descriptor(bytes: &[u8]) -> Value {
-    json!({"bytes": bytes.len(), "sha256": hex::encode(Sha256::digest(bytes))})
-}
-
 impl Evidence {
     pub(super) fn track(&mut self, directory: &Path, name: &str) -> Result<()> {
         if Path::new(name).file_name().and_then(|name| name.to_str()) != Some(name) {
@@ -247,7 +244,7 @@ impl Evidence {
         .into_iter()
         .skip(1)
         .collect();
-        let result = self.command(
+        let (result, _) = self.command(
             port,
             port.context.maintenance_executable("tenant-data")?,
             args,
@@ -268,23 +265,24 @@ impl Evidence {
         let mut receipts = Vec::new();
         let first = self.mysql_attempt(port, database, check, &mut receipts)?;
         if !first.stdout.is_empty() || !first.stderr.is_empty() {
-            return response(&first);
+            return mysql_verification_response(&first);
         }
         let second = self.mysql_attempt(port, database, check, &mut receipts);
         if receipts.len() != 2 {
             second?;
             return Err("MySQL 重试缺少完整两次输出收据".into());
         }
-        self.write(port.directory, &format!("mysql-{check}-retry-{}.json", uuid::Uuid::new_v4().simple()), &json!({
+        let written = self.write(port.directory, &format!("mysql-{check}-retry-{}.json", uuid::Uuid::new_v4().simple()), &json!({
             "format_version": 1, "kind": "mysql-verification-retry", "check": check,
             "target_key": database["key"], "reason": "first_returncode_zero_stdout_stderr_exactly_empty",
             "first": receipts[0], "second": receipts[1],
-        }))?;
+        }));
+        let (second, ()) = CommandTimeout::preserve(second, written)?;
         let second = second?;
         if second.stdout.is_empty() {
             return Err(mismatch(check, database, ""));
         }
-        response(&second)
+        mysql_verification_response(&second)
     }
 
     fn mysql_attempt<T: Transport, F: Fn() -> Result<()>>(
@@ -302,10 +300,12 @@ impl Evidence {
         let snapshot = output.snapshot();
         let receipt = mysql_receipt(database, check, &output, &result, &snapshot);
         let receipt_name = format!("{name}.json");
-        self.write(port.directory, &receipt_name, &receipt)?;
-        let bound = descriptor(&port.directory.join(&receipt_name))?;
+        let written = self
+            .write(port.directory, &receipt_name, &receipt)
+            .and_then(|()| descriptor(&port.directory.join(&receipt_name)));
+        let (result, bound) = CommandTimeout::preserve(result, written)?;
         receipts.push(json!({"path": port.directory.join(receipt_name), "bytes": bound["bytes"], "sha256": bound["sha256"]}));
-        let mut result = result?;
+        let (mut result, _) = result?;
         result.stdout = snapshot?.raw;
         if !result.status.success() {
             return Err(verification_error(
@@ -325,7 +325,7 @@ impl Evidence {
         program: std::path::PathBuf,
         args: Vec<String>,
         stdout: Option<&mut stdout::VerifiedStdout>,
-    ) -> Result<CommandOutput> {
+    ) -> Result<(CommandOutput, Option<StderrDigest>)> {
         (port.checkpoint)()?;
         let mut environment = port.context.command_environment();
         environment.remove("MYSQL_PWD");
@@ -341,7 +341,7 @@ impl Evidence {
             Some(output) => output.target()?,
             None => StdoutTarget::Capture,
         };
-        let mut result = port.transport.run(CommandSpec {
+        let spec = CommandSpec {
             program,
             args,
             cwd: port.context.execution_backend()?,
@@ -351,18 +351,28 @@ impl Evidence {
             work_dir: port.directory.to_path_buf(),
             label: "目标数据库只读核验".into(),
             timeout: Duration::from_secs(1800),
-        });
-        let capture_error =
-            self.record_command(port.directory, &command, &secrets, &mut result, stdout)?;
+        };
+        let (mut result, stderr) = if stdout.is_some() {
+            match port.transport.run_mysql_verification(spec) {
+                Ok((output, digest)) => (Ok(output), Some(digest)),
+                Err(error) => (Err(error), None),
+            }
+        } else {
+            (port.transport.run(spec), None)
+        };
+        let capture = self.record_command(port.directory, &command, &secrets, &mut result, stdout);
+        let (result, capture_error) = CommandTimeout::preserve(result, capture)?;
+        let code = result.as_ref().ok().and_then(|output| output.status.code());
         if let Err(error) = (port.checkpoint)() {
-            return Err(CommandFailure::boxed(error, "CheckpointError", &result));
+            let check = CommandFailure::boxed(error, "CheckpointError", code, stderr);
+            return Err(CommandTimeout::prefer_timeout(result.err(), check));
         }
         let result = result.map_err(CommandFailure::transport)?;
         if let Some(error) = capture_error {
             let kind = error.kind();
-            return Err(CommandFailure::boxed(Box::new(error), kind, &Ok(result)));
+            return Err(CommandFailure::boxed(Box::new(error), kind, code, stderr));
         }
-        Ok(result)
+        Ok((result, stderr))
     }
 
     fn record_command(
@@ -379,6 +389,9 @@ impl Evidence {
                 receipt["returncode"] = json!(output.status.code());
                 receipt["stdout"] = json!(redact(&output.stdout, secrets));
                 receipt["stderr"] = json!(redact(&output.stderr, secrets));
+            }
+            Err(error) if stdout.is_some() && error.is::<CommandTimeout>() => {
+                receipt["error_type"] = json!(CommandTimeout::RECEIPT_KIND)
             }
             Err(_) => receipt["error_type"] = json!("TransportError"),
         }
@@ -467,25 +480,24 @@ pub(crate) fn mysql_receipt(
     database: &Value,
     check: &str,
     output: &stdout::VerifiedStdout,
-    result: &Result<CommandOutput>,
+    result: &Result<(CommandOutput, Option<StderrDigest>)>,
     snapshot: &std::result::Result<stdout::Snapshot, stdout::CaptureError>,
 ) -> Value {
     let (code, stderr, error_type) = match result {
-        Ok(output) => (
+        Ok((output, stderr)) => (
             output.status.code(),
-            Some(output.stderr.as_slice()),
-            if output.status.success() {
-                None
-            } else {
-                Some("CommandFailed")
-            },
+            stderr.as_ref(),
+            (!output.status.success()).then_some("CommandFailed"),
         ),
+        Err(error) if error.is::<CommandTimeout>() => {
+            (None, None, Some(CommandTimeout::RECEIPT_KIND))
+        }
         Err(error) => match error.downcast_ref::<CommandFailure>() {
-            Some(error) => (error.returncode, error.stderr.as_deref(), Some(error.kind)),
+            Some(error) => (error.returncode, error.stderr.as_ref(), Some(error.kind)),
             None => (None, None, Some("RustError")),
         },
     };
-    let mut receipt = json!({"format_version": 1, "kind": "mysql-verification-output", "check": check, "target_key": database["key"], "returncode": code, "error_type": error_type, "stderr_bytes": stderr.map(<[u8]>::len), "stderr_sha256": stderr.map(|bytes| bytes_descriptor(bytes)["sha256"].clone()), "stdout_file": {"path": output.path()}});
+    let mut receipt = json!({"format_version": 1, "kind": "mysql-verification-output", "check": check, "target_key": database["key"], "returncode": code, "error_type": error_type, "stderr_bytes": stderr.map(|digest| digest.bytes), "stderr_sha256": stderr.map(|digest| &digest.sha256), "stdout_file": {"path": output.path()}});
     match snapshot {
         Ok(snapshot) => {
             receipt["stdout_file"] = snapshot.artifact.clone();
@@ -501,13 +513,6 @@ pub(crate) fn mysql_receipt(
         }
     }
     receipt
-}
-
-fn response(output: &CommandOutput) -> Result<String> {
-    Ok(std::str::from_utf8(&output.stdout)
-        .map_err(|_| "MySQL 核验输出不是 UTF-8")?
-        .trim()
-        .to_owned())
 }
 
 fn secrets(

@@ -1,5 +1,12 @@
 use super::*;
-use native::export::transport::{CommandOutput, CommandSpec, StdoutTarget, Transport};
+use crate::job_evidence_process_tests::{
+    MYSQL_TIMEOUT_PARTIAL_STDOUT, MYSQL_VERIFICATION_STDERR, MysqlTimeoutTransport,
+    compile_mysql_timeout_client, compile_mysql_verification_client,
+};
+use native::export::transport::{
+    CommandOutput, CommandSpec, CommandTimeout, StdoutTarget, SystemTransport, Transport,
+};
+use sha2::{Digest, Sha256};
 use std::{cell::RefCell, collections::VecDeque, fs, io::Write, path::PathBuf};
 
 struct Fixture {
@@ -12,6 +19,10 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_mysql_verification_client(None)
+    }
+
+    fn with_mysql_verification_client(compile_client: Option<fn(&Path) -> PathBuf>) -> Self {
         let directory = super::super::tests::temporary();
         let root = directory.path();
         let backend = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -23,6 +34,11 @@ impl Fixture {
             "source":{"scope_id":"source","databases":[{"key":"control","kind":"combined","mode":"shared","database":"source_control","server_uuid":"uuid-1"}]},
             "target":{"scope_id":"target","databases":[{"key":"control","kind":"combined","mode":"shared","database":"target_control","server_uuid":"uuid-1"}]}});
         super::super::tests::formalize(&mut plan, root);
+        if let Some(compile) = compile_client {
+            let mysql = compile(root);
+            plan["tools"]["mysql"] =
+                json!({"path":mysql,"sha256":native::digest::file(&mysql).unwrap().sha256});
+        }
         let config = root.join("config/app.test.toml");
         fs::write(&config, "[object_storage]\nendpoint='http://127.0.0.1:9000'\nregion='us-east-1'\naccess_key='fixture-access'\nsecret_key='fixture-secret'\n").unwrap();
         let digest = native::digest::file(&config).unwrap();
@@ -206,6 +222,97 @@ fn empty_retry_and_failed_second_attempt_keep_exact_output_and_relationship() {
         records
             .iter()
             .any(|value| value["returncode"] == 1 && value["error_type"] == "CommandFailed")
+    );
+}
+
+#[test]
+fn mysql_reference_stderr_digest_uses_raw_child_bytes_without_retry() {
+    let fixture = Fixture::with_mysql_verification_client(Some(compile_mysql_verification_client));
+    let inputs = fixture.inputs("source");
+    let collector = collector::Collector {
+        inputs: &inputs,
+        transport: &SystemTransport,
+    };
+    assert!(
+        verify_database(
+            &fixture.plan,
+            "source",
+            &fixture.plan["source"]["databases"][0],
+            &collector
+        )
+        .is_err()
+    );
+    let receipts = fs::read_dir(&fixture.work)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("mysql-")
+                && path.extension().is_some_and(|ext| ext == "json")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(receipts.len(), 1);
+    let mysql = native::json::read(&receipts[0]).unwrap();
+    assert_eq!(mysql["kind"], "mysql-verification-output");
+    assert_eq!(mysql["returncode"], 0);
+    assert!(mysql["error_type"].is_null());
+    assert_eq!(mysql["stderr_bytes"], MYSQL_VERIFICATION_STDERR.len());
+    assert_eq!(
+        mysql["stderr_sha256"],
+        hex::encode(Sha256::digest(MYSQL_VERIFICATION_STDERR))
+    );
+    assert_eq!(mysql["stdout_file"]["bytes"], 0);
+    assert!(!mysql.to_string().contains("mysql-verification-secret"));
+}
+
+#[test]
+fn mysql_reference_timeout_keeps_typed_failure_and_partial_stdout() {
+    let fixture = Fixture::with_mysql_verification_client(Some(compile_mysql_timeout_client));
+    let inputs = fixture.inputs("source");
+    let transport = MysqlTimeoutTransport::default();
+    let collector = collector::Collector {
+        inputs: &inputs,
+        transport: &transport,
+    };
+    let error = collector
+        .query(&fixture.plan["source"]["databases"][0], "identity")
+        .unwrap_err();
+    assert!(
+        error
+            .downcast_ref::<CommandTimeout>()
+            .unwrap()
+            .tree_reclaimed()
+    );
+    assert!(!error.to_string().contains("partial-private-mysql"));
+    assert_eq!(transport.calls.get(), 1);
+    let receipts = fs::read_dir(&fixture.work)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("mysql-")
+                && path.extension().is_some_and(|ext| ext == "json")
+        })
+        .collect::<Vec<_>>();
+    let [receipt]: [PathBuf; 1] = receipts.try_into().unwrap();
+    let mysql = native::json::read(&receipt).unwrap();
+    assert_eq!(mysql["error_type"], "TimeoutExpired");
+    assert!(mysql["returncode"].is_null());
+    assert!(mysql["stderr_sha256"].is_null());
+    assert!(mysql["stderr_bytes"].is_null());
+    let stdout = path(&mysql["stdout_file"]["path"]).unwrap();
+    assert_eq!(fs::read(stdout).unwrap(), MYSQL_TIMEOUT_PARTIAL_STDOUT);
+    assert_eq!(
+        mysql["stdout_file"]["bytes"],
+        MYSQL_TIMEOUT_PARTIAL_STDOUT.len()
+    );
+    assert_eq!(
+        mysql["stdout_file"]["sha256"],
+        hex::encode(Sha256::digest(MYSQL_TIMEOUT_PARTIAL_STDOUT))
     );
 }
 
