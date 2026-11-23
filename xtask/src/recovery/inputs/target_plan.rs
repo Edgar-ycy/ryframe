@@ -14,6 +14,9 @@ use super::{
 };
 use crate::Result;
 
+pub(in crate::recovery) mod evidence;
+pub(in crate::recovery) mod independent;
+
 const FIELDS: [&str; 15] = [
     "format_version",
     "kind",

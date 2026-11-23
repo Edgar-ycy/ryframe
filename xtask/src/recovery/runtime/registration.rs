@@ -23,7 +23,14 @@ use crate::{
     recovery::{
         clone::native::{resources::common, target_verify::authority::require_closed},
         fixture_control::{git_root, portable_path},
-        inputs::{RestoreChecks, document, publish::publish_verified, target_plan},
+        inputs::{
+            RestoreChecks,
+            document::{self, Document},
+            publish::publish_verified,
+            reference,
+            target::TargetRequest,
+            target_plan::{self, evidence::Frame, independent},
+        },
     },
 };
 
@@ -34,17 +41,13 @@ struct Snapshot {
     directory: PathBuf,
     configuration: configuration_registration::Source,
     receipt: Value,
+    independent_b1: bool,
 }
 
 pub(super) fn run(root: &Path, options: &RuntimeRegistrationOptions) -> Result<Value> {
     let backend = backend_root(root)?;
     register(&backend, &options.output, || {
-        Snapshot::observe(
-            &backend,
-            &options.plan,
-            &options.target_plan,
-            RestoreChecks::default(),
-        )
+        Snapshot::observe_for_register(&backend, options)
     })
 }
 
@@ -127,6 +130,11 @@ fn register_locked(
     observe: &impl Fn() -> Result<Snapshot>,
 ) -> Result<Value> {
     owner.check()?;
+    if before.independent_b1 {
+        // 私有侧件同样是写入。保持原资料和两个原预留路径已核验的缺席。
+        window.finish(Ok(()))?;
+        owner.check()?;
+    }
     let environment = before.configuration.publish(backend, output)?;
     let mut receipt = before.receipt.clone();
     receipt["runtime_environment"] = environment.clone();
@@ -172,29 +180,91 @@ impl Snapshot {
         checks: RestoreChecks<'_>,
     ) -> Result<Self> {
         let reference_path = protocol_path(reference)?;
-        let target_path = protocol_path(target)?;
         let reference = document::read(&reference_path, backend, "参考恢复计划")?;
+        Self::observe_ordinary(backend, reference, target, checks)
+    }
+
+    fn observe_for_register(backend: &Path, options: &RuntimeRegistrationOptions) -> Result<Self> {
+        let reference_path = protocol_path(&options.plan)?;
+        let reference = document::read(&reference_path, backend, "参考恢复计划")?;
+        if !reference::is_independent_b1(&reference.value) {
+            return Self::observe_ordinary(
+                backend,
+                reference,
+                &options.target_plan,
+                RestoreChecks::default(),
+            );
+        }
+        let target_path = protocol_path(&options.target_plan)?;
+        let target = document::read(&target_path, backend, "正式恢复目标计划")?;
+        let frame = Frame::published(backend, &reference, target)?;
+        let (evidence, _) = independent::verify(backend, &frame, None)?;
+        let sidecar = configuration_registration::sidecar(&options.output)?;
+        independent::registration_paths(&evidence, &frame, &options.output, &sidecar)?;
+        let target = frame
+            .target
+            .as_ref()
+            .ok_or("独立 B1 登记缺少原正式目标计划")?;
+        let observed = Self::from_verified(
+            backend,
+            &reference,
+            target,
+            evidence.reference_plan(),
+            &evidence.arm.target_request,
+            require_closed,
+        )?;
+        evidence.check()?;
+        frame.check()?;
+        Ok(observed)
+    }
+
+    fn observe_ordinary(
+        backend: &Path,
+        reference: Document,
+        target: &Path,
+        checks: RestoreChecks<'_>,
+    ) -> Result<Self> {
+        let target_path = protocol_path(target)?;
         let target = document::read(&target_path, backend, "正式恢复目标计划")?;
         let (chain, verified, _) =
             target_plan::verify_with_checks(backend, reference, &target.path, checks)?;
         if verified != target.value {
             return Err("正式恢复目标计划核验结果与登记文件不同".into());
         }
-        let (runtime, endpoints) = runtime_target(&chain.reference.value, &target.value)?;
+        Self::from_verified(
+            backend,
+            &chain.reference,
+            &target,
+            &chain.reference.value,
+            &chain.arm.target,
+            require_closed,
+        )
+    }
+
+    fn from_verified(
+        backend: &Path,
+        reference: &Document,
+        target: &Document,
+        reference_plan: &Value,
+        target_request: &TargetRequest,
+        observe_port: impl Fn(&str) -> Result<()>,
+    ) -> Result<Self> {
+        let (runtime, endpoints) = runtime_target(reference_plan, &target.value)?;
         let (directory, runtime) = runtime_observation(backend, &runtime)?;
-        let ports_idle = closed_roles(&endpoints, require_closed)?;
-        chain.reference.assert_unchanged()?;
+        let ports_idle = closed_roles(&endpoints, observe_port)?;
+        reference.assert_unchanged()?;
         target.assert_unchanged()?;
         Ok(Self {
             directory,
-            configuration: configuration_registration::Source::from_target(&chain.arm.target)?,
+            configuration: configuration_registration::Source::from_target(target_request)?,
             receipt: json!({
                 "format_version":2, "kind":"restore-runtime-registration",
-                "reference_plan":document::binding(&chain.reference),
-                "target_plan":document::binding(&target),
+                "reference_plan":document::binding(reference),
+                "target_plan":document::binding(target),
                 "observation":{"runtime":runtime,"ports_idle":ports_idle},
                 "remote_writes":0,
             }),
+            independent_b1: reference::is_independent_b1(&reference.value),
         })
     }
 }

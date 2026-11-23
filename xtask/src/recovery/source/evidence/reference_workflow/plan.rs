@@ -1,37 +1,34 @@
 //! 完整参考目标计划的只读预览、原文件核验和独占发布。
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
+
+#[cfg(test)]
+use std::fs;
 
 use serde_json::{Value, json};
 
-use super::{inputs, native, path, text};
+use super::{inputs, path, text};
 use crate::{
     Result,
-    cli::RestoreInputSide,
-    local_test_path::{LocalTestPathKind, validate_absolute_path, validate_local_test_path},
+    local_test_path::{LocalTestPathKind, validate_local_test_path},
     recovery::{
         fixture_control::successor::arm_target,
         inputs::{
             chain::{self, Chain},
             document::{self, Document},
-            independent_b1::Verified,
-            reference, target_plan,
+            reference,
+            target_plan::{
+                self,
+                evidence::{Frame, NAMES, directory_identity},
+                independent,
+            },
         },
-        monitoring::execution::ProtectedInputs,
         runtime::dataset_authority::reads::Window,
         source::evidence::comparison,
     },
 };
 
-const EVIDENCE: [&str; 5] = [
-    "backup_receipt",
-    "comparison_sources",
-    "arm_input",
-    "fresh_target_verify",
-    "product_plan",
-];
+#[cfg(test)]
+use target_plan::evidence::check_fresh_parent;
 
 pub(super) fn run(backend: &Path, request: &Value, reference: Document) -> Result<Value> {
     let window = Window::direct()?;
@@ -56,22 +53,18 @@ fn execute(
     if let Some(output) = output {
         validate_local_test_path(output, backend, LocalTestPathKind::OutputFile)?;
     }
-    let frame = Frame::read(backend, request, reference)?;
+    let frame = read_frame(backend, request, reference)?;
     let result = (|| {
         frame.check()?;
         if reference::is_independent_b1(&reference.value) {
             return execute_independent_b1(backend, &frame, output, window);
         }
-        let (chain, mut value) = frame.derive(backend)?;
+        let (chain, mut value) = derive(backend, &frame)?;
         inputs::backup::verify_frozen_source(backend, &chain.backup)?;
         comparison::verify(backend, &chain.comparison_document.value, true)?;
         verify_arm(backend, &chain)?;
         frame.check_bindings(&value)?;
-        verify_fresh_inventory(
-            backend,
-            &chain.arm.target.document.value,
-            fresh_evidence(&frame.evidence)?,
-        )?;
+        frame.verify_fresh_inventory(backend, &chain.arm.target.document.value)?;
         // 旧 Python 输出及其摘要请求都递归排序。即便依赖打开 preserve_order 也保持原字节顺序。
         value.sort_all_objects();
         if let Some(output) = output {
@@ -92,24 +85,8 @@ fn execute_independent_b1(
     output: Option<&Path>,
     window: &Window,
 ) -> Result<Value> {
-    let [backup, comparison_file, arm, fresh, product] = frame.evidence.as_slice() else {
-        return Err("参考目标计划必须绑定五项原证据".into());
-    };
-    let evidence = Verified::load(
-        backend,
-        frame.reference,
-        [&backup.path, &comparison_file.path, &arm.path, &fresh.path],
-        RestoreInputSide::Candidate,
-        output,
-    )?;
+    let (evidence, mut value) = independent::verify(backend, frame, output)?;
     let result = (|| {
-        let mut value = target_plan::capture_independent_b1(backend, &evidence, product)?;
-        require_independent_readback(frame.target.as_ref(), &value)?;
-        frame.check_bindings(&value)?;
-        inputs::backup::verify_frozen_source(backend, &evidence.backup)?;
-        comparison::verify(backend, &evidence.comparison_document.value, true)?;
-        verify_fresh_inventory(backend, &evidence.arm.target_request.document.value, fresh)?;
-        evidence.check()?;
         value.sort_all_objects();
         if let Some(output) = output {
             let backup = path(&evidence.backup.result["backup_root"])?;
@@ -121,13 +98,6 @@ fn execute_independent_b1(
         Ok(value)
     })();
     finish(result, evidence.check())
-}
-
-fn require_independent_readback(selected: Option<&Document>, expected: &Value) -> Result<()> {
-    if selected.is_some_and(|target| &target.value != expected) {
-        return Err("独立 B1 正式目标计划与当前完整来源、ownership 或产品计划不同".into());
-    }
-    Ok(())
 }
 
 fn verify_arm(backend: &Path, chain: &Chain) -> Result<()> {
@@ -167,146 +137,39 @@ fn verify_arm(backend: &Path, chain: &Chain) -> Result<()> {
     finish(checked, verified.check(backend))
 }
 
-fn verify_fresh_inventory(backend: &Path, request: &Value, verify: &Document) -> Result<()> {
-    let initial = &verify.value["inventory"];
-    let parent = verify.path.parent().ok_or("目标 verify 缺少父目录")?;
-    native::target_verify::evidence_protocol::inventory_history::verify(
+fn read_frame<'a>(backend: &Path, request: &Value, reference: &'a Document) -> Result<Frame<'a>> {
+    if let Some(target) = request.get("target_plan") {
+        let target = document::read(path(target)?, backend, "原正式目标计划")?;
+        return Frame::published(backend, reference, target);
+    }
+    let [backup, comparison, arm, fresh, product] = NAMES.map(|field| path(&request[field]));
+    Frame::explicit(
         backend,
-        parent,
-        &json!({
-            "initial":initial,
-            "request":request,
-            "resumed":false,
-            "inventory_directory":parent.join("inventory"),
-        }),
-    )?;
-    Ok(())
+        reference,
+        [backup?, comparison?, arm?, fresh?, product?],
+    )
 }
 
-fn fresh_evidence(evidence: &[Document]) -> Result<&Document> {
-    let [_, _, _, verify, _] = evidence else {
+fn derive(backend: &Path, frame: &Frame<'_>) -> Result<(Chain, Value)> {
+    if let Some(target) = &frame.target {
+        let (chain, value, _) =
+            target_plan::verify(backend, frame.reference.clone(), &target.path)?;
+        return Ok((chain, value));
+    }
+    let [backup, comparison, arm, fresh, product] = frame.evidence.as_slice() else {
         return Err("参考目标计划必须绑定五项原证据".into());
     };
-    Ok(verify)
-}
-
-fn check_fresh_parent(verify: &Path) -> Result<(u64, u64)> {
-    let parent = verify.parent().ok_or("目标 verify 缺少父目录")?;
-    let identity = directory_identity(parent)?;
-    for name in ["failure.json", "initialize.lock"] {
-        match fs::symlink_metadata(parent.join(name)) {
-            Ok(_) => return Err("目标 verify 目录存在失败证据或初始化锁，不能消费残留结果".into()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
-    }
-    if directory_identity(parent)? != identity {
-        return Err("目标 verify 原父目录身份在核验期间发生变化".into());
-    }
-    Ok(identity)
-}
-
-struct Frame<'a> {
-    reference: &'a Document,
-    target: Option<Document>,
-    evidence: Vec<Document>,
-    fresh_parent: (u64, u64),
-    held: ProtectedInputs,
-}
-
-impl<'a> Frame<'a> {
-    fn read(backend: &Path, request: &Value, reference: &'a Document) -> Result<Self> {
-        validate_local_test_path(&reference.path, backend, LocalTestPathKind::ExistingFile)?;
-        let target = request
-            .get("target_plan")
-            .map(|selected| document::read(path(selected)?, backend, "原正式目标计划"))
-            .transpose()?;
-        let evidence = match &target {
-            Some(target) => descriptors(&target.value)
-                .into_iter()
-                .zip(EVIDENCE)
-                .map(|(value, label)| {
-                    document::bound_file(backend, value, label).map(|(_, document)| document)
-                })
-                .collect::<Result<Vec<_>>>()?,
-            None => EVIDENCE
-                .into_iter()
-                .map(|field| document::read(path(&request[field])?, backend, field))
-                .collect::<Result<Vec<_>>>()?,
-        };
-        let held = ProtectedInputs::open(
-            std::iter::once(reference)
-                .chain(target.iter())
-                .chain(&evidence)
-                .map(|file| file.path.clone()),
-        )?;
-        let fresh_parent = check_fresh_parent(&fresh_evidence(&evidence)?.path)?;
-        Ok(Self {
-            reference,
-            target,
-            evidence,
-            fresh_parent,
-            held,
-        })
-    }
-
-    fn derive(&self, backend: &Path) -> Result<(Chain, Value)> {
-        if let Some(target) = &self.target {
-            let (chain, value, _) =
-                target_plan::verify(backend, self.reference.clone(), &target.path)?;
-            return Ok((chain, value));
-        }
-        let [backup, comparison, arm, fresh, product] = self.evidence.as_slice() else {
-            return Err("参考目标计划必须绑定五项原证据".into());
-        };
-        let chain = chain::load_with_reference(
-            backend,
-            self.reference.clone(),
-            &backup.path,
-            &comparison.path,
-            &arm.path,
-            &fresh.path,
-            text(&self.reference.value["target_side"])?,
-        )?;
-        let value = target_plan::capture(backend, &chain, product)?;
-        Ok((chain, value))
-    }
-
-    fn check(&self) -> Result<()> {
-        self.held.assert_unchanged()?;
-        if check_fresh_parent(&fresh_evidence(&self.evidence)?.path)? != self.fresh_parent {
-            return Err("目标 verify 原父目录身份发生变化".into());
-        }
-        for input in std::iter::once(self.reference)
-            .chain(self.target.iter())
-            .chain(&self.evidence)
-        {
-            input.assert_unchanged()?;
-        }
-        Ok(())
-    }
-
-    fn check_bindings(&self, value: &Value) -> Result<()> {
-        if self.evidence.len() != EVIDENCE.len()
-            || descriptors(value)
-                .into_iter()
-                .zip(&self.evidence)
-                .any(|(binding, document)| *binding != document::binding(document))
-        {
-            return Err("参考目标计划没有保持显式五项证据的原路径和原始字节".into());
-        }
-        Ok(())
-    }
-}
-
-fn descriptors(value: &Value) -> [&Value; 5] {
-    [
-        &value["backup_receipt"],
-        &value["comparison_sources"],
-        &value["arm_input"],
-        &value["fresh_target"]["verify"],
-        &value["product_plan_file"],
-    ]
+    let chain = chain::load_with_reference(
+        backend,
+        frame.reference.clone(),
+        &backup.path,
+        &comparison.path,
+        &arm.path,
+        &fresh.path,
+        text(&frame.reference.value["target_side"])?,
+    )?;
+    let value = target_plan::capture(backend, &chain, product)?;
+    Ok((chain, value))
 }
 
 fn publish(
@@ -321,7 +184,9 @@ fn publish(
     let fresh = initialized.path.parent().ok_or("原初始化缺少证据目录")?;
     let mut protected = vec![backup, fresh];
     if reference::is_independent_b1(&frame.reference.value) {
-        let verify = fresh_evidence(&frame.evidence)?;
+        let [_, _, _, verify, _] = frame.evidence.as_slice() else {
+            return Err("参考目标计划必须绑定五项原证据".into());
+        };
         protected.push(verify.path.parent().ok_or("原目标核验缺少证据目录")?);
     }
     let (output, identity) = output_path(backend, output, &protected)?;
@@ -361,11 +226,6 @@ fn check_output_parent(parent: &Path, protected: &[&Path]) -> Result<(u64, u64)>
         }
     }
     Ok(identity)
-}
-
-fn directory_identity(path: &Path) -> Result<(u64, u64)> {
-    validate_absolute_path(path, LocalTestPathKind::ExistingDirectory)?;
-    native::resources::common::device_inode_for(path, &fs::symlink_metadata(path)?)
 }
 
 fn result_summary(value: &Value, output: Option<&Path>) -> Result<Value> {
@@ -517,7 +377,7 @@ mod tests {
             "product_plan_file":document::binding(&product),
         });
         let window = Window::direct()?;
-        let frame = Frame::read(backend, &request, &reference)?;
+        let frame = read_frame(backend, &request, &reference)?;
         document::bound_file(backend, &value["fresh_target"]["initialized"], "原初始化")?;
         frame.check_bindings(&value)?;
         let output = work.join("target-plan-output.json");
@@ -530,11 +390,11 @@ mod tests {
         assert!(publish(backend, &output, &backup, &value, &frame, &window).is_err());
         assert_eq!(fs::read(&output)?, published);
 
-        let verify = Frame::read(backend, &json!({"target_plan":output}), &reference)?;
+        let verify = read_frame(backend, &json!({"target_plan":output}), &reference)?;
         let selected = verify.target.as_ref().unwrap();
         let stored = &selected.value;
         verify.check_bindings(stored)?;
-        require_independent_readback(Some(selected), &value)?;
+        independent::require_readback(Some(selected), &value)?;
         for pointer in [
             "/backup_receipt",
             "/comparison_sources",
@@ -546,7 +406,7 @@ mod tests {
             *replaced.pointer_mut(pointer).unwrap() = document::binding(&reference);
             assert!(frame.check_bindings(&replaced).is_err(), "{pointer}");
             assert!(
-                require_independent_readback(Some(selected), &replaced).is_err(),
+                independent::require_readback(Some(selected), &replaced).is_err(),
                 "{pointer}"
             );
         }

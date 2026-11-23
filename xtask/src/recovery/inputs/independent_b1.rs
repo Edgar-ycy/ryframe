@@ -85,6 +85,10 @@ impl<'a> Verified<'a> {
         comparison::arm(&self.comparison, "candidate")
     }
 
+    pub(in crate::recovery) fn reference_plan(&self) -> &Value {
+        &self.reference
+    }
+
     pub(in crate::recovery) fn check(&self) -> Result<()> {
         let (id, work_dir) = reference_location(&self.reference)?;
         if reference::project_independent_b1(self.backend, id, work_dir, &self.arm)?

@@ -129,6 +129,10 @@ impl<'a> IndependentB1Receipt<'a> {
     pub(in crate::recovery) fn observed_target(&self) -> &Target {
         &self.observed.target
     }
+
+    pub(in crate::recovery) fn copy_directory(&self) -> &Path {
+        &self.bound.copy
+    }
 }
 
 struct Recorded {

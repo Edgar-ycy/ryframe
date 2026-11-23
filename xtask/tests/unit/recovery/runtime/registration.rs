@@ -90,6 +90,7 @@ impl Fixture {
                 "observation":{"runtime":runtime,"ports_idle":ROLES},
                 "remote_writes":0,
             }),
+            independent_b1: false,
         })
     }
 }
@@ -141,6 +142,112 @@ fn register_rechecks_three_times_with_the_original_owner_and_never_overwrites() 
     );
     assert!(register(&fixture.backend, &fixture.output, || fixture.snapshot()).is_err());
     assert_eq!(fs::read(&fixture.output).unwrap(), saved.raw);
+}
+
+#[test]
+fn independent_registration_preserves_raw_envelope_and_only_publishes_local_evidence() -> Result<()>
+{
+    let fixture = Fixture::new();
+    let work = fixture.runtime.with_file_name("prospective-work");
+    let copy = fixture.runtime.with_file_name("prospective-copy");
+    let endpoints = [
+        "http://127.0.0.1:18080/readyz",
+        "http://127.0.0.1:18081/readyz",
+        "http://127.0.0.1:18082",
+    ];
+    let plan = json!({
+        "target_side":"candidate", "work_dir":work,
+        "target":{"scope_id":"fixture", "runtime_dir":fixture.runtime,"frontend_url":endpoints[2]},
+    });
+    let envelope = json!({
+        "format_version":1, "kind":"restore-reference-independent-b1-plan",
+        "reference_plan":plan, "arm_input":{"sha256":"fixture"},"source_export":{"fixture":true},
+    });
+    let target = json!({
+        "target_side":"candidate", "fresh_target":{}, "maintenance_execution":{}, "product_execution":{},
+        "product_plan":{"scope_id":"fixture","frontend_sha":"c".repeat(40),
+            "api_ready_url":endpoints[0],"worker_ready_url":endpoints[1]},
+    });
+    let config = fixture.snapshot()?.configuration;
+    fs::write(&fixture.reference, document::canonical_bytes(&envelope)?)?;
+    fs::write(&fixture.target, document::canonical_bytes(&target)?)?;
+    let target_request_path = fixture
+        .configuration
+        .parent()
+        .unwrap()
+        .join("target-request.json");
+    crate::recovery::clone::native::json::write_new(
+        &target_request_path,
+        &json!({
+            "config_dir":config.directory,"configuration_sha256":config.sha256,
+        }),
+    )?;
+    let checks = RefCell::new(Vec::new());
+    register(&fixture.backend, &fixture.output, || {
+        use crate::recovery::runtime::dataset_authority::reads;
+        reads::optional(&work)?;
+        reads::optional(&copy)?;
+        let reference = document::read(&fixture.reference, &fixture.backend, "原参考封装")?;
+        let target = document::read(&fixture.target, &fixture.backend, "原目标计划")?;
+        let target_request = TargetRequest {
+            document: document::read(&target_request_path, &fixture.backend, "目标请求夹具")?,
+            selected: Value::Null,
+            execution: fixture.backend.clone(),
+            execution_binding: Value::Null,
+        };
+        Snapshot::from_verified(
+            &fixture.backend,
+            &reference,
+            &target,
+            &plan,
+            &target_request,
+            |url| {
+                checks.borrow_mut().push(url.to_owned());
+                Ok(())
+            },
+        )
+    })?;
+    let saved = document::read(&fixture.output, &fixture.backend, "新登记")?;
+    let reference = document::read(&fixture.reference, &fixture.backend, "原参考封装")?;
+    let target = document::read(&fixture.target, &fixture.backend, "原目标计划")?;
+    assert_eq!(saved.value["reference_plan"], document::binding(&reference));
+    assert_eq!(saved.value["target_plan"], document::binding(&target));
+    assert_eq!(saved.value["format_version"], 2);
+    assert_eq!(saved.value["remote_writes"], 0);
+    let expected: Vec<_> = endpoints.repeat(3).into_iter().map(str::to_owned).collect();
+    assert_eq!(checks.into_inner(), expected);
+    assert!(!work.exists() && !copy.exists() && !fixture.runtime.exists());
+    assert!(!saved.value.to_string().contains("fixture-token"));
+    Ok(())
+}
+
+#[test]
+fn independent_registration_rechecks_reserved_absence_before_creating_sidecar() -> Result<()> {
+    use crate::recovery::runtime::dataset_authority::reads;
+    let fixture = Fixture::new();
+    let reserved = fixture.runtime.with_file_name("prospective-copy");
+    let window = Window::direct()?;
+    reads::optional(&reserved)?;
+    let mut before = fixture.snapshot()?;
+    before.independent_b1 = true;
+    fs::create_dir(&reserved)?;
+    let control = control_root(&fixture.backend)?;
+    let error = Owner::with(&control, "register:fixture", |owner| {
+        register_locked(
+            &fixture.backend,
+            &fixture.output,
+            &before,
+            owner,
+            &window,
+            &|| fixture.snapshot(),
+        )
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("原缺省配置出现"), "{error}");
+    assert!(!fixture.output.exists());
+    assert!(!configuration_registration::sidecar(&fixture.output)?.exists());
+    assert!(reserved.is_dir());
+    Ok(())
 }
 
 #[test]

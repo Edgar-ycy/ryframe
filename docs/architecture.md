@@ -131,7 +131,9 @@ seed 的 source-register 由统一 Rust 阶段控制器直接执行。它实际�
 
 取得该独立目标的 `verify.json` 后，用 `cargo xtask check recovery inputs product --reference-plan <b1-reference-plan.json> --backup-receipt <same-backup.json> --comparison-sources <comparison-sources.json> --arm-input <independent-run/result.json> --fresh-target-verify <b1-observation/verify.json> --side candidate --id <restore-id> --fault-at <utc-time>` 预览产品计划。追加 `--output <new-b1-product-plan.json> --write` 可发布。工具按原配置重新生成并核对参考计划，要求原独立 ARM、正式备份和双版本来源绑定同一共享导出。产品前端提交取自原比较清单的 B1，物理目标和探针取自独立登记。复制目录继续保持未创建。
 
-用 `cargo xtask check recovery plan --plan <b1-reference-plan.json> --backup-receipt <same-backup.json> --comparison-sources <comparison-sources.json> --arm-input <independent-run/result.json> --fresh-target-verify <b1-observation/verify.json> --product-plan <b1-product-plan.json>` 预览完整目标计划。追加 `--output <new-b1-target-plan.json> --write` 可独占发布。用 `cargo xtask check recovery plan --plan <b1-reference-plan.json> --target-plan <b1-target-plan.json>` 回读，工具按原五件输入重新投影并核对完整参考计划封装、同一备份、双版本来源、原 ARM 和 fresh 库存历史。参考工作目录及复制目录须保持未创建。目标计划发布后仍需接通并验证运行登记、正式恢复及业务验收。
+用 `cargo xtask check recovery plan --plan <b1-reference-plan.json> --backup-receipt <same-backup.json> --comparison-sources <comparison-sources.json> --arm-input <independent-run/result.json> --fresh-target-verify <b1-observation/verify.json> --product-plan <b1-product-plan.json>` 预览完整目标计划。追加 `--output <new-b1-target-plan.json> --write` 可独占发布。用 `cargo xtask check recovery plan --plan <b1-reference-plan.json> --target-plan <b1-target-plan.json>` 回读，工具按原五件输入重新投影并核对完整参考计划封装、同一备份、双版本来源、原 ARM 和 fresh 库存历史。参考工作目录及复制目录须保持未创建。
+
+发布目标计划后，用 `cargo xtask check recovery runtime register --plan <b1-reference-plan.json> --target-plan <b1-target-plan.json> --output <new-b1-runtime-registration.json> --write` 登记尚未启动的产品运行环境。工具沿用同一锁内的登记复核和私有配置侧件，绑定两份原计划文件并核对 API、Worker 和前端端口空闲。登记与侧件须位于原证据、运行目录和预留路径之外，参考工作目录及复制目录继续保持未创建。正式恢复及业务验收仍需接线与验证。
 
 ## 非生产重建
 
