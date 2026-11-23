@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use ryframe_adapters::backup::runtime_verifier;
 use ryframe_application::ports::backup::{
     RestoreBusinessProof, RestorePlan, RestoreRecord, RestoreStatus,
@@ -153,7 +152,7 @@ fn read_request_path(stream: &mut TcpStream) -> String {
 }
 
 fn restore_record(api_ready_url: String, worker_ready_url: String) -> RestoreRecord {
-    let timestamp = DateTime::<Utc>::from_timestamp(1_800_000_000, 0).unwrap();
+    let timestamp = "2027-01-15T08:00:00Z".parse().unwrap();
     RestoreRecord {
         plan: RestorePlan {
             id: "runtime-drill".into(),
@@ -178,7 +177,7 @@ fn restore_record(api_ready_url: String, worker_ready_url: String) -> RestoreRec
 }
 
 fn proof() -> RestoreBusinessProof {
-    let timestamp = DateTime::<Utc>::from_timestamp(1_800_000_000, 0).unwrap();
+    let timestamp = "2027-01-15T08:00:00Z".parse().unwrap();
     RestoreBusinessProof {
         restore_id: "runtime-drill".into(),
         plan_hash: "b".repeat(64),

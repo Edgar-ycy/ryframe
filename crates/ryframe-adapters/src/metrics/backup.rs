@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use prometheus::{Gauge, GaugeVec, Opts, Registry, core::Collector};
 use ryframe_application::ports::backup::BackupHealth;
 use std::sync::LazyLock;
@@ -70,16 +69,16 @@ pub(super) fn register(registry: &Registry) {
     }
 }
 
-pub fn set_backup_health(health: &BackupHealth, collected_at: DateTime<Utc>) {
+pub fn set_backup_health(health: &BackupHealth, collected_at_unix_seconds: i64) {
     super::ensure_registered();
     METRICS.collector_up.set(1.0);
     METRICS
         .collector_last_success
-        .set(collected_at.timestamp() as f64);
+        .set(collected_at_unix_seconds as f64);
     METRICS.last_capture.set(
         health
             .oldest_capture
-            .map_or(0.0, |time| time.timestamp() as f64),
+            .map_or(0.0, |time| time.unix_timestamp() as f64),
     );
     for (state, value) in [
         ("required", health.required_resources),
@@ -95,7 +94,7 @@ pub fn set_backup_health(health: &BackupHealth, collected_at: DateTime<Utc>) {
     METRICS.last_restore.set(
         health
             .last_restore_completed
-            .map_or(0.0, |time| time.timestamp() as f64),
+            .map_or(0.0, |time| time.unix_timestamp() as f64),
     );
     METRICS
         .restore_succeeded

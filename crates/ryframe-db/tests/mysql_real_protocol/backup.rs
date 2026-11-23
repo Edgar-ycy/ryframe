@@ -5,6 +5,7 @@ use super::{
 use chrono::{DateTime, Duration, Utc};
 use ryframe_application::ports::backup::*;
 use sea_orm::{IsolationLevel, TransactionTrait};
+use time::OffsetDateTime;
 
 #[path = "backup/restore_safety.rs"]
 mod restore_safety;
@@ -79,12 +80,16 @@ async fn check_health(
         "初始化控制库必须登记控制目标及五个对象桶",
     )?;
     let scope = &record.manifest.scope_id;
+    let captured = record.manifest.captured_at;
+    let expected_capture = OffsetDateTime::from_unix_timestamp(captured.timestamp())
+        .and_then(|time| time.replace_nanosecond(captured.timestamp_subsec_nanos()))
+        .map_err(|error| error.to_string())?;
     let health = repository
         .health(scope, &required, now)
         .await
         .map_err(|error| error.to_string())?;
     check(
-        health.missing_resources == 0 && health.oldest_capture == Some(record.manifest.captured_at),
+        health.missing_resources == 0 && health.oldest_capture == Some(expected_capture),
         "登记时间不能替代实际采集时间",
     )?;
     let unrelated = repository
@@ -116,7 +121,7 @@ async fn check_health(
         .await
         .map_err(|error| error.to_string())?;
     check(
-        health.invalid_resources == 6 && health.oldest_capture == Some(record.manifest.captured_at),
+        health.invalid_resources == 6 && health.oldest_capture == Some(expected_capture),
         "较新的失败备份不能掩盖有效备份年龄",
     )?;
     let expired = repository

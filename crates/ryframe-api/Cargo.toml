@@ -41,6 +41,7 @@ sha2.workspace = true
 hex.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
 chrono = { workspace = true, features = ["serde"] }
+time = { workspace = true }
 uuid = { workspace = true, features = ["v4", "v7"] }
 base64 = { workspace = true }
 rand = { workspace = true }

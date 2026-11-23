@@ -1,4 +1,3 @@
-use chrono::{Duration, Utc};
 use ryframe_adapters::{
     backup::{artifact_verifier, object_verifier},
     storage::{LocalObjectStorage, ObjectStorage, ScopedObjectStorage},
@@ -6,16 +5,18 @@ use ryframe_adapters::{
 use ryframe_application::{ports::backup::*, system::operations::BACKUP_OBJECT_BUCKETS};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
+#[cfg(feature = "monitoring")]
+use time::OffsetDateTime;
 
 fn manifest() -> BackupManifest {
     BackupManifest {
         id: "backup".into(),
         scope_id: "source".into(),
         source_sha: "a".repeat(40),
-        quiesced_at: Utc::now(),
-        captured_at: Utc::now(),
-        completed_at: Utc::now(),
-        retention_until: Utc::now() + Duration::days(7),
+        quiesced_at: "2026-01-01T00:00:00Z".parse().unwrap(),
+        captured_at: "2026-01-01T00:00:01Z".parse().unwrap(),
+        completed_at: "2026-01-01T00:00:02Z".parse().unwrap(),
+        retention_until: "2026-01-08T00:00:00Z".parse().unwrap(),
         control_schema_fingerprint: "a".repeat(16),
         tenant_schema_fingerprint: "b".repeat(64),
         databases: vec![],
@@ -204,32 +205,37 @@ async fn scoped_storage_digest_uses_the_scoped_physical_key() {
 #[cfg(feature = "monitoring")]
 #[test]
 fn backup_metrics_have_capture_time_and_only_fixed_labels() {
-    let captured = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
     ryframe_adapters::metrics::set_backup_health(
         &BackupHealth {
             required_resources: 6,
             missing_resources: 1,
             expired_resources: 2,
             invalid_resources: 3,
-            oldest_capture: Some(captured),
-            last_restore_completed: Some(captured),
+            oldest_capture: Some(
+                OffsetDateTime::from_unix_timestamp_nanos(1_700_000_000_123_456_000).unwrap(),
+            ),
+            last_restore_completed: Some(
+                OffsetDateTime::from_unix_timestamp_nanos(1_700_000_002_123_456_000).unwrap(),
+            ),
             last_restore_succeeded: true,
             restore_duration_seconds: Some(42),
             recovery_point_age_seconds: Some(86_400),
             restore_running: 1,
             restore_overdue: 2,
         },
-        chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap(),
+        1_800_000_000,
     );
     let text = ryframe_adapters::metrics::metrics_text();
-    assert!(text.contains("ryframe_backup_last_success_timestamp_seconds 1700000000"));
-    assert!(text.contains("ryframe_backup_collector_last_success_timestamp_seconds 1800000000"));
-    assert!(text.contains("ryframe_backup_resources{state=\"missing\"} 1"));
-    assert!(text.contains("ryframe_restore_last_succeeded 1"));
-    assert!(text.contains("ryframe_restore_duration_seconds 42"));
-    assert!(text.contains("ryframe_restore_recovery_point_age_seconds 86400"));
-    let series = text
-        .lines()
+    let lines = text.lines().collect::<Vec<_>>();
+    assert!(lines.contains(&"ryframe_backup_last_success_timestamp_seconds 1700000000"));
+    assert!(lines.contains(&"ryframe_backup_collector_last_success_timestamp_seconds 1800000000"));
+    assert!(lines.contains(&"ryframe_restore_last_completed_timestamp_seconds 1700000002"));
+    assert!(lines.contains(&"ryframe_backup_resources{state=\"missing\"} 1"));
+    assert!(lines.contains(&"ryframe_restore_last_succeeded 1"));
+    assert!(lines.contains(&"ryframe_restore_duration_seconds 42"));
+    assert!(lines.contains(&"ryframe_restore_recovery_point_age_seconds 86400"));
+    let series = lines
+        .into_iter()
         .filter(|line| line.starts_with("ryframe_backup_") || line.starts_with("ryframe_restore_"))
         .map(|line| line.split_whitespace().next().unwrap())
         .collect::<std::collections::BTreeSet<_>>();
@@ -265,7 +271,7 @@ fn restore_plan() -> RestorePlan {
         id: "drill".into(),
         backup_id: "backup".into(),
         scope_id: "restored".into(),
-        fault_at: Utc::now(),
+        fault_at: "2026-01-01T00:00:03Z".parse().unwrap(),
         databases: vec![],
         object_endpoint: "local".into(),
         object_prefix: "restored/".into(),

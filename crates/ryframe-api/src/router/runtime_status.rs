@@ -1,5 +1,8 @@
 use super::*;
-use ryframe_application::ports::backup::{BackupCollectionStatus, BackupHealthSnapshot};
+use ryframe_application::ports::backup::{
+    BackupCollectionStatus, BackupHealthSnapshot, optional_utc_timestamp,
+};
+use time::OffsetDateTime;
 
 pub(super) async fn probe_runtime_status(
     State(state): State<AppState>,
@@ -160,8 +163,12 @@ struct RuntimeJobsStatus {
 struct RuntimeBackupStatus {
     collector_status: RuntimeBackupCollectionStatus,
     available: bool,
-    last_attempt_at: Option<chrono::DateTime<chrono::Utc>>,
-    last_success_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(serialize_with = "optional_utc_timestamp::serialize")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    last_attempt_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "optional_utc_timestamp::serialize")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    last_success_at: Option<OffsetDateTime>,
     health: Option<RuntimeBackupHealth>,
 }
 
@@ -180,8 +187,12 @@ struct RuntimeBackupHealth {
     missing_resources: u64,
     expired_resources: u64,
     invalid_resources: u64,
-    oldest_capture: Option<chrono::DateTime<chrono::Utc>>,
-    last_restore_completed: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(serialize_with = "optional_utc_timestamp::serialize")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    oldest_capture: Option<OffsetDateTime>,
+    #[serde(serialize_with = "optional_utc_timestamp::serialize")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    last_restore_completed: Option<OffsetDateTime>,
     last_restore_succeeded: bool,
     restore_duration_seconds: Option<i64>,
     recovery_point_age_seconds: Option<i64>,
@@ -222,7 +233,6 @@ fn runtime_backup_status(snapshot: &BackupHealthSnapshot) -> RuntimeBackupStatus
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{DateTime, Utc};
     use ryframe_application::ports::backup::{BackupHealth, BackupHealthCache};
     use std::{
         sync::{Arc, Mutex},
@@ -243,12 +253,22 @@ mod tests {
         );
         assert!(!unknown.available);
         assert!(unknown.health.is_none());
+        let unknown = serde_json::to_value(unknown).unwrap();
+        assert!(unknown["last_attempt_at"].is_null());
+        assert!(unknown["last_success_at"].is_null());
 
-        let collected = DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap();
+        let collected =
+            OffsetDateTime::from_unix_timestamp_nanos(1_700_000_000_123_456_780).unwrap();
         cache.update_success(
             BackupHealth {
                 required_resources: 6,
                 missing_resources: 1,
+                oldest_capture: Some(
+                    OffsetDateTime::from_unix_timestamp_nanos(1_700_000_000_123_400_000).unwrap(),
+                ),
+                last_restore_completed: Some(
+                    OffsetDateTime::from_unix_timestamp_nanos(1_700_000_000_120_000_000).unwrap(),
+                ),
                 restore_running: 1,
                 ..Default::default()
             },
@@ -261,12 +281,24 @@ mod tests {
         );
         assert!(available.available);
         assert_eq!(available.last_success_at, Some(collected));
+        let wire = serde_json::to_value(&available).unwrap();
+        assert_eq!(wire["last_attempt_at"], "2023-11-14T22:13:20.123456780Z");
+        assert_eq!(wire["last_success_at"], wire["last_attempt_at"]);
+        assert_eq!(
+            wire["health"]["oldest_capture"],
+            "2023-11-14T22:13:20.123400Z"
+        );
+        assert_eq!(
+            wire["health"]["last_restore_completed"],
+            "2023-11-14T22:13:20.120Z"
+        );
         let health = available.health.unwrap();
         assert_eq!(health.required_resources, 6);
         assert_eq!(health.missing_resources, 1);
         assert_eq!(health.restore_running, 1);
 
-        cache.update_failure(collected + chrono::Duration::seconds(60));
+        let attempted = OffsetDateTime::from_unix_timestamp(1_700_000_060).unwrap();
+        cache.update_failure(attempted);
         let unavailable = runtime_backup_status(&cache.snapshot());
         assert_eq!(
             unavailable.collector_status,
@@ -274,6 +306,10 @@ mod tests {
         );
         assert!(!unavailable.available);
         assert_eq!(unavailable.last_success_at, Some(collected));
+        assert_eq!(
+            serde_json::to_value(&unavailable).unwrap()["last_attempt_at"],
+            "2023-11-14T22:14:20Z"
+        );
         assert_eq!(unavailable.health.unwrap().required_resources, 6);
 
         *now.lock().unwrap() = started_at + Duration::from_secs(151);
@@ -282,5 +318,37 @@ mod tests {
         assert!(!stale.available);
         assert_eq!(stale.last_success_at, Some(collected));
         assert_eq!(stale.health.unwrap().required_resources, 6);
+    }
+
+    #[test]
+    fn backup_runtime_timestamps_keep_the_registered_openapi_schema() {
+        use utoipa::PartialSchema;
+
+        for (schema, fields) in [
+            (
+                RuntimeBackupStatus::schema(),
+                ["last_attempt_at", "last_success_at"],
+            ),
+            (
+                RuntimeBackupHealth::schema(),
+                ["oldest_capture", "last_restore_completed"],
+            ),
+        ] {
+            let schema = serde_json::to_value(schema).unwrap();
+            for field in fields {
+                assert_eq!(
+                    schema["properties"][field],
+                    serde_json::json!({"format":"date-time","type":["string","null"]}),
+                    "{field}"
+                );
+                assert!(
+                    schema["required"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .all(|name| name != field)
+                );
+            }
+        }
     }
 }

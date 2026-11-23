@@ -1,8 +1,8 @@
-use chrono::Utc;
 use ryframe_application::ports::backup::{BackupHealth, BackupHealthCache, BackupRepository};
 use ryframe_db::ControlDatabaseCluster;
 use ryframe_kernel::AppResult;
 use std::{sync::Arc, time::Duration};
+use time::OffsetDateTime;
 use tokio::sync::watch;
 
 pub const COLLECTION_INTERVAL: Duration = Duration::from_secs(60);
@@ -59,11 +59,11 @@ async fn refresh(
     cache: &BackupHealthCache,
     timeout: Duration,
 ) {
-    let attempted_at = Utc::now();
+    let attempted_at = OffsetDateTime::now_utc();
     match tokio::time::timeout(timeout, collect(repository, scope_id)).await {
         Ok(Ok(health)) => {
-            let collected_at = Utc::now();
-            ryframe_adapters::metrics::set_backup_health(&health, collected_at);
+            let collected_at = OffsetDateTime::now_utc();
+            ryframe_adapters::metrics::set_backup_health(&health, collected_at.unix_timestamp());
             cache.update_success(health, collected_at);
         }
         Ok(Err(error)) => {
@@ -85,7 +85,7 @@ async fn refresh(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::DateTime;
+    use chrono::{DateTime, Utc};
     use ryframe_application::ports::backup::{BackupRecord, BackupTransaction, RestoreRecord};
     use tokio::sync::Notify;
 

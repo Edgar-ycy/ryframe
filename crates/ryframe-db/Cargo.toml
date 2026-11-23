@@ -31,6 +31,7 @@ repositories = [
     "dep:tracing-subscriber",
     "dep:serde_json",
     "dep:chrono",
+    "dep:time",
     "dep:tokio",
 ]
 telemetry = [
@@ -58,6 +59,7 @@ serde = { workspace = true, optional = true, features = ["derive"] }
 serde_json = { workspace = true, optional = true }
 toml = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true, features = ["serde"] }
+time = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true, features = ["time"] }
 
 [dev-dependencies]

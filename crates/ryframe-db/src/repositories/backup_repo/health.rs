@@ -4,6 +4,7 @@ use ryframe_application::ports::backup::{BackupHealth, RestoreStatus};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
 use std::collections::BTreeMap;
+use time::OffsetDateTime;
 
 const CANDIDATE_BATCH_SIZE: usize = 64;
 
@@ -54,13 +55,16 @@ pub async fn backup_health<C: ConnectionTrait>(
         .filter(|row| required.contains(&row.resource_key))
         .filter_map(|row| row.valid_id.clone())
         .collect::<std::collections::BTreeSet<_>>();
-    let mut health = aggregate_resources(required, rows);
+    let (mut health, oldest_capture) = aggregate_resources(required, rows);
     if health.missing_resources == 0
         && health.invalid_resources == 0
         && health.expired_resources == 0
     {
-        validate_healthy_candidates(db, scope_id, now, &health, &valid_ids).await?;
+        let oldest = oldest_capture
+            .ok_or_else(|| AppError::Validation("健康备份缺少实际采集时间".into()))?;
+        validate_healthy_candidates(db, scope_id, now, oldest, &valid_ids).await?;
     }
+    health.oldest_capture = oldest_capture.map(health_timestamp).transpose()?;
     let last = RestoreId::find_by_statement(Statement::from_sql_and_values(DbBackend::MySql,
         "SELECT r.id FROM sys_restore_run r JOIN sys_backup_set b ON b.id = r.backup_id \
          WHERE b.scope_id = ? AND r.completed_at IS NOT NULL ORDER BY r.completed_at DESC, r.id DESC LIMIT 1",
@@ -72,7 +76,7 @@ pub async fn backup_health<C: ConnectionTrait>(
             .ok_or_else(|| {
                 ryframe_kernel::AppError::Database("恢复健康记录在读取期间消失".into())
             })?;
-        health.last_restore_completed = record.completed_at;
+        health.last_restore_completed = record.completed_at.map(health_timestamp).transpose()?;
         health.last_restore_succeeded = record.status == RestoreStatus::Succeeded;
         health.restore_duration_seconds = record
             .completed_at
@@ -97,12 +101,9 @@ async fn validate_healthy_candidates<C: ConnectionTrait>(
     db: &C,
     scope_id: &str,
     now: DateTime<Utc>,
-    health: &BackupHealth,
+    oldest: DateTime<Utc>,
     valid_ids: &std::collections::BTreeSet<String>,
 ) -> AppResult<()> {
-    let oldest = health
-        .oldest_capture
-        .ok_or_else(|| AppError::Validation("健康备份缺少实际采集时间".into()))?;
     let recent = BackupId::find_by_statement(Statement::from_sql_and_values(
         DbBackend::MySql,
         "SELECT id FROM sys_backup_set \
@@ -135,7 +136,10 @@ async fn validate_healthy_candidates<C: ConnectionTrait>(
     Ok(())
 }
 
-fn aggregate_resources(required: &[String], rows: Vec<ResourceHealth>) -> BackupHealth {
+fn aggregate_resources(
+    required: &[String],
+    rows: Vec<ResourceHealth>,
+) -> (BackupHealth, Option<DateTime<Utc>>) {
     let rows = rows
         .into_iter()
         .map(|row| (row.resource_key.clone(), row))
@@ -144,17 +148,14 @@ fn aggregate_resources(required: &[String], rows: Vec<ResourceHealth>) -> Backup
         required_resources: required.len() as u64,
         ..Default::default()
     };
+    let mut oldest_capture: Option<DateTime<Utc>> = None;
     for resource in required {
         let Some(row) = rows.get(resource) else {
             health.missing_resources += 1;
             continue;
         };
         if let Some(captured) = row.valid_capture {
-            health.oldest_capture = Some(
-                health
-                    .oldest_capture
-                    .map_or(captured, |old| old.min(captured)),
-            );
+            oldest_capture = Some(oldest_capture.map_or(captured, |old| old.min(captured)));
         } else if row.expired_capture.is_some() {
             health.expired_resources += 1;
         } else if row.invalid_capture.is_none() {
@@ -167,7 +168,19 @@ fn aggregate_resources(required: &[String], rows: Vec<ResourceHealth>) -> Backup
             health.invalid_resources += 1;
         }
     }
-    health
+    (health, oldest_capture)
+}
+
+fn health_timestamp(value: DateTime<Utc>) -> AppResult<OffsetDateTime> {
+    let nanos = value.timestamp_subsec_nanos();
+    if nanos >= 1_000_000_000 {
+        return Err(AppError::Database(
+            "备份健康时间包含 MySQL 不支持的闰秒".into(),
+        ));
+    }
+    let epoch_nanos = i128::from(value.timestamp()) * 1_000_000_000 + i128::from(nanos);
+    OffsetDateTime::from_unix_timestamp_nanos(epoch_nanos)
+        .map_err(|_| AppError::Database("备份健康时间超出 UTC 表示范围".into()))
 }
 
 #[cfg(test)]
@@ -185,7 +198,7 @@ mod tests {
             invalid_capture: invalid,
             expired_capture: expired,
         };
-        let health = aggregate_resources(
+        let (health, oldest_capture) = aggregate_resources(
             &required,
             vec![
                 row("a", Some(time), None, None),
@@ -200,10 +213,7 @@ mod tests {
                 ),
             ],
         );
-        assert_eq!(
-            health.oldest_capture,
-            Some(time - chrono::Duration::hours(23))
-        );
+        assert_eq!(oldest_capture, Some(time - chrono::Duration::hours(23)));
         assert_eq!(
             (
                 health.required_resources,
@@ -213,5 +223,20 @@ mod tests {
             ),
             (5, 1, 1, 1)
         );
+    }
+
+    #[test]
+    fn health_projection_preserves_fraction_and_rejects_unrepresentable_times() {
+        let before_epoch = DateTime::from_timestamp(-1, 123_456_000).unwrap();
+        assert_eq!(
+            health_timestamp(before_epoch)
+                .unwrap()
+                .unix_timestamp_nanos(),
+            -876_544_000
+        );
+        let leap = DateTime::from_timestamp(59, 1_000_000_000).unwrap();
+        assert!(health_timestamp(leap).is_err());
+        let outside_range = DateTime::from_timestamp(253_402_300_800, 0).unwrap();
+        assert!(health_timestamp(outside_range).is_err());
     }
 }

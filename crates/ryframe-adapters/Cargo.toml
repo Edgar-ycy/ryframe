@@ -38,7 +38,6 @@ image = { workspace = true, optional = true, features = ["bmp", "gif", "jpeg", "
 percent-encoding = { workspace = true }
 quick-xml = { workspace = true }
 reqwest = { workspace = true, features = ["stream"] }
-chrono = { workspace = true, features = ["serde"] }
 time = { workspace = true }
 calamine = { workspace = true, optional = true }
 redis = { workspace = true, optional = true }
