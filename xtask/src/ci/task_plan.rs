@@ -10,7 +10,7 @@ use crate::{
         ci_test_jobs_from, execute_registered_task, minimal_workspace_check_args,
         verify_job_budget_from, worker_lib_test_args, workspace_clippy_args, workspace_test_args,
     },
-    cli::{CiCommand, SecurityCommand},
+    cli::{CiCommand, PreflightPart, SecurityCommand},
 };
 
 use super::{FULL_CI_EVENTS, INTEGRATION_PACKAGES, WINDOWS_RUST_GATE_PROFILE};
@@ -69,7 +69,7 @@ const CI_JOBS: &[CiJobDefinition] = &[
         job: CiJob::Preflight,
         output_name: "preflight",
         command_name: "preflight",
-        workflow_job_name: None,
+        workflow_job_name: Some("preflight-python"),
         tasks: PREFLIGHT_TASKS,
     },
     CiJobDefinition {
@@ -195,6 +195,21 @@ pub(crate) fn ci_execution_plan_for_profile(
     if let CiCommand::Security(command) = command {
         return super::security::plan(command);
     }
+    if let CiCommand::Preflight(options) = command
+        && let Some(part) = options.part
+    {
+        let tasks = PREFLIGHT_TASKS
+            .iter()
+            .copied()
+            .filter(|task| {
+                matches!(
+                    task,
+                    TaskExecutor::PythonEnvironment | TaskExecutor::PythonTests
+                ) == (part == PreflightPart::Python)
+            })
+            .collect::<Vec<_>>();
+        return TaskPlan::sequence(&tasks);
+    }
     let job = job_for_command(command)?;
     let tasks = if job == CiJob::RustGate {
         match rust_gate_profile {
@@ -269,7 +284,7 @@ fn execution_context(
 ) -> Result<VerifyExecutionContext> {
     let mut context = VerifyExecutionContext::new_ci(frontend_dir)?;
     match command {
-        CiCommand::Preflight(base) => context.base_sha = base.clone(),
+        CiCommand::Preflight(options) => context.base_sha = options.base_sha.clone(),
         CiCommand::ResourceGate(options) => context.base_sha = options.base_sha.clone(),
         CiCommand::RustGate(options) => {
             context.test_jobs = options.test_jobs;

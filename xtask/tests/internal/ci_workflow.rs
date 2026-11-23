@@ -124,6 +124,70 @@ fn frontend_gates_bind_the_checked_out_commit() {
 }
 
 #[test]
+fn ci_preflight_python_uses_the_plan_checkout_and_runs_only_the_python_part() {
+    let ci = workflow("ci.yml");
+    let plan = job(&ci, "plan");
+    let python = job(&ci, "preflight-python");
+    assert_eq!(text(python, "needs"), "plan");
+    assert_eq!(
+        text(python, "if").split_whitespace().collect::<String>(),
+        concat!(
+            "${{needs.plan.result=='success'&&needs.plan.outputs.preflight=='true'",
+            "&&needs.plan.outputs.preflight_frontend_repository!=''",
+            "&&needs.plan.outputs.preflight_frontend_commit!=''}}"
+        )
+    );
+    assert_eq!(text(python, "runs-on"), text(plan, "runs-on"));
+    assert!(
+        steps(plan)
+            .iter()
+            .all(|step| !uses(step, "actions/setup-python@"))
+    );
+    let outputs = plan.get("outputs").unwrap();
+    assert_eq!(
+        text(outputs, "preflight_frontend_repository"),
+        "${{ steps.preflight-frontend-ref.outputs.repository }}"
+    );
+    assert_eq!(
+        text(outputs, "preflight_frontend_commit"),
+        "${{ steps.preflight-frontend-checkout.outputs.commit }}"
+    );
+    let plan_checkout = steps(plan)
+        .iter()
+        .find(|step| uses(step, "actions/checkout@"))
+        .unwrap();
+    assert!(plan_checkout.get("with").unwrap().get("ref").is_none());
+    let (python_index, execution) = command(python, "cargo xtask check ci preflight");
+    let [backend, frontend]: [&YamlValue; 2] = steps(python)[..python_index]
+        .iter()
+        .filter(|step| uses(step, "actions/checkout@"))
+        .map(|step| step.get("with").unwrap())
+        .collect::<Vec<_>>()
+        .try_into()
+        .unwrap();
+    assert_eq!(text(backend, "path"), "backend");
+    assert_eq!(text(backend, "ref"), "${{ github.sha }}");
+    assert_eq!(text(frontend, "path"), "frontend");
+    assert_eq!(
+        text(frontend, "repository"),
+        "${{ needs.plan.outputs.preflight_frontend_repository }}"
+    );
+    assert_eq!(
+        text(frontend, "ref"),
+        "${{ needs.plan.outputs.preflight_frontend_commit }}"
+    );
+    let setup = steps(python)[..python_index]
+        .iter()
+        .find(|step| uses(step, "actions/setup-python@"))
+        .unwrap();
+    assert_eq!(text(setup.get("with").unwrap(), "python-version"), "3.12");
+    assert_eq!(argument(execution, "--frontend-dir"), "../frontend");
+    assert_eq!(argument(execution, "--part"), "python");
+    let (_, checks) = command(plan, "cargo xtask check ci preflight");
+    assert_eq!(argument(checks, "--part"), "checks");
+}
+
+#[test]
 fn commit_range_expressions_do_not_use_tag_before_as_a_commit_baseline() {
     let ci = workflow("ci.yml");
     let expected = "${{github.event.pull_request.base.sha||(github.ref_type=='branch'&&github.event.before)||''}}";
@@ -131,6 +195,11 @@ fn commit_range_expressions_do_not_use_tag_before_as_a_commit_baseline() {
         let (_, step) = command(job(&ci, "plan"), &format!("cargo xtask check ci {action}"));
         assert_eq!(github_value(step, r"--base-sha(?:\s+|=)"), expected);
     }
+    let (_, python) = command(
+        job(&ci, "preflight-python"),
+        "cargo xtask check ci preflight",
+    );
+    assert_eq!(github_value(python, r"--base-sha(?:\s+|=)"), expected);
     let (_, resource) = command(
         job(&ci, "resource-gate"),
         "cargo xtask check ci resource-gate",

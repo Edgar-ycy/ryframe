@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use super::cli::PreflightOptions;
 use super::cli::{
     ApiGenerateCommand, BackupCommand, BuildOptions, BuildProfile, CheckCommand, CheckOptions,
     CheckScope, CiCommand, CliError, CloneCommand, Command, DataCommand, DeploymentOptions,
@@ -129,7 +130,13 @@ fn ci_baseline_is_explicit_and_validated_for_each_consumer() {
     let sha = "1111111111111111111111111111111111111111";
     for (name, expected) in [
         ("plan", CiCommand::Plan(Some(sha.to_owned()))),
-        ("preflight", CiCommand::Preflight(Some(sha.to_owned()))),
+        (
+            "preflight",
+            CiCommand::Preflight(PreflightOptions {
+                base_sha: Some(sha.to_owned()),
+                part: None,
+            }),
+        ),
         (
             "resource-gate",
             CiCommand::ResourceGate(crate::cli::ResourceGateOptions {
@@ -172,7 +179,7 @@ fn parses_check_task_graph_and_internal_groups() {
     );
     for (name, operation) in [
         ("plan", CiCommand::Plan(None)),
-        ("preflight", CiCommand::Preflight(None)),
+        ("preflight", CiCommand::Preflight(Default::default())),
         ("rust-gate", CiCommand::RustGate(Default::default())),
         ("resource-gate", CiCommand::ResourceGate(Default::default())),
         ("integration", CiCommand::Integration),

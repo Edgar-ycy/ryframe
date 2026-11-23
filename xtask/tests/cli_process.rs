@@ -578,7 +578,7 @@ fn invalid_security_report_arguments_exit_two_before_running_tasks() {
 
 #[test]
 fn required_ci_command_preserves_usage_and_task_failure_exit_codes() {
-    let valid = r#"{"plan":{"result":"success","outputs":{"preflight":"true","rust_gate":"true","resource_gate":"true","integration":"true","consumer_contract":"false"}},"rust-gate":{"result":"success"},"resource-gate":{"result":"success"},"integration":{"result":"success"},"windows-smoke":{"result":"success"},"security-audit":{"result":"success"}}"#;
+    let valid = r#"{"plan":{"result":"success","outputs":{"preflight":"true","rust_gate":"true","resource_gate":"true","integration":"true","consumer_contract":"false","preflight_frontend_repository":"owner/frontend","preflight_frontend_commit":"1111111111111111111111111111111111111111"}},"preflight-python":{"result":"success"},"rust-gate":{"result":"success"},"resource-gate":{"result":"success"},"integration":{"result":"success"},"windows-smoke":{"result":"success"},"security-audit":{"result":"success"}}"#;
     let success = invoke(&[
         "check",
         "ci",

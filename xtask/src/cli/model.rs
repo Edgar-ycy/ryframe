@@ -250,7 +250,7 @@ pub(crate) enum DataCommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CiCommand {
     Plan(Option<String>),
-    Preflight(Option<String>),
+    Preflight(PreflightOptions),
     RustGate(RustGateOptions),
     ResourceGate(ResourceGateOptions),
     ResourceGateReplay(ResourceGateReplayOptions),
@@ -260,6 +260,18 @@ pub(crate) enum CiCommand {
     FullStackConfig(FullStackConfigOptions),
     Required(RequiredOptions),
     Security(SecurityCommand),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct PreflightOptions {
+    pub(crate) base_sha: Option<String>,
+    pub(crate) part: Option<PreflightPart>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PreflightPart {
+    Checks,
+    Python,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

@@ -26,13 +26,12 @@ env:
 
 jobs:
   # ============================================================
-  # 变更计划与快速预检：复用同一 checkout、Rust 工具链和 xtask 编译结果
+  # 变更计划与快速预检：Python 检查在后续独立作业执行
   # ============================================================
   plan:
     name: Plan & Preflight
     runs-on: ubuntu-24.04
     env:
-      # Python 检查按完整字节核验协调工具，此作业省去行级调试信息。
       CARGO_PROFILE_DEV_DEBUG: "0"
     defaults:
       run:
@@ -43,6 +42,8 @@ jobs:
       resource_gate: ${{ steps.plan.outputs.resource_gate }}
       integration: ${{ steps.plan.outputs.integration }}
       consumer_contract: ${{ steps.plan.outputs.consumer_contract }}
+      preflight_frontend_repository: ${{ steps.preflight-frontend-ref.outputs.repository }}
+      preflight_frontend_commit: ${{ steps.preflight-frontend-checkout.outputs.commit }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -65,12 +66,6 @@ jobs:
       - name: 检查后端 Rust 字节比例下限
         run: cargo xtask check language --min-rust-percent 80
 
-      - name: 固定 CI Python 3.12
-        if: ${{ steps.plan.outputs.preflight == 'true' }}
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
-        with:
-          python-version: "3.12"
-
       - name: 选择快速预检匹配的前端提交
         if: ${{ steps.plan.outputs.preflight == 'true' }}
         id: preflight-frontend-ref
@@ -88,6 +83,7 @@ jobs:
 
       - name: 检出快速预检使用的前端源码
         if: ${{ steps.plan.outputs.preflight == 'true' }}
+        id: preflight-frontend-checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           repository: ${{ steps.preflight-frontend-ref.outputs.repository }}
@@ -109,7 +105,51 @@ jobs:
       - name: 执行仓库快速预检
         if: ${{ steps.plan.outputs.preflight == 'true' }}
         run: >-
-          cargo xtask check ci preflight --frontend-dir ../frontend
+          cargo xtask check ci preflight --part checks --frontend-dir ../frontend
+          --base-sha "${{ github.event.pull_request.base.sha || (github.ref_type == 'branch' && github.event.before) || '' }}"
+
+  preflight-python:
+    name: Preflight Python
+    needs: plan
+    if: >-
+      ${{ needs.plan.result == 'success' && needs.plan.outputs.preflight == 'true' &&
+          needs.plan.outputs.preflight_frontend_repository != '' &&
+          needs.plan.outputs.preflight_frontend_commit != '' }}
+    runs-on: ubuntu-24.04
+    env:
+      # Python 检查按完整字节核验协调工具，此作业省去行级调试信息。
+      CARGO_PROFILE_DEV_DEBUG: "0"
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: 检出与 Plan 一致的后端源码
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          path: backend
+          ref: ${{ github.sha }}
+
+      - name: 检出 Plan 实际使用的前端提交
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ needs.plan.outputs.preflight_frontend_repository }}
+          ref: ${{ needs.plan.outputs.preflight_frontend_commit }}
+          path: frontend
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with:
+          toolchain: "1.100.0"
+
+      - name: 固定 CI Python 3.12
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: 执行完整 Python 预检
+        run: >-
+          cargo xtask check ci preflight --part python --frontend-dir ../frontend
           --base-sha "${{ github.event.pull_request.base.sha || (github.ref_type == 'branch' && github.event.before) || '' }}"
 
   # ============================================================
@@ -678,6 +718,7 @@ jobs:
     runs-on: ubuntu-24.04
     needs:
       - plan
+      - preflight-python
       - rust-gate
       - resource-gate
       - integration

@@ -11,13 +11,23 @@ fn options_for(
     action: Option<RequiredAction>,
     plan: &[CiJob],
 ) -> RequiredOptions {
-    let outputs = plan_outputs(plan)
+    let mut outputs = plan_outputs(plan)
         .into_iter()
         .map(|(name, enabled)| (name.to_owned(), enabled.to_string()))
         .collect::<BTreeMap<_, _>>();
     let enabled = |job| plan.contains(&job);
+    if enabled(CiJob::Preflight) {
+        outputs.extend([
+            (
+                "preflight_frontend_repository".into(),
+                "owner/frontend".into(),
+            ),
+            ("preflight_frontend_commit".into(), "1".repeat(40)),
+        ]);
+    }
     let mut needs = [
         ("plan", RequiredJobResult::Success),
+        ("preflight-python", result_for(enabled(CiJob::Preflight))),
         ("rust-gate", result_for(enabled(CiJob::RustGate))),
         (
             "resource-gate",
@@ -144,6 +154,44 @@ fn required_rejects_mismatched_jobs_outputs_and_results() {
         &failed_job,
         "rust-gate 期望 success，实际 failure"
     ));
+}
+
+#[test]
+fn required_rejects_failed_or_skipped_python_and_invalid_preflight_source() {
+    let jobs = ci_plan_for("push", "", &Default::default(), false).unwrap();
+    let original = options_for(RequiredEvent::Push, None, &jobs);
+    assert!(validate_required_jobs(&original).unwrap().is_empty());
+
+    for result in [
+        RequiredJobResult::Failure,
+        RequiredJobResult::Cancelled,
+        RequiredJobResult::Skipped,
+    ] {
+        let mut failed = original.clone();
+        failed.needs.get_mut("preflight-python").unwrap().result = result;
+        assert!(contains_error(&failed, "preflight-python 期望 success"));
+    }
+    let mut missing = original.clone();
+    missing.needs.remove("preflight-python");
+    assert!(contains_error(
+        &missing,
+        "缺少required job：preflight-python"
+    ));
+
+    for (key, wrong) in [
+        ("preflight_frontend_repository", Some("unknown")),
+        ("preflight_frontend_commit", Some("main")),
+        ("preflight_frontend_commit", None),
+    ] {
+        let mut invalid = original.clone();
+        let outputs = &mut invalid.needs.get_mut("plan").unwrap().outputs;
+        if let Some(value) = wrong {
+            outputs.insert(key.into(), value.into());
+        } else {
+            outputs.remove(key);
+        }
+        assert!(contains_error(&invalid, "预检前端仓库与精确检出 SHA"));
+    }
 }
 
 #[test]

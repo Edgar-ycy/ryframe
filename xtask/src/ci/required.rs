@@ -2,12 +2,17 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     Result,
-    cli::{RequiredAction, RequiredEvent, RequiredJobResult, RequiredOptions},
+    cli::{
+        RepositorySlug, RequiredAction, RequiredEvent, RequiredJobResult, RequiredOptions,
+        valid_frontend_source_sha,
+    },
 };
 
 use super::task_plan::{CiJob, ci_plan_for, plan_outputs, required_ci_jobs};
 
 const FIXED_REQUIRED_JOBS: &[&str] = &["plan", "windows-smoke", "security-audit"];
+const PREFLIGHT_SOURCE_OUTPUTS: [&str; 2] =
+    ["preflight_frontend_repository", "preflight_frontend_commit"];
 
 pub(super) fn run(options: &RequiredOptions) -> Result<()> {
     let errors = validate_required_jobs(options)?;
@@ -40,12 +45,17 @@ pub(crate) fn validate_required_jobs(options: &RequiredOptions) -> Result<Vec<St
     validate_names(
         "CI plan 输出",
         plan_output_names(),
-        plan.outputs.keys().map(String::as_str).collect(),
+        plan.outputs
+            .keys()
+            .map(String::as_str)
+            .filter(|name| !PREFLIGHT_SOURCE_OUTPUTS.contains(name))
+            .collect(),
         &mut errors,
     );
     let invalid = plan
         .outputs
         .iter()
+        .filter(|(name, _)| !PREFLIGHT_SOURCE_OUTPUTS.contains(&name.as_str()))
         .filter_map(|(name, value)| (!matches!(value.as_str(), "true" | "false")).then_some(name))
         .cloned()
         .collect::<Vec<_>>();
@@ -59,6 +69,7 @@ pub(crate) fn validate_required_jobs(options: &RequiredOptions) -> Result<Vec<St
         return Ok(errors);
     }
     validate_plan_contract(options, &plan.outputs, &mut errors)?;
+    validate_preflight_source(&plan.outputs, &mut errors);
     validate_results(options, &plan.outputs, &mut errors);
     Ok(errors)
 }
@@ -92,6 +103,23 @@ fn plan_output_names() -> BTreeSet<&'static str> {
         .into_iter()
         .map(|(name, _)| name)
         .collect()
+}
+
+fn validate_preflight_source(outputs: &BTreeMap<String, String>, errors: &mut Vec<String>) {
+    let [repository, commit] = PREFLIGHT_SOURCE_OUTPUTS.map(|name| outputs.get(name));
+    let enabled = output_enabled(outputs, CiJob::Preflight);
+    let valid = match (enabled, repository, commit) {
+        (true, Some(repository), Some(commit)) => {
+            RepositorySlug::parse(repository, "preflight_frontend_repository").is_ok()
+                && valid_frontend_source_sha(commit)
+        }
+        (false, None, None) => true,
+        (false, Some(repository), Some(commit)) => repository.is_empty() && commit.is_empty(),
+        _ => false,
+    };
+    if !valid {
+        errors.push("CI plan 的预检前端仓库与精确检出 SHA 必须完整并与 preflight 状态一致".into());
+    }
 }
 
 fn validate_plan_contract(

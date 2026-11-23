@@ -4,9 +4,9 @@ use serde::Deserialize;
 
 use super::super::model::{
     CiCommand, CliError, ConsumerContractOptions, DeploymentOptions, DeploymentPhase,
-    RequiredAction, RequiredEvent, RequiredJobResult, RequiredNeed, RequiredOptions,
-    ResourceGateReplayOptions, RustGateOptions, SecurityCommand, SecurityReportKind,
-    SecurityReportOptions,
+    PreflightOptions, PreflightPart, RequiredAction, RequiredEvent, RequiredJobResult,
+    RequiredNeed, RequiredOptions, ResourceGateReplayOptions, RustGateOptions, SecurityCommand,
+    SecurityReportKind, SecurityReportOptions,
 };
 
 #[path = "ci/frontend_source.rs"]
@@ -26,7 +26,7 @@ pub(super) fn parse_ci(args: &[String]) -> Result<CiCommand, CliError> {
         }
         [command, rest @ ..] if command == "plan" => parse_base_sha(rest).map(CiCommand::Plan),
         [command, rest @ ..] if command == "preflight" => {
-            parse_base_sha(rest).map(CiCommand::Preflight)
+            parse_preflight(rest).map(CiCommand::Preflight)
         }
         [command, rest @ ..] if command == "rust-gate" => {
             parse_rust_gate(rest).map(CiCommand::RustGate)
@@ -206,6 +206,34 @@ fn parse_consumer_contract(args: &[String]) -> Result<ConsumerContractOptions, C
         return Err(CliError::new(
             "正式消费契约来源校验必须同时提供 --backend-head、--backend-repository 和 --candidate-openapi",
         ));
+    }
+    Ok(options)
+}
+
+fn parse_preflight(args: &[String]) -> Result<PreflightOptions, CliError> {
+    let mut options = PreflightOptions::default();
+    let mut seen_base = false;
+    for pair in args.chunks(2) {
+        let [flag, value] = pair else {
+            return Err(CliError::new("preflight 参数缺少值"));
+        };
+        match flag.as_str() {
+            "--base-sha" if !seen_base => {
+                seen_base = true;
+                options.base_sha = parse_base_sha(pair)?;
+            }
+            "--part" if options.part.is_none() => {
+                options.part = Some(match value.as_str() {
+                    "checks" => PreflightPart::Checks,
+                    "python" => PreflightPart::Python,
+                    _ => return Err(CliError::new("preflight --part 只接受 checks 或 python")),
+                });
+            }
+            "--base-sha" | "--part" => {
+                return Err(CliError::new("preflight --base-sha 和 --part 均不得重复"));
+            }
+            _ => return Err(CliError::new("preflight 只接受 --base-sha 和 --part")),
+        }
     }
     Ok(options)
 }

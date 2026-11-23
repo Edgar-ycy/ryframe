@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use super::cli::CiCommand;
+use super::cli::{CheckCommand, CiCommand, Command, PreflightOptions, PreflightPart, parse};
 use super::{
     check::{
         BackendSnapshotProfile, CheckPlanMode, TaskExecutor, VerifySelection, WorkspaceGraph,
@@ -197,7 +197,7 @@ fn ci_plan_and_each_independent_job_share_the_same_task_specs() {
     );
     for (command, expected) in [
         (
-            CiCommand::Preflight(None),
+            CiCommand::Preflight(Default::default()),
             &[
                 TaskExecutor::CargoFormat,
                 TaskExecutor::PythonEnvironment,
@@ -244,6 +244,98 @@ fn ci_plan_and_each_independent_job_share_the_same_task_specs() {
             expected
         );
     }
+}
+
+#[test]
+fn ci_preflight_accepts_one_optional_part_and_preserves_base_sha() {
+    let parse_command = |args: &[&str]| {
+        parse(args.iter().map(|arg| (*arg).to_owned()).collect()).map(|cli| cli.command)
+    };
+    let base = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+    for (part, selected) in [
+        ("checks", PreflightPart::Checks),
+        ("python", PreflightPart::Python),
+    ] {
+        for flags in [
+            ["--part", part, "--base-sha", base],
+            ["--base-sha", base, "--part", part],
+        ] {
+            let mut args = vec!["check", "ci", "preflight"];
+            args.extend(flags);
+            assert_eq!(
+                parse_command(&args).unwrap(),
+                Command::Check(CheckCommand::Ci(CiCommand::Preflight(PreflightOptions {
+                    base_sha: Some(base.to_ascii_lowercase()),
+                    part: Some(selected)
+                })))
+            );
+        }
+    }
+    assert!(
+        parse_command(&[
+            "check",
+            "ci",
+            "preflight",
+            "--base-sha",
+            "",
+            "--part",
+            "python"
+        ])
+        .is_ok()
+    );
+    for invalid in [
+        &["--part"][..],
+        &["--part", ""],
+        &["--part", "all"],
+        &["--part", "checks", "--part", "python"],
+        &["--part", "checks", "--part", "checks"],
+        &["--base-sha", "", "--base-sha", base, "--part", "python"],
+    ] {
+        let mut args = vec!["check", "ci", "preflight"];
+        args.extend_from_slice(invalid);
+        assert!(parse_command(&args).is_err(), "{args:?}");
+    }
+    assert!(parse_command(&["check", "ci", "plan", "--part", "checks"]).is_err());
+}
+
+#[test]
+fn ci_preflight_parts_partition_the_original_job_and_keep_order() {
+    let plan = |part| {
+        ci_execution_plan_for(&CiCommand::Preflight(PreflightOptions {
+            part,
+            ..Default::default()
+        }))
+        .unwrap()
+    };
+    let full = plan(None);
+    let checks = plan(Some(PreflightPart::Checks));
+    let python = plan(Some(PreflightPart::Python));
+    let ids = |plan: &crate::check::TaskPlan| {
+        plan.tasks
+            .iter()
+            .map(|task| (task.id, task.executor))
+            .collect::<Vec<_>>()
+    };
+    let full_ids = ids(&full);
+    let python_ids = [
+        ("python.environment", TaskExecutor::PythonEnvironment),
+        ("python.tests", TaskExecutor::PythonTests),
+    ];
+    assert_eq!(ids(&python), python_ids);
+    assert_eq!(python.tasks[1].dependencies, ["python.environment"]);
+    assert_eq!(checks.tasks.len(), 5);
+    assert!(
+        ids(&checks).into_iter().eq(full_ids
+            .iter()
+            .copied()
+            .filter(|task| !python_ids.contains(task)))
+    );
+    assert!(
+        ids(&python).into_iter().eq(full_ids
+            .iter()
+            .copied()
+            .filter(|task| python_ids.contains(task)))
+    );
 }
 
 #[test]
@@ -308,7 +400,8 @@ fn rust_gate_profile_only_changes_the_selected_primitive_nodes() {
             .contains("只允许 standard 或 windows-smoke")
     );
     assert!(
-        ci_execution_plan_for_profile(&CiCommand::Preflight(None), Some("unknown")).is_ok(),
+        ci_execution_plan_for_profile(&CiCommand::Preflight(Default::default()), Some("unknown"))
+            .is_ok(),
         "Rust gate profile 不得改变其他独立 job"
     );
     assert!(ci_execution_plan_for(&CiCommand::Plan(None)).is_err());
