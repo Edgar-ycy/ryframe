@@ -493,6 +493,12 @@ jobs:
             v3-rust-${{ runner.os }}-${{ runner.arch }}-integration-
             v3-rust-${{ runner.os }}-${{ runner.arch }}-
 
+      - name: 准备离线生成器的锁定 Cargo 依赖
+        working-directory: backend
+        run: |
+          cargo fetch --locked
+          cargo metadata --locked --offline --format-version 1 > /dev/null
+
       - name: 准备隔离服务文件配置
         working-directory: backend
         shell: bash
