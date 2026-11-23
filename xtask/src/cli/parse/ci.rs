@@ -127,10 +127,10 @@ fn parse_rust_gate(args: &[String]) -> Result<RustGateOptions, CliError> {
         }
     }
     if options.profile.as_deref() == Some("windows-smoke")
-        && (options.jobs.is_some() || options.target_dir.is_some() || options.plan)
+        && (options.jobs.is_some() || options.plan)
     {
         return Err(CliError::new(
-            "--jobs、--target-dir 和 --plan 只适用于 standard Rust gate",
+            "--jobs 和 --plan 只适用于 standard Rust gate",
         ));
     }
     if let Some(frontend_ref) = options.frontend_ref.as_deref() {

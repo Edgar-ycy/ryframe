@@ -47,6 +47,8 @@ pub(super) fn parse(args: &[String]) -> Result<CloneCommand, CliError> {
         "runtime" => parse_runtime(rest)?,
         "recover" => parse_recover(rest, false)?,
         "recover-copy" => parse_recover(rest, true)?,
+        "prepare-lock-observe" => parse_prepare_lock_observe(rest)?,
+        "prepare-lock-recover" => parse_prepare_lock_recover(rest)?,
         "bridge" => parse_bridge(rest)?,
         "post-copy" => parse_post_copy(rest)?,
         "seed-runtime" => parse_seed_runtime(rest)?,
@@ -56,6 +58,37 @@ pub(super) fn parse(args: &[String]) -> Result<CloneCommand, CliError> {
         _ => return Err(CliError::new(format!("未知 recovery clone 子操作：{name}"))),
     };
     Ok(command)
+}
+
+fn parse_prepare_lock_observe(args: &[String]) -> Result<CloneCommand, CliError> {
+    let options = parse_options(args, &["--run-dir", "--owner-binding", "--output"], false)?;
+    require_write("prepare-lock-observe", &options, true)?;
+    Ok(CloneCommand::ObservePrepareTargetLock {
+        run_dir: run_dir(&options)?,
+        owner_binding: path(
+            required(&options, "--owner-binding")?,
+            "--owner-binding",
+            LocalTestPathKind::ExistingFile,
+        )?,
+        output: path(
+            required(&options, "--output")?,
+            "--output",
+            LocalTestPathKind::OutputFile,
+        )?,
+    })
+}
+
+fn parse_prepare_lock_recover(args: &[String]) -> Result<CloneCommand, CliError> {
+    let options = parse_options(args, &["--run-dir", "--request"], false)?;
+    require_write("prepare-lock-recover", &options, true)?;
+    Ok(CloneCommand::RecoverPrepareTargetLock {
+        run_dir: run_dir(&options)?,
+        receipt: path(
+            required(&options, "--request")?,
+            "--request",
+            LocalTestPathKind::ExistingFile,
+        )?,
+    })
 }
 
 fn parse_plan(args: &[String]) -> Result<CloneCommand, CliError> {

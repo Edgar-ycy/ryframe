@@ -570,10 +570,16 @@ jobs:
 
       - name: 执行 Windows 产品、工具、进程与资源 Workspace 门禁
         working-directory: ryframe
-        run: >-
-          cargo xtask check ci rust-gate --frontend-dir ../ryframe-vue3
-          --frontend-ref "${{ steps.frontend-checkout.outputs.commit }}"
-          --profile windows-smoke --test-jobs 4
+        shell: pwsh
+        run: |
+          # Windows 限制 rustc 命令行长度，此 Runner 独占短构建路径。
+          $driveRoot = [System.IO.Path]::GetPathRoot($env:RUNNER_TEMP)
+          if ($driveRoot -notmatch '^[A-Za-z]:\\$') {
+            throw 'RUNNER_TEMP 必须位于本地 Windows 盘符下'
+          }
+          $targetRoot = Join-Path $driveRoot 'r'
+          New-Item -ItemType Directory -Path $targetRoot -ErrorAction Stop | Out-Null
+          cargo xtask check ci rust-gate --frontend-dir ../ryframe-vue3 --frontend-ref "${{ steps.frontend-checkout.outputs.commit }}" --profile windows-smoke --test-jobs 4 --target-dir "$targetRoot"
 
       - name: 输出 sccache 统计
         if: ${{ always() }}

@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use super::{
     catalog::{self, Catalog},
     digest::{self, FileDigest},
+    held_plan::HeldPlanObjects,
     json::{array, boolean, exact, object, text},
     metadata,
 };
@@ -57,6 +58,14 @@ struct Side {
 }
 
 pub(crate) fn validate(value: &Value, backend: &Path) -> Result<ValidatedInput> {
+    validate_with_objects(value, backend, None)
+}
+
+pub(super) fn validate_with_objects(
+    value: &Value,
+    backend: &Path,
+    held: Option<&HeldPlanObjects>,
+) -> Result<ValidatedInput> {
     let root = exact(
         value,
         &[
@@ -88,10 +97,7 @@ pub(crate) fn validate(value: &Value, backend: &Path) -> Result<ValidatedInput> 
     let old_side = side(root.get("source").unwrap(), false)?;
     let new_side = side(root.get("target").unwrap(), true)?;
     validate_sides(&old_side, &new_side)?;
-    let root_path = PathBuf::from(text(root.get("artifact_root").unwrap(), "artifact_root")?);
-    let artifact_root =
-        validate_local_test_path(&root_path, backend, LocalTestPathKind::ExistingDirectory)
-            .map_err(|error| format!("复制证据根目录无效：{error}"))?;
+    let artifact_root = artifact_root(&value["artifact_root"], backend)?;
 
     let execution = root.get("execution_backend").unwrap();
     let catalog_root = if execution.is_null() {
@@ -115,11 +121,16 @@ pub(crate) fn validate(value: &Value, backend: &Path) -> Result<ValidatedInput> 
     for binding in evidence.values() {
         bound_file(&artifact_root, binding)?;
     }
+    let object_declaration = root.get("objects").unwrap();
+    if let Some(held) = held {
+        held.require_declaration(&artifact_root, object_declaration)?;
+    }
     let objects = object_plan(
-        root.get("objects").unwrap(),
+        object_declaration,
         &artifact_root,
         &old_side.scope,
         &new_side.scope,
+        held,
     )?;
     Ok(ValidatedInput {
         artifact_root,
@@ -132,7 +143,22 @@ pub(crate) fn validate(value: &Value, backend: &Path) -> Result<ValidatedInput> 
     })
 }
 
+pub(super) fn artifact_root(value: &Value, backend: &Path) -> Result<PathBuf> {
+    let path = Path::new(text(value, "artifact_root")?);
+    validate_local_test_path(path, backend, LocalTestPathKind::ExistingDirectory)
+        .map_err(|error| format!("复制证据根目录无效：{error}").into())
+}
+
 pub(crate) fn bound_file(root: &Path, value: &Value) -> Result<ArtifactBinding> {
+    let binding = artifact_descriptor(value)?;
+    let path = digest::safe_file(root, &binding.file)?;
+    if digest::file(&path)? != binding.digest {
+        return Err("复制证据已变化或未完整写入".into());
+    }
+    Ok(binding)
+}
+
+pub(super) fn artifact_descriptor(value: &Value) -> Result<ArtifactBinding> {
     let binding = exact(value, &["file", "bytes", "sha256"], "复制证据绑定")?;
     let file = text(binding.get("file").unwrap(), "证据文件")?.to_owned();
     let bytes = binding
@@ -141,22 +167,29 @@ pub(crate) fn bound_file(root: &Path, value: &Value) -> Result<ArtifactBinding> 
         .filter(|value| *value > 0)
         .ok_or("证据大小无效")?;
     let sha256 = digest_shape(binding.get("sha256").unwrap())?.to_owned();
-    let path = digest::safe_file(root, &file)?;
-    let actual = digest::file(&path)?;
-    if actual.bytes != bytes || actual.sha256 != sha256 {
-        return Err("复制证据已变化或未完整写入".into());
-    }
     Ok(ArtifactBinding {
         file,
-        digest: actual,
+        digest: FileDigest { bytes, sha256 },
     })
 }
 
-pub(crate) fn object_plan(
+pub(super) fn bound_object(
+    root: &Path,
+    value: &Value,
+    held: Option<&HeldPlanObjects>,
+) -> Result<ArtifactBinding> {
+    match held {
+        Some(held) => held.bound_object(root, value),
+        None => bound_file(root, value),
+    }
+}
+
+fn object_plan(
     value: &Value,
     root: &Path,
     source_scope: &str,
     target_scope: &str,
+    held: Option<&HeldPlanObjects>,
 ) -> Result<Objects> {
     let buckets = array(value, "objects")?;
     if buckets.len() != BUCKETS.len() {
@@ -195,7 +228,7 @@ pub(crate) fn object_plan(
                 return Err("对象 key 越过精确来源前缀、包含 owner 或重复".into());
             }
             let metadata = metadata::copy(item.get("metadata").unwrap())?;
-            let artifact = bound_file(root, item.get("artifact").unwrap())?;
+            let artifact = bound_object(root, item.get("artifact").unwrap(), held)?;
             index.insert((name.to_owned(), logical.to_owned()), artifact.clone());
             entries.push(json!({
                 "bucket": name,

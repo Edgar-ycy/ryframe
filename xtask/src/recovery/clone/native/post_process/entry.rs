@@ -59,6 +59,8 @@ impl StageRunner for Runner<'_> {
             || request.mode != self.options.operation.as_str()
             || request.run_dir != self.options.run_dir
             || self.options.producer_binding.is_some()
+            || self.options.hold_originals
+                && (!cfg!(windows) || self.options.operation != PostCopyOperation::Prepare)
         {
             return Err("固定请求阶段参数或生产者绑定不符合正式入口".into());
         }
@@ -118,8 +120,8 @@ impl Runner<'_> {
             .attempt
             .filter(|v| *v > 0)
             .ok_or("缺少正式阶段控制器序号")?;
-        let scope = self.scope.borrow();
-        let scope = scope.as_ref().ok_or("复制后阶段没有来源保护")?;
+        let mut scope = self.scope.borrow_mut();
+        let scope = scope.as_mut().ok_or("复制后阶段没有来源保护")?;
         let manifest = manifest::load(request.backend, &request.run_dir.join("manifest.json"))?;
         let storage = cache::handoff::locks::Storage::acquire(
             request.backend,
@@ -130,6 +132,10 @@ impl Runner<'_> {
             request,
             Phase::Cleanup,
             super::ownership::with_target(request, &manifest.value, storage, |owner, storage| {
+                #[cfg(windows)]
+                if self.options.hold_originals {
+                    hold_prepare_scope(request, &manifest.value, owner, scope)?;
+                }
                 let input = self.input.borrow();
                 let context = Context::load(
                     request,
@@ -138,8 +144,16 @@ impl Runner<'_> {
                     storage,
                     input.as_ref().filter(|v| !v.is_null()),
                 )?;
+                #[cfg(windows)]
+                let context = {
+                    let mut context = context;
+                    if self.options.hold_originals {
+                        context.hold_plan()?;
+                    }
+                    context
+                };
                 let result = self.execute_stage(request, &context);
-                super::files::combine(result, context.check())
+                super::files::combine(result, context.check_end())
             }),
         )?;
         if let Some(completion) = completion {
@@ -175,4 +189,30 @@ impl Runner<'_> {
         };
         diagnostic::context(request, phase, result)
     }
+}
+
+#[cfg(windows)]
+fn hold_prepare_scope(
+    request: &StageRequest<'_>,
+    manifest: &Value,
+    owner: &crate::recovery::clone::native::target_verify::guard::Generation,
+    scope: &mut Scope,
+) -> Result<()> {
+    use crate::recovery::clone::native::{export, target_verify};
+    use target_verify::input::request::{SystemSourceObserver, execution_backend};
+
+    if request.mode != "prepare" || manifest["copy_stage"] != "source_to_seed" {
+        return Err("持有原件只用于 source_to_seed 的复制后准备".into());
+    }
+    let source =
+        export::input::Context::for_copy(request.backend, request.run_dir, request.run_dir)?;
+    let initialized = common::bound_file(request.backend, &manifest["initialized"], "初始化后像")?;
+    let (_, target) =
+        target_verify::published::owned_history(request.backend, &initialized, owner)?;
+    let (execution, _) = execution_backend(
+        request.backend,
+        target.get("execution_backend"),
+        &SystemSourceObserver,
+    )?;
+    scope.hold_windows_sources(&[&source.execution_backend, &execution])
 }

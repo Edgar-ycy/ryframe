@@ -345,9 +345,7 @@ fn execute_ci_task(
             };
             super::verify_formal_contract_source(&context.frontend_dir, options)
         }
-        TaskExecutor::CiWindowsSmoke => {
-            super::windows_smoke(&context.frontend_dir, context.test_jobs)
-        }
+        TaskExecutor::CiWindowsSmoke => super::windows_smoke(context),
         TaskExecutor::CiResourceGate => {
             let CiCommand::ResourceGate(options) = command else {
                 return Err("资源门禁任务需要 ResourceGateOptions".into());

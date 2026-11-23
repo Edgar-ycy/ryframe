@@ -8,9 +8,9 @@ use std::{
 use crate::{
     Result,
     check::{
-        BACKEND_CI_TARGET_DIR, RESOURCE_CI_TARGET_DIR, VerifySelection, changed_paths,
-        changed_paths_between, ci_target_policy, ci_test_jobs_from, classify_changes,
-        complete_verify_selection, load_workspace_graph, resource_workspace_compilation,
+        VerifyExecutionContext, VerifySelection, changed_paths, changed_paths_between,
+        ci_target_policy, ci_test_jobs_from, classify_changes, complete_verify_selection,
+        load_workspace_graph, resource_workspace_compilation,
     },
     cli::CiCommand,
     contract::verify_contract_source,
@@ -205,26 +205,38 @@ fn write_github_outputs(plan: &[CiJob]) -> Result<()> {
     Ok(())
 }
 
-fn windows_smoke(frontend_dir: &Path, configured_test_jobs: Option<usize>) -> Result<()> {
-    let root = root_dir();
+fn windows_smoke(context: &VerifyExecutionContext) -> Result<()> {
     let jobs = ci_test_jobs_from(
-        configured_test_jobs,
+        context.test_jobs,
         true,
         std::thread::available_parallelism().map_or(4, usize::from),
     )?;
     for package in ["ryframe", "xtask"] {
-        run_owned(&root, "cargo", &windows_check_args(package))?;
+        run_owned(
+            &context.root,
+            "cargo",
+            &windows_check_args(package, &context.targets.backend),
+        )?;
     }
-    run_owned(&root, "cargo", &windows_process_test_args(jobs))?;
-    resource_workspace_compilation(&root, frontend_dir, RESOURCE_CI_TARGET_DIR, jobs)
+    run_owned(
+        &context.root,
+        "cargo",
+        &windows_process_test_args(&context.targets.backend, jobs),
+    )?;
+    resource_workspace_compilation(
+        &context.root,
+        &context.frontend_dir,
+        &context.targets.resource,
+        jobs,
+    )
 }
 
-pub(crate) fn windows_check_args(package: &str) -> Vec<String> {
+pub(crate) fn windows_check_args(package: &str, target_dir: &str) -> Vec<String> {
     [
         "check",
         "--locked",
         "--target-dir",
-        BACKEND_CI_TARGET_DIR,
+        target_dir,
         "-p",
         package,
         "--all-targets",
@@ -234,12 +246,12 @@ pub(crate) fn windows_check_args(package: &str) -> Vec<String> {
     .collect()
 }
 
-pub(crate) fn windows_process_test_args(jobs: usize) -> Vec<String> {
+pub(crate) fn windows_process_test_args(target_dir: &str, jobs: usize) -> Vec<String> {
     [
         "test".to_owned(),
         "--locked".to_owned(),
         "--target-dir".to_owned(),
-        BACKEND_CI_TARGET_DIR.to_owned(),
+        target_dir.to_owned(),
         "-p".to_owned(),
         "xtask".to_owned(),
         "--test".to_owned(),

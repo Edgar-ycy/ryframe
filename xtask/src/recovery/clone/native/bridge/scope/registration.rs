@@ -32,6 +32,7 @@ pub(super) fn load(
     current: &source::Inventory,
     binding: &Value,
     inherited: bool,
+    matches_source: impl FnOnce(&Path, &source::Inventory) -> Result<bool>,
 ) -> Result<Registered> {
     let value = bridge::read_binding(backend, binding)?;
     document::exact(
@@ -87,12 +88,12 @@ pub(super) fn load(
         return Err("产物来源桥接的产品指纹不匹配".into());
     }
     if !inherited {
-        let observed = if declared == backend {
-            current.clone()
+        let matches = if declared == backend {
+            &audited == current
         } else {
-            source::capture(&declared)?
+            matches_source(&declared, &audited)?
         };
-        if audited != observed {
+        if !matches {
             return Err("构建审计未绑定本轮完整执行来源".into());
         }
     }
@@ -105,6 +106,8 @@ pub(super) fn load(
         build_sha256: document::text(&value["build"]["sha256"], "桥接构建摘要")?.to_owned(),
         build_identity: build_identity(&receipt)?,
         inventory,
+        #[cfg(windows)]
+        audited: (!inherited).then_some(audited),
         root: declared,
         inherited,
     })

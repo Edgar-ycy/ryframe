@@ -79,6 +79,7 @@ fn formal_fixed_request_modes_reject_bad_options_without_stage_writes() {
         let options = PostCopyOptions {
             run_dir: run.clone(),
             operation,
+            hold_originals: false,
             request: if matches!(
                 operation,
                 PostCopyOperation::Prepare
@@ -127,6 +128,7 @@ fn formal_fixed_request_modes_reject_bad_options_without_stage_writes() {
     let options = PostCopyOptions {
         run_dir: run.clone(),
         operation: PostCopyOperation::Register,
+        hold_originals: false,
         request: Some(input),
         producer_binding: None,
     };
