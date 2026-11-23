@@ -3,7 +3,7 @@ use crate::Result;
 use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::fmt;
+use std::{collections::BTreeMap, fmt};
 
 #[derive(Clone)]
 enum Ordered {
@@ -73,6 +73,71 @@ impl<'de> Deserialize<'de> for Ordered {
 
 /// 只接受唯一前缀的原字节长度与摘要，不以JSON语义相等替代写入器绑定。
 pub(crate) fn count(raw: &[u8], bytes: u64, expected_sha: &str) -> Result<usize> {
+    let (ordered, attempt_count) = ledger(raw)?;
+    if raw.len() as u64 == bytes && hex::encode(Sha256::digest(raw)) == expected_sha {
+        return Ok(attempt_count);
+    }
+    let mut matches = (0..=attempt_count).filter(|count| {
+        let candidate = truncated(&ordered, *count);
+        variants(&candidate).any(|encoded| {
+            encoded.len() as u64 == bytes
+                && hex::encode(Sha256::digest(encoded.as_bytes())) == expected_sha
+        })
+    });
+    match (matches.next(), matches.next()) {
+        (Some(count), None) => Ok(count),
+        _ => Err("历史阶段记录不是当前账本的精确追加前缀".into()),
+    }
+}
+
+/// 同一份已核验账本的所有写入格式，每个阶段前缀只编码一次。
+pub(crate) struct PrefixIndex {
+    full: (u64, String, usize),
+    by_size: BTreeMap<u64, BTreeMap<String, Option<usize>>>,
+}
+
+impl PrefixIndex {
+    pub(crate) fn new(raw: &[u8]) -> Result<Self> {
+        let (ordered, attempt_count) = ledger(raw)?;
+        let mut by_size = BTreeMap::<u64, BTreeMap<String, Option<usize>>>::new();
+        for count in 0..=attempt_count {
+            let candidate = truncated(&ordered, count);
+            for encoded in variants(&candidate) {
+                let sha256 = hex::encode(Sha256::digest(encoded.as_bytes()));
+                by_size
+                    .entry(encoded.len() as u64)
+                    .or_default()
+                    .entry(sha256)
+                    .and_modify(|previous| {
+                        if *previous != Some(count) {
+                            *previous = None;
+                        }
+                    })
+                    .or_insert(Some(count));
+            }
+        }
+        Ok(Self {
+            full: (
+                raw.len() as u64,
+                hex::encode(Sha256::digest(raw)),
+                attempt_count,
+            ),
+            by_size,
+        })
+    }
+
+    pub(crate) fn count(&self, bytes: u64, sha256: &str) -> Result<usize> {
+        if self.full.0 == bytes && self.full.1 == sha256 {
+            return Ok(self.full.2);
+        }
+        self.by_size
+            .get(&bytes)
+            .and_then(|digests| digests.get(sha256).copied().flatten())
+            .ok_or_else(|| "历史阶段记录不是当前账本的精确追加前缀".into())
+    }
+}
+
+fn ledger(raw: &[u8]) -> Result<(Ordered, usize)> {
     let value: Value = serde_json::from_slice(raw)?;
     let ordered = update_order(serde_json::from_slice(raw)?, &value)?;
     let Ordered::Object(fields) = &ordered else {
@@ -82,43 +147,39 @@ pub(crate) fn count(raw: &[u8], bytes: u64, expected_sha: &str) -> Result<usize>
     else {
         return Err("历史状态缺少阶段列表".into());
     };
-    if raw.len() as u64 == bytes && hex::encode(Sha256::digest(raw)) == expected_sha {
-        return Ok(attempts.len());
-    }
-    let mut matches = Vec::new();
-    for count in 0..=attempts.len() {
-        let mut candidate = ordered.clone();
-        let Ordered::Object(fields) = &mut candidate else {
-            unreachable!()
-        };
-        let Some((_, Ordered::Array(items))) = fields.iter_mut().find(|(key, _)| key == "attempts")
-        else {
-            unreachable!()
-        };
-        items.truncate(count);
-        let found = [
-            (true, false, false),
-            (false, true, false),
-            (false, true, true),
-            (true, false, true),
-        ]
-        .into_iter()
-        .any(|(sort, ascii, crlf)| {
-            let mut encoded = encode(&candidate, 0, sort, ascii) + "\n";
-            if crlf {
-                encoded = encoded.replace('\n', "\r\n");
-            }
-            encoded.len() as u64 == bytes
-                && hex::encode(Sha256::digest(encoded.as_bytes())) == expected_sha
-        });
-        if found {
-            matches.push(count);
+    let count = attempts.len();
+    Ok((ordered, count))
+}
+
+fn truncated(ordered: &Ordered, count: usize) -> Ordered {
+    let mut candidate = ordered.clone();
+    let Ordered::Object(fields) = &mut candidate else {
+        unreachable!("已核验历史状态");
+    };
+    let Some((_, Ordered::Array(items))) = fields.iter_mut().find(|(key, _)| key == "attempts")
+    else {
+        unreachable!("已核验阶段列表");
+    };
+    items.truncate(count);
+    candidate
+}
+
+fn variants(value: &Ordered) -> impl Iterator<Item = String> + '_ {
+    [
+        (true, false, false),
+        (false, true, false),
+        (false, true, true),
+        (true, false, true),
+    ]
+    .into_iter()
+    .map(|(sort, ascii, crlf)| {
+        let encoded = encode(value, 0, sort, ascii) + "\n";
+        if crlf {
+            encoded.replace('\n', "\r\n")
+        } else {
+            encoded
         }
-    }
-    if matches.len() != 1 {
-        return Err("历史阶段记录不是当前账本的精确追加前缀".into());
-    }
-    Ok(matches[0])
+    })
 }
 
 fn quoted(value: &str, ascii: bool) -> String {
@@ -186,22 +247,7 @@ fn encode(value: &Ordered, depth: usize, sort: bool, ascii: bool) -> String {
 pub(crate) fn serializations(value: &str) -> Vec<Vec<u8>> {
     let semantic: Value = serde_json::from_str(value).unwrap();
     let node = update_order(serde_json::from_str(value).unwrap(), &semantic).unwrap();
-    [
-        (true, false, false),
-        (false, true, false),
-        (false, true, true),
-        (true, false, true),
-    ]
-    .into_iter()
-    .map(|(sort, ascii, crlf)| {
-        let output = encode(&node, 0, sort, ascii) + "\n";
-        if crlf {
-            output.replace('\n', "\r\n").into_bytes()
-        } else {
-            output.into_bytes()
-        }
-    })
-    .collect()
+    variants(&node).map(String::into_bytes).collect()
 }
 
 /// 保留现存账本的字段顺序；新字段与新阶段使用确定性顺序，不改写旧前像语义。
@@ -268,6 +314,12 @@ fn append_preserves_each_existing_writer_prefix_including_unicode() {
             .push(serde_json::json!({"number":2,"sources":{}}));
         let encoded = updated_serialization(&previous, &next).unwrap();
         assert_eq!(serde_json::from_slice::<Value>(&encoded).unwrap(), next);
+        let index = PrefixIndex::new(&encoded).unwrap();
+        let before = hex::encode(Sha256::digest(&previous));
+        let after = hex::encode(Sha256::digest(&encoded));
+        assert_eq!(index.count(previous.len() as u64, &before).unwrap(), 1);
+        assert_eq!(index.count(encoded.len() as u64, &after).unwrap(), 2);
+        assert!(index.count(previous.len() as u64, &after).is_err());
         let mut prefix: Ordered = serde_json::from_slice(&encoded).unwrap();
         let Ordered::Object(fields) = &mut prefix else {
             unreachable!()

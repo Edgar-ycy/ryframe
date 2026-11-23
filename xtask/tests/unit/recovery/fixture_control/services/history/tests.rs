@@ -123,6 +123,37 @@ fn close_preserves_prefix_is_readonly_and_rejects_tampered_members() {
 }
 
 #[test]
+fn replay_checks_a_historical_view_and_rechecks_all_current_results() {
+    let fixture = Fixture::new();
+    let state_path = fixture.run.join("state.json");
+    let before = binding(&state_path).unwrap();
+    fixture.stage("close", Some(&fixture.close()));
+    let historical = fixture.load();
+    fixture.stage("restart", None);
+    assert_eq!(
+        validate(&fixture.run, &historical, true, true).unwrap()["closed"],
+        true
+    );
+
+    let replay = prefix::Snapshot::open(&fixture.run).unwrap();
+    let descriptor = prefix::Descriptor::read(&fixture.run, &before).unwrap();
+    assert_eq!(replay.count(descriptor).unwrap(), 3);
+    let mut different = before;
+    different["sha256"] = json!("0".repeat(64));
+    let descriptor = prefix::Descriptor::read(&fixture.run, &different).unwrap();
+    assert!(replay.count(descriptor).is_err());
+    replay.check_end().unwrap();
+
+    #[cfg(windows)]
+    assert!(fs::OpenOptions::new().write(true).open(state_path).is_err());
+    let first_result = state::result_path(&fixture.run, 1);
+    let mut raw = fs::read(&first_result).unwrap();
+    raw.push(b'\n');
+    fs::write(first_result, raw).unwrap();
+    assert!(replay.check_end().is_err());
+}
+
+#[test]
 fn rustfs_handoff_history_keeps_original_redis_and_binds_immutable_close() {
     let fixture = Fixture::new();
     let copy = Fixture::new();

@@ -58,21 +58,8 @@ pub(crate) fn validate(run: &Path, value: &Value, ready: bool, settled: bool) ->
         .iter()
         .position(|item| item["stage"] == STAGE)
         .unwrap_or(attempts.len());
-    let initial = &attempts[..boundary];
-    check(initial.len() <= INITIAL.len(), "夹具首代账本包含多余阶段")?;
-    for (item, (stage, mode)) in initial.iter().zip(INITIAL) {
-        check(
-            item["stage"] == stage && item["mode"] == mode,
-            "夹具首代账本包含未知阶段或顺序",
-        )?;
-    }
-    let complete =
-        initial.len() == INITIAL.len() && initial.iter().all(|item| item["status"] == "passed");
-    check(!ready || complete, "夹具首代服务尚未完整就绪")?;
-    let mut history = json!({"closed":false,"external_recovery":null,"restart_predecessor":null,
-        "active_generation":{"kind":"initial","rustfs":attempts.first().map(|item| &item["result"]),
-            "redis":attempts.get(1).map(|item| &item["result"])},
-        "initial_complete":complete,"unsettled":[]});
+    let mut history = initial_history(attempts, boundary, ready)?;
+    let mut prefixes = None;
     for (index, item) in attempts.iter().enumerate().skip(boundary) {
         let mode = text(item, "mode")?;
         check(
@@ -100,8 +87,13 @@ pub(crate) fn validate(run: &Path, value: &Value, ready: bool, settled: bool) ->
             sources["manifest"] == value["manifest"],
             "夹具生命周期未绑定原始服务清单",
         )?;
+        let descriptor = prefix::Descriptor::read(run, &sources["state_before"])?;
+        let snapshot = match &mut prefixes {
+            Some(snapshot) => snapshot,
+            slot @ None => slot.insert(prefix::Snapshot::open(run)?),
+        };
         check(
-            prefix::count(run, &sources["state_before"])? == index,
+            snapshot.count(descriptor)? == index,
             "夹具生命周期未绑定完整先行账本",
         )?;
         let result = bound(run, &item["result"])?;
@@ -131,7 +123,30 @@ pub(crate) fn validate(run: &Path, value: &Value, ready: bool, settled: bool) ->
         !settled || history["unsettled"].as_array().is_some_and(Vec::is_empty),
         "夹具服务存在未成功收尾的生命周期阶段",
     )?;
+    if let Some(snapshot) = prefixes {
+        snapshot.check_end()?;
+    }
     Ok(history)
+}
+
+fn initial_history(attempts: &[Value], boundary: usize, ready: bool) -> Result<Value> {
+    let initial = &attempts[..boundary];
+    check(initial.len() <= INITIAL.len(), "夹具首代账本包含多余阶段")?;
+    for (item, (stage, mode)) in initial.iter().zip(INITIAL) {
+        check(
+            item["stage"] == stage && item["mode"] == mode,
+            "夹具首代账本包含未知阶段或顺序",
+        )?;
+    }
+    let complete =
+        initial.len() == INITIAL.len() && initial.iter().all(|item| item["status"] == "passed");
+    check(!ready || complete, "夹具首代服务尚未完整就绪")?;
+    Ok(
+        json!({"closed":false,"external_recovery":null,"restart_predecessor":null,
+        "active_generation":{"kind":"initial","rustfs":attempts.first().map(|item| &item["result"]),
+            "redis":attempts.get(1).map(|item| &item["result"])},
+        "initial_complete":complete,"unsettled":[]}),
+    )
 }
 
 pub(in crate::recovery) fn is_published_generation(item: &Value) -> bool {
