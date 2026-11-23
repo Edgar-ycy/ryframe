@@ -1,12 +1,13 @@
 use std::{
+    borrow::Cow,
     collections::BTreeMap,
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
 };
 
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use time::{OffsetDateTime, format_description::well_known::Rfc3339, macros::format_description};
 
 use crate::reset::{ResetError, ResetResult, model::ResetManifest};
 
@@ -303,7 +304,7 @@ impl ResetLedger {
                     && record
                         .completed_at
                         .as_deref()
-                        .is_none_or(|value| chrono::DateTime::parse_from_rfc3339(value).is_err())
+                        .is_none_or(|value| !valid_completion_time(value))
             })
             || self
                 .resources
@@ -452,6 +453,32 @@ pub fn backup_path(path: &Path) -> ResetResult<PathBuf> {
     Ok(parent.join(format!(".{file_name}.previous")))
 }
 
-fn now() -> String {
-    Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+pub(super) fn now() -> String {
+    OffsetDateTime::now_utc()
+        .format(format_description!(
+            "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]Z"
+        ))
+        .expect("UTC 时间包含 reset 时间格式的全部组件")
+}
+
+fn valid_completion_time(value: &str) -> bool {
+    if !matches!(value.as_bytes().get(10), Some(b'T' | b't' | b' ')) {
+        return false;
+    }
+    // 旧账本接受闰秒和 Unicode 时区负号。只校验临时字符串，保留账本原值。
+    let mut normalized = Cow::Borrowed(value);
+    if value.get(17..19) == Some("60") {
+        normalized.to_mut().replace_range(17..19, "59");
+    }
+    if let Some(offset) = value.len().checked_sub("−00:00".len())
+        && offset >= 19
+        && value
+            .get(offset..)
+            .is_some_and(|suffix| suffix.starts_with('−'))
+    {
+        normalized
+            .to_mut()
+            .replace_range(offset..offset + '−'.len_utf8(), "-");
+    }
+    OffsetDateTime::parse(&normalized, &Rfc3339).is_ok()
 }

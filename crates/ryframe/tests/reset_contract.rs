@@ -3,9 +3,9 @@
 use std::{collections::BTreeMap, fs};
 
 use async_trait::async_trait;
-use chrono::Utc;
 use ryframe::reset::{engine::*, ledger::*, model::*, *};
 use ryframe_config::Environment;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 #[path = "reset_contract/file_configuration.rs"]
 mod file_configuration;
@@ -231,7 +231,7 @@ mod engine {
         test_state_root().join(format!(
             "ryframe-reset-engine-{label}-{}-{}",
             std::process::id(),
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+            OffsetDateTime::now_utc().unix_timestamp_nanos()
         ))
     }
 
@@ -321,7 +321,14 @@ mod engine {
         let second = serde_json::to_value(second).expect("报告编码");
         assert_eq!(first["status"], "completed");
         assert_eq!(second["status"], "reused");
-        assert!(first["completed_at"].is_string());
+        for field in ["completed_at", "reported_at"] {
+            let value = first[field].as_str().expect("报告时间使用字符串");
+            assert_eq!(value.len(), 24);
+            assert_eq!(&value[19..20], ".");
+            assert!(value[20..23].bytes().all(|byte| byte.is_ascii_digit()));
+            assert!(value.ends_with('Z'));
+            assert!(OffsetDateTime::parse(value, &Rfc3339).is_ok());
+        }
         assert_eq!(first["completed_at"], second["completed_at"]);
         assert_eq!(first["phases"], second["phases"]);
         assert!(calls.lock().await.is_empty());
@@ -499,7 +506,7 @@ mod ledger {
         let base = test_state_root().join(format!(
             "ryframe-reset-ledger-{}-{}",
             std::process::id(),
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+            OffsetDateTime::now_utc().unix_timestamp_nanos()
         ));
         let hash = "c".repeat(64);
         let store = LedgerStore::new(&base, &manifest, &hash).expect("创建账本路径");
@@ -512,9 +519,43 @@ mod ledger {
             .expect("相同清单续跑");
         assert!(resumed.phase_complete(ResetPhase::ObjectStorage));
 
-        let mut changed = manifest;
+        let mut changed = manifest.clone();
         changed.config_sha = "d".repeat(64);
         assert!(store.load_or_create(&changed, &hash).is_err());
+
+        for (value, valid) in [
+            (Some("2024-02-29t09:08:07.1234567890z"), true),
+            (Some("2024-02-29 09:08:60.123456−05:30"), true),
+            (Some("2024-02-29T09:08:60+05:30"), true),
+            (Some("2024-02-29_09:08:07Z"), false),
+            (Some("2024-02-29T09:08:61Z"), false),
+            (Some("2024-02-29T09:08:60−24:00"), false),
+            (Some("2024-02-30T09:08:60Z"), false),
+            (Some("2024-02-29T09:08:07"), false),
+            (None, false),
+        ] {
+            ledger
+                .phases
+                .get_mut(&ResetPhase::ObjectStorage)
+                .unwrap()
+                .completed_at = value.map(str::to_owned);
+            store.save(&ledger).unwrap();
+            let before = fs::read(store.ledger_path()).unwrap();
+            let resumed = store.load_or_create(&manifest, &hash);
+            if valid {
+                assert_eq!(
+                    resumed
+                        .unwrap()
+                        .phase(ResetPhase::ObjectStorage)
+                        .completed_at
+                        .as_deref(),
+                    value
+                );
+            } else {
+                assert!(resumed.is_err(), "{value:?}");
+            }
+            assert_eq!(fs::read(store.ledger_path()).unwrap(), before);
+        }
         fs::remove_dir_all(base).expect("清理测试状态目录");
     }
 
@@ -524,11 +565,18 @@ mod ledger {
         let base = test_state_root().join(format!(
             "ryframe-reset-ledger-recovery-{}-{}",
             std::process::id(),
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+            OffsetDateTime::now_utc().unix_timestamp_nanos()
         ));
         let hash = "e".repeat(64);
         let store = LedgerStore::new(&base, &manifest, &hash).expect("创建账本路径");
         let mut ledger = store.load_or_create(&manifest, &hash).expect("创建账本");
+        let completed_at = "2024-02-29 09:08:60.120−05:30";
+        ledger.mark_complete(ResetPhase::Preflight, BTreeMap::new());
+        ledger
+            .phases
+            .get_mut(&ResetPhase::Preflight)
+            .unwrap()
+            .completed_at = Some(completed_at.to_owned());
         ledger.mark_running(ResetPhase::ObjectStorage);
         store.save(&ledger).expect("生成上一版账本");
 
@@ -544,6 +592,13 @@ mod ledger {
         assert_eq!(
             recovered.phase(ResetPhase::ObjectStorage).status,
             PhaseStatus::Running
+        );
+        assert_eq!(
+            recovered
+                .phase(ResetPhase::Preflight)
+                .completed_at
+                .as_deref(),
+            Some(completed_at)
         );
         assert!(store.ledger_path().exists());
         assert!(backup.exists());

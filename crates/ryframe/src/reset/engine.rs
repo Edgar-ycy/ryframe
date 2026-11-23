@@ -1,12 +1,11 @@
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
-use chrono::Utc;
 use serde::Serialize;
 
 use crate::reset::{
     ResetError, ResetResult,
-    ledger::{LedgerStore, PhaseRecord, PhaseStatus, ResetLedger, ResetPhase, ResourceRecord},
+    ledger::{LedgerStore, PhaseRecord, PhaseStatus, ResetLedger, ResetPhase, ResourceRecord, now},
     model::ResetManifest,
 };
 
@@ -100,7 +99,7 @@ impl ResetReport {
             completed_at: (status != ResetStatus::Failed)
                 .then(|| ledger.phase(ResetPhase::Release).completed_at.clone())
                 .flatten(),
-            reported_at: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            reported_at: now(),
             failed_phase: failed_phase.map(ResetPhase::as_str),
             phases: ledger.phases.clone(),
             resources: ledger.resources.clone(),
