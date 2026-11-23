@@ -796,8 +796,9 @@ fn parses_successor_arm_request() {
     assert!(matches!(
         preview,
         FixtureControlCommand::Successor(FixtureSuccessorCommand::ArmRequest(ref options))
-            if options.output.is_none()
+            if options.output.is_none() && !options.independent_b1
     ));
+    let independent = parse_independent_b1_arm_request(&arm);
     let output = fixture.path("native-arm-request.json");
     let mut write = arm.clone();
     write.push("--write".to_owned());
@@ -807,7 +808,7 @@ fn parses_successor_arm_request() {
     assert!(parse_control(command("successor", Some("arm-request"), publish.clone())).is_err());
     publish.push("--write".into());
     let parsed = parse_control(command("successor", Some("arm-request"), publish)).unwrap();
-    for command in [preview, parsed] {
+    for command in [preview, parsed, independent] {
         let error = crate::recovery::run(
             &RecoveryCommand::FixtureControl(Box::new(command)),
             &root_dir(),
@@ -816,6 +817,64 @@ fn parses_successor_arm_request() {
         assert_eq!(error.to_string(), "arm 选择的审阅关系不同于共享导出登记");
         assert!(!output.exists());
     }
+}
+
+fn parse_independent_b1_arm_request(arm: &[String]) -> FixtureControlCommand {
+    let parse = |args| parse_control(command("successor", Some("arm-request"), args));
+    let flag = "--independent-b1";
+    let mut args = arm.to_vec();
+    args.push(flag.into());
+    assert!(
+        parse(args.clone())
+            .unwrap_err()
+            .to_string()
+            .contains("--side candidate")
+    );
+
+    args[9] = "candidate".into();
+    let preview = parse(args.clone()).unwrap();
+    assert!(matches!(
+        preview,
+        FixtureControlCommand::Successor(FixtureSuccessorCommand::ArmRequest(ref options))
+            if options.output.is_none() && options.independent_b1
+    ));
+    let mut duplicate = args.clone();
+    duplicate.push(flag.into());
+    assert!(
+        parse(duplicate)
+            .unwrap_err()
+            .to_string()
+            .contains("不能重复")
+    );
+
+    let mut misplaced = args.clone();
+    misplaced.pop();
+    misplaced.insert(7, flag.into());
+    assert!(
+        parse(misplaced)
+            .unwrap_err()
+            .to_string()
+            .contains("--id 缺少有效取值")
+    );
+
+    *args.last_mut().unwrap() = format!("{flag}=true");
+    assert!(
+        parse(args)
+            .unwrap_err()
+            .to_string()
+            .contains("未知 fixture 控制参数")
+    );
+    assert!(
+        parse_control(command(
+            "successor",
+            Some("generation-request"),
+            vec![flag.into()]
+        ))
+        .unwrap_err()
+        .to_string()
+        .contains("未知 fixture 控制参数")
+    );
+    preview
 }
 
 #[test]

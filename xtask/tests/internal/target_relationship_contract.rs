@@ -1,7 +1,12 @@
 use super::{Fixture, bound, digest, request, review_binding, write};
 use crate::{
     cli::{FixtureControlCommand, FixtureSuccessorCommand, FixtureSuccessorRelationship},
-    recovery::{clone::native::json as document, fixture_control},
+    recovery::{
+        clone::native::{
+            cache::binding::source::relationship::require_independent_b1_disjoint, json as document,
+        },
+        fixture_control,
+    },
 };
 use serde_json::{Value, json};
 use std::{fs, path::Path};
@@ -190,6 +195,8 @@ fn successor_relationship_publishes_once_and_revalidates_all_three_sides() {
     }
     assert!(publish(&fixture, &options).is_err());
     assert_eq!(fs::read(&options.output).unwrap(), original);
+    check_independent_measurement(&fixture, &descriptor, &old, &next);
+    assert_eq!(fs::read(&options.output).unwrap(), original);
 
     let failed = FixtureSuccessorRelationship {
         output: path("rejected.json"),
@@ -197,6 +204,81 @@ fn successor_relationship_publishes_once_and_revalidates_all_three_sides() {
     };
     reject_modified_candidate_request(&fixture, &failed, &descriptor, &next);
     reject_collisions(&fixture, &failed, &old, &next);
+}
+
+fn measurement_review(mut value: Value, root: &Path) -> Value {
+    value["kind"] = json!("review-only-b1-runtime-measurement-with-readonly-preflight");
+    value["future_root"] = json!(root);
+    value["services"]["rustfs"]["data_dir"] = json!(root.join("rustfs"));
+    value["services"]["redis"]["directory"] = json!(root.join("redis"));
+    let mut candidate = value["scopes"]["candidate"].take();
+    candidate["runtime_dir"] = json!(root.join("runtime-candidate"));
+    candidate["identity_ledger"] = json!(root.join("identities-candidate"));
+    candidate["objects"]["endpoint"] = value["services"]["rustfs"]["api"].clone();
+    let redis = value["services"]["redis"]["endpoint"].as_str().unwrap();
+    candidate["redis"]["url"] = json!(format!("redis://{redis}/0"));
+    value["scopes"] = json!({"candidate":candidate});
+    let tools = value["tools"].as_object_mut().unwrap();
+    tools.remove("wsl");
+    tools.remove("redis_python");
+    value["tools"]["redis_server"] = json!({
+        "platform":"windows","path":"D:/tools/redis-server.exe","sha256":"b".repeat(64),
+        "version":"Redis server v=7.4.11 bits=64","dlls":{"msys-2.0.dll":"a".repeat(64)},
+    });
+    value
+}
+
+fn check_independent_measurement(
+    fixture: &Fixture,
+    descriptor: &Value,
+    previous: &Value,
+    successor: &Value,
+) {
+    let compare =
+        |review: &Value| require_independent_b1_disjoint(&fixture.backend, descriptor, review);
+    let template = review(fixture, "measurement", 23000);
+    let root = Path::new(template["future_root"].as_str().unwrap());
+    let candidate = measurement_review(template.clone(), root);
+    let projection = compare(&candidate).unwrap();
+    assert_eq!(
+        projection["scopes"],
+        json!([{"owner":"measurement.candidate","identity":"measurement-candidate"}])
+    );
+    for (field, count) in [
+        ("databases", 4),
+        ("redis", 1),
+        ("objects", 5),
+        ("paths", 5),
+        ("sockets", 6),
+    ] {
+        assert_eq!(projection[field].as_array().unwrap().len(), count);
+    }
+
+    let mut duplicate = candidate;
+    let previous_database = &previous["scopes"]["base"]["databases"][0];
+    let database = &mut duplicate["scopes"]["candidate"]["databases"][0];
+    assert_eq!(
+        database["expected_server_uuid"],
+        previous_database["expected_server_uuid"]
+    );
+    database["database"] = json!(
+        previous_database["database"]
+            .as_str()
+            .unwrap()
+            .to_ascii_uppercase()
+    );
+    assert_eq!(
+        compare(&duplicate).unwrap_err().to_string(),
+        "successor 资源与历史计划发生碰撞"
+    );
+
+    let nested = Path::new(successor["future_root"].as_str().unwrap()).join("measurement");
+    assert_eq!(
+        compare(&measurement_review(template, &nested))
+            .unwrap_err()
+            .to_string(),
+        "successor 路径与历史计划重叠"
+    );
 }
 
 fn reject_modified_candidate_request(

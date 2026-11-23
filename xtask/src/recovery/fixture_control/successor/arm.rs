@@ -14,6 +14,9 @@ use crate::{
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
+const SUCCESSOR_KIND: &str = "devex-clone-seed-successor-arm-input";
+const INDEPENDENT_B1_KIND: &str = "devex-clone-seed-independent-b1-arm-input";
+
 #[derive(PartialEq)]
 struct Observation {
     request: Value,
@@ -41,8 +44,14 @@ pub(in crate::recovery::fixture_control) fn run(
 }
 
 fn summary(request: &Value, side: &str, written: bool) -> Result<Value> {
+    let status = match (request["kind"] == INDEPENDENT_B1_KIND, written) {
+        (true, true) => "independent_b1_arm_request_published",
+        (true, false) => "independent_b1_arm_request_planned",
+        (false, true) => "successor_arm_request_published",
+        (false, false) => "successor_arm_request_planned",
+    };
     Ok(json!({
-        "status":if written {"successor_arm_request_published"} else {"successor_arm_request_planned"},
+        "status":status,
         "request_sha256":digest::plan_hash(request)?,"side":side,"remote_writes":0,
     }))
 }
@@ -58,6 +67,9 @@ fn build(backend: &Path, options: &FixtureSuccessorArm) -> Result<Observation> {
     if !matches!(side, "base" | "candidate") {
         return Err("successor arm 只能选择 base 或 candidate".into());
     }
+    if options.independent_b1 && side != "candidate" {
+        return Err("独立 B1 ARM 只能选择 candidate".into());
+    }
     let successor = file_binding(backend, &options.successor, "arm 审阅关系")?;
     let export = file_binding(backend, &options.source_export_result, "arm 共享导出结果")?;
     let source = published::verified(backend, &export, Some(&successor))?;
@@ -70,14 +82,28 @@ fn build(backend: &Path, options: &FixtureSuccessorArm) -> Result<Observation> {
         return Err("successor arm 缺少原 seed、显式重绑定或已发布代次".into());
     }
     let bridges = document::array(&source.source["manifest"]["build_bridges"], "arm 构建桥接")?;
-    let target = arm_target::observe(
-        backend,
-        &options.workspace,
-        side,
-        relation,
-        &source.source["request"]["source"],
-        bridges,
-    )?;
+    let source_scope = &source.source["request"]["source"];
+    let (target, review) = if options.independent_b1 {
+        let (target, review) = arm_target::observe_independent_b1(
+            backend,
+            &options.workspace,
+            &successor,
+            source_scope,
+            bridges,
+            false,
+        )?;
+        (target, Some(review))
+    } else {
+        let target = arm_target::observe(
+            backend,
+            &options.workspace,
+            side,
+            relation,
+            source_scope,
+            bridges,
+        )?;
+        (target, None)
+    };
     let copy = crate::local_test_path::validate_local_test_path(
         &options.copy_directory,
         backend,
@@ -85,7 +111,7 @@ fn build(backend: &Path, options: &FixtureSuccessorArm) -> Result<Observation> {
     )?;
     source.check(backend)?;
     let request = json!({
-        "format_version":1, "kind":"devex-clone-seed-successor-arm-input",
+        "format_version":1, "kind":null,
         "source_registration":source.identity["source_registration"], "review_successor":successor,
         "source_export":source.identity["export"], "source_export_result":export,
         "source_rebind":source.identity["source_rebind"], "source_generation":source.identity["source_generation"],
@@ -95,12 +121,25 @@ fn build(backend: &Path, options: &FixtureSuccessorArm) -> Result<Observation> {
         "build_bridges":bridges,
     });
     Ok(Observation {
-        request,
+        request: request_with_mode(request, review),
         export_identity: source.identity,
         source_state: source.state,
         target_generation: target.generation,
         target_state: target.state,
     })
+}
+
+fn request_with_mode(mut request: Value, review: Option<arm_target::IndependentB1Review>) -> Value {
+    let kind = match review {
+        Some(review) => {
+            request["independent_b1_review"] = review.binding;
+            request["independent_b1_collision_projection"] = review.collision_projection;
+            INDEPENDENT_B1_KIND
+        }
+        None => SUCCESSOR_KIND,
+    };
+    request["kind"] = json!(kind);
+    request
 }
 
 pub(super) fn file_binding(backend: &Path, path: &Path, label: &str) -> Result<Value> {
@@ -123,4 +162,47 @@ fn arm_request_summary_keeps_the_existing_safe_fields() {
     let mut published = planned;
     published["status"] = json!("successor_arm_request_published");
     assert_eq!(summary(&request, "base", true).unwrap(), published);
+}
+
+#[cfg(test)]
+#[test]
+fn independent_b1_request_binds_review_and_original_evidence() {
+    let common = json!({"format_version":1,"kind":null,"id":"arm-candidate",
+        "source_export_result":{"path":"same-published-export"},
+        "review_successor":{"path":"original-relationship"},
+        "target_registration":{"path":"new-target"}});
+    let mut expected = common.clone();
+    expected["kind"] = json!(SUCCESSOR_KIND);
+    assert_eq!(
+        serde_json::to_vec(&request_with_mode(common.clone(), None)).unwrap(),
+        serde_json::to_vec(&expected).unwrap()
+    );
+
+    let binding = json!({"path":"independent-review","bytes":20,"sha256":"a".repeat(64),
+        "canonical_sha256":"b".repeat(64)});
+    let projection =
+        json!({"scopes":[{"owner":"measurement.candidate","identity":"candidate-scope"}]});
+    expected["kind"] = json!(INDEPENDENT_B1_KIND);
+    expected["independent_b1_review"] = binding.clone();
+    expected["independent_b1_collision_projection"] = projection.clone();
+    let request = request_with_mode(
+        common,
+        Some(arm_target::IndependentB1Review {
+            binding,
+            collision_projection: projection,
+        }),
+    );
+    assert_eq!(request, expected);
+    for (written, status) in [
+        (false, "independent_b1_arm_request_planned"),
+        (true, "independent_b1_arm_request_published"),
+    ] {
+        assert_eq!(
+            summary(&request, "candidate", written).unwrap(),
+            json!({
+                "status":status,"request_sha256":digest::plan_hash(&request).unwrap(),
+                "side":"candidate","remote_writes":0,
+            })
+        );
+    }
 }

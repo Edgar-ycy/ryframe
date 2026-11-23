@@ -125,7 +125,7 @@ fn generation(args: &[String]) -> Result<FixtureSuccessorCommand, CliError> {
 }
 
 fn arm(args: &[String]) -> Result<FixtureSuccessorCommand, CliError> {
-    let options = ParsedOptions::parse(
+    let (options, independent_b1) = ParsedOptions::parse_with_switch(
         args,
         &[
             "--successor",
@@ -136,7 +136,13 @@ fn arm(args: &[String]) -> Result<FixtureSuccessorCommand, CliError> {
             "--copy-directory",
             "--output",
         ],
+        Some("--independent-b1"),
     )?;
+    if independent_b1 && options.require("--side")? != "candidate" {
+        return Err(CliError::new(
+            "--independent-b1 必须与 --side candidate 一起使用",
+        ));
+    }
     let output = paired_output(&options, "successor arm-request")?;
     Ok(FixtureSuccessorCommand::ArmRequest(FixtureSuccessorArm {
         successor: input(&options, "--successor")?,
@@ -144,6 +150,7 @@ fn arm(args: &[String]) -> Result<FixtureSuccessorCommand, CliError> {
         workspace: options.path("--workspace", LocalTestPathKind::ExistingDirectory)?,
         id: valid_copy_name(options.require("--id")?, "--id")?,
         side: parse_side(options.require("--side")?, false)?,
+        independent_b1,
         copy_directory: new_directory(options.require("--copy-directory")?, "--copy-directory")?,
         output,
     }))

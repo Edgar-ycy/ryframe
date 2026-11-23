@@ -5,6 +5,7 @@ use crate::{
     cli::CloneSide,
     recovery::clone::native::{
         bridge::{self, scope::Scope},
+        cache::binding::source::relationship,
         digest, json as document,
         lifecycle::manifest::{self, fixture_storage},
         maintenance,
@@ -12,6 +13,7 @@ use crate::{
         target_verify::{self, fresh, guard::Inputs, input::request},
     },
     recovery::fixture_control::services::lifecycle::query,
+    recovery::inputs::{document::bound_file as bound_document, target::validate_b1_measurement},
 };
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, path::Path};
@@ -25,6 +27,12 @@ pub(in crate::recovery) struct Target {
     pub(in crate::recovery) generation: Value,
     pub(in crate::recovery) state: Value,
     pub(in crate::recovery) side: String,
+}
+
+#[derive(PartialEq)]
+pub(in crate::recovery) struct IndependentB1Review {
+    pub(in crate::recovery) binding: Value,
+    pub(in crate::recovery) collision_projection: Value,
 }
 
 pub(super) fn observe(
@@ -46,6 +54,26 @@ pub(super) fn observe(
         bridges,
         false,
     )
+    .map(|(target, _)| target)
+}
+
+pub(in crate::recovery) fn observe_independent_b1(
+    backend: &Path,
+    workspace: &Path,
+    relationship: &Value,
+    source: &Value,
+    bridges: &[Value],
+    live: bool,
+) -> Result<(Target, IndependentB1Review)> {
+    let (target, review) = observe_target(
+        backend,
+        workspace,
+        Selection::IndependentB1 { relationship },
+        source,
+        bridges,
+        live,
+    )?;
+    Ok((target, review.ok_or("独立 B1 ARM 未取得目标审阅绑定")?))
 }
 
 enum Selection<'a> {
@@ -55,6 +83,9 @@ enum Selection<'a> {
     },
     Ordinary {
         seed: &'a Value,
+    },
+    IndependentB1 {
+        relationship: &'a Value,
     },
 }
 
@@ -84,7 +115,7 @@ pub(in crate::recovery) fn for_input(
         }
     };
     let bridges = document::array(&request["build_bridges"], "arm 构建桥接")?;
-    let target = observe_target(
+    let (target, _) = observe_target(
         backend,
         workspace,
         selection,
@@ -109,7 +140,7 @@ fn observe_target(
     source: &Value,
     bridges: &[Value],
     live: bool,
-) -> Result<Target> {
+) -> Result<(Target, Option<IndependentB1Review>)> {
     let workspace = common::local_directory(backend, workspace, "arm 目标工作区")?;
     let registration_path = workspace.join("registration.json");
     let initialized_path = workspace.join("target/initialized.json");
@@ -133,7 +164,8 @@ fn observe_target(
             if prepared["request"] != registered["request"] {
                 return Err("arm 初始化请求不属于原目标登记".into());
             }
-            let side = verify_selection(backend, &target, &registered["request"], selection)?;
+            let (side, review) =
+                verify_selection(backend, &target, &registered["request"], selection)?;
             disjoint(source, &target["target"])?;
             let (generation, state) = storage(
                 backend,
@@ -145,26 +177,32 @@ fn observe_target(
             verify_maintenance(backend, &target, bridges)?;
             common::bound_file(backend, &registered["request"], "arm 原目标请求")?;
             common::bound_file(backend, &environment, "arm 目标环境")?;
-            Ok((generation, state, side))
+            Ok((generation, state, side, review))
         },
     );
     let checked = guard.check();
-    let (generation, state, side) = match (observed, checked) {
+    let (generation, state, side, review) = match (observed, checked) {
         (Ok(value), Ok(())) => value,
         (Err(error), Ok(())) | (Ok(_), Err(error)) => return Err(error),
         (Err(primary), Err(after)) => {
             return Err(format!("{primary}；arm 目标登记后验失败：{after}").into());
         }
     };
-    Ok(Target {
-        registration,
-        initialized,
-        files,
-        environment,
-        generation,
-        state,
-        side,
-    })
+    if let Some(review) = &review {
+        read_independent_b1_review(backend, &review.binding)?;
+    }
+    Ok((
+        Target {
+            registration,
+            initialized,
+            files,
+            environment,
+            generation,
+            state,
+            side,
+        },
+        review,
+    ))
 }
 
 fn read_registration(backend: &Path, workspace: &Path, registration: &Value) -> Result<Value> {
@@ -198,12 +236,12 @@ fn verify_selection(
     target: &Value,
     registration: &Value,
     selection: Selection<'_>,
-) -> Result<String> {
+) -> Result<(String, Option<IndependentB1Review>)> {
     let side = document::text(&target["side"], "arm 目标侧")?;
     if !matches!(side, "base" | "candidate") {
         return Err("arm 目标必须是独立的 base 或 candidate 侧".into());
     }
-    match selection {
+    let review = match selection {
         Selection::Successor {
             relation,
             side: expected,
@@ -213,6 +251,7 @@ fn verify_selection(
                 None => side,
             };
             verify_selected(target, registration, relation, expected)?;
+            None
         }
         Selection::Ordinary { seed } => {
             let seed_review = target_verify::published::request_binding(backend, seed)?;
@@ -220,9 +259,37 @@ fn verify_selection(
             if seed_review["review"] != target_review["review"] {
                 return Err("普通 arm 目标不属于同一 seed 审阅计划".into());
             }
+            None
         }
+        Selection::IndependentB1 { relationship } => {
+            if side != "candidate" {
+                return Err("独立 B1 ARM 目标必须是 candidate 侧".into());
+            }
+            let (_, request) = bound_document(backend, registration, "独立 B1 ARM 原目标请求")?;
+            if request.value != *target {
+                return Err("独立 B1 ARM 观察与原登记目标请求不同".into());
+            }
+            let request = validate_b1_measurement(backend, request, None)?;
+            let binding = &request.document.value["review"];
+            let review = read_independent_b1_review(backend, binding)?;
+            let collision_projection =
+                relationship::require_independent_b1_disjoint(backend, relationship, &review)?;
+            Some(IndependentB1Review {
+                binding: binding.clone(),
+                collision_projection,
+            })
+        }
+    };
+    Ok((side.to_owned(), review))
+}
+
+fn read_independent_b1_review(backend: &Path, binding: &Value) -> Result<Value> {
+    let file = json!({"path":binding["path"],"bytes":binding["bytes"],"sha256":binding["sha256"]});
+    let review = common::read_bound(backend, &file, "独立 B1 ARM 审阅")?;
+    if binding["canonical_sha256"] != digest::plan_hash(&review)? {
+        return Err("独立 B1 ARM 审阅规范摘要不同".into());
     }
-    Ok(side.to_owned())
+    Ok(review)
 }
 
 fn verify_environment(backend: &Path, descriptor: &Value) -> Result<()> {
@@ -352,13 +419,36 @@ mod tests {
         let mut descriptor = raw.clone();
         descriptor["canonical_sha256"] = json!(digest::plan_hash(&target).unwrap());
         let relation = json!({"successor_review":review,"requests":{"candidate":descriptor}});
-        verify_selected(&target, &raw, &relation, "candidate").unwrap();
+        let (side, independent) = verify_selection(
+            Path::new("."),
+            &target,
+            &raw,
+            Selection::Successor {
+                relation: &relation,
+                side: Some("candidate"),
+            },
+        )
+        .unwrap();
+        assert_eq!(side, "candidate");
+        assert!(independent.is_none());
         let mut wrong = raw.clone();
         wrong["sha256"] = json!("other");
         assert!(verify_selected(&target, &wrong, &relation, "candidate").is_err());
         let mut wrong = target.clone();
         wrong["side"] = json!("base");
         assert!(verify_selected(&wrong, &raw, &relation, "candidate").is_err());
+        let rejected = verify_selection(
+            Path::new("."),
+            &wrong,
+            &raw,
+            Selection::IndependentB1 {
+                relationship: &relation,
+            },
+        );
+        assert_eq!(
+            rejected.err().unwrap().to_string(),
+            "独立 B1 ARM 目标必须是 candidate 侧"
+        );
         wrong = target.clone();
         wrong["review"]["sha256"] = json!("other");
         assert!(verify_selected(&wrong, &raw, &relation, "candidate").is_err());
@@ -370,5 +460,59 @@ mod tests {
         source["databases"][0]["server_uuid"] = json!("secondary");
         source["scope_id"] = json!("target-side");
         assert!(disjoint(&source, &target["target"]).is_err());
+    }
+
+    #[test]
+    fn independent_b1_rejects_an_observation_other_than_the_bound_request() {
+        let backend = crate::workspace::root_dir();
+        let local = backend.join(".local-tests");
+        std::fs::create_dir_all(&local).unwrap();
+        let directory = tempfile::tempdir_in(local).unwrap();
+        let path = directory.path().join("target-request.json");
+        let original = json!({"side":"candidate","id":"original"});
+        document::write_new(&path, &original).unwrap();
+        let registered = file_binding(&backend, &path, "独立 B1 测试请求").unwrap();
+        let observed = json!({"side":"candidate","id":"another"});
+        let rejected = verify_selection(
+            &backend,
+            &observed,
+            &registered,
+            Selection::IndependentB1 {
+                relationship: &Value::Null,
+            },
+        );
+        assert_eq!(
+            rejected.err().unwrap().to_string(),
+            "独立 B1 ARM 观察与原登记目标请求不同"
+        );
+    }
+
+    #[test]
+    fn independent_b1_review_rechecks_original_bytes_and_canonical_digest() {
+        let backend = crate::workspace::root_dir();
+        let local = backend.join(".local-tests");
+        std::fs::create_dir_all(&local).unwrap();
+        let directory = tempfile::tempdir_in(local).unwrap();
+        let path = directory.path().join("measurement-review.json");
+        let review =
+            json!({"ready_for_execution":true,"scopes":{"candidate":{"scope_id":"fixture-b1"}}});
+        document::write_new(&path, &review).unwrap();
+        let mut binding = file_binding(&backend, &path, "独立 B1 测试审阅").unwrap();
+        binding["canonical_sha256"] = json!(digest::plan_hash(&review).unwrap());
+        assert_eq!(
+            read_independent_b1_review(&backend, &binding).unwrap(),
+            review
+        );
+
+        let mut wrong = binding.clone();
+        wrong["canonical_sha256"] = json!("a".repeat(64));
+        assert_eq!(
+            read_independent_b1_review(&backend, &wrong)
+                .unwrap_err()
+                .to_string(),
+            "独立 B1 ARM 审阅规范摘要不同"
+        );
+        std::fs::write(&path, serde_json::to_vec(&review).unwrap()).unwrap();
+        assert!(read_independent_b1_review(&backend, &binding).is_err());
     }
 }

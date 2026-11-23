@@ -16,7 +16,13 @@ use crate::{
     Result,
     local_test_path::{LocalTestPathKind, validate_local_test_path},
     recovery::{
-        clone::native::cache::windows_tool,
+        clone::native::{
+            cache::windows_tool,
+            target_verify::input::{
+                request as fresh_request,
+                request_review::{self, Kind},
+            },
+        },
         fixture_control::source_pair::execution::{self, HeldTargetSource},
     },
 };
@@ -38,12 +44,34 @@ pub(super) fn validate_with_source(
     side: &str,
     held: Option<&HeldTargetSource>,
 ) -> Result<TargetRequest> {
-    let fields = super::super::clone::native::target_verify::input::request::fields(&request.value);
-    let object = exact(&request.value, &fields, "新目标请求")?;
-    super::super::clone::native::target_verify::input::request::config_directory(
+    validate_for(backend, request, side, held, Kind::Comparison)
+}
+
+/// 仅供独立 B1 测量入口消费已登记的 fresh candidate 请求。
+pub(in crate::recovery) fn validate_b1_measurement(
+    backend: &Path,
+    request: Document,
+    held: Option<&HeldTargetSource>,
+) -> Result<TargetRequest> {
+    validate_for(
         backend,
-        &request.value,
-    )?;
+        request,
+        "candidate",
+        held,
+        Kind::B1RuntimeMeasurement,
+    )
+}
+
+fn validate_for(
+    backend: &Path,
+    request: Document,
+    side: &str,
+    held: Option<&HeldTargetSource>,
+    kind: Kind,
+) -> Result<TargetRequest> {
+    let fields = fresh_request::fields(&request.value);
+    let object = exact(&request.value, &fields, "新目标请求")?;
+    fresh_request::config_directory(backend, &request.value)?;
     if object.get("format_version") != Some(&Value::from(1))
         || object.get("kind").and_then(Value::as_str) != Some("devex-clone-fresh-target")
     {
@@ -53,22 +81,31 @@ pub(super) fn validate_with_source(
     if object.get("side").and_then(Value::as_str) != Some(side) {
         return Err("arm 目标侧与请求不同".into());
     }
-    let review = read_review(backend, object.get("review").unwrap())?;
+    let review = read_review(backend, object.get("review").unwrap(), kind)?;
     let selected = review
         .value
         .get("scopes")
         .and_then(|scopes| scopes.get(side))
         .cloned()
         .ok_or("必须选择已就绪审阅计划的明确单侧")?;
-    text(
+    let planned_backend = text(
         selected
             .get("backend_dir")
             .ok_or("审阅单侧资源缺少执行后端")?,
         "审阅执行后端",
     )?;
-    validate_review_database_isolation(&review.value)?;
-    validate_target(backend, object.get("target").unwrap(), &selected)?;
-    validate_tools(object.get("tools").unwrap(), &review.value)?;
+    match kind {
+        Kind::Comparison => {
+            validate_review_database_isolation(&review.value)?;
+            validate_target(backend, object.get("target").unwrap(), &selected)?;
+            validate_tools(object.get("tools").unwrap(), &review.value)?;
+        }
+        Kind::B1RuntimeMeasurement => {
+            fresh_request::target(backend, object.get("target").unwrap(), &selected)?;
+            fresh_request::tools(object.get("tools").unwrap(), &review.value)?;
+            fresh_request::reset(&request.value, &selected)?;
+        }
+    }
     exact(
         object.get("storage").unwrap(),
         &["rustfs", "redis"],
@@ -82,6 +119,10 @@ pub(super) fn validate_with_source(
     )?;
     let (execution, execution_binding) =
         execution_backend(backend, object.get("execution_backend"), held)?;
+    if kind == Kind::B1RuntimeMeasurement && planned_backend != execution.to_string_lossy().as_ref()
+    {
+        return Err("B1 测量目标执行后端与审阅 candidate 不符".into());
+    }
     request.assert_unchanged()?;
     review.assert_unchanged()?;
     Ok(TargetRequest {
@@ -92,7 +133,7 @@ pub(super) fn validate_with_source(
     })
 }
 
-fn read_review(backend: &Path, value: &Value) -> Result<Document> {
+fn read_review(backend: &Path, value: &Value, kind: Kind) -> Result<Document> {
     let binding = exact(
         value,
         &["path", "bytes", "sha256", "canonical_sha256"],
@@ -109,7 +150,15 @@ fn read_review(backend: &Path, value: &Value) -> Result<Document> {
     {
         return Err("审阅计划规范摘要不匹配".into());
     }
-    validate_review(&document.value)?;
+    match kind {
+        Kind::Comparison => validate_review(&document.value)?,
+        Kind::B1RuntimeMeasurement => {
+            if Kind::read(&document.value)? != kind {
+                return Err("独立 B1 测量必须绑定已就绪的 B1 测量审阅".into());
+            }
+            request_review::validate(&document.value)?;
+        }
+    }
     Ok(document)
 }
 

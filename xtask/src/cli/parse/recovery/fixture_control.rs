@@ -54,8 +54,17 @@ pub(super) struct ParsedOptions {
 
 impl ParsedOptions {
     pub(super) fn parse(args: &[String], allowed: &[&str]) -> Result<Self, CliError> {
+        Self::parse_with_switch(args, allowed, None).map(|(options, _)| options)
+    }
+
+    fn parse_with_switch(
+        args: &[String],
+        allowed: &[&str],
+        switch: Option<&str>,
+    ) -> Result<(Self, bool), CliError> {
         let mut values = BTreeMap::new();
         let mut write = false;
+        let mut switched = false;
         let mut index = 0;
         while index < args.len() {
             let name = args[index].as_str();
@@ -64,6 +73,14 @@ impl ParsedOptions {
                     return Err(CliError::new("--write 不能重复"));
                 }
                 write = true;
+                index += 1;
+                continue;
+            }
+            if switch == Some(name) {
+                if switched {
+                    return Err(CliError::new(format!("{name} 不能重复")));
+                }
+                switched = true;
                 index += 1;
                 continue;
             }
@@ -79,7 +96,7 @@ impl ParsedOptions {
             }
             index += 2;
         }
-        Ok(Self { values, write })
+        Ok((Self { values, write }, switched))
     }
 
     pub(super) fn require(&self, name: &str) -> Result<&str, CliError> {

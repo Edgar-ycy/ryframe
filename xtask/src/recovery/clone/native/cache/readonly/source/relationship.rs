@@ -1,6 +1,6 @@
 //! 重建三侧 successor 的全部绑定与碰撞投影，不接受收据自身摘要作为来源证明。
 use super::*;
-use crate::recovery::clone::native::lifecycle::manifest;
+use crate::recovery::clone::native::{lifecycle::manifest, target_verify::input::request_review};
 use std::{collections::BTreeSet, path::PathBuf};
 
 const SIDES: [&str; 3] = ["seed", "base", "candidate"];
@@ -221,8 +221,31 @@ fn requests(backend: &Path, value: &Value) -> Result<()> {
 }
 
 fn projection(previous: &Value, current: &Value) -> Result<Value> {
-    let before = side_projection(previous, "predecessor")?;
-    let after = side_projection(current, "successor")?;
+    let before = side_projection(previous, "predecessor", &SIDES)?;
+    let after = side_projection(current, "successor", &SIDES)?;
+    require_disjoint(&before, &after)?;
+    Ok(json!({"predecessor":before,"successor":after}))
+}
+
+/// 调用方先核验独立目标引用的审阅文件绑定，再对照原关系的两套保留资源。
+pub(in crate::recovery) fn require_independent_b1_disjoint(
+    backend: &Path,
+    descriptor: &Value,
+    review: &Value,
+) -> Result<Value> {
+    if request_review::Kind::read(review)? != request_review::Kind::B1RuntimeMeasurement {
+        return Err("独立 B1 ARM 必须使用单侧测量审阅".into());
+    }
+    request_review::validate(review)?;
+    let original = load(backend, descriptor)?;
+    let candidate = side_projection(review, "measurement", &["candidate"])?;
+    for role in ["predecessor", "successor"] {
+        require_disjoint(&original["collision_projection"][role], &candidate)?;
+    }
+    Ok(candidate)
+}
+
+fn require_disjoint(before: &Value, after: &Value) -> Result<()> {
     for field in ["scopes", "databases", "redis", "objects", "sockets"] {
         let existing = document::array(&before[field], "原碰撞投影")?
             .iter()
@@ -243,13 +266,13 @@ fn projection(previous: &Value, current: &Value) -> Result<Value> {
             }
         }
     }
-    Ok(json!({"predecessor":before,"successor":after}))
+    Ok(())
 }
 
-fn side_projection(review: &Value, label: &str) -> Result<Value> {
+fn side_projection(review: &Value, label: &str, sides: &[&str]) -> Result<Value> {
     let mut result =
         json!({"scopes":[],"databases":[],"redis":[],"objects":[],"paths":[],"sockets":[]});
-    for side in SIDES {
+    for &side in sides {
         let selected = &review["scopes"][side];
         let owner = format!("{label}.{side}");
         let scope = document::text(&selected["scope_id"], "资源 scope")?;

@@ -46,6 +46,7 @@ pub(crate) struct FixtureSuccessorArm {
     pub(crate) workspace: PathBuf,
     pub(crate) id: String,
     pub(crate) side: FixtureSide,
+    pub(crate) independent_b1: bool,
     pub(crate) copy_directory: PathBuf,
     pub(crate) output: Option<PathBuf>,
 }
