@@ -3,8 +3,9 @@ use std::path::Path;
 use serde_json::{Value, json};
 
 use super::{
-    document::{digest, exact, hash, text},
+    document::{digest, exact, text},
     domain::{hash_40, identifier, scope_identifier, timestamp},
+    product_record::product_hash,
     target_plan,
 };
 use crate::{Result, cli::BindingsInputOptions};
@@ -33,7 +34,8 @@ pub(crate) fn build(backend: &Path, options: &BindingsInputOptions) -> Result<Va
     )?;
     let product = target.get("product_plan").ok_or("目标计划缺少产品计划")?;
     if record_value.get("plan") != Some(product)
-        || record_value.get("plan_hash").and_then(Value::as_str) != Some(hash(product)?.as_str())
+        || record_value.get("plan_hash").and_then(Value::as_str)
+            != Some(product_hash(product)?.as_str())
     {
         return Err("运行绑定的产品计划、备份或数据核验记录不一致".into());
     }

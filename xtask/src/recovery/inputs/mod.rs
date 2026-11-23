@@ -19,6 +19,7 @@ mod fresh;
 pub(in crate::recovery) mod independent_b1;
 pub(in crate::recovery) mod inventory;
 pub(crate) mod product;
+pub(crate) mod product_record;
 pub(crate) mod publish;
 pub(crate) mod reference;
 pub(crate) mod reference_configuration;

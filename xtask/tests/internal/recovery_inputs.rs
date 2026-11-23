@@ -112,6 +112,10 @@ fn reference_product_and_bindings_native_chains_succeed() {
 
     let bindings = bindings::build(&fixture.backend, &fixture.bindings_options(None)).unwrap();
     assert_eq!(bindings["record"], read_json(&fixture.record));
+    assert_ne!(
+        bindings["record"]["plan_hash"],
+        read_json(&fixture.target_plan)["product_plan_sha256"]
+    );
     assert_eq!(bindings["manifest"]["id"], reference["id"]);
     assert_eq!(bindings["manifest"]["source_sha"], "a".repeat(40));
 
@@ -523,17 +527,27 @@ fn read_json(path: &std::path::Path) -> Value {
 }
 
 #[test]
-fn bindings_reject_a_different_explicit_backup_and_unverified_record() {
+fn bindings_reject_mismatched_backup_status_and_digest() {
     let fixture = Fixture::new();
     let other = fixture.root.join("other-backup.json");
     fs::copy(&fixture.backup_receipt, &other).unwrap();
     let mut options = fixture.bindings_options(None);
     options.backup_receipt = other;
     assert!(bindings::build(&fixture.backend, &options).is_err());
-    let mut record = read_json(&fixture.record);
+    let original = read_json(&fixture.record);
+    let mut record = original.clone();
     record["status"] = Value::String("started".into());
     fs::write(&fixture.record, serde_json::to_vec(&record).unwrap()).unwrap();
-    assert!(bindings::build(&fixture.backend, &fixture.bindings_options(None)).is_err());
+    let options = fixture.bindings_options(None);
+    assert!(bindings::build(&fixture.backend, &options).is_err());
+
+    let mut record = original;
+    record["plan_hash"] = read_json(&fixture.target_plan)["product_plan_sha256"].clone();
+    fs::write(&fixture.record, serde_json::to_vec(&record).unwrap()).unwrap();
+    let error = bindings::build(&fixture.backend, &options)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("运行绑定的产品计划、备份或数据核验记录不一致"));
 }
 
 #[test]

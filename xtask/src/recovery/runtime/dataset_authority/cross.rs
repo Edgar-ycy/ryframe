@@ -4,7 +4,10 @@ use crate::{
     Result,
     recovery::{
         clone::native::json as strict,
-        inputs::document::{self, Document},
+        inputs::{
+            document::{self, Document},
+            product_record::product_hash,
+        },
     },
 };
 use serde_json::{Value, json};
@@ -77,8 +80,12 @@ pub(in crate::recovery::runtime) fn start_authority(
         "恢复 bindings 未绑定同一已核验产品计划及唯一备份",
     )?;
     check(
-        record["plan_hash"] == target["product_plan_sha256"],
+        record["plan_hash"] == product_hash(product)?,
         "恢复记录计划摘要与已核验产品计划不同",
+    )?;
+    check(
+        target["product_plan_sha256"] == document::hash(product)?,
+        "目标计划的产品文档摘要不同",
     )?;
     let execution = &target["product_execution"];
     check(

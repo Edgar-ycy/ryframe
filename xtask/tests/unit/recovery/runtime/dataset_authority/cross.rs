@@ -1,5 +1,16 @@
 use super::*;
+use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, fs, path::Path};
+
+// 产品 RestorePlan、RestoreDatabase 声明顺序的 JSON，包含微秒与数据库映射。
+const PRODUCT_PLAN_JSON: &str = concat!(
+    r#"{"id":"restore-arm","backup_id":"formal-backup","scope_id":"arm-b1","fault_at":"2026-11-09T03:00:00.123456Z","#,
+    r#""databases":[{"source_key":"shared-control","target_key":"shared-control","#,
+    r#""server_uuid":"11111111-1111-4111-8111-111111111111","database":"ryframe_b1_control"}],"#,
+    r#""object_endpoint":"http://127.0.0.1:19000","object_prefix":"arm-b1/","#,
+    r#""api_ready_url":"http://127.0.0.1:17001/readyz","worker_ready_url":"http://127.0.0.1:17002/readyz","#,
+    r#""frontend_sha":"dddddddddddddddddddddddddddddddddddddddd"}"#,
+);
 
 struct Fixture {
     bindings: Value,
@@ -10,15 +21,9 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let product = json!({
-            "id":"restore-arm", "backup_id":"formal-backup", "scope_id":"arm-b1",
-            "fault_at":"2026-11-09T11:00:00+08:00", "databases":[],
-            "object_endpoint":"http://127.0.0.1:19000", "object_prefix":"arm-b1/",
-            "api_ready_url":"http://127.0.0.1:17001/readyz",
-            "worker_ready_url":"http://127.0.0.1:17002/readyz",
-            "frontend_sha":"d".repeat(40),
-        });
-        let plan_hash = document::hash(&product).unwrap();
+        let product: Value = serde_json::from_str(PRODUCT_PLAN_JSON).unwrap();
+        let plan_hash = hex::encode(Sha256::digest(PRODUCT_PLAN_JSON.as_bytes()));
+        let product_plan_sha256 = document::hash(&product).unwrap();
         let manifest = json!({
             "id":"formal-backup", "source_sha":"a".repeat(40),
             "captured_at":"2026-11-09T10:30:00+08:00", "objects":[],
@@ -34,7 +39,7 @@ impl Fixture {
                 "manifest":manifest,
             }),
             target: json!({
-                "product_plan":product, "product_plan_sha256":plan_hash,
+                "product_plan":product, "product_plan_sha256":product_plan_sha256,
                 "product_execution":{
                     "backend_product_sha":"b".repeat(40), "backend_execution_sha":"b".repeat(40),
                     "frontend_sha":"d".repeat(40), "adapter":null,
@@ -152,7 +157,7 @@ fn start_authority_preserves_the_complete_v2_projection_for_ordinary_and_b0() {
     let mut expected = json!({
         "format_version":2, "kind":"restore-runtime-authority",
         "restore_id":"restore-arm", "backup_id":"formal-backup", "scope_id":"arm-b1",
-        "plan_hash":fixture.target["product_plan_sha256"],
+        "plan_hash":fixture.bindings["record"]["plan_hash"],
         "data_verified_at":"2026-11-09T11:12:00+08:00",
         "backup_source_sha":"a".repeat(40),
         "backend_product_sha":"b".repeat(40), "backend_execution_sha":"b".repeat(40),
@@ -161,6 +166,7 @@ fn start_authority_preserves_the_complete_v2_projection_for_ordinary_and_b0() {
         "worker_endpoint":"http://127.0.0.1:17002/readyz",
         "frontend_endpoint":"http://127.0.0.1:17003",
     });
+    assert_ne!(expected["plan_hash"], fixture.target["product_plan_sha256"]);
     assert_eq!(fixture.authority().unwrap(), expected);
 
     let execution = &mut fixture.target["product_execution"];
@@ -169,6 +175,29 @@ fn start_authority_preserves_the_complete_v2_projection_for_ordinary_and_b0() {
     expected["backend_execution_sha"] = json!("c".repeat(40));
     expected["backend_adapter_contract"] = json!("legacy-stable-readiness-b0-v1");
     assert_eq!(fixture.authority().unwrap(), expected);
+}
+
+#[test]
+fn start_authority_validates_the_product_and_target_document_digests_separately() {
+    let mut fixture = Fixture::new();
+    fixture.bindings["record"]["plan_hash"] = fixture.target["product_plan_sha256"].clone();
+    assert!(
+        fixture
+            .authority()
+            .unwrap_err()
+            .to_string()
+            .contains("恢复记录计划摘要与已核验产品计划不同")
+    );
+
+    let mut fixture = Fixture::new();
+    fixture.target["product_plan_sha256"] = fixture.bindings["record"]["plan_hash"].clone();
+    assert!(
+        fixture
+            .authority()
+            .unwrap_err()
+            .to_string()
+            .contains("目标计划的产品文档摘要不同")
+    );
 }
 
 #[test]

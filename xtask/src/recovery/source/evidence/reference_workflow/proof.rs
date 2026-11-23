@@ -1,12 +1,11 @@
 use std::collections::BTreeSet;
 
 use chrono::{DateTime, Utc};
-use serde::Serialize;
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 
 use super::{exact, inputs, native, text};
 use crate::Result;
+pub(super) use crate::recovery::inputs::product_record::product_hash;
 
 pub(in crate::recovery) fn backup_source(args: &Value) -> Result<Value> {
     exact(
@@ -83,60 +82,6 @@ pub(super) fn backup_result(args: &Value) -> Result<Value> {
         return Err("正式备份结果版本、类型或产物数量无效".into());
     }
     Ok(Value::Bool(true))
-}
-
-#[derive(Serialize)]
-struct OrderedPlan<'a> {
-    id: &'a Value,
-    backup_id: &'a Value,
-    scope_id: &'a Value,
-    fault_at: &'a Value,
-    databases: Vec<OrderedDatabase<'a>>,
-    object_endpoint: &'a Value,
-    object_prefix: &'a Value,
-    api_ready_url: &'a Value,
-    worker_ready_url: &'a Value,
-    frontend_sha: &'a Value,
-}
-
-#[derive(Serialize)]
-struct OrderedDatabase<'a> {
-    source_key: &'a Value,
-    target_key: &'a Value,
-    server_uuid: &'a Value,
-    database: &'a Value,
-}
-
-pub(super) fn product_hash(value: &Value) -> Result<String> {
-    exact(value, &inputs::domain::product_fields())?;
-    let databases = native::json::array(&value["databases"], "产品数据库")?
-        .iter()
-        .map(|database| {
-            exact(
-                database,
-                &["source_key", "target_key", "server_uuid", "database"],
-            )?;
-            Ok(OrderedDatabase {
-                source_key: &database["source_key"],
-                target_key: &database["target_key"],
-                server_uuid: &database["server_uuid"],
-                database: &database["database"],
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let ordered = OrderedPlan {
-        id: &value["id"],
-        backup_id: &value["backup_id"],
-        scope_id: &value["scope_id"],
-        fault_at: &value["fault_at"],
-        databases,
-        object_endpoint: &value["object_endpoint"],
-        object_prefix: &value["object_prefix"],
-        api_ready_url: &value["api_ready_url"],
-        worker_ready_url: &value["worker_ready_url"],
-        frontend_sha: &value["frontend_sha"],
-    };
-    Ok(hex::encode(Sha256::digest(serde_json::to_vec(&ordered)?)))
 }
 
 pub(super) fn record(args: &Value) -> Result<Value> {

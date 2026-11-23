@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use super::cli::{
     ProductInputOptions, ReferenceInputOptions, RestoreInputPublication, RestoreInputSide,
 };
-use super::recovery::inputs::{product, reference};
+use super::recovery::inputs::{product, product_record::product_hash, reference};
 use crate::clone_arm_storage::arm_storage_bindings;
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
 
@@ -457,7 +457,7 @@ fn prepare_outputs(
         "record.json",
         &json!({
             "plan": product_value,
-            "plan_hash": hash(&product_value),
+            "plan_hash": product_hash(&product_value).unwrap(),
             "status": "data_verified",
             "started_at": now(),
             "data_verified_at": now(),
