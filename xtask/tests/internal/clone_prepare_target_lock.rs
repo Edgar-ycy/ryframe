@@ -115,7 +115,19 @@ fn real_prepare_interruption_recovers_the_original_target_lock_on_the_same_run()
         original_id,
         &recovery,
     );
+    verify_next_prepare(&fixture, &target, &observation, &original_lock, original_id);
+    for (path, bytes) in original {
+        assert_eq!(fs::read(&path).unwrap(), bytes, "{}", path.display());
+    }
+}
 
+fn verify_next_prepare(
+    fixture: &Fixture,
+    target: &Path,
+    observation: &Path,
+    original_lock: &Path,
+    original_id: (u64, u64),
+) {
     let archive = observation.with_extension("original-empty-lock");
     let probe = stage::run_named(
         &fixture.backend,
@@ -123,7 +135,7 @@ fn real_prepare_interruption_recovers_the_original_target_lock_on_the_same_run()
         "post-copy",
         "prepare",
         &Next {
-            target: &target,
+            target,
             original_id,
         },
     )
@@ -147,9 +159,6 @@ fn real_prepare_interruption_recovers_the_original_target_lock_on_the_same_run()
     assert!(!original_lock.exists());
     assert!(!fixture.run.join("post-copy/runtime").exists());
     assert!(!fixture.run.join("post-copy/runtime-configuration").exists());
-    for (path, bytes) in original {
-        assert_eq!(fs::read(&path).unwrap(), bytes, "{}", path.display());
-    }
 }
 
 fn recover_interrupted(

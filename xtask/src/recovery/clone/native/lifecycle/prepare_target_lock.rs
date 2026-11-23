@@ -392,4 +392,5 @@ fn require_unwritten(
 }
 
 #[cfg(test)]
+#[path = "../../../../../tests/unit/recovery/clone/native/lifecycle/prepare_target_lock.rs"]
 mod tests;

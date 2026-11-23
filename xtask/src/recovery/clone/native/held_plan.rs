@@ -225,4 +225,5 @@ fn declared_artifacts(objects: &Value) -> Result<BTreeMap<String, digest::FileDi
 }
 
 #[cfg(all(test, windows))]
+#[path = "../../../../tests/unit/recovery/clone/native/held_plan.rs"]
 mod tests;

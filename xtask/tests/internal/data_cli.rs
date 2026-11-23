@@ -394,7 +394,7 @@ impl RestoreRunner {
 }
 
 #[test]
-fn parses_every_restore_operation_into_typed_requests() {
+fn parses_restore_begin_and_verify_into_typed_requests() {
     let fixture = DataFixture::new();
     let config = fixture.path("config");
     let plan = fixture.path("plan.json");
@@ -404,7 +404,6 @@ fn parses_every_restore_operation_into_typed_requests() {
     let runtime = fixture.path("runtime.json");
     let maintenance_root = fixture.path("config");
     let maintenance_build = fixture.path("build.json");
-    let data_output = fixture.path("output/data.json");
     let runner = RestoreRunner::new();
     assert_eq!(
         command(&[
@@ -430,42 +429,15 @@ fn parses_every_restore_operation_into_typed_requests() {
         Command::Data(DataCommand::Restore(RestoreCommand::Begin(Box::new(
             RestoreBeginOptions {
                 plan: plan.into(),
-                backup_root: backup.clone().into(),
+                backup_root: backup.into(),
                 target_plan: target.into(),
                 runtime_registration: runtime.into(),
-                maintenance_root: maintenance_root.clone().into(),
+                maintenance_root: maintenance_root.into(),
                 maintenance_build: maintenance_build.into(),
                 output: running.into(),
                 copy: None,
             }
         ))))
-    );
-    assert_eq!(
-        command(&[
-            "data",
-            "restore",
-            "verify-data",
-            "--id",
-            "drill-1",
-            "--backup-root",
-            &backup,
-            "--output",
-            &data_output,
-            "--config-dir",
-            &maintenance_root,
-            "--restore-config-dir",
-            &config,
-            "--write",
-        ]),
-        Command::Data(DataCommand::Restore(RestoreCommand::VerifyData(
-            RestoreDataOptions {
-                id: "drill-1".into(),
-                backup_root: backup.into(),
-                output: data_output.into(),
-                config_dir: Some(maintenance_root.into()),
-                restore_config_dir: config.clone().into(),
-            }
-        )))
     );
     let mut expected = RestoreVerifyOptions {
         id: RESTORE_ID.into(),
@@ -498,6 +470,43 @@ fn parses_every_restore_operation_into_typed_requests() {
         Command::Data(DataCommand::Restore(RestoreCommand::Verify(Box::new(
             expected
         ))))
+    );
+}
+
+#[test]
+fn parses_restore_verify_data_with_separate_registry_and_target_config() {
+    let fixture = DataFixture::new();
+    let config = fixture.path("config");
+    let backup = fixture.path("backup");
+    let data_output = fixture.path("output/data.json");
+    let registry_config = fixture.path("registry");
+    fs::create_dir(&registry_config).unwrap();
+    assert_eq!(
+        command(&[
+            "data",
+            "restore",
+            "verify-data",
+            "--id",
+            "drill-1",
+            "--backup-root",
+            &backup,
+            "--output",
+            &data_output,
+            "--config-dir",
+            &registry_config,
+            "--restore-config-dir",
+            &config,
+            "--write",
+        ]),
+        Command::Data(DataCommand::Restore(RestoreCommand::VerifyData(
+            RestoreDataOptions {
+                id: "drill-1".into(),
+                backup_root: backup.into(),
+                output: data_output.into(),
+                config_dir: Some(registry_config.into()),
+                restore_config_dir: config.into(),
+            }
+        )))
     );
 }
 

@@ -178,6 +178,7 @@ mod expression;
 mod management;
 mod persistence;
 #[cfg(test)]
+#[path = "../../../tests/unit/jobs/schedule.rs"]
 mod tests;
 
 use expression::*;
