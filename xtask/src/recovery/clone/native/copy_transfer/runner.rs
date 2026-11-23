@@ -1,5 +1,5 @@
 //! 正式复制阶段共用外层生命周期、目标锁及一次持久账本会话。
-use std::fs;
+use std::{fs, path::Path};
 
 use serde_json::{Value, json};
 
@@ -9,7 +9,10 @@ use super::super::{
     copy_owner::Owner,
     export::transport::SystemTransport,
     json as document,
-    lifecycle::stage::{StageRequest, StageRunner},
+    lifecycle::{
+        lock::ProcessGuard,
+        stage::{StageRequest, StageRunner},
+    },
     resources::common,
     target_verify::{database::SourceBinding, guard::Generation, storage::StorageInputs},
 };
@@ -73,25 +76,41 @@ fn continue_copy(stage: &Stage<'_>, storage: &Storage, saved: &Continuation) -> 
     let attempt = Attempt::new(stage.mode, &stage.copy);
     let result = (|| {
         let files = Files::bind(stage.backend, &stage.manifest, &stage.descriptor)?;
-        saved.check()?;
-        let owner = Generation::acquire_copy(Owner::register(
+        with_continuation_owner(
             stage.backend,
             &stage.copy,
-            files.source_export,
-            files.initialized,
-        )?)?;
-        let pre = (|| {
-            saved.check()?;
-            let operation = Operation::load(stage, storage, Some(&owner))?;
-            let data = operation.prepare(Some(saved), Some(&owner))?;
-            Ok((operation, data))
-        })();
-        match pre {
-            Ok((operation, data)) => operation.transfer(owner, &data, &attempt),
-            Err(error) => owner.finish(Err(error)),
-        }
+            &files,
+            saved,
+            |owner| {
+                let operation = Operation::load(stage, storage, Some(owner))?;
+                let data = operation.prepare(Some(saved), Some(owner))?;
+                Ok((operation, data))
+            },
+            |owner, (operation, data)| operation.transfer(owner, &data, &attempt),
+        )
     })();
     attempt.failure(stage.backend, &stage.copy, result, "continuation")
+}
+
+pub(super) fn with_continuation_owner<B, T>(
+    backend: &Path,
+    copy: &Path,
+    files: &Files<'_>,
+    saved: &Continuation,
+    prepare: impl FnOnce(&Generation) -> Result<B>,
+    transfer: impl FnOnce(Generation, B) -> Result<T>,
+) -> Result<T> {
+    saved.check()?;
+    let owner = Generation::acquire_copy(Owner::register(
+        backend,
+        copy,
+        files.source_export,
+        files.initialized,
+    )?)?;
+    match saved.check().and_then(|()| prepare(&owner)) {
+        Ok(prepared) => transfer(owner, prepared),
+        Err(error) => owner.finish(Err(error)),
+    }
 }
 
 struct Operation<'a> {
@@ -329,21 +348,39 @@ impl<'a> Operation<'a> {
         owner: &Generation,
         bound: &Bound,
     ) -> Result<(steps::Outcome, Value)> {
-        let (current, guard, lock) = owner.copy_session()?;
+        let authority = owner.copy_session()?;
         let plan = steps::Plan::from_verified(&bound.prepared.plan)?;
         let window = self.database_window(Some(&bound.prepared.record["source_observation"]));
-        let mut io = io::Live::open(self, bound, &window, owner, current)?;
-        io.verify_target_owners()?;
-        session::run(current, guard, lock, self.stage.mode, |ledger| {
-            let execution = steps::run(&plan, ledger, self.stage.mode, &mut io);
-            let checked = self.source.complete_source_window();
-            match (execution, checked) {
-                (Ok(outcome), Ok(())) => Ok(outcome),
-                (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
-                (Err(error), Err(after)) => {
-                    Err(format!("{error}；运行来源完整后验失败：{after}").into())
-                }
-            }
-        })
+        let mut io = io::Live::open(self, bound, &window, owner, authority.0)?;
+        run_guarded_steps(
+            authority,
+            &plan,
+            self.stage.mode,
+            &mut io,
+            io::Live::verify_target_owners,
+            || self.source.complete_source_window(),
+        )
     }
+}
+
+pub(super) fn run_guarded_steps<I: steps::CopyIo>(
+    (current, guard, lock): (&Owner, &ProcessGuard, &Value),
+    plan: &steps::Plan<'_>,
+    mode: session::Mode,
+    io: &mut I,
+    verify_target_owners: impl FnOnce(&I) -> Result<()>,
+    complete_source_window: impl FnOnce() -> Result<()>,
+) -> Result<(steps::Outcome, Value)> {
+    verify_target_owners(io)?;
+    session::run(current, guard, lock, mode, |ledger| {
+        let execution = steps::run(plan, ledger, mode, io);
+        let checked = complete_source_window();
+        match (execution, checked) {
+            (Ok(outcome), Ok(())) => Ok(outcome),
+            (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+            (Err(error), Err(after)) => {
+                Err(format!("{error}；运行来源完整后验失败：{after}").into())
+            }
+        }
+    })
 }

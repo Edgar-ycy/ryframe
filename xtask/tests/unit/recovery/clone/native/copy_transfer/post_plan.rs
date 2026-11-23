@@ -12,6 +12,9 @@ use crate::recovery::clone::native::{
     seed::source_registration::copied,
 };
 
+#[path = "steps_resume_owner_gate.rs"]
+mod owner_gate;
+
 struct CompletedCopy {
     source: OfflineFixture,
     fixture: Fixture,
@@ -23,6 +26,10 @@ struct CompletedCopy {
 
 impl CompletedCopy {
     fn new() -> Self {
+        Self::with_io().0
+    }
+
+    fn with_io() -> (Self, FixtureIo) {
         let source = OfflineFixture::new();
         let initialized = json!({
             "inventory":{"observations":{"shared-control":{"kind":"database","tables":{},"preserved":{}}}}
@@ -58,14 +65,17 @@ impl CompletedCopy {
         lock.release().unwrap();
         state::finish(&run, number, Some(&result), None).unwrap();
         let outer_result = state::result_path(&run, number);
-        Self {
-            source,
-            fixture,
-            run,
-            manifest,
-            plan: prepared.plan.clone(),
-            outer_result,
-        }
+        (
+            Self {
+                source,
+                fixture,
+                run,
+                manifest,
+                plan: prepared.plan.clone(),
+                outer_result,
+            },
+            io,
+        )
     }
 
     fn require(&self) -> crate::Result<Value> {

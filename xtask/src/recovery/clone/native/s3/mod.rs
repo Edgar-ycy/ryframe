@@ -17,6 +17,7 @@ mod signing;
 pub(in crate::recovery::clone::native) mod tests;
 mod write;
 
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub(crate) struct Configuration {
     endpoint: Url,
     region: String,

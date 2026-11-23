@@ -293,6 +293,8 @@ fn register_original_inputs(
             &source.export,
             json!({
                 "artifact_root":source.export,"evidence":{"generation-after":source_stopped},
+                "scope_id":declaration["source"]["scope_id"],
+                "source":{"s3":{"endpoint":declaration["source"]["object_endpoint"],"region":"us-east-1"}},
                 "databases":declaration["databases"],"objects":declaration["objects"],
             }),
         )
