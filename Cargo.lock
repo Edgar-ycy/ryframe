@@ -3414,7 +3414,6 @@ name = "ryframe-generator"
 version = "0.13.1"
 dependencies = [
  "async-trait",
- "chrono",
  "futures-util",
  "hex",
  "proc-macro2",

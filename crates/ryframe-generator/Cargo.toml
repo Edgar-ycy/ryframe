@@ -38,7 +38,6 @@ proc-macro2 = { workspace = true, features = ["span-locations"] }
 same-file.workspace = true
 futures-util = { workspace = true }
 async-trait = { workspace = true }
-chrono = { workspace = true }
 
 [lints]
 workspace = true
