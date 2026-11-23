@@ -7,7 +7,10 @@ use super::{
     chain::{self, Chain},
     document::{Document, digest, exact, hash, object, text},
     domain::validate_plan,
+    fresh::Fresh,
+    independent_b1::Verified,
     product,
+    target::TargetRequest,
 };
 use crate::Result;
 
@@ -49,16 +52,97 @@ const EXECUTION_FIELDS: [&str; 6] = [
 pub(crate) fn capture(backend: &Path, chain: &Chain, product_document: &Document) -> Result<Value> {
     product::validate_product(chain, &product_document.value)?;
     let result = object(&chain.arm.result.value, "arm 结果")?;
-    let name = match chain.reference.value["target_side"].as_str() {
+    let value = assemble(
+        backend,
+        &PlanInputs {
+            envelope: &chain.reference.value,
+            reference: &chain.reference.value,
+            backup: &chain.backup_document,
+            comparison: &chain.comparison_document,
+            product_arm: chain::source_arm(chain)?,
+            arm_input: super::document::binding(&chain.arm.result),
+            fresh: fresh_bindings(
+                &chain.fresh,
+                &result["initialized"],
+                &result["target_registration"],
+                &result["target_initialized_files"],
+                &result["target_environment"],
+            ),
+            target: &chain.arm.target,
+        },
+        product_document,
+    )?;
+    validate_plan(&chain.reference.value, backend)?;
+    Ok(value)
+}
+
+pub(in crate::recovery) fn capture_independent_b1(
+    backend: &Path,
+    evidence: &Verified<'_>,
+    product_document: &Document,
+) -> Result<Value> {
+    product::validate_independent_product(evidence, &product_document.value)?;
+    let target = evidence.arm.observed_target();
+    assemble(
+        backend,
+        &PlanInputs {
+            envelope: &evidence.envelope.value,
+            reference: &evidence.reference,
+            backup: &evidence.backup_document,
+            comparison: &evidence.comparison_document,
+            product_arm: evidence.product_arm()?,
+            arm_input: evidence.arm.result_binding(),
+            fresh: fresh_bindings(
+                &evidence.fresh,
+                &target.initialized,
+                &target.registration,
+                &target.files,
+                &target.environment,
+            ),
+            target: &evidence.arm.target_request,
+        },
+        product_document,
+    )
+}
+
+fn fresh_bindings(
+    fresh: &Fresh,
+    initialized: &Value,
+    registration: &Value,
+    files: &Value,
+    environment: &Value,
+) -> Value {
+    json!({
+        "verify": fresh.binding,
+        "initialized": initialized,
+        "registration": registration,
+        "initialized_files": files,
+        "environment": environment,
+        "inventory": fresh.inventory,
+        "ownership_sha256": fresh.ownership_sha256,
+    })
+}
+
+struct PlanInputs<'a> {
+    envelope: &'a Value,
+    reference: &'a Value,
+    backup: &'a Document,
+    comparison: &'a Document,
+    product_arm: &'a Value,
+    arm_input: Value,
+    fresh: Value,
+    target: &'a TargetRequest,
+}
+
+fn assemble(backend: &Path, inputs: &PlanInputs<'_>, product_document: &Document) -> Result<Value> {
+    let name = match inputs.reference["target_side"].as_str() {
         Some("base") => "b0",
         Some("candidate") => "b1",
         _ => return Err("参考计划目标侧无效".into()),
     };
-    let source_arm = chain::source_arm(chain)?;
-    let comparison_arm_sha256 = hash(source_arm)?;
+    let comparison_arm_sha256 = hash(inputs.product_arm)?;
     let maintenance_build = object(
-        chain
-            .arm
+        inputs
             .target
             .document
             .value
@@ -66,37 +150,28 @@ pub(crate) fn capture(backend: &Path, chain: &Chain, product_document: &Document
             .ok_or("新目标请求缺少维护构建")?,
         "维护构建",
     )?;
-    let fresh = json!({
-        "verify": chain.fresh.binding,
-        "initialized": result.get("initialized").unwrap(),
-        "registration": result.get("target_registration").unwrap(),
-        "initialized_files": result.get("target_initialized_files").unwrap(),
-        "environment": result.get("target_environment").unwrap(),
-        "inventory": chain.fresh.inventory,
-        "ownership_sha256": chain.fresh.ownership_sha256,
-    });
     let value = json!({
         "format_version": 1,
         "kind": "restore-reference-target-plan",
-        "target_side": chain.reference.value["target_side"],
-        "reference_plan_sha256": hash(&chain.reference.value)?,
-        "backup_receipt": super::document::binding(&chain.backup_document),
-        "comparison_sources": super::document::binding(&chain.comparison_document),
+        "target_side": inputs.reference["target_side"],
+        "reference_plan_sha256": hash(inputs.envelope)?,
+        "backup_receipt": super::document::binding(inputs.backup),
+        "comparison_sources": super::document::binding(inputs.comparison),
         "comparison_arm": name,
         "comparison_arm_sha256": comparison_arm_sha256,
-        "arm_input": super::document::binding(&chain.arm.result),
-        "fresh_target": fresh,
+        "arm_input": inputs.arm_input,
+        "fresh_target": inputs.fresh,
         "maintenance_execution": {
-            "root": chain.arm.target.execution.to_string_lossy(),
-            "binding": chain.arm.target.execution_binding,
+            "root": inputs.target.execution.to_string_lossy(),
+            "binding": inputs.target.execution_binding,
             "build": maintenance_build,
         },
-        "product_execution": chain::product_execution(chain)?,
+        "product_execution": chain::product_execution(inputs.product_arm)?,
         "product_plan_file": super::document::binding(product_document),
         "product_plan": product_document.value,
         "product_plan_sha256": hash(&product_document.value)?,
     });
-    validate_shape(backend, &value, &chain.reference.value)?;
+    validate_shape(backend, &value, inputs.envelope, inputs.reference)?;
     Ok(value)
 }
 
@@ -115,7 +190,8 @@ pub(in crate::recovery) fn verify_with_checks(
     checks: RestoreChecks<'_>,
 ) -> Result<(Chain, Value, Document)> {
     let target = super::document::read(target_path, backend, "目标计划")?;
-    validate_shape(backend, &target.value, &reference.value)?;
+    validate_shape(backend, &target.value, &reference.value, &reference.value)?;
+    validate_plan(&reference.value, backend)?;
     let paths = InputPaths::from(&target.value)?;
     let product_document = super::document::read(&paths.product, backend, "产品恢复计划")?;
     let chain = chain::load_verified(
@@ -137,7 +213,7 @@ pub(in crate::recovery) fn verify_with_checks(
     Ok((chain, expected, product_document))
 }
 
-fn validate_shape(backend: &Path, value: &Value, plan: &Value) -> Result<()> {
+fn validate_shape(backend: &Path, value: &Value, envelope: &Value, plan: &Value) -> Result<()> {
     let target = exact(value, &FIELDS, "目标计划")?;
     let fresh = exact(
         target.get("fresh_target").unwrap(),
@@ -169,7 +245,8 @@ fn validate_shape(backend: &Path, value: &Value, plan: &Value) -> Result<()> {
         || target.get("kind").and_then(Value::as_str) != Some("restore-reference-target-plan")
         || plan.get("target_side").and_then(Value::as_str) != Some(side)
         || target.get("comparison_arm").and_then(Value::as_str) != Some(arm)
-        || target.get("reference_plan_sha256").and_then(Value::as_str) != Some(hash(plan)?.as_str())
+        || target.get("reference_plan_sha256").and_then(Value::as_str)
+            != Some(hash(envelope)?.as_str())
         || target.get("product_plan_sha256").and_then(Value::as_str)
             != Some(hash(target.get("product_plan").unwrap())?.as_str())
     {
@@ -199,7 +276,6 @@ fn validate_shape(backend: &Path, value: &Value, plan: &Value) -> Result<()> {
         super::document::bound_file(backend, descriptor, label)?;
     }
     super::comparison::validate_builds(&value["product_execution"])?;
-    validate_plan(plan, backend)?;
     Ok(())
 }
 
@@ -234,6 +310,57 @@ impl InputPaths {
 mod tests {
     use super::*;
     use crate::recovery::inputs::{document, inventory::HeldArtifacts};
+
+    #[test]
+    fn independent_b1_target_plan_binds_the_complete_reference_envelope() -> Result<()> {
+        let fixture = crate::recovery_inputs_fixture::Fixture::new();
+        let (reference, target) = fixture.candidate_plans();
+        let reference = document::read(&reference, &fixture.backend, "参考计划")?;
+        let (chain, original, product) = verify(&fixture.backend, reference, &target)?;
+        let work = Path::new(text(&chain.reference.value["work_dir"], "参考工作目录")?);
+        assert!(!work.exists());
+        let envelope = json!({
+            "format_version":1, "kind":super::super::reference::INDEPENDENT_B1_KIND,
+            "reference_plan":chain.reference.value, "arm_input":original["arm_input"],
+            "source_export":chain.comparison["source_export"],
+        });
+        // 已有候选夹具只覆盖目标计划投影，不把普通 ARM 装成独立登记。
+        let value = assemble(
+            &fixture.backend,
+            &PlanInputs {
+                envelope: &envelope,
+                reference: &chain.reference.value,
+                backup: &chain.backup_document,
+                comparison: &chain.comparison_document,
+                product_arm: chain::source_arm(&chain)?,
+                arm_input: original["arm_input"].clone(),
+                fresh: original["fresh_target"].clone(),
+                target: &chain.arm.target,
+            },
+            &product,
+        )?;
+        assert_eq!(value["reference_plan_sha256"], hash(&envelope)?);
+        assert_ne!(
+            value["reference_plan_sha256"],
+            original["reference_plan_sha256"]
+        );
+        for field in FIELDS
+            .into_iter()
+            .filter(|field| *field != "reference_plan_sha256")
+        {
+            assert_eq!(value[field], original[field], "{field}");
+        }
+        for field in ["source_export", "arm_input"] {
+            let mut replaced = envelope.clone();
+            replaced[field] = Value::Null;
+            assert!(
+                validate_shape(&fixture.backend, &value, &replaced, &chain.reference.value)
+                    .is_err()
+            );
+        }
+        assert!(!work.exists());
+        Ok(())
+    }
 
     #[test]
     fn held_backup_still_validates_the_original_target_plan_and_source_chain() {

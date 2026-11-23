@@ -129,7 +129,9 @@ seed 的 source-register 由统一 Rust 阶段控制器直接执行。它实际�
 
 用 `cargo xtask check recovery inputs reference --independent-b1 --arm-input <independent-run/result.json> --side candidate --id <backup-id> --work-dir <new-b1-reference-work-dir>` 预览独立 B1 参考计划。追加 `--output <new-b1-reference-plan.json> --write` 可发布计划，输出文件和工作目录须使用不同位置。原运行须已收尾，且请求中的复制目录仍须不存在。工具重新核对独立目标和原共享导出，允许来源账本在原记录逐项保持一致的基础上追加已核验的终态阶段。计划绑定独立 ARM 结果及原共享导出，写入范围限于指定的新计划文件。登记结果保持 `restore_qualified=false`，实际复制须先独占声明请求绑定的复制目录。
 
-取得该独立目标的 `verify.json` 后，用 `cargo xtask check recovery inputs product --reference-plan <b1-reference-plan.json> --backup-receipt <same-backup.json> --comparison-sources <comparison-sources.json> --arm-input <independent-run/result.json> --fresh-target-verify <b1-observation/verify.json> --side candidate --id <restore-id> --fault-at <utc-time>` 预览产品计划。追加 `--output <new-b1-product-plan.json> --write` 可发布。工具按原配置重新生成并核对参考计划，要求原独立 ARM、正式备份和双版本来源绑定同一共享导出。产品前端提交取自原比较清单的 B1，物理目标和探针取自独立登记。复制目录继续保持未创建。此步骤只形成产品计划，正式目标计划核验、恢复写入和业务验收仍需后续接线与验证。
+取得该独立目标的 `verify.json` 后，用 `cargo xtask check recovery inputs product --reference-plan <b1-reference-plan.json> --backup-receipt <same-backup.json> --comparison-sources <comparison-sources.json> --arm-input <independent-run/result.json> --fresh-target-verify <b1-observation/verify.json> --side candidate --id <restore-id> --fault-at <utc-time>` 预览产品计划。追加 `--output <new-b1-product-plan.json> --write` 可发布。工具按原配置重新生成并核对参考计划，要求原独立 ARM、正式备份和双版本来源绑定同一共享导出。产品前端提交取自原比较清单的 B1，物理目标和探针取自独立登记。复制目录继续保持未创建。
+
+用 `cargo xtask check recovery plan --plan <b1-reference-plan.json> --backup-receipt <same-backup.json> --comparison-sources <comparison-sources.json> --arm-input <independent-run/result.json> --fresh-target-verify <b1-observation/verify.json> --product-plan <b1-product-plan.json>` 预览完整目标计划。追加 `--output <new-b1-target-plan.json> --write` 可独占发布。用 `cargo xtask check recovery plan --plan <b1-reference-plan.json> --target-plan <b1-target-plan.json>` 回读，工具按原五件输入重新投影并核对完整参考计划封装、同一备份、双版本来源、原 ARM 和 fresh 库存历史。参考工作目录及复制目录须保持未创建。目标计划发布后仍需接通并验证运行登记、正式恢复及业务验收。
 
 ## 非生产重建
 

@@ -69,6 +69,12 @@ pub(super) fn run(raw: &str) -> Result<Value> {
     }
     let backend = path(&request["backend_dir"])?;
     let reference = inputs::document::read(path(&request["plan"])?, backend, "参考恢复计划")?;
+    if inputs::reference::is_independent_b1(&reference.value) {
+        if command != "plan" || request.as_object().is_some_and(|value| value.len() == 4) {
+            return Err("独立 B1 参考计划只允许完整目标计划操作".into());
+        }
+        return super::plan::run(backend, &request, reference);
+    }
     inputs::domain::validate_plan(&reference.value, backend)?;
     if command == "plan" {
         return if request.as_object().is_some_and(|value| value.len() == 4) {

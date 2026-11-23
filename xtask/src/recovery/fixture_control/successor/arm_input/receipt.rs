@@ -2,8 +2,8 @@
 use std::io::ErrorKind;
 
 use super::{
-    Bound, Observation, RESULT_KIND, RESULT_STATUS, RUN_KIND, common, document, portable_path,
-    registered_target, require_disjoint_paths, source_history,
+    Bound, Observation, RESULT_KIND, RESULT_STATUS, RUN_KIND, arm_target::Target, common, document,
+    portable_path, registered_target, require_disjoint_paths, source_history,
 };
 use crate::{
     Result,
@@ -11,6 +11,7 @@ use crate::{
     recovery::{
         clone::native::{lifecycle::identity, target_verify::guard::Inputs},
         inputs::target::{TargetRequest, validate_b1_measurement},
+        runtime::dataset_authority::reads,
     },
 };
 use serde_json::{Value, json};
@@ -35,6 +36,7 @@ impl<'a> IndependentB1Receipt<'a> {
         let request =
             document::binding_shape(&recorded.result.value["request"], "原独立 ARM 请求")?;
         let bound = Bound::read(backend, &request.path)?;
+        reads::optional(&bound.copy)?;
         validate_history(&recorded, &bound)?;
         let source_history = source_history::verify(&bound, &recorded.intent.value, &recorded.run)?;
         let observed = bound.observe(false)?;
@@ -122,6 +124,10 @@ impl<'a> IndependentB1Receipt<'a> {
         let (_, initialized) =
             document::bound_file(self.bound.backend, binding, "独立 B1 目标初始化")?;
         Ok((binding, initialized))
+    }
+
+    pub(in crate::recovery) fn observed_target(&self) -> &Target {
+        &self.observed.target
     }
 }
 

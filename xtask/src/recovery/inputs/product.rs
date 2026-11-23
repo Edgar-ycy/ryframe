@@ -1,30 +1,25 @@
 use std::path::Path;
 
 use chrono::{DateTime, Duration, SecondsFormat, Timelike, Utc};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use super::{
-    backup::{self, Backup},
+    backup::Backup,
     chain::{self, Chain},
-    comparison,
-    document::{self, Document, array, exact, object, text},
+    document::{self, Document, array, exact, text},
     domain::{canonical_endpoint, identifier, product_fields, scope_identifier, timestamp},
-    fresh, reference,
+    independent_b1::Verified,
+    reference,
 };
 use crate::{
-    Result,
-    cli::{ProductInputOptions, RestoreInputSide},
-    recovery::{
-        fixture_control::successor::arm_input::IndependentB1Receipt,
-        runtime::dataset_authority::reads::Window,
-    },
+    Result, cli::ProductInputOptions, recovery::runtime::dataset_authority::reads::Window,
 };
 
 pub(crate) fn build(backend: &Path, options: &ProductInputOptions) -> Result<Value> {
     identifier(&options.id)?;
     let fault = parse_fault_time(&options.fault_at)?;
     let reference = document::read(&options.reference_plan, backend, "参考计划")?;
-    if reference.value["kind"] == reference::INDEPENDENT_B1_KIND {
+    if reference::is_independent_b1(&reference.value) {
         let window = Window::direct()?;
         let result = reference
             .assert_unchanged()
@@ -58,105 +53,51 @@ fn build_independent_b1(
     reference_file: &Document,
     fault: DateTime<Utc>,
 ) -> Result<Value> {
-    let envelope = independent_reference(&reference_file.value, options.side)?;
-    let id = text(&envelope["reference_plan"]["id"], "独立 B1 参考计划 ID")?;
-    let work_dir = Path::new(text(
-        &envelope["reference_plan"]["work_dir"],
-        "独立 B1 参考计划工作目录",
-    )?);
-    if let Some(publication) = &options.publication {
-        reference::validate_publication_path(work_dir, &publication.output)?;
-    }
-    let arm = IndependentB1Receipt::read(backend, &options.arm_input)?;
-    if envelope["arm_input"] != arm.result_binding() {
-        return Err("独立 B1 产品计划未绑定原独立 ARM 结果".into());
-    }
-    require_same_export(arm.source_export(), &envelope["source_export"])?;
-    if let Some(publication) = &options.publication {
-        arm.require_disjoint(&publication.output)?;
-    }
-    let reference = reference::project_independent_b1(backend, id, work_dir, &arm)?;
-    if reference != envelope["reference_plan"] {
-        return Err("独立 B1 参考计划与原 ARM 重新投影不同".into());
-    }
-    let backup_file = document::read(&options.backup_receipt, backend, "备份收据")?;
-    let backup = backup::validate(backend, &reference, &backup_file, None)?;
-    validate_recovery_point(&backup, fault)?;
-    require_same_export(arm.source_export(), &backup.result["source_export"])?;
-    let comparison_file = document::read(&options.comparison_sources, backend, "双版本来源清单")?;
-    let comparison = comparison::validate(backend, &comparison_file)?;
-    require_same_export(arm.source_export(), &comparison["source_export"])?;
-    let b1 = comparison::arm(&comparison, options.side.as_str())?;
-    let frontend_sha = text(
-        &b1["sources"]["frontend"]["source"]["snapshot"]["head"],
-        "比较来源前端 SHA",
-    )?;
-    let (initialized_binding, initialized) = arm.initialized()?;
-    let target = &arm.target_request;
-    fresh::validate(
+    let evidence = Verified::load(
         backend,
-        &options.fresh_target_verify,
-        initialized_binding,
-        &initialized.value,
-        &target.document.value,
+        reference_file,
+        [
+            &options.backup_receipt,
+            &options.comparison_sources,
+            &options.arm_input,
+            &options.fresh_target_verify,
+        ],
+        options.side,
+        options
+            .publication
+            .as_ref()
+            .map(|value| value.output.as_path()),
     )?;
-    let plan = project_inputs(
-        &reference,
-        &target.selected["worker_ready_url"],
-        frontend_sha,
-        &options.id,
-        &options.fault_at,
-    )?;
-    if reference::project_independent_b1(backend, id, work_dir, &arm)? != reference {
-        return Err("独立 B1 参考计划在产品计划投影期间变化".into());
-    }
-    initialized.assert_unchanged()?;
-    arm.check()?;
-    reference_file.assert_unchanged()?;
-    backup_file.assert_unchanged()?;
-    comparison_file.assert_unchanged()?;
+    validate_recovery_point(&evidence.backup, fault)?;
+    let plan = project_independent(&evidence, &options.id, &options.fault_at)?;
+    evidence.check()?;
     Ok(plan)
 }
 
-fn independent_reference(value: &Value, side: RestoreInputSide) -> Result<&Map<String, Value>> {
-    let envelope = exact(
-        value,
-        &[
-            "format_version",
-            "kind",
-            "reference_plan",
-            "arm_input",
-            "source_export",
-        ],
-        "独立 B1 参考计划封装",
-    )?;
-    if envelope["kind"] != reference::INDEPENDENT_B1_KIND || envelope["format_version"] != 1 {
-        return Err("独立 B1 参考计划封装类型或版本无效".into());
-    }
-    let stored = object(&envelope["reference_plan"], "独立 B1 参考计划")?;
-    if side != RestoreInputSide::Candidate
-        || stored.get("target_side").and_then(Value::as_str) != Some("candidate")
-    {
-        return Err("独立 B1 产品计划只允许 candidate 侧".into());
-    }
-    Ok(envelope)
-}
-
-fn require_same_export(original: &Value, observed: &Value) -> Result<()> {
-    if original != observed {
-        return Err("独立 B1 产品计划未绑定同一原共享导出".into());
-    }
-    Ok(())
-}
-
 pub(super) fn validate_product(chain: &Chain, value: &Value) -> Result<()> {
+    validate_projection(&chain.backup, value, |id, fault_at| {
+        project(chain, id, fault_at)
+    })
+}
+
+pub(super) fn validate_independent_product(evidence: &Verified<'_>, value: &Value) -> Result<()> {
+    validate_projection(&evidence.backup, value, |id, fault_at| {
+        project_independent(evidence, id, fault_at)
+    })
+}
+
+fn validate_projection(
+    backup: &Backup,
+    value: &Value,
+    project: impl FnOnce(&str, &str) -> Result<Value>,
+) -> Result<()> {
     let plan = exact(value, &product_fields(), "产品恢复计划")?;
     let id = text(&plan["id"], "产品恢复 ID")?;
     identifier(id)?;
     identifier(text(&plan["backup_id"], "产品备份 ID")?)?;
     scope_identifier(text(&plan["scope_id"], "产品 scope")?)?;
     let fault_at = text(&plan["fault_at"], "产品故障时间")?;
-    validate_recovery_point(&chain.backup, parse_fault_time(fault_at)?)?;
+    validate_recovery_point(backup, parse_fault_time(fault_at)?)?;
     for database in array(&plan["databases"], "产品数据库")? {
         exact(
             database,
@@ -164,7 +105,7 @@ pub(super) fn validate_product(chain: &Chain, value: &Value) -> Result<()> {
             "产品数据库",
         )?;
     }
-    let expected = project(chain, id, fault_at)?;
+    let expected = project(id, fault_at)?;
     for field in product_fields() {
         if plan[field] != expected[field] {
             return Err(
@@ -173,6 +114,20 @@ pub(super) fn validate_product(chain: &Chain, value: &Value) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn project_independent(evidence: &Verified<'_>, id: &str, fault_at: &str) -> Result<Value> {
+    let frontend_sha = text(
+        &evidence.product_arm()?["sources"]["frontend"]["source"]["snapshot"]["head"],
+        "比较来源前端 SHA",
+    )?;
+    project_inputs(
+        &evidence.reference,
+        &evidence.arm.target_request.selected["worker_ready_url"],
+        frontend_sha,
+        id,
+        fault_at,
+    )
 }
 
 fn project(chain: &Chain, id: &str, fault_at: &str) -> Result<Value> {
@@ -252,6 +207,7 @@ fn validate_recovery_point(backup: &Backup, fault: DateTime<Utc>) -> Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::recovery::inputs::{comparison, independent_b1::require_same_export};
     use crate::recovery_inputs_fixture::Fixture;
 
     #[test]

@@ -18,11 +18,15 @@ use crate::{
     local_test_path::{LocalTestPathKind, validate_local_test_path},
     recovery::{
         fixture_control::successor::arm_input::IndependentB1Receipt,
-        runtime::dataset_authority::reads::Window,
+        runtime::dataset_authority::reads::{self, Window},
     },
 };
 
 pub(super) const INDEPENDENT_B1_KIND: &str = "restore-reference-independent-b1-plan";
+
+pub(in crate::recovery) fn is_independent_b1(value: &Value) -> bool {
+    value["kind"] == INDEPENDENT_B1_KIND
+}
 
 pub(crate) fn source_projection(backend: &Path, descriptor: &Value) -> Result<Value> {
     let request = super::source::load(backend, descriptor)?;
@@ -100,6 +104,7 @@ pub(super) fn project_independent_b1(
     identifier(id)?;
     validate_local_test_path(work_dir, backend, LocalTestPathKind::NewDirectory)?;
     let directory = new_path(backend, work_dir, "独立 B1 参考计划 work_dir")?;
+    reads::optional(&directory)?;
     arm.require_disjoint(&directory)?;
     let source = SourceProjection::load(backend, &arm.source_request)?;
     let target = TargetProjection::load(&arm.target_request)?;

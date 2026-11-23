@@ -18,7 +18,7 @@ use crate::{
 };
 
 impl Fixture {
-    fn candidate_plans(&self) -> (PathBuf, PathBuf) {
+    pub(crate) fn candidate_plans(&self) -> (PathBuf, PathBuf) {
         let base = Base {
             backend: self.backend.clone(),
             root: self.root.join("candidate-target"),

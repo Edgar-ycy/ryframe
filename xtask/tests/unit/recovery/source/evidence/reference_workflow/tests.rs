@@ -151,6 +151,69 @@ fn parsed(value: &Value) -> Result<Value> {
 }
 
 #[test]
+fn independent_b1_reference_only_enters_complete_target_plan_without_creating_work() -> Result<()> {
+    let directory = temporary();
+    let backend = crate::workspace::root_dir();
+    let plan = directory.path().join("independent.json");
+    let work = directory.path().join("new-work");
+    let missing = directory.path().join("missing-evidence.json");
+    native::json::write_new(
+        &plan,
+        &json!({
+            "format_version":1, "kind":"restore-reference-independent-b1-plan",
+            "reference_plan":{"target_side":"candidate","work_dir":work},
+            "arm_input":null, "source_export":null,
+        }),
+    )?;
+    for (operation, extra) in [
+        ("plan", json!({})),
+        ("dataset", json!({})),
+        (
+            "backup",
+            json!({"inventory":missing,"source_generation":missing,"source_export_result":missing}),
+        ),
+        (
+            "copy",
+            json!({"backup_root":missing,"copy_id":"isolated-copy"}),
+        ),
+        (
+            "damage",
+            json!({"backup_root":missing,"artifact":"databases/control.sql","missing":false}),
+        ),
+    ] {
+        let mut request = raw_request(&backend, operation, operation != "plan");
+        request["request"]["plan"] = json!(plan);
+        request["request"]
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        let error = run_local(&serde_json::to_string(&request)?)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("只允许完整目标计划操作"), "{error}");
+    }
+
+    let mut request = raw_request(&backend, "plan", false);
+    request["request"]["plan"] = json!(plan);
+    for field in [
+        "backup_receipt",
+        "comparison_sources",
+        "arm_input",
+        "fresh_target_verify",
+        "product_plan",
+    ] {
+        request["request"][field] = json!(missing);
+    }
+    let error = run_local(&serde_json::to_string(&request)?)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("backup_receipt"), "{error}");
+    assert!(!work.exists());
+    assert!(!missing.exists());
+    Ok(())
+}
+
+#[test]
 fn request_rejects_unknown_cross_family_duplicate_invalid_version_and_parent_jump() {
     let directory = temporary();
     let mut valid = raw_request(directory.path(), "check-existing", false);

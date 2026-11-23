@@ -159,8 +159,7 @@ pub(crate) fn frontend_sha(chain: &Chain) -> Result<String> {
     Ok(value.to_owned())
 }
 
-pub(crate) fn product_execution(chain: &Chain) -> Result<Value> {
-    let arm = source_arm(chain)?;
+pub(super) fn product_execution(arm: &Value) -> Result<Value> {
     let roots = exact(
         arm.get("roots").ok_or("比较 source arm 缺少 roots")?,
         &["source_backend", "execution_backend", "frontend"],

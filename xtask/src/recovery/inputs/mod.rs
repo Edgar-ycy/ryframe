@@ -16,6 +16,7 @@ pub(crate) mod document;
 pub(in crate::recovery) mod domain;
 pub(crate) use domain::canonical_endpoint;
 mod fresh;
+pub(in crate::recovery) mod independent_b1;
 pub(in crate::recovery) mod inventory;
 pub(crate) mod product;
 pub(crate) mod publish;
