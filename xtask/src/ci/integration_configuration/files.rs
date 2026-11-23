@@ -35,17 +35,18 @@ pub(crate) fn io_error(path: &Path, stage: &str, error: io::Error) -> String {
 }
 
 pub(crate) fn ordinary(metadata: &Metadata) -> bool {
-    if metadata.file_type().is_symlink() {
-        return false;
-    }
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
-        if metadata.file_attributes() & 0x400 != 0 {
-            return false;
-        }
+
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        !metadata.file_type().is_symlink()
+            && metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0
     }
-    true
+    #[cfg(not(windows))]
+    {
+        !metadata.file_type().is_symlink()
+    }
 }
 
 pub(crate) fn directory_available(path: &Path) -> Result<bool, String> {
