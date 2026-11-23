@@ -85,6 +85,32 @@ impl Fixture {
         }
     }
 
+    fn select_execution(&mut self, directory: &Path) -> PathBuf {
+        let execution = portable_path(&directory.canonicalize().unwrap());
+        assert_ne!(execution, self.backend);
+        assert!(!execution.starts_with(&self.control));
+        self.request["execution_backend"] = json!({"path":execution});
+        execution
+    }
+
+    fn bind_execution_configuration(&mut self, directory: &Path) {
+        let execution = self.select_execution(directory);
+        let config = execution.join(".local-tests/config");
+        fs::create_dir_all(&config).unwrap();
+        let endpoint = "http://127.0.0.1:9473";
+        let region = "us-west-2";
+        fs::write(
+            config.join("app.test.toml"),
+            format!("[object_storage]\nendpoint='{endpoint}'\nregion='{region}'\naccess_key='execution-access'\nsecret_key='fixture-secret'\n"),
+        )
+        .unwrap();
+        let configuration =
+            s3::app_configuration::configuration_value(&execution, &config, "test").unwrap();
+        let objects = json!({"endpoint":endpoint,"region":region,"configuration":configuration});
+        self.request["target"]["s3"] = objects.clone();
+        self.plan["target"]["s3"] = objects;
+    }
+
     fn run(&self, mock: &Mock<'_>) -> Result<()> {
         let writes = Writes {
             storage: StorageInputs {
@@ -241,6 +267,7 @@ enum Scenario {
     Complete,
     UnknownSql,
     UnknownPut,
+    ObjectConfigurationDrift,
     ArtifactDrift,
     DeniedCheckpoint,
 }
@@ -324,15 +351,30 @@ impl<'a> Mock<'a> {
             .unwrap();
         let intent_path = Path::new(pending["request_file"].as_str().unwrap());
         let intent = document::read(intent_path)?;
+        assert!(intent_path.starts_with(&self.fixture.work));
         assert_eq!(intent["scope_id"], "target");
         assert_eq!(intent["bucket"], "uploads");
         assert_eq!(intent["key"], request.key);
         assert_eq!(intent["expected"]["bytes"], request.expected_bytes);
         assert_eq!(intent["expected"]["sha256"], request.expected_sha256);
+        let target_s3 = &self.fixture.plan["target"]["s3"];
+        assert_eq!(intent["endpoint"], target_s3["endpoint"]);
+        assert_eq!(intent["region"], target_s3["region"]);
+        let configuration_root = self.fixture.request["execution_backend"]["path"]
+            .as_str()
+            .map_or(self.fixture.backend.as_path(), Path::new);
+        let configuration = s3::Configuration::read_app_binding(configuration_root, target_s3)?;
+        assert!(request.configuration == configuration);
         let number = self.sent.borrow().len() - DATABASES.len();
         assert_eq!(request.bucket, "uploads");
         assert_eq!(request.key, OBJECT_KEYS[number]);
         assert_eq!(request.metadata["ContentType"], "application/octet-stream");
+        assert_eq!(
+            request.source,
+            self.fixture
+                .backup
+                .join(format!("objects/uploads/item-{}.bin", number + 1)),
+        );
         assert_eq!(
             fs::read(&request.source)?,
             format!("对象夹具 {}", number + 1).as_bytes(),
@@ -340,6 +382,10 @@ impl<'a> Mock<'a> {
         self.note_send(intent_path, request.key)?;
         if self.scenario == Scenario::UnknownPut {
             return Err("模拟条件创建响应中断".into());
+        }
+        if self.scenario == Scenario::ObjectConfigurationDrift {
+            let directory = Path::new(target_s3["configuration"]["directory"].as_str().unwrap());
+            fs::write(directory.join("app.toml"), "# 新出现的目标公共配置\n")?;
         }
         Ok(
             json!({"status":"created_unverified","http_status":200,"remote_write_may_have_occurred":true,
@@ -422,6 +468,56 @@ fn writes_four_databases_in_inventory_order_then_two_objects_under_registration_
             .iter()
             .all(|row| row["outcome"] == "created_unverified")
     );
+}
+
+#[test]
+fn object_writes_use_execution_configuration_and_keep_coordinator_originals() {
+    let mut fixture = Fixture::new();
+    let execution = temporary();
+    fixture.bind_execution_configuration(execution.path());
+    let mock = Mock::new(&fixture, Scenario::Complete);
+    fixture.run(&mock).unwrap();
+
+    assert_eq!(&mock.sent.borrow()[DATABASES.len()..], &OBJECT_KEYS);
+    let records = fixture.diagnostics("object-create-").unwrap();
+    assert_eq!(records.len(), OBJECT_KEYS.len());
+    assert!(
+        records
+            .iter()
+            .all(|row| row["outcome"] == "created_unverified")
+    );
+}
+
+#[test]
+fn object_write_rejects_coordinator_configuration_for_registered_execution() {
+    let mut fixture = Fixture::new();
+    let execution = temporary();
+    fixture.select_execution(execution.path());
+    let mock = Mock::new(&fixture, Scenario::Complete);
+    let error = fixture.run(&mock).unwrap_err().to_string();
+
+    assert!(
+        error.contains("路径必须位于当前后端 .local-tests 的子目录"),
+        "{error}"
+    );
+    assert_eq!(mock.sent.borrow().len(), DATABASES.len());
+    assert!(fixture.diagnostics("object-create-").unwrap().is_empty());
+}
+
+#[test]
+fn object_write_rechecks_execution_configuration_after_single_put() {
+    let mut fixture = Fixture::new();
+    let execution = temporary();
+    fixture.bind_execution_configuration(execution.path());
+    let mock = Mock::new(&fixture, Scenario::ObjectConfigurationDrift);
+    let error = fixture.run(&mock).unwrap_err().to_string();
+
+    assert!(error.contains("needs_reconciliation"), "{error}");
+    assert_eq!(&mock.sent.borrow()[DATABASES.len()..], &[OBJECT_KEYS[0]]);
+    let records = fixture.diagnostics("object-create-").unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0]["error_type"], "PostWriteBindingChanged");
+    assert_eq!(records[0]["remote_write_may_have_occurred"], true);
 }
 
 #[test]

@@ -18,6 +18,7 @@ use crate::{
 
 pub(super) struct Create<'a> {
     pub(super) backend: &'a Path,
+    pub(super) configuration_root: &'a Path,
     pub(super) work: &'a Path,
     pub(super) artifact_root: &'a Path,
     pub(super) task: &'a Value,
@@ -36,7 +37,7 @@ pub(super) fn send_once(
     let request = prepare(spec)?;
     let mut snapshots = Vec::new();
     app_configuration::load(
-        spec.backend,
+        spec.configuration_root,
         &spec.target_s3["configuration"],
         &mut snapshots,
     )?;
@@ -57,7 +58,7 @@ pub(super) fn send_once(
         checkpoint()?;
         held.check()?;
         evidence.check()?;
-        Configuration::read_app_binding(spec.backend, spec.target_s3)?;
+        Configuration::read_app_binding(spec.configuration_root, spec.target_s3)?;
         Ok(())
     };
     let outcome = if check_inputs().is_err() {
@@ -101,7 +102,7 @@ fn prepare(spec: &Create<'_>) -> Result<PutRequest> {
     let expected_bytes = artifact["bytes"].as_u64().ok_or("原对象字节数无效")?;
     let expected_sha256 = document::text(&artifact["sha256"], "原对象摘要")?.to_owned();
     Ok(PutRequest {
-        configuration: Configuration::read_app_binding(spec.backend, spec.target_s3)?,
+        configuration: Configuration::read_app_binding(spec.configuration_root, spec.target_s3)?,
         bucket: bucket.to_owned(),
         key: key.to_owned(),
         source,

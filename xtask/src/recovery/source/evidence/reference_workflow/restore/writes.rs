@@ -47,6 +47,7 @@ impl Writes<'_> {
                     object_write::send_once(
                         &object_write::Create {
                             backend: self.storage.backend,
+                            configuration_root: &self.storage.execution_backend()?,
                             work: self.work,
                             artifact_root: self.backup_root,
                             task,

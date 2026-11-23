@@ -59,6 +59,7 @@ impl Fixture {
     fn spec(&self) -> Create<'_> {
         Create {
             backend: &self.backend,
+            configuration_root: &self.backend,
             work: &self.work,
             artifact_root: &self.backup,
             task: &self.task,
