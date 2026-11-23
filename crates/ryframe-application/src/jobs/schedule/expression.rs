@@ -1,3 +1,7 @@
+use ::time::OffsetDateTime;
+use jiff_cron::Schedule;
+
+use super::calendar::{Calendar, next_local_second, resolve_timezone};
 use super::*;
 
 pub(super) fn validate_persisted_schedule(
@@ -43,8 +47,7 @@ pub(super) struct ValidatedScheduleCommand {
 
 pub(super) struct ParsedSchedule {
     pub(super) expression: String,
-    pub(super) timezone: Tz,
-    schedule: Schedule,
+    calendar: Calendar,
 }
 
 impl ParsedSchedule {
@@ -64,47 +67,76 @@ impl ParsedSchedule {
         if fields[6] != "*" {
             return Err(AppError::Validation("Cron 年字段首版只允许 *".into()));
         }
-        let timezone = normalize_required(timezone, MAX_TIMEZONE_BYTES, "时区")?
-            .parse::<Tz>()
-            .map_err(|_| AppError::Validation("时区必须是有效的 IANA 时区名称".into()))?;
+        let timezone = normalize_required(timezone, MAX_TIMEZONE_BYTES, "时区")?;
+        let (name, timezone) = resolve_timezone(&timezone)?;
         if fields[3] != "*" && fields[5] != "*" {
             return Err(AppError::Validation(
                 "Cron 日期字段和星期字段不能同时受限，其中一项必须为 *".into(),
             ));
         }
-        let schedule = Schedule::from_str(&expression)
+        let schedule = expression
+            .parse::<Schedule>()
             .map_err(|error| AppError::Validation(format!("Cron 表达式无效: {error}")))?;
         Ok(Self {
             expression,
-            timezone,
-            schedule,
+            calendar: Calendar {
+                schedule,
+                timezone,
+                name,
+            },
         })
     }
 
+    pub(super) fn timezone_name(&self) -> &'static str {
+        self.calendar.name
+    }
+
     pub(super) fn next_after(&self, after: DateTime<Utc>) -> AppResult<DateTime<Utc>> {
-        self.schedule
-            .after(&after.with_timezone(&self.timezone))
-            .next()
-            .map(|date| date.with_timezone(&Utc))
-            .ok_or_else(|| AppError::Validation("Cron 表达式没有未来执行时间".into()))
+        let cutoff = after.timestamp();
+        if let Some(mut start) = self.calendar.start_after(cutoff) {
+            while let Some(occurrence) = self.calendar.first_from(start)? {
+                if let Some(utc) = std::iter::once(occurrence.first)
+                    .chain(occurrence.repeated)
+                    .find(|utc| utc.unix_timestamp() > cutoff)
+                {
+                    return app_utc(utc);
+                }
+                start = next_local_second(occurrence.local)?;
+            }
+        }
+        Err(AppError::Validation("Cron 表达式没有未来执行时间".into()))
     }
 
     pub(super) fn future_occurrences(
         &self,
         after: DateTime<Utc>,
         count: usize,
-    ) -> AppResult<Vec<DateTime<Utc>>> {
-        let occurrences = self
-            .schedule
-            .after(&after.with_timezone(&self.timezone))
-            .take(count)
-            .map(|date| date.with_timezone(&Utc))
-            .collect::<Vec<_>>();
-        if occurrences.len() != count {
-            return Err(AppError::Validation(
-                "Cron 表达式无法产生足够的未来执行时间".into(),
-            ));
+    ) -> AppResult<Vec<JobScheduleOccurrence>> {
+        let mut previous = after.timestamp();
+        let mut repeated = None;
+        let mut occurrences = Vec::with_capacity(count);
+        for _ in 0..count {
+            let utc = if let Some(utc) = repeated.take() {
+                utc
+            } else {
+                let occurrence = self.calendar.first_after(previous)?.ok_or_else(|| {
+                    AppError::Validation("Cron 表达式无法产生足够的未来执行时间".into())
+                })?;
+                // 预览沿用同一迭代器的顺序，重复的当地时刻先输出较早的 UTC，再输出较晚的 UTC。
+                repeated = occurrence.repeated;
+                occurrence.first
+            };
+            previous = utc.unix_timestamp();
+            occurrences.push(JobScheduleOccurrence {
+                utc: app_utc(utc)?,
+                schedule_time: self.calendar.format_local(utc)?,
+            });
         }
         Ok(occurrences)
     }
+}
+
+fn app_utc(utc: OffsetDateTime) -> AppResult<DateTime<Utc>> {
+    DateTime::from_timestamp(utc.unix_timestamp(), 0)
+        .ok_or_else(|| AppError::Validation("Cron 执行时间超出 UTC 日期范围".into()))
 }
