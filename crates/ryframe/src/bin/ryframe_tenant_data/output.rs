@@ -52,12 +52,15 @@ fn staging_file(target: &Path) -> AppResult<(PathBuf, File)> {
         .file_name()
         .ok_or_else(|| AppError::Validation("恢复记录输出文件名无效".into()))?
         .to_string_lossy();
+    let name = name.trim_end_matches(['.', ' ']);
     for _ in 0..64 {
         let sequence = STAGING_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let path = parent.join(format!(
-            ".{name}.ryframe-{}-{sequence}.tmp",
-            std::process::id()
-        ));
+        let staging_name = format!(".ryframe-{}-{sequence}.tmp", std::process::id());
+        // 跳过与最终输出指向同一文件名的临时名称。
+        if name.eq_ignore_ascii_case(&staging_name) {
+            continue;
+        }
+        let path = parent.join(staging_name);
         match OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(file) => return Ok((path, file)),
             Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
@@ -140,4 +143,33 @@ pub fn publish_result<T: Serialize>(
     let target = publish_json(output, &value)?;
     println!("{label}已写入不可覆盖的新文件：{}", target.display());
     Ok(())
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn publishes_a_long_windows_filename_without_leaving_staging() {
+        let local = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.local-tests");
+        fs::create_dir_all(&local).unwrap();
+        let directory = tempfile::tempdir_in(local).unwrap();
+        let parent = directory.path().canonicalize().unwrap();
+        let name = format!("{}.json", "x".repeat(245));
+        let output = parent.join(&name);
+        let value = serde_json::json!({"status": "running"});
+
+        assert_eq!(validate_new_output(&output).unwrap(), output);
+        assert_eq!(publish_json(&output, &value).unwrap(), output);
+        assert_eq!(
+            fs::read(&output).unwrap(),
+            b"{\n  \"status\": \"running\"\n}\n"
+        );
+        let files = fs::read_dir(&parent)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>();
+        assert_eq!(files, [std::ffi::OsString::from(name)]);
+    }
 }
