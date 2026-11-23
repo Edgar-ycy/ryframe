@@ -238,7 +238,9 @@ impl ExportService {
             .users
             .calculate_current_authorization(tenant_id, actor.user_id)
             .await?;
-        if !authorization.tenant.is_available(chrono::Utc::now())
+        if !authorization
+            .tenant
+            .is_available(time::OffsetDateTime::now_utc())
             || !authorization.user.is_enabled()
         {
             return Err(AppError::Authorization(

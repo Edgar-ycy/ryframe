@@ -1,8 +1,12 @@
 use std::sync::Arc;
 
+use chrono::{DateTime, Utc};
+use ryframe_kernel::AppResult;
+use time::OffsetDateTime;
+
 use crate::{
-    ControlDatabaseCluster, DeptRepository, PermissionRepository, Repository, RoleRepository,
-    TenantRepository, UserRepository,
+    ControlDatabaseCluster, DbResultExt, DeptRepository, PermissionRepository, Repository,
+    RoleRepository, TenantRepository, UserRepository,
 };
 
 use ryframe_application::ports::auth::{
@@ -23,19 +27,11 @@ impl IdentityAuthorizationReadPort for DatabaseIdentityAuthorization {
         &'a self,
         tenant_id: &'a str,
     ) -> ryframe_kernel::AppResult<Option<IdentityTenantRecord>> {
-        Ok(TenantRepository
+        TenantRepository
             .find_by_tenant_id(self.database.write(), tenant_id)
             .await?
-            .map(|tenant| IdentityTenantRecord {
-                tenant_id: tenant.tenant_id,
-                name: tenant.name,
-                status: tenant.status,
-                expire_at: tenant.expire_at,
-                max_requests_per_min: tenant.max_requests_per_min,
-                session_version: tenant.session_version,
-                authorization_epoch: tenant.authorization_epoch,
-                data_scope_version: tenant.data_scope_version,
-            }))
+            .map(to_tenant)
+            .transpose()
     }
 
     async fn user_by_id<'a>(
@@ -134,6 +130,25 @@ impl IdentityAuthorizationReadPort for DatabaseIdentityAuthorization {
     }
 }
 
+fn to_tenant(tenant: crate::entities::tenant::Model) -> AppResult<IdentityTenantRecord> {
+    Ok(IdentityTenantRecord {
+        tenant_id: tenant.tenant_id,
+        name: tenant.name,
+        status: tenant.status,
+        expire_at: tenant.expire_at.map(tenant_expiry).transpose()?,
+        max_requests_per_min: tenant.max_requests_per_min,
+        session_version: tenant.session_version,
+        authorization_epoch: tenant.authorization_epoch,
+        data_scope_version: tenant.data_scope_version,
+    })
+}
+
+fn tenant_expiry(value: DateTime<Utc>) -> AppResult<OffsetDateTime> {
+    OffsetDateTime::from_unix_timestamp(value.timestamp())
+        .and_then(|instant| instant.replace_nanosecond(value.timestamp_subsec_nanos()))
+        .db_context("读取身份租户到期时间")
+}
+
 fn to_user(user: crate::entities::user::Model) -> IdentityUserRecord {
     IdentityUserRecord {
         id: user.id,
@@ -149,5 +164,32 @@ fn to_user(user: crate::entities::user::Model) -> IdentityUserRecord {
         status: user.status,
         authorization_version: user.authorization_version,
         dept_id: user.dept_id,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::TimeZone;
+    use ryframe_kernel::AppError;
+
+    use super::*;
+
+    #[test]
+    fn tenant_expiry_retains_mysql_calendar_and_subsecond_precision() {
+        for stored in [
+            Utc.with_ymd_and_hms(1, 1, 1, 0, 0, 0).unwrap(),
+            DateTime::from_timestamp(-1, 123_456_000).unwrap(),
+            Utc.with_ymd_and_hms(9999, 12, 31, 23, 59, 59).unwrap(),
+        ] {
+            let expiry = tenant_expiry(stored).unwrap();
+            assert_eq!(expiry.unix_timestamp(), stored.timestamp());
+            assert_eq!(expiry.nanosecond(), stored.timestamp_subsec_nanos());
+            assert_eq!(expiry.offset(), time::UtcOffset::UTC);
+        }
+        let unrepresentable = DateTime::from_timestamp(-1, 1_123_456_000).unwrap();
+        assert!(matches!(
+            tenant_expiry(unrepresentable),
+            Err(AppError::Database(_))
+        ));
     }
 }

@@ -5,7 +5,7 @@ use ryframe_application::{
     next_id, validate_cache_namespace, validate_persisted_schedule_configuration,
 };
 use ryframe_application::{
-    ports::auth::IdentityRoleRecord,
+    ports::auth::{IdentityRoleRecord, IdentityTenantRecord},
     system::{identity::RoleOptionPurpose, operations::parse_log_time_range},
 };
 use ryframe_kernel::AppError;
@@ -29,6 +29,31 @@ fn tenant_target_key_validation_is_strict() {
     assert!(is_valid_tenant_target_key("shared-control"));
     assert!(!is_valid_tenant_target_key("-invalid"));
     assert!(!is_valid_tenant_target_key("invalid value"));
+}
+
+#[test]
+fn identity_tenant_availability_requires_enabled_and_future_or_no_expiry() {
+    let now = time::macros::datetime!(2026-11-24 00:00:00.123456 UTC);
+    let mut tenant = IdentityTenantRecord {
+        tenant_id: "tenant-a".into(),
+        name: "租户 A".into(),
+        status: "enabled".into(),
+        expire_at: None,
+        max_requests_per_min: 60,
+        session_version: 1,
+        authorization_epoch: 1,
+        data_scope_version: 1,
+    };
+    assert!(tenant.is_available(now));
+    tenant.expire_at = Some(now + time::Duration::nanoseconds(1));
+    assert!(tenant.is_available(now));
+    tenant.expire_at = Some(now);
+    assert!(!tenant.is_available(now));
+    tenant.expire_at = Some(now - time::Duration::nanoseconds(1));
+    assert!(!tenant.is_available(now));
+    tenant.status = "disabled".into();
+    tenant.expire_at = None;
+    assert!(!tenant.is_available(now));
 }
 
 #[test]

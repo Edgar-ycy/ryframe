@@ -4,11 +4,12 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{ActorContext, AppError, AppResult, DataScope};
 use serde::Serialize;
+use time::OffsetDateTime;
 
 use crate::{
     AuthorizationCache,
     ports::{
-        auth::IdentityRoleRecord,
+        auth::{IdentityRoleRecord, IdentityTenantRecord},
         authorization::{
             AuthorizationDiagnosticReadPort, DiagnosticMenuRecord, DiagnosticPermissionRecord,
         },
@@ -179,7 +180,10 @@ impl AuthorizationDiagnosticService {
             .calculate_current_authorization(tenant_id, user_id)
             .await?;
         let calculated_at = self.persistence.database_now().await?;
-        let tenant_available = authorization.tenant.is_available(calculated_at);
+        let tenant_now = OffsetDateTime::from_unix_timestamp(calculated_at.timestamp())
+            .and_then(|instant| instant.replace_nanosecond(calculated_at.timestamp_subsec_nanos()))
+            .map_err(|_| AppError::Database("授权诊断数据库时点无法精确表示为 UTC".into()))?;
+        let tenant_available = authorization.tenant.is_available(tenant_now);
         let user_enabled = authorization.user.is_enabled();
         let final_access_enabled = tenant_available && user_enabled;
         let mut assigned_roles = self.persistence.assigned_roles(tenant_id, user_id).await?;
@@ -246,11 +250,7 @@ impl AuthorizationDiagnosticService {
         }
         if authorization.tenant.status != "enabled" {
             warnings.push("tenant_disabled".to_owned());
-        } else if authorization
-            .tenant
-            .expire_at
-            .is_some_and(|expire_at| expire_at <= calculated_at)
-        {
+        } else if !tenant_available {
             warnings.push("tenant_expired".to_owned());
         }
         if authorization.roles.is_empty() {
@@ -276,13 +276,7 @@ impl AuthorizationDiagnosticService {
                 enabled: user_enabled,
                 final_access_enabled,
             },
-            tenant: AuthorizationDiagnosticTenantVo {
-                tenant_id: authorization.tenant.tenant_id,
-                name: authorization.tenant.name,
-                status: authorization.tenant.status,
-                expire_at: authorization.tenant.expire_at,
-                available: tenant_available,
-            },
+            tenant: diagnostic_tenant(authorization.tenant, tenant_available)?,
             roles,
             permissions,
             menus,
@@ -452,6 +446,26 @@ impl AuthorizationDiagnosticService {
             warning,
         )
     }
+}
+
+fn diagnostic_tenant(
+    tenant: IdentityTenantRecord,
+    available: bool,
+) -> AppResult<AuthorizationDiagnosticTenantVo> {
+    let expire_at = tenant
+        .expire_at
+        .map(|instant| {
+            DateTime::from_timestamp(instant.unix_timestamp(), instant.nanosecond())
+                .ok_or_else(|| AppError::Internal("租户授权诊断到期时间超出范围".into()))
+        })
+        .transpose()?;
+    Ok(AuthorizationDiagnosticTenantVo {
+        tenant_id: tenant.tenant_id,
+        name: tenant.name,
+        status: tenant.status,
+        expire_at,
+        available,
+    })
 }
 
 fn data_scope_key(scope: &DataScope) -> &'static str {

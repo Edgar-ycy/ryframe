@@ -1,11 +1,11 @@
-use chrono::{DateTime, Utc};
+use time::OffsetDateTime;
 
 #[derive(Clone, Debug)]
 pub struct IdentityTenantRecord {
     pub tenant_id: String,
     pub name: String,
     pub status: String,
-    pub expire_at: Option<DateTime<Utc>>,
+    pub expire_at: Option<OffsetDateTime>,
     pub max_requests_per_min: i32,
     pub session_version: i32,
     pub authorization_epoch: i32,
@@ -13,7 +13,7 @@ pub struct IdentityTenantRecord {
 }
 
 impl IdentityTenantRecord {
-    pub fn is_available(&self, now: DateTime<Utc>) -> bool {
+    pub fn is_available(&self, now: OffsetDateTime) -> bool {
         self.status == "enabled" && self.expire_at.is_none_or(|value| value > now)
     }
 }

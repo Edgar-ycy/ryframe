@@ -159,10 +159,7 @@ impl AuthService {
         if tenant.status != "enabled" {
             return Err(AppError::Authentication("租户已停用".into()));
         }
-        if tenant
-            .expire_at
-            .is_some_and(|expire_at| expire_at <= chrono::Utc::now())
-        {
+        if !tenant.is_available(time::OffsetDateTime::now_utc()) {
             return Err(AppError::Authentication("租户已到期".into()));
         }
         Ok(tenant)

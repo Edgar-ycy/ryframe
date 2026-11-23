@@ -68,7 +68,10 @@ impl UserService {
         let authorization = self
             .calculate_current_authorization(tenant_id, user_id)
             .await?;
-        if !authorization.tenant.is_available(chrono::Utc::now()) {
+        if !authorization
+            .tenant
+            .is_available(time::OffsetDateTime::now_utc())
+        {
             return Err(AppError::Authorization(
                 "操作申请人的租户已停用或到期".into(),
             ));
