@@ -13,7 +13,7 @@ pub(super) struct DataInvocation {
 pub(super) fn invocation(command: &DataCommand) -> Option<DataInvocation> {
     match command {
         DataCommand::Backup(command) => Some(tenant_data(backup_arguments(command))),
-        DataCommand::Restore(command) => Some(tenant_data(restore_arguments(command))),
+        DataCommand::Restore(command) => restore_arguments(command).map(tenant_data),
         DataCommand::TargetInventory(options) => {
             Some(tenant_data(target_inventory_arguments(options)))
         }
@@ -59,17 +59,9 @@ pub(crate) fn backup_arguments(command: &BackupCommand) -> Vec<String> {
     }
 }
 
-pub(crate) fn restore_arguments(command: &RestoreCommand) -> Vec<String> {
-    match command {
-        RestoreCommand::Begin(options) => vec![
-            "restore-begin".into(),
-            "--plan".into(),
-            path_argument(&options.plan),
-            "--output".into(),
-            path_argument(&options.output),
-            "--restore-config-dir".into(),
-            path_argument(&options.restore_config_dir),
-        ],
+pub(crate) fn restore_arguments(command: &RestoreCommand) -> Option<Vec<String>> {
+    Some(match command {
+        RestoreCommand::Begin(_) => return None,
         RestoreCommand::VerifyData(options) => vec![
             "restore-verify-data".into(),
             "--id".into(),
@@ -109,7 +101,7 @@ pub(crate) fn restore_arguments(command: &RestoreCommand) -> Vec<String> {
             ]);
             arguments
         }
-    }
+    })
 }
 
 pub(crate) fn target_inventory_arguments(options: &TargetInventoryOptions) -> Vec<String> {

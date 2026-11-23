@@ -75,15 +75,20 @@ impl BackupService {
         }
     }
 
-    pub async fn begin_restore(&self, plan: RestorePlan) -> AppResult<RestoreRecord> {
+    pub async fn begin_restore(
+        &self,
+        plan: RestorePlan,
+        preimage: &RestoreTargetPreimage,
+    ) -> AppResult<RestoreRecord> {
         let now = self.repository.database_now().await?;
         let backup = self.require_backup(&plan.backup_id).await?;
         validate_restore_plan(&backup, &plan, now)?;
+        let plan_hash = backup_content_hash(&plan)?;
+        preimage.validate(&plan, &plan_hash)?;
         self.databases
-            .validate_restore_targets(&backup.manifest, &plan)
+            .validate_restore_targets(&backup.manifest, &plan, preimage)
             .await?;
         self.objects.validate_restore_targets(&plan).await?;
-        let plan_hash = backup_content_hash(&plan)?;
         let record = RestoreRecord {
             plan,
             plan_hash,

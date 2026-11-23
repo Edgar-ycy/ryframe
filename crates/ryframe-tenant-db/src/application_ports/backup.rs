@@ -46,15 +46,28 @@ impl BackupDatabaseVerifier for DatabaseVerification {
         &self,
         manifest: &BackupManifest,
         plan: &RestorePlan,
+        preimage: &RestoreTargetPreimage,
     ) -> AppResult<()> {
         self.validate_restore_contract(manifest, plan)?;
         for target in &plan.databases {
             let expected = expected_database(manifest, &target.source_key)?;
-            let actual = self.target_snapshot(&target.target_key).await?;
-            validate_physical_target(manifest, target, &actual)?;
-            validate_database_shape(expected.kind, expected.shared, actual.kind, actual.shared)?;
+            let actual = self.complete_target_inventory(&target.target_key).await?;
+            validate_physical_target(manifest, target, &actual.database)?;
+            validate_database_shape(
+                expected.kind,
+                expected.shared,
+                actual.database.kind,
+                actual.database.shared,
+            )?;
+            validate_inventory_preimage(
+                actual,
+                preimage
+                    .databases
+                    .iter()
+                    .find(|database| database.target_key == target.target_key),
+            )?;
         }
-        require_safe_overwrite_proof()
+        Ok(())
     }
 
     async fn snapshot(&self) -> AppResult<Vec<DatabaseBackup>> {
@@ -283,10 +296,20 @@ fn canonical_tables(mut tables: Vec<BackupTableDigest>) -> AppResult<Vec<BackupT
     Ok(tables)
 }
 
-fn require_safe_overwrite_proof() -> AppResult<()> {
-    Err(AppError::Validation(
-        "恢复目标缺少已绑定的初始化前像，禁止覆盖现有业务数据".into(),
-    ))
+fn validate_inventory_preimage(
+    mut actual: DatabaseTargetInventory,
+    expected: Option<&RestoreDatabasePreimage>,
+) -> AppResult<()> {
+    let expected = expected.ok_or_else(|| {
+        AppError::Validation("恢复目标缺少已绑定的初始化前像，禁止覆盖现有业务数据".into())
+    })?;
+    actual.database.tables.append(&mut actual.preserved_tables);
+    if canonical_tables(actual.database.tables)? != canonical_tables(expected.tables.clone())? {
+        return Err(AppError::Validation(
+            "恢复目标当前完整库清单与绑定的初始化前像不同，禁止覆盖现有业务数据".into(),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -352,12 +375,48 @@ mod tests {
     }
 
     #[test]
-    fn restore_preflight_stays_closed_without_bound_initialization_preimage() {
-        let error = require_safe_overwrite_proof().unwrap_err();
+    fn restore_preflight_requires_exact_business_and_preserved_table_digests() {
+        let table = |name: &str, rows: u64| BackupTableDigest {
+            table: name.into(),
+            rows,
+            sha256: "ab".repeat(32),
+        };
+        let business = table("biz_item", 0);
+        let preserved = table("ryframe_resource_ownership", 2);
+        let inventory = DatabaseTargetInventory {
+            database: DatabaseBackup {
+                key: "shared-control".into(),
+                kind: BackupDatabaseKind::Combined,
+                server_uuid: "server".into(),
+                database: "target".into(),
+                shared: true,
+                placements: vec![],
+                tables: vec![business.clone()],
+            },
+            preserved_tables: vec![preserved.clone()],
+        };
+        let proof = RestoreDatabasePreimage {
+            target_key: inventory.database.key.clone(),
+            tables: vec![preserved.clone(), business.clone()],
+        };
+        assert!(validate_inventory_preimage(inventory.clone(), Some(&proof)).is_ok());
+        let error = validate_inventory_preimage(inventory.clone(), None).unwrap_err();
         assert!(matches!(
             error,
             AppError::Validation(message)
                 if message == "恢复目标缺少已绑定的初始化前像，禁止覆盖现有业务数据"
         ));
+        let mut changed_hash = preserved.clone();
+        changed_hash.sha256 = "ba".repeat(32);
+        for tables in [
+            vec![business.clone()],
+            vec![business.clone(), preserved.clone(), preserved.clone()],
+            vec![business.clone(), table("ryframe_resource_ownership", 1)],
+            vec![business, changed_hash],
+        ] {
+            let mut changed = proof.clone();
+            changed.tables = tables;
+            assert!(validate_inventory_preimage(inventory.clone(), Some(&changed)).is_err());
+        }
     }
 }

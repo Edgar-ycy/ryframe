@@ -87,6 +87,7 @@ pub trait BackupDatabaseVerifier: Send + Sync {
         &self,
         manifest: &BackupManifest,
         plan: &RestorePlan,
+        preimage: &RestoreTargetPreimage,
     ) -> AppResult<()>;
     /// 只读验证已登记隔离目标的 ownership、schema 与完整数据。
     async fn restored_databases(

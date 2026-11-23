@@ -139,21 +139,37 @@ fn registered_file_and_checkpoint_reject_same_content_copies_and_wrong_bindings(
 }
 
 #[test]
-fn record_remains_protected_when_the_before_image_precedes_writes() {
+fn selected_target_plan_inputs_do_not_require_a_running_record() {
     let fixture = Fixture::new();
     let reference = fixture.read("reference.json", &json!({"plan":"reference"}));
     let target = fixture.read("target.json", &json!({"target_side":"base"}));
-    let record = fixture.read("record.json", &json!({"status":"running"}));
     let registration = fixture.read(
         "registration.json",
         &json!({"reference_plan":document::binding(&reference),"target_plan":document::binding(&target)}),
     );
     let selected = Selected::read(
         &fixture.backend,
-        &json!({"plan":reference.path,"target_plan":target.path,"record":record.path}),
+        &json!({"plan":reference.path,"target_plan":target.path}),
         &registration,
     )
     .unwrap();
+    assert_eq!(
+        document::binding(&selected.reference),
+        document::binding(&reference)
+    );
+    assert_eq!(
+        document::binding(&selected.target),
+        document::binding(&target)
+    );
+    selected.guard.assert_unchanged().unwrap();
+}
+
+#[test]
+fn record_remains_protected_when_the_before_image_precedes_writes() {
+    let fixture = Fixture::new();
+    let record = fixture.read("record.json", &json!({"status":"running"}));
+    let (selected, guard) =
+        running_record(&fixture.backend, &json!({"record":record.path})).unwrap();
     let mut evidence = serde_json::Map::new();
     let attempted = std::cell::Cell::new(false);
     let result = super::super::capture_around_write(
@@ -165,8 +181,8 @@ fn record_remains_protected_when_the_before_image_precedes_writes() {
                 #[cfg(not(windows))]
                 changed?;
             }
-            selected.guard.assert_unchanged()?;
-            selected.record.assert_unchanged()
+            guard.assert_unchanged()?;
+            selected.assert_unchanged()
         },
         || {
             attempted.set(true);

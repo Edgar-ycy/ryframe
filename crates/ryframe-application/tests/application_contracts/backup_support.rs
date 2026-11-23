@@ -149,6 +149,8 @@ pub struct Verification {
     pub broken_data: AtomicBool,
     pub unavailable: AtomicBool,
     pub artifact_calls: AtomicU64,
+    pub restore_target_calls: AtomicU64,
+    pub restore_object_target_calls: AtomicU64,
     pub restored_database_calls: AtomicU64,
     pub restored_object_calls: AtomicU64,
     pub runtime_calls: AtomicU64,
@@ -192,8 +194,14 @@ impl BackupDatabaseVerifier for Verification {
             preserved_tables: vec![],
         })
     }
-    async fn validate_restore_targets(&self, _: &BackupManifest, _: &RestorePlan) -> AppResult<()> {
-        checked(false)
+    async fn validate_restore_targets(
+        &self,
+        _: &BackupManifest,
+        _: &RestorePlan,
+        _: &RestoreTargetPreimage,
+    ) -> AppResult<()> {
+        self.restore_target_calls.fetch_add(1, Ordering::SeqCst);
+        checked(self.broken_data.load(Ordering::SeqCst))
     }
     async fn restored_databases(&self, _: &BackupManifest, _: &RestorePlan) -> AppResult<()> {
         self.restored_database_calls.fetch_add(1, Ordering::SeqCst);
@@ -206,6 +214,8 @@ impl BackupObjectVerifier for Verification {
         Ok(manifest().objects)
     }
     async fn validate_restore_targets(&self, _: &RestorePlan) -> AppResult<()> {
+        self.restore_object_target_calls
+            .fetch_add(1, Ordering::SeqCst);
         checked(false)
     }
     async fn restored_objects(&self, _: &BackupManifest, _: &RestorePlan) -> AppResult<()> {
@@ -312,6 +322,36 @@ pub fn plan() -> RestorePlan {
         worker_ready_url: "http://127.0.0.1:9091/readyz".into(),
         frontend_sha: "e".repeat(40),
     }
+}
+
+pub fn target_preimage(plan: &RestorePlan) -> RestoreTargetPreimage {
+    RestoreTargetPreimage {
+        format_version: 1,
+        plan_hash: backup_content_hash(plan).unwrap(),
+        target_plan_sha256: "a".repeat(64),
+        initialized_sha256: "b".repeat(64),
+        resource_image_sha256: "c".repeat(64),
+        databases: plan
+            .databases
+            .iter()
+            .map(|database| RestoreDatabasePreimage {
+                target_key: database.target_key.clone(),
+                tables: vec![BackupTableDigest {
+                    table: "biz_example".into(),
+                    rows: 0,
+                    sha256: "d".repeat(64),
+                }],
+            })
+            .collect(),
+    }
+}
+
+pub async fn begin_fixture_restore(
+    service: &BackupService,
+    plan: RestorePlan,
+) -> AppResult<RestoreRecord> {
+    let preimage = target_preimage(&plan);
+    service.begin_restore(plan, &preimage).await
 }
 
 pub fn proof(record: &RestoreRecord) -> RestoreBusinessProof {

@@ -91,11 +91,16 @@ fn parse_restore(args: &[String]) -> Result<RestoreCommand, CliError> {
     let mut options = NamedOptions::parse(rest)?;
     match operation.as_str() {
         "begin" => {
-            let command = RestoreCommand::Begin(RestoreBeginOptions {
+            let command = RestoreCommand::Begin(Box::new(RestoreBeginOptions {
                 plan: options.take_file("--plan")?,
-                output: options.take_output("--output")?,
-                restore_config_dir: options.take_directory("--restore-config-dir")?,
-            });
+                backup_root: options.take_directory("--backup-root")?,
+                target_plan: options.take_file("--target-plan")?,
+                runtime_registration: options.take_file("--runtime-registration")?,
+                maintenance_root: options.take_directory("--maintenance-root")?,
+                maintenance_build: options
+                    .take_path("--maintenance-build", DataPathRole::ExternalInputFile)?,
+                output: options.take_path("--output", DataPathRole::ControlledPlannedOutput)?,
+            }));
             options.require_write()?;
             options.finish("data restore begin")?;
             Ok(command)

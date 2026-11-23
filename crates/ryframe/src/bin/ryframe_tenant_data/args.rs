@@ -7,7 +7,7 @@ pub const USAGE: &str = "用法：
   ryframe-tenant-data backup-inventory --output <inventory.json> --source-sha <SHA> <--quiesced-at|--observed-at> <RFC3339>
   ryframe-tenant-data backup-register --manifest <manifest.json> --backup-root <目录>
   ryframe-tenant-data backup-status
-  ryframe-tenant-data restore-begin --plan <plan.json> --output <running.json> --restore-config-dir <目录>
+  ryframe-tenant-data restore-begin --plan <plan.json> --output <running.json> --restore-config-dir <目录> --target-preimage-stdin
   ryframe-tenant-data restore-verify-data --id <演练ID> --backup-root <目录> --output <data-verified.json> --restore-config-dir <目录>
   ryframe-tenant-data restore-verify --id <演练ID> --proof <business-proof.json> --tests-receipt <tests.json> --runtime-receipt <runtime.json> --target-plan <target-plan.json> --coordinator-root <协调源码目录> --coordinator-sha <SHA> --runner-root <测试源码目录> --restore-config-dir <目录>
 
@@ -48,6 +48,7 @@ pub enum Command {
         plan: PathBuf,
         config: PathBuf,
         output: PathBuf,
+        target_preimage_stdin: bool,
     },
     VerifyData {
         id: String,
@@ -72,7 +73,15 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
     let mut args = args.into_iter();
     let command = args.next().ok_or(USAGE)?;
     let mut flags = BTreeMap::new();
+    let mut target_preimage_stdin = false;
     while let Some(flag) = args.next() {
+        if command == "restore-begin" && flag == "--target-preimage-stdin" {
+            if target_preimage_stdin {
+                return Err("--target-preimage-stdin 不能重复".into());
+            }
+            target_preimage_stdin = true;
+            continue;
+        }
         let value = args
             .next()
             .filter(|value| !value.starts_with("--") && !value.trim().is_empty())
@@ -118,6 +127,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             plan: take("--plan")?.into(),
             config: take("--restore-config-dir")?.into(),
             output: take("--output")?.into(),
+            target_preimage_stdin,
         },
         "restore-verify-data" => Command::VerifyData {
             id: take("--id")?,

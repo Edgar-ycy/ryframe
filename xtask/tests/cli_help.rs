@@ -63,7 +63,7 @@ fn data_help_describes_typed_write_and_path_boundaries() {
     for expected in [
         "data backup inventory --output <绝对新文件>",
         "data backup register --manifest <绝对文件> --backup-root <绝对目录> --write",
-        "data restore begin --plan <绝对文件>",
+        "data restore begin --plan <绝对参考计划> --backup-root <绝对目录>",
         "data target inventory --target <目标键>",
         "data reset execute --plan-hash <sha256> --confirm-reset <精确短语> --write",
         "备份根、隔离配置和 runner 可使用已登记的外部绝对目录",

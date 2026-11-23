@@ -47,7 +47,14 @@ impl DataFixture {
         for directory in ["backup", "config", "output"] {
             fs::create_dir_all(root.join(directory)).unwrap();
         }
-        for file in ["manifest.json", "plan.json", "proof.json", "target.json"] {
+        for file in [
+            "manifest.json",
+            "plan.json",
+            "proof.json",
+            "target.json",
+            "runtime.json",
+            "build.json",
+        ] {
             fs::write(root.join(file), b"{}\n").unwrap();
         }
         Self { root }
@@ -391,8 +398,12 @@ fn parses_every_restore_operation_into_typed_requests() {
     let fixture = DataFixture::new();
     let config = fixture.path("config");
     let plan = fixture.path("plan.json");
-    let running = fixture.path("output/running.json");
+    let running = fixture.path("uncreated-reference-work/running.json");
     let backup = fixture.path("backup");
+    let target = fixture.path("target.json");
+    let runtime = fixture.path("runtime.json");
+    let maintenance_root = fixture.path("config");
+    let maintenance_build = fixture.path("build.json");
     let data_output = fixture.path("output/data.json");
     let runner = RestoreRunner::new();
     assert_eq!(
@@ -400,21 +411,33 @@ fn parses_every_restore_operation_into_typed_requests() {
             "data",
             "restore",
             "begin",
-            "--restore-config-dir",
-            &config,
             "--output",
             &running,
             "--plan",
             &plan,
+            "--backup-root",
+            &backup,
+            "--target-plan",
+            &target,
+            "--runtime-registration",
+            &runtime,
+            "--maintenance-root",
+            &maintenance_root,
+            "--maintenance-build",
+            &maintenance_build,
             "--write",
         ]),
-        Command::Data(DataCommand::Restore(RestoreCommand::Begin(
+        Command::Data(DataCommand::Restore(RestoreCommand::Begin(Box::new(
             RestoreBeginOptions {
                 plan: plan.into(),
+                backup_root: backup.clone().into(),
+                target_plan: target.into(),
+                runtime_registration: runtime.into(),
+                maintenance_root: maintenance_root.into(),
+                maintenance_build: maintenance_build.into(),
                 output: running.into(),
-                restore_config_dir: config.clone().into(),
             }
-        )))
+        ))))
     );
     assert_eq!(
         command(&[

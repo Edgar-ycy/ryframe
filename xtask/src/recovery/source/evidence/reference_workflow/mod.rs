@@ -27,6 +27,13 @@ pub(crate) fn run_local(raw: &str) -> Result<Value> {
     local::run(raw)
 }
 
+pub(crate) fn run_restore_begin(
+    root: &Path,
+    options: &crate::cli::RestoreBeginOptions,
+) -> Result<Value> {
+    restore::run_begin(root, options)
+}
+
 pub(crate) fn handles(operation: &str) -> bool {
     matches!(
         operation,

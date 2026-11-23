@@ -4,6 +4,8 @@ mod args;
 mod configuration_fixture;
 #[path = "../src/bin/ryframe_tenant_data/output.rs"]
 mod output;
+#[path = "../src/bin/ryframe_tenant_data/preimage.rs"]
+mod preimage;
 #[path = "../src/bin/ryframe_tenant_data/proof_binding.rs"]
 mod proof_binding;
 #[path = "backup_cli_contract/proof_binding.rs"]
@@ -163,6 +165,106 @@ fn restore_records_require_outputs_without_touching_existing_files_on_argument_f
     );
     assert!(arguments(&invalid).is_err());
     assert_eq!(fs::read(&output).unwrap(), b"keep");
+}
+
+#[test]
+fn restore_begin_requires_explicit_preimage_stdin_before_connecting() {
+    let args = [
+        "restore-begin",
+        "--plan",
+        "absent-plan.json",
+        "--output",
+        "running.json",
+        "--restore-config-dir",
+        "absent-target",
+    ];
+    let base = args.join(" ");
+    assert!(matches!(
+        arguments(&format!("{base} --target-preimage-stdin")).unwrap(),
+        Command::Begin {
+            target_preimage_stdin: true,
+            ..
+        }
+    ));
+    for command in [
+        format!("{base} --target-preimage-stdin --target-preimage-stdin"),
+        format!("{base} --target-preimage-stdin true"),
+        "backup-status --target-preimage-stdin".into(),
+    ] {
+        assert!(arguments(&command).is_err(), "{command}");
+    }
+    let directory = configuration_directory();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_ryframe-tenant-data"))
+        .current_dir(directory.path())
+        .args(["--config-dir", "absent-registry"])
+        .args(args)
+        .env("APP_ENV", "must-not-read-for-offline")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains(preimage::required().message())
+    );
+    assert!(fs::read_dir(directory.path()).unwrap().next().is_none());
+}
+
+#[test]
+fn restore_preimage_stdin_requires_one_bounded_utf8_object_with_exact_fields() {
+    let json = serde_json::to_string(&json!({
+        "format_version": 1,
+        "plan_hash": "a".repeat(64),
+        "target_plan_sha256": "b".repeat(64),
+        "initialized_sha256": "c".repeat(64),
+        "resource_image_sha256": "d".repeat(64),
+        "databases": [{
+            "target_key": "shared-control",
+            "tables": [{"table": "biz_example", "rows": 0, "sha256": "e".repeat(64)}],
+        }],
+    }))
+    .unwrap();
+    let received = preimage::read(json.as_bytes()).unwrap();
+    assert_eq!(received.databases[0].target_key, "shared-control");
+    assert!(preimage::read([0xff].as_slice()).is_err());
+    for malformed in [
+        format!("{json} {{}}"),
+        json.replacen('{', "{\"format_version\":1,", 1),
+        json.replacen('{', "{\"unknown\":1,", 1),
+    ] {
+        assert!(preimage::read(malformed.as_bytes()).is_err());
+    }
+    let oversized = std::io::Read::take(std::io::repeat(b' '), 16 * 1024 * 1024 + 1);
+    assert!(
+        preimage::read(oversized)
+            .unwrap_err()
+            .message()
+            .contains("16 MiB")
+    );
+}
+
+#[test]
+fn restore_begin_registry_must_be_disjoint_from_every_planned_physical_database() {
+    let plan = serde_json::from_value(json!({
+        "id": "drill",
+        "backup_id": "backup",
+        "scope_id": "scope",
+        "fault_at": "2026-01-01T00:00:00Z",
+        "databases": [
+            {"source_key": "base", "target_key": "base", "server_uuid": "one", "database": "db1"},
+            {"source_key": "shared", "target_key": "shared", "server_uuid": "two", "database": "db2"},
+        ],
+        "object_endpoint": "127.0.0.1:9000",
+        "object_prefix": "scope/",
+        "api_ready_url": "http://127.0.0.1:8080/readyz",
+        "worker_ready_url": "http://127.0.0.1:9091/readyz",
+        "frontend_sha": "a".repeat(40),
+    }))
+    .unwrap();
+    assert!(preimage::require_registry_disjoint(&plan, "one", "DB1").is_err());
+    assert!(preimage::require_registry_disjoint(&plan, "two", "DB2").is_err());
+    assert!(preimage::require_registry_disjoint(&plan, "two", "DB1").is_ok());
+    assert!(preimage::require_registry_disjoint(&plan, "two", "registry").is_ok());
 }
 
 #[test]

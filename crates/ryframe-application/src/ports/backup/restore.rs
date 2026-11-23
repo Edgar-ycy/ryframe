@@ -1,8 +1,9 @@
 use chrono::{DateTime, Duration, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
-use super::{backup_content_hash, has_storage_timestamp_precision};
+use super::{BackupTableDigest, backup_content_hash, has_storage_timestamp_precision};
 
 /// 恢复演练只绑定显式登记的隔离目标。连接凭据由进程外的配置提供。
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -27,6 +28,80 @@ pub struct RestoreDatabase {
     pub target_key: String,
     pub server_uuid: String,
     pub database: String,
+}
+
+/// 控制器核验的初始化前像，供恢复登记前和完整实时库清单比较。
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RestoreTargetPreimage {
+    pub format_version: u32,
+    pub plan_hash: String,
+    pub target_plan_sha256: String,
+    pub initialized_sha256: String,
+    pub resource_image_sha256: String,
+    pub databases: Vec<RestoreDatabasePreimage>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RestoreDatabasePreimage {
+    pub target_key: String,
+    pub tables: Vec<BackupTableDigest>,
+}
+
+impl RestoreTargetPreimage {
+    pub(crate) fn validate(&self, plan: &RestorePlan, plan_hash: &str) -> AppResult<()> {
+        if self.format_version != 1 || self.plan_hash != plan_hash {
+            return Err(AppError::Validation(
+                "恢复初始化前像的版本或产品计划摘要不同".into(),
+            ));
+        }
+        if ![
+            &self.target_plan_sha256,
+            &self.initialized_sha256,
+            &self.resource_image_sha256,
+        ]
+        .iter()
+        .all(|value| sha256(value))
+        {
+            return Err(AppError::Validation("恢复初始化前像摘要格式无效".into()));
+        }
+        let expected = plan
+            .databases
+            .iter()
+            .map(|database| database.target_key.as_str())
+            .collect::<BTreeSet<_>>();
+        let provided = self
+            .databases
+            .iter()
+            .map(|database| database.target_key.as_str())
+            .collect::<BTreeSet<_>>();
+        if expected != provided || provided.len() != self.databases.len() {
+            return Err(AppError::Validation(
+                "恢复初始化前像必须精确覆盖全部目标库且不能重复".into(),
+            ));
+        }
+        for database in &self.databases {
+            let mut tables = BTreeSet::new();
+            if database.tables.is_empty()
+                || database.tables.iter().any(|table| {
+                    table.table.trim().is_empty()
+                        || !tables.insert(table.table.as_str())
+                        || !sha256(&table.sha256)
+                })
+            {
+                return Err(AppError::Validation("恢复初始化前像的表清单无效".into()));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]

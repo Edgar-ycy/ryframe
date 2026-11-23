@@ -1,8 +1,40 @@
 use super::{
     args::{Command, InventoryTime},
     context::Context,
-    output,
+    output, preimage,
 };
+use chrono::{DateTime, Utc};
+use ryframe_application::ports::backup::*;
+use ryframe_config::AppConfig;
+use ryframe_kernel::{AppError, AppResult};
+use serde::{Serialize, de::DeserializeOwned};
+use std::{
+    fs::OpenOptions,
+    io::{Read, Write},
+    path::Path,
+};
+
+pub struct BeginInput {
+    pub plan: RestorePlan,
+    preimage: RestoreTargetPreimage,
+}
+
+pub fn prepare_begin(command: &Command) -> AppResult<Option<BeginInput>> {
+    let Command::Begin {
+        plan,
+        target_preimage_stdin,
+        ..
+    } = command
+    else {
+        return Ok(None);
+    };
+    if !*target_preimage_stdin {
+        return Err(preimage::required());
+    }
+    let preimage = preimage::read(std::io::stdin().lock())?;
+    let plan = read_json(plan)?;
+    Ok(Some(BeginInput { plan, preimage }))
+}
 
 pub fn validate_outputs(command: &mut Command) -> AppResult<()> {
     match command {
@@ -15,18 +47,12 @@ pub fn validate_outputs(command: &mut Command) -> AppResult<()> {
     }
     Ok(())
 }
-use chrono::{DateTime, Utc};
-use ryframe_application::ports::backup::*;
-use ryframe_config::AppConfig;
-use ryframe_kernel::{AppError, AppResult};
-use serde::{Serialize, de::DeserializeOwned};
-use std::{
-    fs::OpenOptions,
-    io::{Read, Write},
-    path::Path,
-};
-
-pub async fn execute(config: &AppConfig, context: &Context, command: Command) -> AppResult<()> {
+pub async fn execute(
+    config: &AppConfig,
+    context: &Context,
+    command: Command,
+    begin: Option<BeginInput>,
+) -> AppResult<()> {
     match command {
         Command::TargetInventory { target, output } => {
             target_inventory(config, context.databases.as_ref(), &target, &output).await
@@ -51,11 +77,17 @@ pub async fn execute(config: &AppConfig, context: &Context, command: Command) ->
             let required = context.repository.required_resources().await?;
             print_json(&context.service.register(manifest, &required).await?)
         }
-        Command::Begin { plan, output, .. } => output::publish_result(
-            &output,
-            context.service.begin_restore(read_json(&plan)?).await,
-            "恢复开始记录",
-        ),
+        Command::Begin { output, .. } => {
+            let input = begin.ok_or_else(preimage::required)?;
+            output::publish_result(
+                &output,
+                context
+                    .service
+                    .begin_restore(input.plan, &input.preimage)
+                    .await,
+                "恢复开始记录",
+            )
+        }
         Command::VerifyData { id, output, .. } => output::publish_result(
             &output,
             context.service.verify_data(&id).await,

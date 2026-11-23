@@ -37,7 +37,7 @@ pub(crate) struct BackupRegisterOptions {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RestoreCommand {
-    Begin(RestoreBeginOptions),
+    Begin(Box<RestoreBeginOptions>),
     VerifyData(RestoreDataOptions),
     Verify(Box<RestoreVerifyOptions>),
 }
@@ -45,8 +45,12 @@ pub(crate) enum RestoreCommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RestoreBeginOptions {
     pub(crate) plan: PathBuf,
+    pub(crate) backup_root: PathBuf,
+    pub(crate) target_plan: PathBuf,
+    pub(crate) runtime_registration: PathBuf,
+    pub(crate) maintenance_root: PathBuf,
+    pub(crate) maintenance_build: PathBuf,
     pub(crate) output: PathBuf,
-    pub(crate) restore_config_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

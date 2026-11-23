@@ -11,6 +11,8 @@ mod commands;
 mod context;
 #[path = "ryframe_tenant_data/output.rs"]
 mod output;
+#[path = "ryframe_tenant_data/preimage.rs"]
+mod preimage;
 #[path = "ryframe_tenant_data/proof.rs"]
 mod proof;
 #[path = "ryframe_tenant_data/proof_binding.rs"]
@@ -27,6 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("{}", args::USAGE);
         return Ok(());
     }
+    let begin = commands::prepare_begin(&command)?;
     commands::validate_outputs(&mut command)?;
     let modules = ryframe::business::registered_business_modules()?;
     if let args::Command::Catalog { output } = &command {
@@ -52,7 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "control",
     )
     .await?;
-    let result = execute(&config, database.clone(), command).await;
+    let result = execute(&config, database.clone(), command, begin).await;
     let close_registry = database.close().await;
     result?;
     close_registry?;
@@ -63,6 +66,7 @@ async fn execute(
     config: &AppConfig,
     database: sea_orm::DatabaseConnection,
     command: args::Command,
+    begin: Option<commands::BeginInput>,
 ) -> ryframe_kernel::AppResult<()> {
     if let args::Command::TargetInventory { target, output } = &command {
         let verifier = context::database_verifier(config, database)?;
@@ -74,8 +78,11 @@ async fn execute(
         );
         return commands::status(config, repository.as_ref()).await;
     }
+    if let Some(input) = &begin {
+        context::validate_registry_isolated(&database, &input.plan).await?;
+    }
     let context = context::build(config, database, &command).await?;
-    let result = commands::execute(config, &context, command).await;
+    let result = commands::execute(config, &context, command, begin).await;
     let close = context.close().await;
     result?;
     close

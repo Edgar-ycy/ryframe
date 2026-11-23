@@ -119,6 +119,7 @@ pub(super) fn restore_result(args: &Value) -> Result<Value> {
             "target_plan",
             "backup_receipt",
             "record",
+            "begin_receipt",
             "runtime_registration",
         ],
     )?;

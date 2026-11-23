@@ -65,20 +65,16 @@ fn backup_and_target_commands_rebuild_private_arguments_in_stable_order() {
 #[test]
 fn restore_commands_rebuild_every_required_path_without_forwarding_raw_argv() {
     assert_eq!(
-        restore_arguments(&RestoreCommand::Begin(RestoreBeginOptions {
+        restore_arguments(&RestoreCommand::Begin(Box::new(RestoreBeginOptions {
             plan: "plan.json".into(),
+            backup_root: "backup".into(),
+            target_plan: "target.json".into(),
+            runtime_registration: "runtime.json".into(),
+            maintenance_root: "maintenance".into(),
+            maintenance_build: "maintenance/build.json".into(),
             output: "running.json".into(),
-            restore_config_dir: "D:/隔离 config".into(),
-        })),
-        strings(&[
-            "restore-begin",
-            "--plan",
-            "plan.json",
-            "--output",
-            "running.json",
-            "--restore-config-dir",
-            "D:/隔离 config",
-        ])
+        }))),
+        None
     );
     assert_eq!(
         restore_arguments(&RestoreCommand::VerifyData(RestoreDataOptions {
@@ -87,7 +83,7 @@ fn restore_commands_rebuild_every_required_path_without_forwarding_raw_argv() {
             output: "verified.json".into(),
             restore_config_dir: "config".into(),
         })),
-        strings(&[
+        Some(strings(&[
             "restore-verify-data",
             "--id",
             "drill-1",
@@ -97,7 +93,7 @@ fn restore_commands_rebuild_every_required_path_without_forwarding_raw_argv() {
             "verified.json",
             "--restore-config-dir",
             "config",
-        ])
+        ]))
     );
     let mut options = RestoreVerifyOptions {
         id: "drill-1".into(),
@@ -134,14 +130,14 @@ fn restore_commands_rebuild_every_required_path_without_forwarding_raw_argv() {
     ]);
     assert_eq!(
         restore_arguments(&RestoreCommand::Verify(Box::new(options.clone()))),
-        expected
+        Some(expected.clone())
     );
     options.config_dir = Some("D:/来源 config".into());
     let mut with_source = strings(&["--config-dir", "D:/来源 config"]);
     with_source.extend(expected);
     assert_eq!(
         restore_arguments(&RestoreCommand::Verify(Box::new(options))),
-        with_source
+        Some(with_source)
     );
 }
 

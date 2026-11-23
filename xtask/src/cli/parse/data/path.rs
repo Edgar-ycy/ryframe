@@ -13,6 +13,7 @@ pub(super) enum DataPathRole {
     ExternalInputFile,
     ExternalDirectory,
     ControlledNewOutput,
+    ControlledPlannedOutput,
 }
 
 pub(super) fn validate_data_path(
@@ -30,7 +31,9 @@ pub(super) fn validate_data_path(
         return Err(CliError::new(format!("{option} 不得包含父目录跳转")));
     }
     let boundary = match role {
-        DataPathRole::ControlledInputFile | DataPathRole::ControlledNewOutput => {
+        DataPathRole::ControlledInputFile
+        | DataPathRole::ControlledNewOutput
+        | DataPathRole::ControlledPlannedOutput => {
             let boundary = root_dir().join(".local-tests");
             if path == boundary || !path.starts_with(&boundary) {
                 return Err(CliError::new(format!(
@@ -98,7 +101,7 @@ fn validate_role(path: &Path, option: &str, role: DataPathRole) -> Result<(), Cl
             Ok(metadata) if metadata.is_dir() => Ok(()),
             _ => Err(CliError::new(format!("{option} 必须是已存在的真实目录"))),
         },
-        DataPathRole::ControlledNewOutput => {
+        DataPathRole::ControlledNewOutput | DataPathRole::ControlledPlannedOutput => {
             match fs::symlink_metadata(path) {
                 Ok(_) => {
                     return Err(CliError::new(format!("{option} 必须指向不存在的新文件")));
@@ -110,6 +113,9 @@ fn validate_role(path: &Path, option: &str, role: DataPathRole) -> Result<(), Cl
                         path.display()
                     )));
                 }
+            }
+            if matches!(role, DataPathRole::ControlledPlannedOutput) {
+                return Ok(());
             }
             let parent = path
                 .parent()

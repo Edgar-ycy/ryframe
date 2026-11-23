@@ -18,6 +18,13 @@ pub(crate) fn run(command: &DataCommand) -> Result<()> {
         return performance_identities::run(command);
     }
     let root = root_dir();
+    if let DataCommand::Restore(RestoreCommand::Begin(options)) = command {
+        let result = crate::recovery::source::evidence::reference_workflow::run_restore_begin(
+            &root, options,
+        )?;
+        println!("{}", serde_json::to_string(&result)?);
+        return Ok(());
+    }
     let cargo_args = cargo_arguments(command, &root)?;
     if let DataCommand::Restore(RestoreCommand::Verify(options)) = command {
         return run_restore_verify(options, &cargo_args);

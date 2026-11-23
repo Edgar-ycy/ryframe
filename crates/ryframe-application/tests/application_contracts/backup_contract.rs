@@ -42,11 +42,11 @@ async fn registration_and_restore_success_have_separate_evidence_and_timing() {
         .unwrap();
     assert!(record.valid);
     assert!(repository.records.lock().await.restores.is_empty());
-    let running = service.begin_restore(plan()).await.unwrap();
+    let running = begin_fixture_restore(&service, plan()).await.unwrap();
     assert_eq!(running.status, RestoreStatus::Running);
     assert!(running.completed_at.is_none());
     repository.clock.fetch_add(600, Ordering::SeqCst);
-    let repeated = service.begin_restore(plan()).await.unwrap();
+    let repeated = begin_fixture_restore(&service, plan()).await.unwrap();
     assert_eq!(repeated, running);
     let verified = service.verify_data(&running.plan.id).await.unwrap();
     assert_eq!(verified.status, RestoreStatus::DataVerified);
@@ -78,7 +78,47 @@ async fn corrupt_or_missing_files_are_persisted_as_invalid_and_cannot_begin_rest
     let record = repository.backup(&manifest.id).await.unwrap().unwrap();
     assert!(!record.valid);
     assert!(record.failure.is_some());
-    assert!(service.begin_restore(plan()).await.is_err());
+    assert!(begin_fixture_restore(&service, plan()).await.is_err());
+}
+
+#[tokio::test]
+async fn restore_begin_rejects_invalid_or_drifted_preimages_before_recording() {
+    let (service, repository, verifier) = fixture();
+    let manifest = manifest();
+    service
+        .register(manifest.clone(), &manifest.resource_keys())
+        .await
+        .unwrap();
+    let plan = plan();
+    let invalid: [fn(&mut RestoreTargetPreimage); 8] = [
+        |proof| proof.format_version = 2,
+        |proof| proof.plan_hash = "1".repeat(64),
+        |proof| proof.target_plan_sha256 = "B".repeat(64),
+        |proof| proof.initialized_sha256.clear(),
+        |proof| proof.databases.clear(),
+        |proof| proof.databases.push(proof.databases[0].clone()),
+        |proof| proof.databases[0].tables.clear(),
+        |proof| proof.databases[0].tables[0].sha256 = "e".repeat(63),
+    ];
+    for change in invalid {
+        let mut preimage = target_preimage(&plan);
+        change(&mut preimage);
+        assert!(
+            service
+                .begin_restore(plan.clone(), &preimage)
+                .await
+                .is_err()
+        );
+    }
+    assert_eq!(verifier.restore_target_calls.load(Ordering::SeqCst), 0);
+    verifier.broken_data.store(true, Ordering::SeqCst);
+    assert!(begin_fixture_restore(&service, plan).await.is_err());
+    assert_eq!(verifier.restore_target_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        verifier.restore_object_target_calls.load(Ordering::SeqCst),
+        0
+    );
+    assert!(repository.records.lock().await.restores.is_empty());
 }
 
 #[tokio::test]
@@ -160,7 +200,7 @@ async fn damaged_restored_data_records_failed_drill() {
         .register(manifest.clone(), &manifest.resource_keys())
         .await
         .unwrap();
-    service.begin_restore(plan()).await.unwrap();
+    begin_fixture_restore(&service, plan()).await.unwrap();
     verifier.broken_data.store(true, Ordering::SeqCst);
     let error = service.verify_data("drill-1").await.unwrap_err();
     assert!(error.message().contains("注入的校验失败"));
@@ -178,7 +218,7 @@ async fn first_restore_create_revalidates_parent_and_recovery_point() {
         .register(manifest.clone(), &manifest.resource_keys())
         .await
         .unwrap();
-    let running = service.begin_restore(plan()).await.unwrap();
+    let running = begin_fixture_restore(&service, plan()).await.unwrap();
     let backup = repository.backup(&manifest.id).await.unwrap().unwrap();
 
     let mut invalid = backup.clone();
@@ -229,7 +269,7 @@ async fn advance_restore_rejects_immutable_changes_and_illegal_transitions() {
         .register(manifest.clone(), &manifest.resource_keys())
         .await
         .unwrap();
-    let running = service.begin_restore(plan()).await.unwrap();
+    let running = begin_fixture_restore(&service, plan()).await.unwrap();
 
     let mut candidates = Vec::new();
     let mut changed = data_verified_record(&running);
@@ -269,7 +309,7 @@ async fn persistence_contract_rejects_malformed_restore_record_shapes() {
         .register(manifest.clone(), &manifest.resource_keys())
         .await
         .unwrap();
-    let running = service.begin_restore(plan()).await.unwrap();
+    let running = begin_fixture_restore(&service, plan()).await.unwrap();
 
     for invalid in malformed_restore_creates(&running) {
         let transaction = repository.begin().await.unwrap();
@@ -507,7 +547,7 @@ async fn corrupted_authoritative_records_fail_before_external_verification() {
         .register(manifest.clone(), &manifest.resource_keys())
         .await
         .unwrap();
-    let running = service.begin_restore(plan()).await.unwrap();
+    let running = begin_fixture_restore(&service, plan()).await.unwrap();
 
     let mut malformed_existing = running.clone();
     malformed_existing.status = RestoreStatus::Succeeded;
@@ -518,7 +558,7 @@ async fn corrupted_authoritative_records_fail_before_external_verification() {
         .restores
         .insert(running.plan.id.clone(), malformed_existing);
     assert!(matches!(
-        service.begin_restore(plan()).await,
+        begin_fixture_restore(&service, plan()).await,
         Err(AppError::Validation(_))
     ));
 
@@ -568,7 +608,7 @@ async fn clock_rollback_after_data_verification_is_persisted_as_failure() {
         .register(manifest.clone(), &manifest.resource_keys())
         .await
         .unwrap();
-    let running = service.begin_restore(plan()).await.unwrap();
+    let running = begin_fixture_restore(&service, plan()).await.unwrap();
     repository.clock.fetch_add(10, Ordering::SeqCst);
     let verified = service.verify_data(&running.plan.id).await.unwrap();
     repository.clock.fetch_sub(5, Ordering::SeqCst);
@@ -591,7 +631,7 @@ async fn runtime_probe_time_counts_towards_the_one_hour_limit() {
         .register(manifest.clone(), &manifest.resource_keys())
         .await
         .unwrap();
-    service.begin_restore(plan()).await.unwrap();
+    begin_fixture_restore(&service, plan()).await.unwrap();
     let verified = service.verify_data("drill-1").await.unwrap();
     verifier.runtime_delay_seconds.store(3601, Ordering::SeqCst);
     assert!(
@@ -615,7 +655,7 @@ async fn stale_or_incomplete_business_evidence_never_marks_recovery_successful()
             .register(manifest.clone(), &manifest.resource_keys())
             .await
             .unwrap();
-        service.begin_restore(plan()).await.unwrap();
+        begin_fixture_restore(&service, plan()).await.unwrap();
         let verified = service.verify_data("drill-1").await.unwrap();
         let mut proof = proof(&verified);
         match case {
@@ -706,10 +746,10 @@ async fn identifiers_cannot_replace_existing_backup_or_restore_plans() {
             .manifest,
         manifest
     );
-    let original = service.begin_restore(plan()).await.unwrap();
+    let original = begin_fixture_restore(&service, plan()).await.unwrap();
     let mut changed = plan();
     changed.object_endpoint = "elsewhere:9000".into();
-    assert!(service.begin_restore(changed).await.is_err());
+    assert!(begin_fixture_restore(&service, changed).await.is_err());
     assert_eq!(
         repository.restore("drill-1").await.unwrap().unwrap().plan,
         original.plan

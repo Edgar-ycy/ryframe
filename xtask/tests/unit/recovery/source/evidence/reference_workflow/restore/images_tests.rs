@@ -36,6 +36,7 @@ impl Fixture {
             "target_plan",
             "backup_receipt",
             "record",
+            "begin_receipt",
             "runtime_registration",
         ] {
             let path = local.join(format!("{key}.json"));

@@ -1,4 +1,4 @@
-use crate::args::Command;
+use crate::{args::Command, preimage};
 use ryframe_adapters::{
     backup,
     storage::{LocalObjectStorage, ObjectStorage, S3Config, S3ObjectStorage},
@@ -97,6 +97,15 @@ impl Context {
         }
         Ok(())
     }
+}
+
+pub async fn validate_registry_isolated(
+    database: &DatabaseConnection,
+    plan: &RestorePlan,
+) -> AppResult<()> {
+    let (server_uuid, database) =
+        ryframe_db::backup_verification::physical_identity(database).await?;
+    preimage::require_registry_disjoint(plan, &server_uuid, &database)
 }
 
 pub fn validate_isolation(source: &AppConfig, target: &AppConfig) -> AppResult<()> {

@@ -59,6 +59,7 @@ pub(super) fn start(args: &Value) -> Result<Value> {
                 "target_plan",
                 "backup_receipt",
                 "record",
+                "begin_receipt",
                 "runtime_registration",
             ],
         )?;
@@ -69,6 +70,7 @@ pub(super) fn start(args: &Value) -> Result<Value> {
             "target_plan",
             "backup_receipt",
             "record",
+            "begin_receipt",
             "runtime_registration",
         ] {
             verify_binding(&bindings[field])?;

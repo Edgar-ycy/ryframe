@@ -20,6 +20,10 @@ use native::{
     export::transport::SystemTransport, s3,
 };
 
+#[path = "restore/begin.rs"]
+mod begin;
+#[path = "restore/begin_proof.rs"]
+mod begin_proof;
 #[path = "restore/database_images.rs"]
 mod database_images;
 #[path = "restore/expected_images.rs"]
@@ -35,6 +39,7 @@ mod object_write;
 #[path = "restore/writes.rs"]
 mod writes;
 
+pub(super) use begin::run as run_begin;
 use inputs::Snapshot;
 
 #[derive(Clone, Copy, PartialEq, Eq)]

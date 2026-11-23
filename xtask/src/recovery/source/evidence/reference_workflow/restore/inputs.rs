@@ -2,6 +2,7 @@
 use std::{
     fs,
     io::ErrorKind,
+    ops::Deref,
     path::{Path, PathBuf},
 };
 
@@ -25,19 +26,25 @@ use crate::{
     },
 };
 
-pub(super) struct Snapshot {
+pub(super) struct TargetSnapshot {
     pub(super) root: PathBuf,
     pub(super) chain: Chain,
     pub(super) target: Document,
     pub(super) manifest: Document,
-    pub(super) record: Document,
     pub(super) registration: Document,
+    pub(super) product_plan: Document,
     protected: [ProtectedInputs; 3],
     provenance: Inputs,
 }
 
-impl Snapshot {
+impl TargetSnapshot {
     pub(super) fn read(backend: &Path, request: &Value, read_only: bool) -> Result<Self> {
+        let snapshot = Self::load(backend, request)?;
+        snapshot.verify_source(backend, read_only)?;
+        Ok(snapshot)
+    }
+
+    fn load(backend: &Path, request: &Value) -> Result<Self> {
         let registration_path = validate_local_test_path(
             path(&request["runtime_registration"])?,
             backend,
@@ -47,12 +54,12 @@ impl Snapshot {
         let registration_guard = ProtectedInputs::open([registration_path.clone()])?;
         let registration = document::read(&registration_path, backend, "恢复运行登记")?;
         let selected = Selected::read(backend, request, &registration)?;
-        let (chain, verified, product) =
+        let (chain, verified, product_plan) =
             target_plan::verify(backend, selected.reference, &selected.target.path)?;
         if verified != selected.target.value {
             return Err("恢复目标计划在读取与核验之间发生变化".into());
         }
-        let provenance = hold_provenance(&chain.comparison_document, &product)?;
+        let provenance = hold_provenance(&chain.comparison_document, &product_plan)?;
         let manifest_binding = &chain.backup.result["manifest"];
         let manifest_path = document::binding_shape(manifest_binding, "正式备份清单")?.path;
         let backup_guard =
@@ -67,26 +74,24 @@ impl Snapshot {
             &chain.backup.result,
             &manifest.path,
         )?;
-        proof::record(&json!({
-            "plan":chain.reference.value,"manifest":manifest.value,
-            "record":selected.record.value,"product_plan":verified["product_plan"],
-        }))?;
-        backup::verify_frozen_source(backend, &chain.backup)?;
-        // 仅持原运行守卫的执行态调用允许比较入口重建 B0 适配证据。
-        comparison::verify(backend, &chain.comparison_document.value, read_only)?;
-        provenance.check()?;
-        let snapshot = Self {
+        Ok(Self {
             root,
             chain,
             target: selected.target,
             manifest,
-            record: selected.record,
             registration,
+            product_plan,
             protected: [registration_guard, selected.guard, backup_guard],
             provenance,
-        };
-        snapshot.assert_unchanged()?;
-        Ok(snapshot)
+        })
+    }
+
+    fn verify_source(&self, backend: &Path, read_only: bool) -> Result<()> {
+        backup::verify_frozen_source(backend, &self.chain.backup)?;
+        // 仅持原运行守卫的执行态调用允许比较入口重建 B0 适配证据。
+        comparison::verify(backend, &self.chain.comparison_document.value, read_only)?;
+        self.provenance.check()?;
+        self.assert_unchanged()
     }
 
     pub(super) fn assert_unchanged(&self) -> Result<()> {
@@ -99,7 +104,6 @@ impl Snapshot {
             &self.target,
             &self.chain.backup_document,
             &self.manifest,
-            &self.record,
             &self.registration,
         ] {
             document.assert_unchanged()?;
@@ -107,15 +111,68 @@ impl Snapshot {
         Ok(())
     }
 
+    pub(super) fn check_runtime(&self, checkpoint: &Value) -> Result<()> {
+        check_runtime(&self.registration, &self.target, checkpoint)?;
+        self.assert_unchanged()
+    }
+}
+
+pub(super) struct Snapshot {
+    selected: TargetSnapshot,
+    pub(super) record: Document,
+    pub(super) begin_receipt: Document,
+    record_guard: ProtectedInputs,
+}
+
+impl Deref for Snapshot {
+    type Target = TargetSnapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.selected
+    }
+}
+
+impl Snapshot {
+    pub(super) fn read(backend: &Path, request: &Value, read_only: bool) -> Result<Self> {
+        let (record, record_guard) = running_record(backend, request)?;
+        let selected = TargetSnapshot::load(backend, request)?;
+        proof::record(&json!({
+            "plan":selected.chain.reference.value,"manifest":selected.manifest.value,
+            "record":record.value,"product_plan":selected.product_plan.value,
+        }))?;
+        let begin_receipt = super::begin::verify_record(backend, &selected, &record)?;
+        selected.verify_source(backend, read_only)?;
+        let snapshot = Self {
+            selected,
+            record,
+            begin_receipt,
+            record_guard,
+        };
+        snapshot.check_record()?;
+        Ok(snapshot)
+    }
+
+    fn check_record(&self) -> Result<()> {
+        self.record_guard.assert_unchanged()?;
+        self.record.assert_unchanged()?;
+        self.begin_receipt.assert_unchanged()
+    }
+
+    pub(super) fn assert_unchanged(&self) -> Result<()> {
+        self.selected.assert_unchanged()?;
+        self.check_record()
+    }
+
     pub(super) fn bindings(&self) -> Value {
         json!({"target_side":self.target.value["target_side"],"target_plan":document::binding(&self.target),
             "backup_receipt":document::binding(&self.chain.backup_document),"record":document::binding(&self.record),
+            "begin_receipt":document::binding(&self.begin_receipt),
             "runtime_registration":document::binding(&self.registration)})
     }
 
     pub(super) fn check_runtime(&self, checkpoint: &Value) -> Result<()> {
-        check_runtime(&self.registration, &self.target, checkpoint)?;
-        self.assert_unchanged()
+        self.selected.check_runtime(checkpoint)?;
+        self.check_record()
     }
 
     pub(super) fn check_final(&self) -> Result<()> {
@@ -153,7 +210,6 @@ fn check_provenance(held: &Inputs) -> Result<()> {
 struct Selected {
     reference: Document,
     target: Document,
-    record: Document,
     guard: ProtectedInputs,
 }
 
@@ -163,22 +219,26 @@ impl Selected {
         let target_binding = &registration.value["target_plan"];
         let reference_path = registered_path(backend, path(&request["plan"])?, reference_binding)?;
         let target_path = registered_path(backend, path(&request["target_plan"])?, target_binding)?;
-        let record_path = validate_local_test_path(
-            path(&request["record"])?,
-            backend,
-            LocalTestPathKind::ExistingFile,
-        )?;
-        let guard = ProtectedInputs::open([reference_path, target_path, record_path.clone()])?;
+        let guard = ProtectedInputs::open([reference_path, target_path])?;
         let (_, reference) = document::bound_file(backend, reference_binding, "登记参考计划")?;
         let (_, target) = document::bound_file(backend, target_binding, "登记目标计划")?;
-        let record = document::read(&record_path, backend, "产品恢复运行记录")?;
         Ok(Self {
             reference,
             target,
-            record,
             guard,
         })
     }
+}
+
+fn running_record(backend: &Path, request: &Value) -> Result<(Document, ProtectedInputs)> {
+    let path = validate_local_test_path(
+        path(&request["record"])?,
+        backend,
+        LocalTestPathKind::ExistingFile,
+    )?;
+    let guard = ProtectedInputs::open([path.clone()])?;
+    let record = document::read(&path, backend, "产品恢复运行记录")?;
+    Ok((record, guard))
 }
 
 fn registered_path(backend: &Path, selected: &Path, descriptor: &Value) -> Result<PathBuf> {
