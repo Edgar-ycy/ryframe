@@ -1,6 +1,8 @@
 //! 五桶逐项独占 create+HEAD；远端写入前记录意图，任何未知结果禁止重放。
 use super::*;
-use crate::recovery::clone::native::{input::BUCKETS, s3::app_configuration};
+use crate::recovery::clone::native::{
+    input::BUCKETS, s3::app_configuration, target_verify::input::request_review::Kind,
+};
 use crate::recovery::fixture_control::services::lifecycle::{Runtime, readonly::NativeRuntime};
 use std::time::Duration;
 
@@ -36,9 +38,10 @@ fn execute(inputs: &Inputs, lock: &RunLock, output: &Path) -> Result<Value> {
     state::bind_controller(&inputs.run, number, &lock.owner, &attempt)?;
     let running = json!({"ledger":storage::binding::snapshot(&inputs.run.join("state.json"))?,
         "controller":storage::binding::snapshot(&state::controller_path(&inputs.run, number))?});
+    let side = Kind::read(&inputs.review)?.service_side();
     let result = create_all(
         output,
-        &inputs.review["scopes"]["seed"]["scope_id"],
+        &inputs.review["scopes"][side]["scope_id"],
         &inputs.configuration,
         || guard(inputs, lock, &sources, &predecessors, &running),
         |operation, request| invoke(inputs, operation, request),
@@ -97,7 +100,8 @@ fn create_all(
 
 fn configuration(inputs: &Inputs) -> Result<Value> {
     let settings = inputs.settings()?;
-    let selected = &inputs.review["scopes"]["seed"]["objects"];
+    let side = Kind::read(&inputs.review)?.service_side();
+    let selected = &inputs.review["scopes"][side]["objects"];
     let value = json!({"endpoint":selected["endpoint"],"region":selected["region"],
         "access_key":settings["object_storage"]["access_key"],"secret_key":settings["object_storage"]["secret_key"]});
     check(

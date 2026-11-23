@@ -1,5 +1,8 @@
 use super::protocol::check;
-use crate::{Result, recovery::clone::native::json as native_json};
+use crate::{
+    Result,
+    recovery::clone::native::{json as native_json, target_verify::input::request_review::Kind},
+};
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, path::Path};
 
@@ -80,6 +83,10 @@ pub(super) fn reset_password(value: &Value) -> Result<()> {
 
 pub(super) fn preflight_binding(review: &Value) -> Result<Value> {
     let message = "夹具审阅计划缺少当前工具预检收据";
+    let kind = Kind::read(review)?;
+    if kind == Kind::B1RuntimeMeasurement {
+        super::super::review::validate_review(review)?;
+    }
     let tools = &review["tools"];
     let tool_object = tools.as_object().ok_or(message)?;
     let names = tool_names(tools);
@@ -118,7 +125,7 @@ pub(super) fn preflight_binding(review: &Value) -> Result<Value> {
             && preflight["tools"] == expected,
         message,
     )?;
-    let seed_scope = review["scopes"]["seed"]["scope_id"]
+    let service_scope = review["scopes"][kind.service_side()]["scope_id"]
         .as_str()
         .ok_or(message)?;
     let run = match super::super::review::reconciled::service_run(review)? {
@@ -130,7 +137,7 @@ pub(super) fn preflight_binding(review: &Value) -> Result<Value> {
         .map(Path::new)
         .ok_or(message)?;
     check(
-        review["services"]["rustfs"]["scope_id"] == format!("services-{seed_scope}")
+        review["services"]["rustfs"]["scope_id"] == format!("services-{service_scope}")
             && process.is_absolute()
             && process == run.join("rustfs").join("process.json"),
         message,

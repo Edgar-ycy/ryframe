@@ -4,8 +4,11 @@ use serde_json::{Value, json};
 
 use super::super::{file_binding, output_value, path_value, read_json, write_new};
 use crate::{
-    Result, local_test_path::LocalTestPathKind,
-    recovery::clone::native::cache::review_tools::observe,
+    Result,
+    local_test_path::LocalTestPathKind,
+    recovery::clone::native::{
+        cache::review_tools::observe, target_verify::input::request_review::Kind,
+    },
 };
 
 const LIMIT: u64 = 4 * 1024 * 1024;
@@ -40,6 +43,11 @@ fn renew_with_observer(
         }
         structural.insert("ready_for_execution".to_owned(), json!(true));
         super::super::review::validate_review(&Value::Object(structural))?;
+        let new_measurement =
+            Kind::is_measurement(&original) && original["ready_for_execution"] == false;
+        if new_measurement {
+            super::super::review::validate_measurement_root(root, &original)?;
+        }
         if original["ready_for_execution"] == true {
             super::guards::preflight_binding(&original)?;
         }
@@ -59,6 +67,9 @@ fn renew_with_observer(
         }
         unchanged(review, &original, &predecessor)?;
         stage = "本地收据发布";
+        if new_measurement {
+            super::super::review::validate_measurement_root(root, &original)?;
+        }
         write_new(output, &revised)?;
         Ok(revised)
     })();
@@ -81,11 +92,12 @@ fn receipt(original: &Value, observed: &Value, predecessor: &Value) -> Result<Va
     }
     // Ready 的资源字段已通过原绑定守卫；保持 JSON 原文，不重写等价路径。
     if original["ready_for_execution"] == false {
+        let side = Kind::read(original)?.service_side();
         let scope = format!(
             "services-{}",
-            original["scopes"]["seed"]["scope_id"]
+            original["scopes"][side]["scope_id"]
                 .as_str()
-                .ok_or("seed scope 缺失")?
+                .ok_or("服务 scope 缺失")?
         );
         let process = super::guards::service_run(original)?
             .join("rustfs")

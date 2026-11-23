@@ -1,7 +1,7 @@
 //! 从正式预检收尾派生只可用于产品执行的审阅，保留原服务控制权。
 use super::{
-    SIDES, file_binding, path_text_lexical, portable_path, validate_future_root, validate_output,
-    validate_review, write_new,
+    SIDES, file_binding, path_text_lexical, portable_path, require_comparison,
+    validate_future_root, validate_output, validate_review, write_new,
 };
 use crate::{
     Result,
@@ -10,6 +10,7 @@ use crate::{
     recovery::{
         clone::native::{
             digest, json as document, resources::common, target_verify::fresh::reconcile,
+            target_verify::input::request_review::Kind,
         },
         fixture_control::{services::lifecycle::query, source_pair::execution},
     },
@@ -39,6 +40,7 @@ impl Origin {
         let binding = &origin.request["review"];
         let review_binding = file_descriptor(binding);
         let review = common::read_bound(backend, &review_binding, "原 seed 审阅")?;
+        require_comparison(&review)?;
         validate_review(&review)?;
         if has_origin(&review) || binding["canonical_sha256"] != digest::plan_hash(&review)? {
             return Err("接续须使用原服务审阅及其正式收尾".into());
@@ -77,6 +79,9 @@ pub(crate) fn has_origin(review: &Value) -> bool {
 pub(crate) fn service_run(review: &Value) -> Result<Option<PathBuf>> {
     if !has_origin(review) {
         return Ok(None);
+    }
+    if Kind::is_measurement(review) {
+        return Err("B1 测量审阅不得附带原 seed 接续".into());
     }
     Ok(Some(PathBuf::from(document::text(
         &review["sources"]["reconciled_seed"]["storage_run"]["path"],
@@ -153,6 +158,9 @@ fn redis_configuration(request: &Value) -> Result<toml::Value> {
 pub(crate) fn verify(backend: &Path, review: &Value) -> Result<Option<SeedService>> {
     if !has_origin(review) {
         return Ok(None);
+    }
+    if Kind::is_measurement(review) {
+        return Err("B1 测量审阅不得附带原 seed 接续".into());
     }
     let marker = &review["sources"]["reconciled_seed"];
     let workspace = Path::new(document::text(&marker["workspace"], "原已收尾工作区")?);

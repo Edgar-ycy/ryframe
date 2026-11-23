@@ -11,6 +11,7 @@ use crate::{
     Result,
     cli::{FixtureReviewCommand, FixtureReviewOptions},
     local_test_path::{LocalTestPathKind, validate_local_test_path},
+    recovery::clone::native::target_verify::input::request_review,
 };
 
 use super::{
@@ -72,6 +73,7 @@ pub(crate) fn renew_observed(
         .collect::<PathBuf>();
     let template = read_controlled_json(&template_file, "审阅模板")?;
     let template_binding = file_binding(&template_file, "审阅模板")?;
+    require_comparison(&template)?;
     validate_review(&template)?;
     reject_historical_databases(&template)?;
     let publication_binding = file_binding(&publication_file, "执行源码发布收据")?;
@@ -161,10 +163,10 @@ fn validate_ports(options: &FixtureReviewOptions) -> Result<()> {
 
 pub(super) fn validate_review(review: &Value) -> Result<()> {
     let root = review.as_object().ok_or("审阅计划结构无效")?;
-    if !root.get("reference").is_some_and(Value::is_object)
-        || root.get("kind").and_then(Value::as_str)
-            != Some("review-only-perf-resource-plan-with-readonly-preflight")
-    {
+    if request_review::Kind::read(review)? == request_review::Kind::B1RuntimeMeasurement {
+        return request_review::validate(review);
+    }
+    if !root.get("reference").is_some_and(Value::is_object) {
         return Err("审阅计划类型无效".into());
     }
     if root.get("ready_for_execution") != Some(&Value::Bool(true)) {
@@ -204,6 +206,28 @@ pub(super) fn validate_review(review: &Value) -> Result<()> {
         validate_scope(side)?;
     }
     Ok(())
+}
+
+fn require_comparison(review: &Value) -> Result<()> {
+    if request_review::Kind::read(review)? != request_review::Kind::Comparison {
+        return Err("三侧夹具审阅入口不接受 B1 运行测量审阅".into());
+    }
+    Ok(())
+}
+
+pub(super) fn validate_measurement_root(backend: &Path, review: &Value) -> Result<()> {
+    let root = Path::new(
+        review["future_root"]
+            .as_str()
+            .ok_or("B1 测量缺少新运行根")?,
+    );
+    let execution = Path::new(
+        review["scopes"]["candidate"]["backend_dir"]
+            .as_str()
+            .ok_or("B1 测量缺少执行根")?,
+    );
+    validate_local_test_path(root, backend, LocalTestPathKind::NewDirectory)?;
+    validate_future_root(root, execution)
 }
 
 fn validate_tools(tools: &Map<String, Value>) -> Result<()> {

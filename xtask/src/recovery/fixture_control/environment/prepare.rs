@@ -3,7 +3,10 @@ use super::{configuration, output, plan, protocol::check};
 use crate::{
     Result,
     cli::FixtureEnvironmentCommand,
-    recovery::clone::native::{digest, json as document, maintenance},
+    local_test_path::same_local_test_file,
+    recovery::clone::native::{
+        digest, json as document, maintenance, target_verify::input::request_review::Kind,
+    },
 };
 use serde_json::{Value, json};
 use std::{
@@ -41,6 +44,9 @@ fn run_with(
     fields.insert("backend".into(), json!(root));
     let planned = plan::create(&Value::Object(fields))?;
     let captured = plan::inputs(&json!({"backend":root,"plan":planned}))?;
+    if Kind::read(&captured["inputs"][1])? == Kind::B1RuntimeMeasurement {
+        check(secrets_dir.is_some(), "B1 测量必须显式指定 --secrets-dir")?;
+    }
     output::request(&json!({"backend":root,"plan":planned,"output":output}))?;
     create_output(&output)?;
     let result = files::private_permissions(&output, true).and_then(|()| {
@@ -139,12 +145,19 @@ fn prepare(
             .as_str()
             .ok_or("原始来源缺失")?,
     );
-    let source = files::Secrets::open(root, original, None)?;
-    let secrets = files::Secrets::open(root, original, selected_secrets)?;
+    let kind = Kind::read(review)?;
+    let (source, secrets) = open_secrets(root, original, execution, kind, selected_secrets)?;
     let side = planned["side"].as_str().ok_or("夹具侧缺失")?;
     let selected = &review["scopes"][side];
     let mysql = mysql_path(selected)?;
-    files::copy_mysql(root, &source.directory.join("mysql-client.cnf"), &mysql)?;
+    if let Some(source) = &source {
+        files::copy_mysql(root, &source.directory.join("mysql-client.cnf"), &mysql)?;
+    } else {
+        check(
+            same_local_test_file(root, &mysql, &secrets.directory.join("mysql-client.cnf"))?,
+            "B1 四库必须直接绑定本次私有秘密集中的 MySQL 客户端配置",
+        )?;
+    }
     let mysql_binding = files::binding(&mysql)?;
     let database = selected["databases"]
         .as_array()
@@ -155,6 +168,12 @@ fn prepare(
     let credentials = json!({"backend":root,"database":{"defaults_file":mysql,
         "defaults_sha256":mysql_binding["sha256"],"database":database["database"]}});
     let client = crate::recovery::source::evidence::binding::summary(&credentials)?;
+    if kind == Kind::B1RuntimeMeasurement {
+        check(
+            client["host"] == database["host"] && client["port"] == database["port"],
+            "B1 MySQL 客户端必须连接审阅登记的独立实例",
+        )?;
+    }
     let settings = configuration::settings(&json!({"selected":selected,"client":client,
         "values":secrets.values()?,"side":side}))?;
     render::configuration(execution, output, &settings, &credentials)?;
@@ -175,9 +194,42 @@ fn prepare(
         captured,
         output,
         execution,
-        [&source, &secrets],
+        (source.as_ref(), &secrets),
         (&mysql, mysql_binding),
     )
+}
+
+fn open_secrets(
+    root: &Path,
+    original: &Path,
+    execution: &Path,
+    kind: Kind,
+    selected: Option<&Path>,
+) -> Result<(Option<files::Secrets>, files::Secrets)> {
+    match kind {
+        Kind::Comparison => Ok((
+            Some(files::Secrets::open(root, original, None)?),
+            files::Secrets::open(root, original, selected)?,
+        )),
+        Kind::B1RuntimeMeasurement => {
+            let selected = selected.ok_or("B1 测量必须显式指定 --secrets-dir")?;
+            let selected = if selected.is_absolute() {
+                selected.to_owned()
+            } else {
+                root.join(selected)
+            };
+            let default = execution.join(".local-tests/reference-fixture/secrets");
+            check(
+                !default.try_exists()?
+                    || fs::canonicalize(&default)? != fs::canonicalize(&selected)?,
+                "B1 测量须使用独立秘密集，不能选择默认 MySQL 凭据",
+            )?;
+            Ok((
+                None,
+                files::Secrets::open(root, execution, Some(&selected))?,
+            ))
+        }
+    }
 }
 
 fn publish(
@@ -186,10 +238,10 @@ fn publish(
     captured: &Value,
     output: &Path,
     execution: &Path,
-    secret_sets: [&files::Secrets; 2],
+    secret_sets: (Option<&files::Secrets>, &files::Secrets),
     mysql: (&Path, Value),
 ) -> Result<Value> {
-    let [source, secrets] = secret_sets;
+    let (source, secrets) = secret_sets;
     let (mysql, mysql_binding) = mysql;
     let values = &captured["inputs"];
     fs::create_dir(output.join("tmp"))?;
@@ -201,7 +253,9 @@ fn publish(
         plan::inputs(&json!({"backend":root,"plan":planned}))? == *captured,
         "夹具计划输入在准备期间变化",
     )?;
-    source.check()?;
+    if let Some(source) = source {
+        source.check()?;
+    }
     secrets.check()?;
     check(
         files::binding(mysql)? == mysql_binding,

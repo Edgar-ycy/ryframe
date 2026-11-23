@@ -70,6 +70,133 @@ impl Fixture {
     }
 }
 
+fn measurement_review(review: &Value, tools: &Value) -> Value {
+    let future = Path::new(review["future_root"].as_str().unwrap());
+    let mut candidate = review["scopes"]["candidate"].clone();
+    candidate["scope_id"] = json!("fixture-b1-measurement");
+    candidate["runtime_dir"] = json!(future.join("runtime-candidate"));
+    candidate["identity_ledger"] = json!(future.join("identities-candidate"));
+    candidate["objects"]["endpoint"] = review["services"]["rustfs"]["api"].clone();
+    candidate["redis"]["namespace"] = json!("ryframe:{fixture-b1-measurement}:");
+    candidate["redis"]["ownership_key"] = json!("ryframe:{fixture-b1-measurement}:.ryframe-owner");
+    candidate["redis"]["ownership_value"] = json!("ryframe-owner:v1:fixture-b1-measurement:redis");
+    let mut review = review.clone();
+    review.as_object_mut().unwrap().remove("preflight");
+    review["kind"] = json!("review-only-b1-runtime-measurement-with-readonly-preflight");
+    review["ready_for_execution"] = json!(false);
+    review["scopes"] = json!({"candidate":candidate});
+    review["services"]["redis"]["endpoint"] = json!("127.0.0.1:16390");
+    review["services"]["redis"]["directory"] = json!(future.join("redis"));
+    let rustfs = review["services"]["rustfs"].as_object_mut().unwrap();
+    rustfs.insert("data_dir".into(), json!(future.join("rustfs")));
+    rustfs.remove("scope_id");
+    rustfs.remove("process_receipt");
+    review["tools"] = tools.clone();
+    for role in ["mysql", "mysqldump", "rustfs"] {
+        review["tools"][role]["sha256"] = json!("a".repeat(64));
+    }
+    review
+}
+
+#[test]
+fn measurement_preflight_and_environment_plan_use_only_candidate() {
+    use crate::{
+        cli::{FixtureEnvironmentCommand, FixtureEnvironmentInputs, FixtureSide},
+        recovery::fixture_control::{review, services::lifecycle::query, source_pair::execution},
+    };
+    let sources = execution::tests::Fixture::new();
+    let (directory, legacy) = fixtures::published_plan(&sources);
+    let execution_root = Path::new(legacy["execution_backend"].as_str().unwrap());
+    let reference = execution_root.join(".local-tests/reference-fixture");
+    fs::create_dir_all(&reference).unwrap();
+    let predecessor =
+        crate::recovery::clone::native::json::read(&directory.join("review.json")).unwrap();
+    let pending = measurement_review(&predecessor, &Fixture::new().windows_tools());
+    let review_input = directory.join("measurement-pending.json");
+    let review_ready = directory.join("measurement-ready.json");
+    write_new(&review_input, &pending).unwrap();
+    let ready = renew_with_observer(&sources.backend, &review_input, &review_ready, |_, _| {
+        Ok(pending["tools"].clone())
+    })
+    .unwrap();
+    let future = Path::new(ready["future_root"].as_str().unwrap());
+    let run = future.join("service-run");
+    assert_eq!(
+        ready["services"]["rustfs"]["scope_id"],
+        "services-fixture-b1-measurement"
+    );
+    assert_eq!(
+        query::dispatch(&sources.backend, "service-run", &json!({"review":ready})).unwrap(),
+        json!(run)
+    );
+    assert!(!future.exists());
+    assert!(
+        review::reconciled::verify(&sources.backend, &ready)
+            .unwrap()
+            .is_none()
+    );
+    let execution_source = sources.output.join("execution-source.json");
+    let maintenance_build = directory.join("maintenance_build.json");
+    let mut args = json!({"backend":sources.backend,"review":review_ready,
+        "execution_source":execution_source,"maintenance_build":maintenance_build,"side":"candidate"});
+    let plan = super::super::plan::create(&args).unwrap();
+    assert_eq!(plan["scope_id"], "fixture-b1-measurement");
+    assert_eq!(plan["databases"].as_array().unwrap().len(), 4);
+    super::super::plan::inputs(&json!({"backend":sources.backend,"plan":plan})).unwrap();
+    args["side"] = json!("seed");
+    assert!(super::super::plan::create(&args).is_err());
+    let output = reference.join("measurement-prepare");
+    let command = FixtureEnvironmentCommand::Prepare {
+        inputs: FixtureEnvironmentInputs {
+            review: review_ready,
+            execution_source,
+            maintenance_build,
+            side: FixtureSide::Candidate,
+        },
+        output: output.clone(),
+        secrets_dir: None,
+    };
+    let error = super::super::prepare::run(&sources.backend, &command).unwrap_err();
+    assert!(error.to_string().contains("--secrets-dir"));
+    assert!(!output.exists());
+}
+
+#[test]
+fn measurement_review_rejects_extra_roles_linux_and_legacy_reconciliation() {
+    use crate::recovery::{
+        clone::native::target_verify::input::request_review, fixture_control::review,
+    };
+    let fixture = Fixture::new();
+    let mut ready = measurement_review(&fixture.review, &fixture.windows_tools());
+    ready["ready_for_execution"] = json!(true);
+    request_review::validate(&ready).unwrap();
+    let mut extra = ready.clone();
+    extra["scopes"]["seed"] = fixture.review["scopes"]["seed"].clone();
+    assert!(request_review::validate(&extra).is_err());
+    let mut wrong = ready.clone();
+    wrong["scopes"] = json!({"base":ready["scopes"]["candidate"]});
+    assert!(request_review::validate(&wrong).is_err());
+    let mut linux = ready.clone();
+    linux["tools"]["redis_server"] = fixture.review["tools"]["redis_server"].clone();
+    assert!(
+        request_review::validate(&linux)
+            .unwrap_err()
+            .to_string()
+            .contains("Windows Redis")
+    );
+    let mut overlap = ready.clone();
+    overlap["reference"]["protected_target"]["databases"] = json!([{
+        "server_uuid":ready["scopes"]["candidate"]["databases"][0]["expected_server_uuid"],
+        "database":ready["scopes"]["candidate"]["databases"][0]["database"],
+    }]);
+    assert!(request_review::validate(&overlap).is_err());
+    let mut legacy = ready.clone();
+    legacy["kind"] = fixture.review["kind"].clone();
+    assert!(review::validate_review(&legacy).is_err());
+    ready["sources"] = json!({"reconciled_seed":{}});
+    assert!(review::reconciled::verify(&fixture.root, &ready).is_err());
+}
+
 #[test]
 fn pending_and_ready_refresh_preserve_history_and_raw_predecessor_binding() {
     let fixture = Fixture::new();

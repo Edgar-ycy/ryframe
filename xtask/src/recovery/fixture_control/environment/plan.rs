@@ -137,7 +137,8 @@ fn selected(review: &Value, side: &str) -> Result<Value> {
         "夹具侧必须精确声明四个数据库",
     )?;
     let mut names = Vec::new();
-    for scope in review["scopes"].as_object().ok_or("三侧缺失")?.values() {
+    let scopes = review["scopes"].as_object().ok_or("审阅侧缺失")?;
+    for scope in scopes.values() {
         for item in scope["databases"].as_array().ok_or("数据库列表缺失")? {
             names.push(
                 item["database"]
@@ -148,8 +149,13 @@ fn selected(review: &Value, side: &str) -> Result<Value> {
         }
     }
     check(
-        names.len() == 12 && names.iter().collect::<BTreeSet<_>>().len() == 12,
-        "三侧夹具数据库名称不得重叠",
+        names.len() == scopes.len() * KEYS.len()
+            && names.iter().collect::<BTreeSet<_>>().len() == names.len(),
+        if scopes.len() == 3 {
+            "三侧夹具数据库名称不得重叠"
+        } else {
+            "B1 测量夹具数据库名称不得重叠"
+        },
     )?;
     Ok(selected.clone())
 }

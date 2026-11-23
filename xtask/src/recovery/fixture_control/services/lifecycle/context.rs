@@ -1,6 +1,9 @@
 //! 服务上下文只读装载；凭据只返回私有调用方，不写日志或公开状态。
 use super::*;
-use crate::local_test_path::{LocalTestPathKind, same_local_test_file, validate_local_test_path};
+use crate::{
+    local_test_path::{LocalTestPathKind, same_local_test_file, validate_local_test_path},
+    recovery::clone::native::target_verify::input::request_review::Kind,
+};
 
 pub(super) fn document(backend: &Path, selected: &Path) -> Result<(PathBuf, Value)> {
     let path = if selected.is_absolute() {
@@ -34,7 +37,12 @@ pub(super) fn service_run(review: &Value) -> Result<PathBuf> {
         "接续产品审阅不登记服务；服务操作须使用原审阅",
     )?;
     let root = PathBuf::from(text(review, "future_root")?);
-    let backend = PathBuf::from(text(&review["scopes"]["seed"], "backend_dir")?);
+    let side = if Kind::is_measurement(review) {
+        "candidate"
+    } else {
+        "seed"
+    };
+    let backend = PathBuf::from(text(&review["scopes"][side], "backend_dir")?);
     check(
         root.is_absolute()
             && backend.is_absolute()
@@ -68,6 +76,13 @@ pub(super) fn environment(
             && bootstrap["remote_writes"] == 0,
         "夹具环境尚未准备完成或已经发生服务副作用",
     )?;
+    if Kind::is_measurement(review) {
+        check(
+            bootstrap["plan"]["side"] == "candidate"
+                && bootstrap["plan"]["scope_id"] == review["scopes"]["candidate"]["scope_id"],
+            "B1 测量服务必须使用同一 candidate 私有环境",
+        )?;
+    }
     let original = &bootstrap["plan"]["review"];
     let descriptor = descriptor(original);
     let registered = recorded_path(backend, review_file, &descriptor)?;
