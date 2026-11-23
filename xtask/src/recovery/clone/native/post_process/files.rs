@@ -1,9 +1,15 @@
 //! 文件位置、字节和独占新建沿用原受管边界；不覆盖失败现场。
 use crate::{
     Result,
-    recovery::clone::native::{json as document, resources::common, target_verify},
+    recovery::clone::native::{
+        json as document,
+        lifecycle::{stage::StageRequest, state},
+        resources::common,
+        seed,
+        target_verify::{self, guard::Inputs},
+    },
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::{
     collections::BTreeSet,
     fs,
@@ -58,6 +64,124 @@ pub(in crate::recovery::clone::native) fn bindings(
         _ => (),
     }
     Ok(())
+}
+
+pub(super) fn check_proof_files(
+    proofs: &serde_json::Map<String, Value>,
+    changed: &'static str,
+) -> Result<()> {
+    for (path, expected) in proofs {
+        let actual = common::binding(Path::new(path))?;
+        if actual["bytes"] != expected["bytes"] || actual["sha256"] != expected["sha256"] {
+            return Err(changed.into());
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn stage_output(request: &StageRequest<'_>, number: u64) -> Result<PathBuf> {
+    let base = request.run_dir.join(request.stage);
+    if !base.try_exists()? {
+        fs::create_dir(&base)?;
+    }
+    common::local_directory(request.backend, &base, "复制后证据根")?;
+    let output = base.join(format!("attempt-{number:04}"));
+    common::ensure_new_directory(request.backend, &output, "复制后只读核验目录")?;
+    Ok(output)
+}
+
+pub(super) fn protected(
+    request: &StageRequest<'_>,
+    copy: &Path,
+    post: &seed::history::Post,
+    proof_files: &Value,
+    target: &Value,
+    source: &Value,
+    manifest: &Value,
+) -> Result<Inputs> {
+    let backend = request.backend;
+    let run = request.run_dir;
+    let number = request.attempt.ok_or("固定输入缺少阶段序号")?;
+    let initialized = common::bound_file(backend, &manifest["initialized"], "初始化后像")?;
+    let mut paths = BTreeSet::new();
+    for path in [
+        run.join("manifest.json"),
+        run.join("state.json"),
+        run.join("run.lock/owner.json"),
+        state::controller_path(run, number),
+        copy.join("plan.json"),
+        copy.join("input.json"),
+        copy.join("session.json"),
+        copy.join("result.json"),
+        copy.join("ledger/head.json"),
+    ] {
+        paths.insert(common::common_file(backend, &path, "复制后固定文件")?);
+    }
+    for value in [&post.request, &post.descriptor, target, source, manifest] {
+        bindings(backend, value, &mut paths)?;
+    }
+    let proof_files = document::object(proof_files, "原来源完整证明文件")?;
+    for path in proof_files.keys() {
+        paths.insert(common::common_file(
+            backend,
+            Path::new(path),
+            "原来源证明文件",
+        )?);
+    }
+    paths.extend(target_verify::tree::files(
+        initialized.parent().ok_or("初始化目录缺失")?,
+        &target_verify::tree::snapshot(
+            backend,
+            initialized.parent().ok_or("初始化目录缺失")?,
+            true,
+        )?,
+    )?);
+    for request in [&post.request, target, source] {
+        for field in ["backend_build", "maintenance_build"] {
+            if request[field].is_null() {
+                continue;
+            }
+            let build = common::read_bound(backend, &request[field], "冻结构建")?;
+            for artifact in document::object(&build["artifacts"], "冻结构建产物")?.values() {
+                paths.insert(target_verify::input::request::external_file(
+                    &json!({"path":artifact["executable"],"sha256":artifact["sha256"]}),
+                )?);
+            }
+        }
+    }
+    if request.mode == "amend" {
+        let tree = target_verify::tree::snapshot(backend, &post.runtime, true)?;
+        paths.extend(
+            target_verify::tree::files(&post.runtime, &tree)?
+                .into_iter()
+                .filter(|path| {
+                    !matches!(
+                        path.file_name().and_then(|v| v.to_str()),
+                        Some(
+                            "api-control.guard" | "worker-control.guard" | "runtime-control.guard"
+                        )
+                    )
+                }),
+        );
+        let runtime = document::read(&post.runtime.join("runtime.json"))?;
+        for field in ["api_config_dir", "worker_config_dir"] {
+            let directory = common::local_directory(
+                backend,
+                Path::new(document::text(&runtime[field], "原私有角色配置目录")?),
+                "原私有角色配置目录",
+            )?;
+            for name in ["app.toml", "app.test.toml"] {
+                let path = directory.join(name);
+                if path.try_exists()? {
+                    paths.insert(common::common_file(backend, &path, "原私有角色配置")?);
+                }
+            }
+        }
+    }
+    let held = Inputs::open(paths)?;
+    check_proof_files(proof_files, "原来源证明在取得保护前字节发生变化")?;
+    held.check()?;
+    Ok(held)
 }
 
 pub(super) fn publish(backend: &Path, path: &Path, value: &Value) -> Result<()> {

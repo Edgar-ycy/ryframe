@@ -165,7 +165,15 @@ impl Runner<'_> {
         input: Option<&Value>,
         held: Option<&'stage HeldTargetSource>,
     ) -> Result<(Value, Option<Completion>)> {
-        let context = Context::load_with_held_target(request, owner, scope, storage, input, held)?;
+        let context = Context::load_with_held_target(
+            request,
+            owner,
+            scope,
+            storage,
+            input,
+            held,
+            self.options.hold_originals,
+        )?;
         #[cfg(windows)]
         let context = {
             let mut context = context;

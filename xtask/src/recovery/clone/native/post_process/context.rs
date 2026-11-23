@@ -18,7 +18,7 @@ use crate::{
 };
 use serde_json::{Value, json};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     path::{Path, PathBuf},
 };
 
@@ -51,6 +51,8 @@ pub(super) struct Context<'a> {
     held_plan: Option<HeldPlanObjects>,
     #[cfg(windows)]
     held_target: Option<&'a HeldTargetSource>,
+    #[cfg(windows)]
+    held_source_proofs: Option<super::source_proofs::HeldSourceProofs>,
 }
 
 impl<'a> Context<'a> {
@@ -61,7 +63,7 @@ impl<'a> Context<'a> {
         storage: &'a Path,
         input: Option<&Value>,
     ) -> Result<Self> {
-        Self::load_with_held_target(request, owner, scope, storage, input, None)
+        Self::load_with_held_target(request, owner, scope, storage, input, None, false)
     }
 
     pub(super) fn load_with_held_target(
@@ -71,53 +73,40 @@ impl<'a> Context<'a> {
         storage: &'a Path,
         input: Option<&Value>,
         held_target: Option<&'a HeldTargetSource>,
+        hold_originals: bool,
     ) -> Result<Self> {
         #[cfg(not(windows))]
-        let _ = held_target;
+        let _ = (held_target, hold_originals);
         let backend = request.backend;
         let run = request.run_dir;
         let number = request.attempt.ok_or("复制后阶段序号缺失")?;
         let manifest = document::read(&run.join("manifest.json"))?;
         let saved = state::load(run, true)?;
         controller(backend, run, number, &saved, request.stage, request.mode)?;
-        let Registered {
-            post,
-            active,
-            initial,
-            target,
-            target_descriptor,
-            selected,
-            plan,
-        } = registered(request, owner, &manifest, input)?;
+        let registered = registered(request, owner, &manifest, input)?;
         quiet(backend, run, number, request.mode, &saved)?;
-        let copy = common::local_directory(
-            backend,
-            Path::new(document::text(&manifest["copy_directory"], "复制目录")?),
-            "复制目录",
-        )?;
-        let session = document::read(&copy.join("session.json"))?;
-        let ledger = inspect(backend, &copy, &session)?;
-        let base = run.join(request.stage);
-        if !base.try_exists()? {
-            std::fs::create_dir(&base)?;
-        }
-        common::local_directory(backend, &base, "复制后证据根")?;
-        let output = base.join(format!("attempt-{number:04}"));
-        common::ensure_new_directory(backend, &output, "复制后只读核验目录")?;
+        let (copy, session, ledger) = completed_copy(backend, &manifest)?;
+        let output = super::files::stage_output(request, number)?;
         let source = export::input::Context::for_copy(backend, run, &output)?;
         let (source_generation, proof_files) =
             source_proof(request.stage, &source, scope, &session["source_export"])?;
-        let runtime_tree = if request.mode == "amend" {
-            Some(target_verify::tree::snapshot(backend, &post.runtime, true)?)
-        } else {
-            None
-        };
-        let protected = protected(
+        #[cfg(windows)]
+        let (proof_files, held_source_proofs) = super::source_proofs::for_prepare(
+            request,
+            &manifest["copy_stage"],
+            &session["source_export"],
+            proof_files,
+            hold_originals,
+        )?;
+        let runtime_tree = (request.mode == "amend")
+            .then(|| target_verify::tree::snapshot(backend, &registered.post.runtime, true))
+            .transpose()?;
+        let protected = super::files::protected(
             request,
             &copy,
-            &post,
+            &registered.post,
             &proof_files,
-            &target,
+            &registered.target,
             &source.request,
             &manifest,
         )?;
@@ -131,13 +120,13 @@ impl<'a> Context<'a> {
             scope,
             storage,
             manifest,
-            post,
-            active,
-            initial,
-            target,
-            target_descriptor,
-            selected,
-            plan,
+            post: registered.post,
+            active: registered.active,
+            initial: registered.initial,
+            target: registered.target,
+            target_descriptor: registered.target_descriptor,
+            selected: registered.selected,
+            plan: registered.plan,
             copy,
             session,
             ledger,
@@ -150,13 +139,15 @@ impl<'a> Context<'a> {
             held_plan: None,
             #[cfg(windows)]
             held_target,
+            #[cfg(windows)]
+            held_source_proofs,
         };
         result.check()?;
         Ok(result)
     }
 
     pub(super) fn check(&self) -> Result<()> {
-        self.protected.check()?;
+        self.check_protected()?;
         if let Some(tree) = &self.runtime_tree
             && target_verify::tree::snapshot(self.backend, &self.post.runtime, true)? != *tree
         {
@@ -225,8 +216,17 @@ impl<'a> Context<'a> {
             )?,
         )?;
         quiet(self.backend, self.run, self.number, self.mode, &self.state)?;
-        self.protected.check()?;
+        self.check_protected()?;
         self.owner.check()
+    }
+
+    fn check_protected(&self) -> Result<()> {
+        self.protected.check()?;
+        #[cfg(windows)]
+        if let Some(held) = &self.held_source_proofs {
+            held.checkpoint()?;
+        }
+        Ok(())
     }
 
     #[cfg(windows)]
@@ -252,6 +252,10 @@ impl<'a> Context<'a> {
         #[cfg(windows)]
         if let Some(held) = &self.held_plan {
             self.scope.assert_unchanged_full()?;
+            held.check_end()?;
+        }
+        #[cfg(windows)]
+        if let Some(held) = &self.held_source_proofs {
             held.check_end()?;
         }
         Ok(())
@@ -324,6 +328,17 @@ impl<'a> Context<'a> {
             "remote_writes":0,"worker_must_remain_stopped":true,"restore_qualified":false}),
         )
     }
+}
+
+fn completed_copy(backend: &Path, manifest: &Value) -> Result<(PathBuf, Value, Value)> {
+    let copy = common::local_directory(
+        backend,
+        Path::new(document::text(&manifest["copy_directory"], "复制目录")?),
+        "复制目录",
+    )?;
+    let session = document::read(&copy.join("session.json"))?;
+    let ledger = inspect(backend, &copy, &session)?;
+    Ok((copy, session, ledger))
 }
 
 fn inspect(backend: &Path, copy: &Path, session: &Value) -> Result<Value> {
@@ -484,103 +499,4 @@ fn registered(
         selected,
         plan,
     })
-}
-
-fn protected(
-    request: &StageRequest<'_>,
-    copy: &Path,
-    post: &seed::history::Post,
-    proof_files: &Value,
-    target: &Value,
-    source: &Value,
-    manifest: &Value,
-) -> Result<Inputs> {
-    let backend = request.backend;
-    let run = request.run_dir;
-    let number = request.attempt.ok_or("固定输入缺少阶段序号")?;
-    let initialized = common::bound_file(backend, &manifest["initialized"], "初始化后像")?;
-    let mut paths = BTreeSet::new();
-    for path in [
-        run.join("manifest.json"),
-        run.join("state.json"),
-        run.join("run.lock/owner.json"),
-        state::controller_path(run, number),
-        copy.join("plan.json"),
-        copy.join("input.json"),
-        copy.join("session.json"),
-        copy.join("result.json"),
-        copy.join("ledger/head.json"),
-    ] {
-        paths.insert(common::common_file(backend, &path, "复制后固定文件")?);
-    }
-    for value in [&post.request, &post.descriptor, target, source, manifest] {
-        super::files::bindings(backend, value, &mut paths)?;
-    }
-    let proof_files = document::object(proof_files, "原来源完整证明文件")?;
-    for path in proof_files.keys() {
-        paths.insert(common::common_file(
-            backend,
-            Path::new(path),
-            "原来源证明文件",
-        )?);
-    }
-    paths.extend(target_verify::tree::files(
-        initialized.parent().ok_or("初始化目录缺失")?,
-        &target_verify::tree::snapshot(
-            backend,
-            initialized.parent().ok_or("初始化目录缺失")?,
-            true,
-        )?,
-    )?);
-    for request in [&post.request, target, source] {
-        for field in ["backend_build", "maintenance_build"] {
-            if request[field].is_null() {
-                continue;
-            }
-            let build = common::read_bound(backend, &request[field], "冻结构建")?;
-            for artifact in document::object(&build["artifacts"], "冻结构建产物")?.values() {
-                paths.insert(target_verify::input::request::external_file(
-                    &json!({"path":artifact["executable"],"sha256":artifact["sha256"]}),
-                )?);
-            }
-        }
-    }
-    if request.mode == "amend" {
-        let tree = target_verify::tree::snapshot(backend, &post.runtime, true)?;
-        paths.extend(
-            target_verify::tree::files(&post.runtime, &tree)?
-                .into_iter()
-                .filter(|path| {
-                    !matches!(
-                        path.file_name().and_then(|v| v.to_str()),
-                        Some(
-                            "api-control.guard" | "worker-control.guard" | "runtime-control.guard"
-                        )
-                    )
-                }),
-        );
-        let runtime = document::read(&post.runtime.join("runtime.json"))?;
-        for field in ["api_config_dir", "worker_config_dir"] {
-            let directory = common::local_directory(
-                backend,
-                Path::new(document::text(&runtime[field], "原私有角色配置目录")?),
-                "原私有角色配置目录",
-            )?;
-            for name in ["app.toml", "app.test.toml"] {
-                let path = directory.join(name);
-                if path.try_exists()? {
-                    paths.insert(common::common_file(backend, &path, "原私有角色配置")?);
-                }
-            }
-        }
-    }
-    let held = Inputs::open(paths)?;
-    for (path, expected) in proof_files {
-        let actual = common::binding(Path::new(path))?;
-        if actual["bytes"] != expected["bytes"] || actual["sha256"] != expected["sha256"] {
-            return Err("原来源证明在取得保护前字节发生变化".into());
-        }
-    }
-    held.check()?;
-    Ok(held)
 }

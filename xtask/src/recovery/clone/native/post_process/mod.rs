@@ -28,6 +28,8 @@ mod seed_department;
 mod seed_identity;
 mod seed_prepare;
 mod seed_start;
+#[cfg(windows)]
+pub(super) mod source_proofs;
 pub(super) use inspection::inspect_historical;
 pub(super) use prepare::require_runtime_receipts;
 
