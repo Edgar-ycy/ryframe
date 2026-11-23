@@ -196,8 +196,13 @@ fn recover_interrupted(
 }
 
 fn setup(fixture: &Fixture) -> PathBuf {
-    let api = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-    let worker = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    // 使用 Windows 默认临时端口区间以下的回环端口，避免夹具释放后被出站连接占用。
+    let start = 30_000 + (std::process::id() % 8_000) as u16;
+    let mut ports = (start..38_000)
+        .chain(30_000..start)
+        .filter_map(|port| TcpListener::bind((Ipv4Addr::LOCALHOST, port)).ok());
+    let api = ports.next().expect("夹具需要独立 API 回环端口");
+    let worker = ports.next().expect("夹具需要独立 Worker 回环端口");
     let target = fixture.local.join("target");
     fs::create_dir(&target).unwrap();
     let initialized = target.join("initialized.json");

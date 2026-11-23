@@ -4,6 +4,7 @@ use super::{
     context::Context,
     diagnostic::{self, Phase},
 };
+use crate::recovery::fixture_control::source_pair::execution::HeldTargetSource;
 use crate::{
     Result,
     cli::{PostCopyOperation, PostCopyOptions},
@@ -15,6 +16,7 @@ use crate::{
             stage::{self, StageRequest, StageRunner},
         },
         resources::common,
+        target_verify::guard::Generation,
     },
 };
 use serde_json::{Value, json};
@@ -132,34 +134,48 @@ impl Runner<'_> {
             request,
             Phase::Cleanup,
             super::ownership::with_target(request, &manifest.value, storage, |owner, storage| {
+                let input = self.input.borrow();
+                let input = input.as_ref().filter(|v| !v.is_null());
                 #[cfg(windows)]
                 if self.options.hold_originals {
-                    hold_prepare_scope(request, &manifest.value, owner, scope)?;
+                    let target = hold_prepare_scope(request, &manifest.value, owner, scope)?;
+                    return super::runtime::with_held_published_target(
+                        request.backend,
+                        &target,
+                        |held| {
+                            self.execute_with_context(request, owner, scope, storage, input, held)
+                        },
+                    );
                 }
-                let input = self.input.borrow();
-                let context = Context::load(
-                    request,
-                    owner,
-                    scope,
-                    storage,
-                    input.as_ref().filter(|v| !v.is_null()),
-                )?;
-                #[cfg(windows)]
-                let context = {
-                    let mut context = context;
-                    if self.options.hold_originals {
-                        context.hold_plan()?;
-                    }
-                    context
-                };
-                let result = self.execute_stage(request, &context);
-                super::files::combine(result, context.check_end())
+                self.execute_with_context(request, owner, scope, storage, input, None)
             }),
         )?;
         if let Some(completion) = completion {
             diagnostic::context(request, Phase::Business, completion.check(request.backend))?;
         }
         Ok(value)
+    }
+
+    fn execute_with_context<'stage>(
+        &self,
+        request: &StageRequest<'stage>,
+        owner: &'stage Generation,
+        scope: &'stage Scope,
+        storage: &'stage Path,
+        input: Option<&Value>,
+        held: Option<&'stage HeldTargetSource>,
+    ) -> Result<(Value, Option<Completion>)> {
+        let context = Context::load_with_held_target(request, owner, scope, storage, input, held)?;
+        #[cfg(windows)]
+        let context = {
+            let mut context = context;
+            if self.options.hold_originals {
+                context.hold_plan()?;
+            }
+            context
+        };
+        let result = self.execute_stage(request, &context);
+        super::files::combine(result, context.check_end())
     }
 
     fn execute_stage(
@@ -195,9 +211,9 @@ impl Runner<'_> {
 fn hold_prepare_scope(
     request: &StageRequest<'_>,
     manifest: &Value,
-    owner: &crate::recovery::clone::native::target_verify::guard::Generation,
+    owner: &Generation,
     scope: &mut Scope,
-) -> Result<()> {
+) -> Result<Value> {
     use crate::recovery::clone::native::{export, target_verify};
     use target_verify::input::request::{SystemSourceObserver, execution_backend};
 
@@ -214,5 +230,6 @@ fn hold_prepare_scope(
         target.get("execution_backend"),
         &SystemSourceObserver,
     )?;
-    scope.hold_windows_sources(&[&source.execution_backend, &execution])
+    scope.hold_windows_sources(&[&source.execution_backend, &execution])?;
+    Ok(target)
 }

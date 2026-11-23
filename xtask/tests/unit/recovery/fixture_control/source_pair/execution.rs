@@ -137,7 +137,14 @@ impl Fixture {
         bytes
     }
 
-    fn candidate(&self) -> Vec<u8> {
+    #[cfg(windows)]
+    pub(crate) fn detach_originals(&self) {
+        for root in [&self.backend, &self.frontend] {
+            git::run(root, &["checkout", "--quiet", "--detach", "HEAD"]).unwrap();
+        }
+    }
+
+    pub(crate) fn candidate(&self) -> Vec<u8> {
         let path = self.backend.join("openapi/openapi.json");
         let mut document: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         document["info"]["version"] = json!("0.0.2");
@@ -422,9 +429,7 @@ fn held_target_source_reuses_only_the_bound_four_roots() {
     use crate::recovery::full_stack::provenance;
 
     let fixture = Fixture::new();
-    for root in [&fixture.backend, &fixture.frontend] {
-        git::run(root, &["checkout", "--quiet", "--detach", "HEAD"]).unwrap();
-    }
+    fixture.detach_originals();
     fixture.candidate();
     let publication = fixture.publication();
     let path = fixture.output.join("backend");

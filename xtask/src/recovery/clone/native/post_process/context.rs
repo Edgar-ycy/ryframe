@@ -1,4 +1,5 @@
 //! 复制后与 seed 共享同一持锁事实窗口，沿用原复制和来源证据。
+use crate::recovery::fixture_control::source_pair::execution::HeldTargetSource;
 use crate::{
     Result,
     recovery::clone::native::{
@@ -48,6 +49,8 @@ pub(super) struct Context<'a> {
     protected: Inputs,
     runtime_tree: Option<Value>,
     held_plan: Option<HeldPlanObjects>,
+    #[cfg(windows)]
+    held_target: Option<&'a HeldTargetSource>,
 }
 
 impl<'a> Context<'a> {
@@ -58,6 +61,19 @@ impl<'a> Context<'a> {
         storage: &'a Path,
         input: Option<&Value>,
     ) -> Result<Self> {
+        Self::load_with_held_target(request, owner, scope, storage, input, None)
+    }
+
+    pub(super) fn load_with_held_target(
+        request: &StageRequest<'a>,
+        owner: &'a Generation,
+        scope: &'a Scope,
+        storage: &'a Path,
+        input: Option<&Value>,
+        held_target: Option<&'a HeldTargetSource>,
+    ) -> Result<Self> {
+        #[cfg(not(windows))]
+        let _ = held_target;
         let backend = request.backend;
         let run = request.run_dir;
         let number = request.attempt.ok_or("复制后阶段序号缺失")?;
@@ -132,6 +148,8 @@ impl<'a> Context<'a> {
             protected,
             runtime_tree,
             held_plan: None,
+            #[cfg(windows)]
+            held_target,
         };
         result.check()?;
         Ok(result)
@@ -196,13 +214,7 @@ impl<'a> Context<'a> {
             "复制后产品构建",
         )?;
         let build = document::read(&build_path)?;
-        let product = super::runtime::selected_product_root(
-            self.backend,
-            &self.target,
-            self.scope,
-            &build_path,
-            &build,
-        )?;
+        let product = self.product_root_for(&build_path, &build)?;
         self.scope.product(
             &product,
             &build_path,
@@ -252,7 +264,28 @@ impl<'a> Context<'a> {
             "产品构建",
         )?;
         let build = document::read(&path)?;
-        super::runtime::selected_product_root(self.backend, &self.target, self.scope, &path, &build)
+        self.product_root_for(&path, &build)
+    }
+
+    fn product_root_for(&self, build_path: &Path, build: &Value) -> Result<PathBuf> {
+        #[cfg(windows)]
+        if let Some(held) = self.held_target {
+            return super::runtime::selected_product_root_held(
+                self.backend,
+                &self.target,
+                self.scope,
+                build_path,
+                build,
+                held,
+            );
+        }
+        super::runtime::selected_product_root(
+            self.backend,
+            &self.target,
+            self.scope,
+            build_path,
+            build,
+        )
     }
     pub(super) fn environment(&self) -> Result<BTreeMap<String, String>> {
         let private = common::read_bound(

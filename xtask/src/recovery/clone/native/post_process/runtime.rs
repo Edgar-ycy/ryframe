@@ -1,15 +1,22 @@
 use std::{
     net::{IpAddr, SocketAddr, TcpStream},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::Duration,
 };
 
 use serde_json::{Value, json};
 
 use super::super::{
-    json as json_io, resources::common,
-    target_verify::input::request_configuration::python_configuration_hash,
+    bridge::scope::Scope,
+    json as json_io,
+    resources::common,
+    target_verify::input::{
+        request::{self, SystemSourceObserver},
+        request_configuration::python_configuration_hash,
+    },
 };
+#[cfg(windows)]
+use crate::recovery::fixture_control::source_pair::execution::{self, HeldTargetSource};
 use crate::{
     Result,
     recovery::fixture_control::{
@@ -33,17 +40,83 @@ pub(crate) fn product_root(coordinator: &std::path::Path, runtime: &Value) -> Re
 }
 /// 来源选择与已登记产品桥接必须独立指向同一根；不从构建收据补造字段。
 pub(crate) fn selected_product_root(
-    coordinator: &std::path::Path,
+    coordinator: &Path,
     target: &Value,
-    scope: &super::super::bridge::scope::Scope,
-    build_path: &std::path::Path,
+    scope: &Scope,
+    build_path: &Path,
     build: &Value,
 ) -> Result<PathBuf> {
-    let (selected, _) = super::super::target_verify::input::request::execution_backend(
+    let (selected, _) = request::execution_backend(
         coordinator,
         target.get("execution_backend"),
-        &super::super::target_verify::input::request::SystemSourceObserver,
+        &SystemSourceObserver,
     )?;
+    registered_product_root(coordinator, selected, scope, build_path, build)
+}
+
+/// 发布目标的完整观察与阶段操作共用同一个四树持有窗口。
+#[cfg(windows)]
+pub(in crate::recovery::clone::native) fn with_held_published_target<T>(
+    coordinator: &Path,
+    target: &Value,
+    observe: impl FnOnce(Option<&HeldTargetSource>) -> Result<T>,
+) -> Result<T> {
+    let Some(declared) = published_declaration(target) else {
+        return observe(None);
+    };
+    let (_, binding) = execution::target_binding(coordinator, declared)?;
+    let held = HeldTargetSource::open(coordinator, declared, &binding)?;
+    verify_held_observation(coordinator, declared, &held)?;
+    let result = observe(Some(&held));
+    let observed = verify_held_observation(coordinator, declared, &held);
+    super::files::combine(result, super::files::combine(observed, held.check_end()))
+}
+
+#[cfg(windows)]
+pub(in crate::recovery::clone::native) fn selected_product_root_held(
+    coordinator: &Path,
+    target: &Value,
+    scope: &Scope,
+    build_path: &Path,
+    build: &Value,
+    held: &HeldTargetSource,
+) -> Result<PathBuf> {
+    let declared = published_declaration(target).ok_or("持有的目标必须绑定原发布执行工作树")?;
+    let (selected, _) = held.verify(coordinator, declared)?;
+    registered_product_root(coordinator, selected, scope, build_path, build)
+}
+
+#[cfg(windows)]
+fn published_declaration(target: &Value) -> Option<&Value> {
+    target
+        .get("execution_backend")
+        .filter(|declared| declared.get("execution_source").is_some())
+}
+
+#[cfg(windows)]
+fn verify_held_observation(
+    coordinator: &Path,
+    declared: &Value,
+    held: &HeldTargetSource,
+) -> Result<()> {
+    let expected = held.verify(coordinator, declared)?;
+    let observed = request::execution_backend(coordinator, Some(declared), &SystemSourceObserver)
+        .and_then(|observed| {
+            if observed != expected {
+                return Err("完整目标源码观察与已保护发布来源不一致".into());
+            }
+            Ok(())
+        });
+    super::files::combine(observed, held.verify(coordinator, declared).map(|_| ()))
+}
+
+fn registered_product_root(
+    coordinator: &Path,
+    selected: PathBuf,
+    scope: &Scope,
+    build_path: &Path,
+    build: &Value,
+) -> Result<PathBuf> {
     let registered = scope.registered_product_root(build_path, build)?;
     if selected != registered {
         return Err("目标产品根与本运行已核验构建桥接根不一致".into());
@@ -300,6 +373,77 @@ fn path(value: &Value, label: &str) -> Result<PathBuf> {
         return Err(format!("{label}必须是绝对路径").into());
     }
     Ok(path)
+}
+
+#[cfg(all(test, windows))]
+#[test]
+fn held_target_routes_legacy_declarations_and_rejects_malformed_publication() {
+    let coordinator = Path::new("unused");
+    for target in [
+        json!({}),
+        json!({"execution_backend": null}),
+        json!({"execution_backend": {"path": "legacy", "fixture": {}}}),
+    ] {
+        let result = with_held_published_target(coordinator, &target, |held| {
+            assert!(held.is_none());
+            Ok(42)
+        })
+        .unwrap();
+        assert_eq!(result, 42);
+    }
+    let target = json!({"execution_backend": {"execution_source": null}});
+    let result = with_held_published_target::<()>(coordinator, &target, |_| {
+        panic!("畸形发布声明不能进入持有窗口或回退到旧入口");
+    });
+    assert!(result.is_err());
+}
+
+#[cfg(all(test, windows))]
+#[test]
+fn held_published_target_wrapper_protects_all_four_roots_until_completion() {
+    use std::fs;
+
+    use execution::tests::Fixture;
+
+    let fixture = Fixture::new();
+    fixture.detach_originals();
+    fixture.candidate();
+    fixture.publication();
+    let declaration = json!({
+        "path":fixture.output.join("backend"),
+        "execution_source":fixture.binding(),
+    });
+    let target = json!({"execution_backend":declaration});
+    let declaration = &target["execution_backend"];
+    let expected = execution::target_binding(&fixture.backend, declaration).unwrap();
+    let mut substituted = declaration.clone();
+    substituted["execution_source"]["sha256"] = json!("0".repeat(64));
+    let files = [
+        fixture.backend.clone(),
+        fixture.frontend.clone(),
+        fixture.output.join("backend"),
+        fixture.output.join("frontend"),
+    ]
+    .map(|root| root.join("src/lib.rs"));
+    let original = files.each_ref().map(|file| fs::read(file).unwrap());
+    let replacement = "// 持有窗口关闭后的源码改动\n".as_bytes();
+
+    let selection = with_held_published_target(&fixture.backend, &target, |held| {
+        let held = held.expect("已发布的四棵源码树必须进入同一持有窗口");
+        let error = held.verify(&fixture.backend, &substituted).unwrap_err();
+        assert!(error.to_string().contains("维护来源与已保护来源不同"));
+        for (file, previous) in files.iter().zip(&original) {
+            assert!(fs::write(file, replacement).is_err(), "{}", file.display());
+            assert_eq!(&fs::read(file).unwrap(), previous);
+        }
+        held.verify(&fixture.backend, declaration)
+    })
+    .unwrap();
+    assert_eq!(selection, expected);
+    for file in files {
+        fs::write(&file, replacement).unwrap();
+        assert_eq!(fs::read(file).unwrap().as_slice(), replacement);
+    }
 }
 
 #[cfg(all(test, windows))]
