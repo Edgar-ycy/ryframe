@@ -166,10 +166,6 @@ def _control(_private: dict, backend: Path, runtime: Path, operation: str, roles
     return pair_control(backend, runtime, operation, roles, handoff, attempt["number"])["runtime"]
 
 
-def _drain_evidence(value, worker_identity):
-    return guard("drain", {"value": value, "worker_identity": worker_identity}, label="稳定排空证据")
-
-
 def _base_result(runtime: Path, handoff: dict, runtime_status: dict, identities: dict, *,
                  phase="running", api_stop=None) -> dict:
     return {
