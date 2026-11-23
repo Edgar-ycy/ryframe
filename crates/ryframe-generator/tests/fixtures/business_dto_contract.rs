@@ -15,6 +15,87 @@ fn nullable_values_follow_complete_replacement_contract() {
 }
 
 #[test]
+fn date_fields_preserve_string_schema_calendar_and_null() {
+    use invoice_business::generated::dto::invoice::{
+        CreateInvoiceDto, InvoiceListQuery, InvoiceVo, UpdateInvoiceDto,
+    };
+    use invoice_business::generated::models::invoice::InvoiceRecord;
+    use ryframe_sdk::utoipa::{IntoParams, PartialSchema};
+    use ryframe_sdk::{
+        PaginationPolicy,
+        axum::extract::Query,
+        time::{Date, Month},
+    };
+
+    let date = Date::from_calendar_date(2024, Month::February, 9).unwrap();
+    let input: CreateInvoiceDto =
+        serde_json::from_value(json!({"code":"first","starts_on":"2024-2-9"})).unwrap();
+    assert_eq!(input.starts_on, date);
+    assert_eq!(input.ends_on, None);
+    let update: UpdateInvoiceDto =
+        serde_json::from_value(json!({"starts_on":"2024-02-09","ends_on":null})).unwrap();
+    assert_eq!(update.starts_on, Some(date));
+    assert_eq!(update.ends_on, None);
+    let historical: UpdateInvoiceDto =
+        serde_json::from_value(json!({"ends_on":"0001-1-2"})).unwrap();
+    assert_eq!(
+        historical.ends_on,
+        Some(Date::from_calendar_date(1, Month::January, 2).unwrap())
+    );
+    let Query(query) =
+        Query::<InvoiceListQuery>::try_from_uri(&"/?starts_on=2024-2-9".parse().unwrap()).unwrap();
+    assert_eq!(
+        query
+            .into_service_params(PaginationPolicy::new(20, 100))
+            .unwrap()
+            .starts_on,
+        Some(date)
+    );
+    assert!(serde_json::from_value::<CreateInvoiceDto>(json!({"code":"missing"})).is_err());
+    for invalid in [json!("2023-2-29"), json!("10000-2-9"), json!([2024, 40])] {
+        assert!(serde_json::from_value::<UpdateInvoiceDto>(json!({"ends_on":invalid})).is_err());
+    }
+    assert!(
+        Query::<InvoiceListQuery>::try_from_uri(&"/?starts_on=2024-02-30".parse().unwrap())
+            .is_err()
+    );
+
+    let timestamp = ryframe_sdk::chrono::DateTime::from_timestamp(0, 0).unwrap();
+    let view = InvoiceVo::from(InvoiceRecord {
+        id: 1,
+        tenant_id: "tenant-example".into(),
+        code: "first".into(),
+        memo: None,
+        amount: 0,
+        owner_id: 2,
+        starts_on: date,
+        ends_on: None,
+        created_at: timestamp,
+        updated_at: timestamp,
+    });
+    let body = serde_json::to_value(view).unwrap();
+    assert_eq!(body["starts_on"], "2024-02-09");
+    assert!(body["ends_on"].is_null());
+
+    let schema = serde_json::to_value(CreateInvoiceDto::schema()).unwrap();
+    assert_eq!(schema["properties"]["starts_on"]["type"], "string");
+    assert_eq!(schema["properties"]["starts_on"]["format"], "date");
+    assert_eq!(
+        schema["properties"]["ends_on"]["type"],
+        json!(["string", "null"])
+    );
+    assert_eq!(schema["properties"]["ends_on"]["format"], "date");
+    let parameters = serde_json::to_value(InvoiceListQuery::into_params(|| None)).unwrap();
+    let date_parameter = parameters
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|value| value["name"] == "starts_on")
+        .unwrap();
+    assert_eq!(date_parameter["schema"]["format"], "date");
+}
+
+#[test]
 fn imported_integer_dtos_accept_boundaries_and_reject_overflow() {
     use invoice_business::generated::dto::memo::{CreateMemoDto, UpdateMemoDto};
     let body = json!({"code":"first", "status":1, "tiny_count":-128, "small_count":-32768, "byte_count":255, "short_count":65535, "count":4294967295u32, "large_count":"18446744073709551615"});

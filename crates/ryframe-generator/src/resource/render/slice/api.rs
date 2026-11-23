@@ -3,8 +3,8 @@ use super::{FieldIr, ResourceIr, ValueType, rust_base_type};
 mod validation;
 
 use validation::{
-    render_decimal_validators, render_enum_validators, render_utf8_byte_validators,
-    schema_attribute, validation_attribute,
+    deserialization_attribute, render_decimal_validators, render_enum_validators,
+    render_utf8_byte_validators, schema_attribute, validation_attribute,
 };
 
 pub(super) fn dto(resource: &ResourceIr, header: &str) -> String {
@@ -61,29 +61,8 @@ fn render_input(resource: &ResourceIr, output: &mut String, create: bool) {
         if let Some(attribute) = schema_attribute(field, optional) {
             output.push_str(&format!("    {attribute}\n"));
         }
-        if matches!(field.value_type, ValueType::I64 | ValueType::U64)
-            && field.wire_type == ValueType::String
-        {
-            let function = format!(
-                "deserialize_{}{}",
-                if optional { "optional_" } else { "" },
-                field.value_type.rust_base_type()
-            );
-            let default = if optional { "default, " } else { "" };
-            output.push_str(&format!(
-                "    #[serde({default}deserialize_with = \"crate::http::integer::{function}\")]\n"
-            ));
-        }
-        if field.value_type == ValueType::Decimal {
-            let function = if optional {
-                "deserialize_optional_decimal"
-            } else {
-                "deserialize_decimal"
-            };
-            let default = if optional { "default, " } else { "" };
-            output.push_str(&format!(
-                "    #[serde({default}deserialize_with = \"crate::http::decimal::{function}\")]\n"
-            ));
+        if let Some(attribute) = deserialization_attribute(field, optional) {
+            output.push_str(&format!("    {attribute}\n"));
         }
         let value_type = rust_base_type(field.value_type);
         let value_type = if optional {
@@ -124,6 +103,11 @@ fn render_list_query(resource: &ResourceIr, output: &mut String) {
     output.push_str("    #[param(minimum = 1)]\n    pub page: Option<u64>,\n");
     output.push_str("    #[param(minimum = 1)]\n    pub page_size: Option<u64>,\n");
     for field in filter_fields(resource) {
+        if field.value_type == ValueType::Date
+            && let Some(attribute) = deserialization_attribute(field, true)
+        {
+            output.push_str(&format!("    {attribute}\n"));
+        }
         output.push_str(&format!(
             "    pub {}: Option<{}>,\n",
             field.name,
@@ -149,6 +133,12 @@ fn render_view(resource: &ResourceIr, output: &mut String) {
     output.push_str("#[derive(Clone, Debug, Serialize, ToSchema)]\n");
     output.push_str(&format!("pub struct {pascal}Vo {{\n"));
     for field in view_fields(resource) {
+        if field.value_type == ValueType::Date {
+            let optional = if field.nullable { "optional_" } else { "" };
+            output.push_str(&format!(
+                "    #[serde(serialize_with = \"crate::http::date::serialize_{optional}date\")]\n"
+            ));
+        }
         output.push_str(&format!("    pub {}: {},\n", field.name, wire_type(field)));
     }
     output.push_str("}\n\n");

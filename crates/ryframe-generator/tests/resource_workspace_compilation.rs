@@ -215,7 +215,7 @@ fn prepare_shared_workspace(
         ] {
             sync_file(&backend_source.join(file), &backend.join(file));
         }
-        for directory in [".cargo", "catalog", "crates", "vendor", "xtask"] {
+        for directory in [".cargo", "catalog", "crates", "locales", "vendor", "xtask"] {
             sync_directory(&backend_source.join(directory), &backend.join(directory));
         }
         prepare_frontend_workspace(&frontend_source, &frontend);

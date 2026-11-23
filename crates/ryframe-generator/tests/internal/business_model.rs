@@ -137,7 +137,7 @@ fn resource_model_types_map_to_supported_form_widgets() {
         field("tenant_id", "String", true),
         field("id", "i64", true),
         field("enabled", "bool", false),
-        field("due_on", "ryframe_sdk::chrono::NaiveDate", false),
+        field("due_on", "ryframe_sdk::time::Date", false),
         field(
             "happens_at",
             "ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>",

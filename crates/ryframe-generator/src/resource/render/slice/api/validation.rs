@@ -200,3 +200,23 @@ pub(super) fn schema_attribute(field: &FieldIr, optional: bool) -> Option<String
     }
     (!parts.is_empty()).then(|| format!("#[schema({})]", parts.join(", ")))
 }
+
+pub(super) fn deserialization_attribute(field: &FieldIr, optional: bool) -> Option<String> {
+    let (prefix, default) = if optional {
+        ("optional_", "default, ")
+    } else {
+        ("", "")
+    };
+    let function = match field.value_type {
+        ValueType::I64 | ValueType::U64 if field.wire_type == ValueType::String => format!(
+            "integer::deserialize_{prefix}{}",
+            field.value_type.rust_base_type()
+        ),
+        ValueType::Decimal => format!("decimal::deserialize_{prefix}decimal"),
+        ValueType::Date => format!("date::deserialize_{prefix}date"),
+        _ => return None,
+    };
+    Some(format!(
+        "#[serde({default}deserialize_with = \"crate::http::{function}\")]"
+    ))
+}

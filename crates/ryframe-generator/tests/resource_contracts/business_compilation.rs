@@ -383,6 +383,9 @@ pub struct Invoice {
     pub code: String,
     #[resource(filter)]
     pub owner_id: i64,
+    #[resource(filter)]
+    pub starts_on: ryframe_sdk::time::Date,
+    pub ends_on: Option<ryframe_sdk::time::Date>,
     #[resource(read_only)]
     pub created_at: ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>,
     #[resource(read_only)]

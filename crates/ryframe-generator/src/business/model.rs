@@ -351,7 +351,8 @@ fn value_type(rust_type: &str) -> Result<(ValueType, bool), ResourceError> {
     let inner = inner
         .replace("ryframe_sdk::chrono::", "chrono::")
         .replace("ryframe_sdk::rust_decimal::", "rust_decimal::")
-        .replace("ryframe_sdk::serde_json::", "serde_json::");
+        .replace("ryframe_sdk::serde_json::", "serde_json::")
+        .replace("ryframe_sdk::time::", "time::");
     let value = match inner.as_str() {
         "String" | "std::string::String" => ValueType::String,
         "i8" => ValueType::I8,
@@ -364,7 +365,7 @@ fn value_type(rust_type: &str) -> Result<(ValueType, bool), ResourceError> {
         "u64" => ValueType::U64,
         "rust_decimal::Decimal" => ValueType::Decimal,
         "bool" => ValueType::Bool,
-        "chrono::NaiveDate" => ValueType::Date,
+        "time::Date" => ValueType::Date,
         "chrono::DateTime<chrono::Utc>" => ValueType::DateTime,
         "serde_json::Value" => ValueType::Json,
         _ => {

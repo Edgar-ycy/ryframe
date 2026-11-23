@@ -20,7 +20,7 @@ pub fn mysql_rust_type(column_type: &str, is_nullable: bool) -> Result<String, S
         ("datetime" | "timestamp", false) => {
             "ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>"
         }
-        ("date", false) => "ryframe_sdk::chrono::NaiveDate",
+        ("date", false) => "ryframe_sdk::time::Date",
         ("json", false) => "ryframe_sdk::serde_json::Value",
         ("binary" | "varbinary" | "tinyblob" | "blob" | "mediumblob" | "longblob", false) => {
             "Vec<u8>"

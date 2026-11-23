@@ -1,4 +1,5 @@
 use ryframe_sdk::ResourceModel;
+use ryframe_sdk::time::{Date, Month};
 
 #[derive(ResourceModel)]
 #[resource(
@@ -12,7 +13,7 @@ pub struct TypedModel {
     pub id: i64,
     #[resource(sql_comment = "中文 '注释'\\路径")]
     pub payload: ryframe_sdk::serde_json::Value,
-    pub date: ryframe_sdk::chrono::NaiveDate,
+    pub date: ryframe_sdk::time::Date,
     pub amount: ryframe_sdk::rust_decimal::Decimal,
 }
 
@@ -33,10 +34,14 @@ fn model_types_compile_without_runtime_api_or_database_features() {
     assert!(!descriptor.fields[1].auto_increment);
     assert!(descriptor.fields[1].rust_type.contains("serde_json"));
     assert_eq!(descriptor.fields[1].sql_comment, Some("中文 '注释'\\路径"));
+    assert_eq!(
+        descriptor.fields[2].rust_type.replace(' ', ""),
+        "ryframe_sdk::time::Date"
+    );
     let model = TypedModel {
         id: 1,
         payload: ryframe_sdk::serde_json::json!({"value": 1}),
-        date: ryframe_sdk::chrono::NaiveDate::from_ymd_opt(2026, 10, 13).unwrap(),
+        date: Date::from_calendar_date(2026, Month::October, 13).unwrap(),
         amount: ryframe_sdk::rust_decimal::Decimal::from_str_exact("12345678901234567890.123456")
             .unwrap(),
     };

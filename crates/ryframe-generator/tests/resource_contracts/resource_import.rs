@@ -225,6 +225,7 @@ fn mysql_mapping_keeps_ranges_and_qualified_model_types() {
         ("bigint unsigned", "u64"),
         ("bool", "bool"),
         ("decimal(20,6)", "ryframe_sdk::rust_decimal::Decimal"),
+        ("date", "ryframe_sdk::time::Date"),
         (
             "datetime(6)",
             "ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>",

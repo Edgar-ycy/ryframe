@@ -13,6 +13,7 @@ use serde::Serialize;
 use std::fmt;
 use validator::ValidationErrors;
 
+pub mod date;
 pub mod decimal;
 pub mod integer;
 

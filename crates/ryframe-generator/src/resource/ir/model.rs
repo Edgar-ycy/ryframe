@@ -68,7 +68,7 @@ impl ValueType {
             Self::U64 => "u64",
             Self::Decimal => "rust_decimal::Decimal",
             Self::Bool => "bool",
-            Self::Date => "chrono::NaiveDate",
+            Self::Date => "time::Date",
             Self::DateTime => "chrono::DateTime<chrono::Utc>",
             Self::Json => "serde_json::Value",
         }

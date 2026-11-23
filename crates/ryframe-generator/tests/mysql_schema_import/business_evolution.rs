@@ -1,7 +1,7 @@
 use std::{fs, path::Path, process::Command};
 
 use ryframe_generator::business::{BusinessGenerateOptions, generate_business_package};
-use sea_orm::DatabaseConnection;
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, prelude::TimeDate};
 
 use super::mysql;
 
@@ -52,7 +52,7 @@ async fn generated_incremental_sql_preserves_rows_and_matches_current_mysql_sche
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn imported_physical_types_match_existing_table_and_generated_ddl() {
     mysql::run_mysql_test("importedtypes", |database| async move {
-        mysql::execute(&database, "CREATE TABLE biz_evolution (id BIGINT NOT NULL PRIMARY KEY, code VARCHAR(32) COLLATE utf8mb4_bin NOT NULL DEFAULT _utf8mb4 X'66726573685c70617468', memo TEXT NULL, amount INT NOT NULL DEFAULT 7, occurred_at DATETIME(3) NULL, whole_second DATETIME NULL, payload JSON NULL, tiny_count TINYINT NULL, small_count SMALLINT NULL, byte_count TINYINT UNSIGNED NULL, short_count SMALLINT UNSIGNED NULL, count INT UNSIGNED NULL, large_count BIGINT UNSIGNED NULL DEFAULT 18446744073709551615, created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), updated_at DATETIME(6) NULL ON UPDATE CURRENT_TIMESTAMP(6), price DECIMAL(20,6) NOT NULL DEFAULT 0.125000, exact_amount DECIMAL(28,6) NULL, UNIQUE KEY uk_external_code(code), KEY idx_external_amount(amount,code)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci").await?;
+        mysql::execute(&database, "CREATE TABLE biz_evolution (id BIGINT NOT NULL PRIMARY KEY, code VARCHAR(32) COLLATE utf8mb4_bin NOT NULL DEFAULT _utf8mb4 X'66726573685c70617468', memo TEXT NULL, amount INT NOT NULL DEFAULT 7, due_on DATE NULL, occurred_at DATETIME(3) NULL, whole_second DATETIME NULL, payload JSON NULL, tiny_count TINYINT NULL, small_count SMALLINT NULL, byte_count TINYINT UNSIGNED NULL, short_count SMALLINT UNSIGNED NULL, count INT UNSIGNED NULL, large_count BIGINT UNSIGNED NULL DEFAULT 18446744073709551615, created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), updated_at DATETIME(6) NULL ON UPDATE CURRENT_TIMESTAMP(6), price DECIMAL(20,6) NOT NULL DEFAULT 0.125000, exact_amount DECIMAL(28,6) NULL, UNIQUE KEY uk_external_code(code), KEY idx_external_amount(amount,code)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci").await?;
         mysql::execute(&database, "INSERT INTO biz_evolution(id,code,amount) VALUES(41,'keep-source',7)").await?;
         let comment = "中文 '注释'\\路径\n保留\"#";
         let quoted = format!("'{}'", comment.replace('\\', "\\\\").replace('\'', "''"));
@@ -63,6 +63,7 @@ async fn imported_physical_types_match_existing_table_and_generated_ddl() {
         let model = ryframe_generator::import::rust_model_source(&table, "control")?;
         assert!(model.contains("sql_type = \"varchar(32)\""));
         assert!(model.contains("sql_type = \"datetime(3)\""));
+        assert!(model.contains("pub due_on: Option<ryframe_sdk::time::Date>"));
         assert!(model.contains("collation = \"utf8mb4_0900_ai_ci\""));
         assert!(model.contains("collation = \"utf8mb4_bin\""));
         let model = model.replace("name = \"biz_evolution\"", "name = \"evolution\"")
@@ -91,6 +92,7 @@ async fn imported_physical_types_match_existing_table_and_generated_ddl() {
         mysql::require_count(&database, "SELECT COUNT(*) AS value FROM biz_evolution WHERE id=42 AND created_at IS NOT NULL AND updated_at IS NULL", 1).await?;
         mysql::require_count(&database, "SELECT COUNT(*) AS value FROM biz_evolution WHERE id=42 AND CAST(price AS CHAR)='90071992547409.123456' AND CAST(exact_amount AS CHAR)='9999999999999999999999.999999'", 1).await?;
         mysql::execute(&database, "INSERT INTO biz_evolution(id) VALUES(43)").await?;
+        verify_typed_date(&database).await?;
         mysql::require_count(&database, "SELECT COUNT(*) AS value FROM biz_evolution WHERE id=43 AND code=CONVERT(X'66726573685c70617468' USING utf8mb4) AND amount=7 AND large_count=18446744073709551615 AND created_at IS NOT NULL AND CAST(price AS CHAR)='0.125000'", 1).await?;
         mysql::execute(&database, "UPDATE biz_evolution SET updated_at='2000-01-01 00:00:00' WHERE id=42").await?;
         mysql::execute(&database, "UPDATE biz_evolution SET memo=CONCAT(memo,'!') WHERE id=42").await?;
@@ -99,6 +101,39 @@ async fn imported_physical_types_match_existing_table_and_generated_ddl() {
         assert!(repeat.created.is_empty() && repeat.updated.is_empty() && repeat.removed.is_empty());
         Ok(())
     }).await;
+}
+
+async fn verify_typed_date(database: &DatabaseConnection) -> Result<(), String> {
+    let date = TimeDate::from_ordinal_date(2024, 60).map_err(message)?;
+    database
+        .execute_raw(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            "UPDATE biz_evolution SET due_on = ? WHERE id = 42",
+            [date.into()],
+        ))
+        .await
+        .map_err(mysql::db_error)?;
+    let rows = database
+        .query_all_raw(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            "SELECT id, due_on FROM biz_evolution WHERE due_on = ? OR id = 43 ORDER BY id",
+            [date.into()],
+        ))
+        .await
+        .map_err(mysql::db_error)?;
+    assert_eq!(rows.len(), 2);
+    assert_eq!(
+        rows[0].try_get::<i64>("", "id").map_err(mysql::db_error)?,
+        42
+    );
+    for (row, expected) in rows.iter().zip([Some(date), None]) {
+        assert_eq!(
+            row.try_get::<Option<TimeDate>>("", "due_on")
+                .map_err(mysql::db_error)?,
+            expected
+        );
+    }
+    Ok(())
 }
 
 fn prepare(workspace: &Path, model: &str) -> Result<(), String> {
