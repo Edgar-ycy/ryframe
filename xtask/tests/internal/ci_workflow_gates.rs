@@ -38,12 +38,9 @@ fn edited_pull_requests_keep_consumer_and_security_while_skipping_windows_replay
         "${{needs.plan.result=='success'&&github.event.action!='edited'}}"
     );
     let (_, windows) = command(job(&ci, "windows-smoke"), "cargo xtask check ci rust-gate");
-    let tokens: Vec<_> = text(windows, "run").split_whitespace().collect();
-    assert!(
-        tokens
-            .windows(2)
-            .any(|args| args == ["--profile", "windows-smoke"])
-    );
+    assert_eq!(argument(windows, "--profile"), "windows-smoke");
+    assert_eq!(argument(windows, "--test-jobs"), "4");
+    assert_eq!(argument(windows, "--target-dir"), "$targetRoot");
 }
 
 #[test]
