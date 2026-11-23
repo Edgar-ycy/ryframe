@@ -149,6 +149,8 @@ cargo xtask check recovery clone seed-runtime --operation source-register --run-
 
 对已完成初始化的独立 Windows B1 测量目标，运行上述 `arm-request` 时使用 `--side candidate --independent-b1`，通过 `--workspace` 选择其隔离工作区。`--successor` 和 `--source-export-result` 绑定原比较关系及其唯一共享导出结果。默认只预览。追加 `--output <new-request.json> --write` 后，工具将隔离目标、原共享导出、独立审阅和碰撞投影的绑定写入新请求文件。此命令的写入范围限于该请求文件。
 
+用 `cargo xtask check recovery fixture successor arm-input --request <independent-b1-request.json> --run-dir <new-independent-run-directory> --write` 消费已发布的独立请求。登记目录必须位于当前协调工作树的 `.local-tests` 下，父目录已存在，登记目录与复制路径分离。工具持本地登记锁及原独立目标存储锁，核对同一共享导出、原目标初始化和当前存储代次，发布 `manifest.json`、`intent.json` 和 `result.json`，并保留未确认状态的失败证据。登记目录已存在时保留原件并拒绝重跑。此阶段不创建复制目录，也不具备恢复资格。后续实际复制须先独占声明请求绑定的新复制目录。
+
 | 阶段 | 操作与输出 |
 | --- | --- |
 | `dataset` | Rust 先核对源库归属、已登记 API 和普通租户为空，再通过受管原生子进程按计划时限建立套餐、十个租户、业务记录和关联对象。保存逐条创建证据与 `dataset/result.json`，阶段失败收据保留在 `dataset.json`。已有阶段证据时拒绝重放。 |

@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 const SUCCESSOR_KIND: &str = "devex-clone-seed-successor-arm-input";
-const INDEPENDENT_B1_KIND: &str = "devex-clone-seed-independent-b1-arm-input";
+pub(super) const INDEPENDENT_B1_KIND: &str = "devex-clone-seed-independent-b1-arm-input";
 
 #[derive(PartialEq)]
 struct Observation {

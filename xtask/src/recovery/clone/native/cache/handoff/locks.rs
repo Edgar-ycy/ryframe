@@ -29,6 +29,27 @@ pub(crate) struct Storage {
 impl Storage {
     pub(crate) fn acquire(backend: &Path, current: &Path, manifest: &Value) -> Result<Self> {
         let directory = resolve(backend, current, manifest)?;
+        Self::claim(backend, current, directory)
+    }
+
+    pub(in crate::recovery) fn acquire_independent_target(
+        backend: &Path,
+        current: &Path,
+        registration: &Value,
+        storage: &Value,
+    ) -> Result<Self> {
+        let directory = registered_target(backend, registration, storage)?;
+        let physical_target = fs::canonicalize(&directory)?;
+        let physical_current = fs::canonicalize(current)?;
+        if physical_target.starts_with(&physical_current)
+            || physical_current.starts_with(&physical_target)
+        {
+            return Err("独立 ARM 必须使用互不重叠的目标存储运行".into());
+        }
+        Self::claim(backend, current, directory)
+    }
+
+    fn claim(backend: &Path, current: &Path, directory: PathBuf) -> Result<Self> {
         if directory != current
             && (directory.starts_with(current) || current.starts_with(&directory))
         {
@@ -98,15 +119,11 @@ impl Storage {
 
 pub(super) fn resolve(backend: &Path, current: &Path, manifest: &Value) -> Result<PathBuf> {
     if manifest["copy_stage"] == "seed_to_arm" {
-        let registered =
-            common::read_bound(backend, &manifest["target_registration"], "目标fresh登记")?;
-        let run = target_verify::fresh::storage_run(backend, &registered["storage_run"], None)?;
-        if manifest["target_storage_run"]["path"] != json!(run)
-            || manifest["target_storage_run"]["manifest"] != registered["storage_run"]["manifest"]
-        {
-            return Err("API交接外部目标存储不属于原fresh登记".into());
-        }
-        return Ok(run);
+        return registered_target(
+            backend,
+            &manifest["target_registration"],
+            &manifest["target_storage_run"],
+        );
     }
     let initialized = common::bound_file(backend, &manifest["initialized"], "API交接初始化")?;
     let workspace = initialized
@@ -127,6 +144,20 @@ pub(super) fn resolve(backend: &Path, current: &Path, manifest: &Value) -> Resul
         return Ok(current.to_owned());
     }
     target_verify::published::unlocked_history(backend, &initialized)?;
+    Ok(run)
+}
+
+pub(in crate::recovery) fn registered_target(
+    backend: &Path,
+    registration: &Value,
+    storage: &Value,
+) -> Result<PathBuf> {
+    let registered = common::read_bound(backend, registration, "目标fresh登记")?;
+    let run = target_verify::fresh::storage_run(backend, &registered["storage_run"], None)?;
+    if storage["path"] != json!(run) || storage["manifest"] != registered["storage_run"]["manifest"]
+    {
+        return Err("API交接外部目标存储不属于原fresh登记".into());
+    }
     Ok(run)
 }
 

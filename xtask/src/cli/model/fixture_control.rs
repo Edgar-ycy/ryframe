@@ -52,6 +52,7 @@ pub(crate) const FIXTURE_CONTROL_USAGE: &str = concat!(
     "  successor generation-request --successor <文件> --source-backend <目录> --expected-head <SHA> --backend-build <文件> --maintenance-build <文件> --source-environment <文件> --config-dir <规范绝对目录> [--execution-source <发布收据>] --id <ID> [--adapter-contract <值>] [--product-backend <目录>] [--output <新文件> --write]\n",
     "  successor arm-request --successor <文件> --source-export-result <文件> --workspace <目录> --id <ID> --side base|candidate --copy-directory <新目录> [--output <新文件> --write]\n",
     "  successor arm-request --successor <文件> --source-export-result <文件> --workspace <独立 B1 工作区> --id <ID> --side candidate --independent-b1 --copy-directory <新目录> [--output <新文件> --write]\n",
+    "  successor arm-input --request <独立 B1 ARM 请求> --run-dir <新独立本地目录> --write\n",
     "  services <rustfs|redis|buckets|close> --review <文件> --environment <文件> --write\n",
     "  services status --review <文件> --environment <文件>\n",
     "  services <reconcile|recover|restart> --review <文件> --environment <文件> --owner-binding <文件> --write\n",

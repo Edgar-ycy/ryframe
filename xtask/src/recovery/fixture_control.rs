@@ -85,6 +85,9 @@ pub(super) fn run(command: &FixtureControlCommand, root: &Path) -> Result<()> {
             FixtureSuccessorCommand::ArmRequest(options) => {
                 print_json(&successor::arm::run(root, options)?)
             }
+            FixtureSuccessorCommand::ArmInput(options) => {
+                print_json(&successor::arm_input::run(root, options)?)
+            }
             FixtureSuccessorCommand::Help => unreachable!("已输出夹具帮助"),
         },
         FixtureControlCommand::Services(services) => {

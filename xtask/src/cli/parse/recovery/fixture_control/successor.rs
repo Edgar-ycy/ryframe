@@ -1,7 +1,7 @@
 use crate::{
     cli::{
-        CliError, FixtureSuccessorArm, FixtureSuccessorCommand, FixtureSuccessorGeneration,
-        FixtureSuccessorRelationship,
+        CliError, FixtureSuccessorArm, FixtureSuccessorArmInput, FixtureSuccessorCommand,
+        FixtureSuccessorGeneration, FixtureSuccessorRelationship,
     },
     local_test_path::LocalTestPathKind,
 };
@@ -26,6 +26,7 @@ pub(super) fn parse(args: &[String]) -> Result<FixtureSuccessorCommand, CliError
         "relationship" => relationship(values),
         "generation-request" => generation(values),
         "arm-request" => arm(values),
+        "arm-input" => arm_input(values),
         _ => Err(CliError::new(format!(
             "未知 fixture successor 操作：{operation}"
         ))),
@@ -172,6 +173,68 @@ fn paired_output(
     }
 }
 
+fn arm_input(args: &[String]) -> Result<FixtureSuccessorCommand, CliError> {
+    let options = ParsedOptions::parse(args, &["--request", "--run-dir"])?;
+    require_write(&options, "successor arm-input")?;
+    Ok(FixtureSuccessorCommand::ArmInput(
+        FixtureSuccessorArmInput {
+            request: input(&options, "--request")?,
+            run_dir: new_directory(options.require("--run-dir")?, "--run-dir")?,
+        },
+    ))
+}
+
 fn input(options: &ParsedOptions, name: &str) -> Result<std::path::PathBuf, CliError> {
     options.path(name, LocalTestPathKind::ExistingFile)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn independent_b1_arm_input_requires_explicit_write_and_a_new_run_directory() {
+        let local = crate::workspace::root_dir().join(".local-tests");
+        std::fs::create_dir_all(&local).unwrap();
+        let fixture = tempfile::tempdir_in(local).unwrap();
+        let request = fixture.path().join("request.json");
+        let directory = fixture.path().join("new-run");
+        std::fs::write(&request, b"{}").unwrap();
+        let mut args = [
+            "arm-input",
+            "--request",
+            request.to_str().unwrap(),
+            "--run-dir",
+            directory.to_str().unwrap(),
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        assert!(parse(&args).is_err());
+        args.push("--write".into());
+        let parsed = parse(&args).unwrap();
+        assert!(parsed.writes());
+        assert_eq!(parsed.operation(), "arm-input");
+        assert_eq!(
+            parsed,
+            FixtureSuccessorCommand::ArmInput(FixtureSuccessorArmInput {
+                request: request.clone(),
+                run_dir: directory.clone(),
+            })
+        );
+        assert!(!directory.exists());
+        for extra in [
+            vec![
+                "--run-dir".to_owned(),
+                directory.to_string_lossy().into_owned(),
+            ],
+            vec!["--side".to_owned(), "candidate".to_owned()],
+            vec!["--write".to_owned()],
+        ] {
+            assert!(parse(&[args.clone(), extra].concat()).is_err());
+        }
+        std::fs::create_dir(&directory).unwrap();
+        assert!(parse(&args).is_err());
+        assert_eq!(std::fs::read(&request).unwrap(), b"{}");
+        assert!(std::fs::read_dir(&directory).unwrap().next().is_none());
+    }
 }

@@ -259,9 +259,9 @@ fn require_disjoint(before: &Value, after: &Value) -> Result<()> {
     }
     for before in document::array(&before["paths"], "原碰撞路径")? {
         for after in document::array(&after["paths"], "后继碰撞路径")? {
-            let old = path_key(document::text(&before["identity"], "原路径")?);
-            let new = path_key(document::text(&after["identity"], "后继路径")?);
-            if old.starts_with(&new) || new.starts_with(&old) {
+            let old = document::text(&before["identity"], "原路径")?;
+            let new = document::text(&after["identity"], "后继路径")?;
+            if paths_overlap(old, new) {
                 return Err("successor 路径与历史计划重叠".into());
             }
         }
@@ -429,6 +429,12 @@ fn http_port(text: &str, url: &url::Url, host: &str) -> Result<u16> {
         return Err(message.into());
     }
     Ok(url.port().filter(|port| *port != 0).unwrap_or(default))
+}
+
+pub(in crate::recovery) fn paths_overlap(left: &str, right: &str) -> bool {
+    let left = path_key(left);
+    let right = path_key(right);
+    left.starts_with(&right) || right.starts_with(&left)
 }
 
 fn path_key(value: &str) -> PathBuf {

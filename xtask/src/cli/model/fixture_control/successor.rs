@@ -8,6 +8,7 @@ pub(crate) enum FixtureSuccessorCommand {
     Relationship(FixtureSuccessorRelationship),
     GenerationRequest(FixtureSuccessorGeneration),
     ArmRequest(FixtureSuccessorArm),
+    ArmInput(FixtureSuccessorArmInput),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,6 +52,12 @@ pub(crate) struct FixtureSuccessorArm {
     pub(crate) output: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FixtureSuccessorArmInput {
+    pub(crate) request: PathBuf,
+    pub(crate) run_dir: PathBuf,
+}
+
 impl FixtureSuccessorCommand {
     pub(crate) const fn operation(&self) -> &'static str {
         match self {
@@ -58,6 +65,7 @@ impl FixtureSuccessorCommand {
             Self::Relationship(_) => "relationship",
             Self::GenerationRequest(_) => "generation-request",
             Self::ArmRequest(_) => "arm-request",
+            Self::ArmInput(_) => "arm-input",
         }
     }
 
@@ -67,6 +75,7 @@ impl FixtureSuccessorCommand {
             Self::Relationship(_) => true,
             Self::GenerationRequest(options) => options.output.is_some(),
             Self::ArmRequest(options) => options.output.is_some(),
+            Self::ArmInput(_) => true,
         }
     }
 }
