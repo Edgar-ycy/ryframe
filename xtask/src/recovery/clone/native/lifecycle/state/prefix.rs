@@ -3,7 +3,19 @@ use crate::Result;
 use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, fmt};
+use std::{cell::RefCell, collections::BTreeMap, fmt, rc::Rc};
+
+const MAX_CACHED_BYTES: usize = 256 * 1024;
+const MAX_CACHED_ATTEMPTS: usize = 256;
+
+struct CachedIndex {
+    raw: Box<[u8]>,
+    index: Rc<PrefixIndex>,
+}
+
+thread_local! {
+    static PREFIX_CACHE: RefCell<Option<CachedIndex>> = const { RefCell::new(None) };
+}
 
 #[derive(Clone)]
 enum Ordered {
@@ -73,6 +85,9 @@ impl<'de> Deserialize<'de> for Ordered {
 
 /// 只接受唯一前缀的原字节长度与摘要，不以JSON语义相等替代写入器绑定。
 pub(crate) fn count(raw: &[u8], bytes: u64, expected_sha: &str) -> Result<usize> {
+    if let Some(index) = cached(raw) {
+        return index.count(bytes, expected_sha);
+    }
     let (ordered, attempt_count) = ledger(raw)?;
     if raw.len() as u64 == bytes && hex::encode(Sha256::digest(raw)) == expected_sha {
         return Ok(attempt_count);
@@ -97,7 +112,24 @@ pub(crate) struct PrefixIndex {
 }
 
 impl PrefixIndex {
-    pub(crate) fn new(raw: &[u8]) -> Result<Self> {
+    /// 只复用已核验原字节的纯索引，调用方仍负责全部账本和现场核验。
+    pub(crate) fn shared(raw: &[u8]) -> Result<Rc<Self>> {
+        if let Some(index) = cached(raw) {
+            return Ok(index);
+        }
+        let index = Rc::new(Self::new(raw)?);
+        if raw.len() <= MAX_CACHED_BYTES && index.full.2 <= MAX_CACHED_ATTEMPTS {
+            PREFIX_CACHE.with_borrow_mut(|cached| {
+                *cached = Some(CachedIndex {
+                    raw: raw.into(),
+                    index: Rc::clone(&index),
+                });
+            });
+        }
+        Ok(index)
+    }
+
+    fn new(raw: &[u8]) -> Result<Self> {
         let (ordered, attempt_count) = ledger(raw)?;
         let mut by_size = BTreeMap::<u64, BTreeMap<String, Option<usize>>>::new();
         for count in 0..=attempt_count {
@@ -135,6 +167,15 @@ impl PrefixIndex {
             .and_then(|digests| digests.get(sha256).copied().flatten())
             .ok_or_else(|| "历史阶段记录不是当前账本的精确追加前缀".into())
     }
+}
+
+fn cached(raw: &[u8]) -> Option<Rc<PrefixIndex>> {
+    PREFIX_CACHE.with_borrow(|cached| {
+        cached
+            .as_ref()
+            .filter(|entry| entry.raw.as_ref() == raw)
+            .map(|entry| Rc::clone(&entry.index))
+    })
 }
 
 fn ledger(raw: &[u8]) -> Result<(Ordered, usize)> {
@@ -334,4 +375,35 @@ fn append_preserves_each_existing_writer_prefix_including_unicode() {
         items.truncate(1);
         assert!(serializations(&(encode(&prefix, 0, false, true) + "\n")).contains(&previous));
     }
+}
+
+#[cfg(test)]
+#[test]
+fn reuses_only_exact_bytes_and_preserves_the_uncached_prefix_check() {
+    let original = br#"{"attempts":[1]}"#;
+    let changed = br#"{"attempts":[2]}"#;
+    let invalid = br#"{"attempts":[x]}"#;
+    let bytes = original.len() as u64;
+    assert_eq!(changed.len(), original.len());
+    assert_eq!(invalid.len(), original.len());
+
+    let original_index = PrefixIndex::shared(original).unwrap();
+    assert!(Rc::ptr_eq(
+        &original_index,
+        &PrefixIndex::shared(original).unwrap()
+    ));
+    let original_sha = hex::encode(Sha256::digest(original));
+    let changed_sha = hex::encode(Sha256::digest(changed));
+    assert_eq!(count(original, bytes, &original_sha).unwrap(), 1);
+    assert!(count(changed, bytes, &original_sha).is_err());
+    assert_eq!(count(changed, bytes, &changed_sha).unwrap(), 1);
+    assert!(cached(changed).is_none());
+    assert!(PrefixIndex::shared(invalid).is_err());
+    assert!(count(invalid, bytes, &original_sha).is_err());
+
+    let changed_index = PrefixIndex::shared(changed).unwrap();
+    assert!(!Rc::ptr_eq(&original_index, &changed_index));
+    assert!(cached(original).is_none());
+    assert!(changed_index.count(bytes, &original_sha).is_err());
+    assert_eq!(changed_index.count(bytes, &changed_sha).unwrap(), 1);
 }
