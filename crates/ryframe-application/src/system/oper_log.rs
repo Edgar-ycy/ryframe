@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
-use chrono::Utc;
-use ryframe_kernel::{ActorContext, AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery};
+use ryframe_kernel::{
+    ActorContext, AppError, AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery,
+};
 use serde::{Deserialize, Serialize};
+use time::{OffsetDateTime, UtcOffset, macros::format_description};
 
 use crate::ports::system::{OperLogFilter, OperLogPersistencePort, OperLogRecord};
 use crate::{TransactionAuditMode, complete_transaction};
@@ -30,9 +32,19 @@ pub struct OperLogVo {
     pub oper_time: String,
 }
 
-impl From<OperLogRecord> for OperLogVo {
-    fn from(log: OperLogRecord) -> Self {
-        Self {
+impl TryFrom<OperLogRecord> for OperLogVo {
+    type Error = AppError;
+
+    fn try_from(log: OperLogRecord) -> AppResult<Self> {
+        let oper_time = log
+            .oper_time
+            .checked_to_offset(UtcOffset::UTC)
+            .ok_or_else(|| AppError::Internal("操作时间超出 UTC 表示范围".into()))?
+            .format(format_description!(
+                "[year]-[month]-[day] [hour]:[minute]:[second]"
+            ))
+            .map_err(|error| AppError::Internal(format!("格式化操作时间失败：{error}")))?;
+        Ok(Self {
             id: log.id.to_string(),
             title: log.title,
             business_type: log.business_type,
@@ -47,8 +59,8 @@ impl From<OperLogRecord> for OperLogVo {
             status: log.status,
             error_msg: log.error_message,
             cost_time: log.cost_time,
-            oper_time: log.oper_time.format("%Y-%m-%d %H:%M:%S").to_string(),
-        }
+            oper_time,
+        })
     }
 }
 
@@ -115,7 +127,7 @@ impl RecordOperLogCommand {
             json_result: self.json_result,
             status: self.status.as_str().to_owned(),
             error_message: self.error_msg,
-            oper_time: Utc::now(),
+            oper_time: OffsetDateTime::now_utc(),
             cost_time: self.cost_time,
         })
     }
@@ -170,11 +182,12 @@ impl OperLogService {
             .persistence
             .find_by_page(tenant_id, query.page, filter, &data_scope)
             .await?;
-        Ok(PageResult::new(
-            result.records.into_iter().map(OperLogVo::from).collect(),
-            result.total,
-            &query.page,
-        ))
+        let records = result
+            .records
+            .into_iter()
+            .map(OperLogVo::try_from)
+            .collect::<AppResult<Vec<_>>>()?;
+        Ok(PageResult::new(records, result.total, &query.page))
     }
 
     /// 按稳定主键窗口读取一批操作日志，并延续当前数据范围约束。
@@ -186,13 +199,12 @@ impl OperLogService {
     ) -> AppResult<Vec<OperLogVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let data_scope = actor.data_scope_context();
-        Ok(self
-            .persistence
+        self.persistence
             .find_export_batch(tenant_id, filter, &data_scope, window)
             .await?
             .into_iter()
-            .map(OperLogVo::from)
-            .collect())
+            .map(OperLogVo::try_from)
+            .collect()
     }
 
     pub async fn clean(&self, actor: &ActorContext) -> AppResult<u64> {

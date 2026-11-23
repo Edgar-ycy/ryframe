@@ -1,19 +1,21 @@
-use crate::DbResultExt;
 use std::sync::Arc;
 
-use crate::{
-    ControlDatabaseCluster, OperLogFilter as DatabaseOperLogFilter, OperLogRepository,
-    ReadConsistency, Repository, entities::oper_log,
-};
 use async_trait::async_trait;
+use chrono::DateTime;
 use ryframe_kernel::{
     AppResult, DataScopeContextRef, ExportCursorWindow, PageResult, ValidatedPageQuery,
 };
 use sea_orm::{DatabaseTransaction, TransactionTrait};
+use time::OffsetDateTime;
 
 use ryframe_application::{
     PersistenceTransaction, TransactionAuditMode,
     ports::system::{OperLogFilter, OperLogPersistencePort, OperLogRecord, OperLogTransaction},
+};
+
+use crate::{
+    ControlDatabaseCluster, DbResultExt, OperLogFilter as DatabaseOperLogFilter, OperLogRepository,
+    ReadConsistency, Repository, entities::oper_log,
 };
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn OperLogPersistencePort> {
@@ -26,7 +28,7 @@ pub(crate) async fn insert_event_in_transaction(
     record: OperLogRecord,
 ) -> ryframe_kernel::AppResult<bool> {
     OperLogRepository
-        .insert_event_in_transaction(transaction, tenant_id, to_entity(tenant_id, record))
+        .insert_event_in_transaction(transaction, tenant_id, to_entity(tenant_id, record)?)
         .await
 }
 
@@ -45,7 +47,7 @@ impl OperLogPersistencePort for DatabaseOperLogPersistence {
             .insert(
                 self.database.write(),
                 tenant_id,
-                to_entity(tenant_id, record),
+                to_entity(tenant_id, record)?,
             )
             .await
             .map(|_| ())
@@ -71,11 +73,12 @@ impl OperLogPersistencePort for DatabaseOperLogPersistence {
                 data_scope,
             )
             .await?;
-        Ok(PageResult::new(
-            result.records.into_iter().map(to_record).collect(),
-            result.total,
-            &page,
-        ))
+        let records = result
+            .records
+            .into_iter()
+            .map(to_record)
+            .collect::<AppResult<Vec<_>>>()?;
+        Ok(PageResult::new(records, result.total, &page))
     }
 
     async fn find_export_batch(
@@ -97,8 +100,10 @@ impl OperLogPersistencePort for DatabaseOperLogPersistence {
                 data_scope,
                 window,
             )
-            .await
-            .map(|records| records.into_iter().map(to_record).collect())
+            .await?
+            .into_iter()
+            .map(to_record)
+            .collect()
     }
 
     async fn begin(&self) -> AppResult<Box<dyn OperLogTransaction>> {
@@ -141,8 +146,11 @@ fn to_database_filter(filter: OperLogFilter<'_>) -> DatabaseOperLogFilter<'_> {
     }
 }
 
-fn to_record(model: oper_log::Model) -> OperLogRecord {
-    OperLogRecord {
+fn to_record(model: oper_log::Model) -> AppResult<OperLogRecord> {
+    let oper_time = OffsetDateTime::from_unix_timestamp(model.oper_time.timestamp())
+        .and_then(|time| time.replace_nanosecond(model.oper_time.timestamp_subsec_nanos()))
+        .db_context("读取操作日志 UTC 时间")?;
+    Ok(OperLogRecord {
         id: model.id,
         event_id: model.event_id,
         request_id: model.request_id,
@@ -158,13 +166,19 @@ fn to_record(model: oper_log::Model) -> OperLogRecord {
         json_result: model.json_result,
         status: model.status,
         error_message: model.error_msg,
-        oper_time: model.oper_time,
+        oper_time,
         cost_time: model.cost_time,
-    }
+    })
 }
 
-fn to_entity(tenant_id: &str, record: OperLogRecord) -> oper_log::Model {
-    oper_log::Model {
+fn to_entity(tenant_id: &str, record: OperLogRecord) -> AppResult<oper_log::Model> {
+    let oper_time = DateTime::from_timestamp(
+        record.oper_time.unix_timestamp(),
+        record.oper_time.nanosecond(),
+    )
+    .ok_or("时间超出 UTC 表示范围")
+    .db_context("写入操作日志 UTC 时间")?;
+    Ok(oper_log::Model {
         id: record.id,
         tenant_id: tenant_id.to_owned(),
         event_id: record.event_id,
@@ -181,7 +195,62 @@ fn to_entity(tenant_id: &str, record: OperLogRecord) -> oper_log::Model {
         json_result: record.json_result,
         status: record.status,
         error_msg: record.error_message,
-        oper_time: record.oper_time,
+        oper_time,
         cost_time: record.cost_time,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+    use ryframe_application::system::operations::OperLogVo;
+    use ryframe_kernel::AppError;
+    use time::UtcOffset;
+
+    #[test]
+    fn operation_time_preserves_sql_precision_and_utc_view() {
+        let entity = oper_log::Model {
+            id: 1,
+            tenant_id: "tenant-a".into(),
+            event_id: None,
+            request_id: None,
+            title: "测试操作".into(),
+            business_type: "UPDATE".into(),
+            method: "update".into(),
+            request_method: "PUT".into(),
+            oper_name: "tester".into(),
+            oper_url: "/fixture".into(),
+            oper_ip: "127.0.0.1".into(),
+            oper_location: None,
+            oper_param: None,
+            json_result: None,
+            status: "1".into(),
+            error_msg: None,
+            oper_time: DateTime::from_timestamp(-1, 123_456_000).unwrap(),
+            cost_time: 10,
+        };
+        let mut record = to_record(entity.clone()).unwrap();
+        assert_eq!(record.oper_time.unix_timestamp(), -1);
+        assert_eq!(record.oper_time.nanosecond(), 123_456_000);
+        assert_eq!(record.oper_time.offset(), UtcOffset::UTC);
+
+        record.oper_time = record
+            .oper_time
+            .to_offset(UtcOffset::from_hms(8, 0, 0).unwrap());
+        let view = OperLogVo::try_from(record.clone()).unwrap();
+        assert_eq!(view.oper_time, "1969-12-31 23:59:59");
+        assert_eq!(to_entity("tenant-a", record).unwrap(), entity);
+
+        for oper_time in [
+            Utc.with_ymd_and_hms(10_000, 1, 1, 0, 0, 0).unwrap(),
+            DateTime::from_timestamp(-1, 1_123_456_000).unwrap(),
+        ] {
+            let invalid = oper_log::Model {
+                oper_time,
+                ..entity.clone()
+            };
+            assert!(matches!(to_record(invalid), Err(AppError::Database(_))));
+        }
     }
 }

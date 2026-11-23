@@ -3,6 +3,7 @@ use chrono::{DateTime, Utc};
 use ryframe_kernel::{
     AppResult, DataScopeContextRef, ExportCursorWindow, PageResult, ValidatedPageQuery,
 };
+use time::OffsetDateTime;
 
 use crate::PersistenceTransaction;
 
@@ -23,7 +24,7 @@ pub struct OperLogRecord {
     pub json_result: Option<String>,
     pub status: String,
     pub error_message: Option<String>,
-    pub oper_time: DateTime<Utc>,
+    pub oper_time: OffsetDateTime,
     pub cost_time: i64,
 }
 
