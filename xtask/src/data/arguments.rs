@@ -62,22 +62,23 @@ pub(crate) fn backup_arguments(command: &BackupCommand) -> Vec<String> {
 pub(crate) fn restore_arguments(command: &RestoreCommand) -> Option<Vec<String>> {
     Some(match command {
         RestoreCommand::Begin(_) => return None,
-        RestoreCommand::VerifyData(options) => vec![
-            "restore-verify-data".into(),
-            "--id".into(),
-            options.id.clone(),
-            "--backup-root".into(),
-            path_argument(&options.backup_root),
-            "--output".into(),
-            path_argument(&options.output),
-            "--restore-config-dir".into(),
-            path_argument(&options.restore_config_dir),
-        ],
+        RestoreCommand::VerifyData(options) => {
+            let mut arguments = registry_arguments(options.config_dir.as_deref());
+            arguments.extend([
+                "restore-verify-data".into(),
+                "--id".into(),
+                options.id.clone(),
+                "--backup-root".into(),
+                path_argument(&options.backup_root),
+                "--output".into(),
+                path_argument(&options.output),
+                "--restore-config-dir".into(),
+                path_argument(&options.restore_config_dir),
+            ]);
+            arguments
+        }
         RestoreCommand::Verify(options) => {
-            let mut arguments = Vec::new();
-            if let Some(directory) = &options.config_dir {
-                arguments.extend(["--config-dir".into(), path_argument(directory)]);
-            }
+            let mut arguments = registry_arguments(options.config_dir.as_deref());
             arguments.extend([
                 "restore-verify".into(),
                 "--id".into(),
@@ -102,6 +103,12 @@ pub(crate) fn restore_arguments(command: &RestoreCommand) -> Option<Vec<String>>
             arguments
         }
     })
+}
+
+fn registry_arguments(directory: Option<&Path>) -> Vec<String> {
+    directory
+        .map(|directory| vec!["--config-dir".into(), path_argument(directory)])
+        .unwrap_or_default()
 }
 
 pub(crate) fn target_inventory_arguments(options: &TargetInventoryOptions) -> Vec<String> {

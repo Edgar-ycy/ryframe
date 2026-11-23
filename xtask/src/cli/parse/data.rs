@@ -12,8 +12,8 @@ use path::{DataPathRole, validate_data_path};
 
 use super::super::model::{
     BackupCommand, BackupInventoryOptions, BackupObservation, BackupRegisterOptions, CliError,
-    DataCommand, ResetCommand, ResetExecuteOptions, RestoreBeginOptions, RestoreCommand,
-    RestoreDataOptions, RestoreVerifyOptions, TargetInventoryOptions,
+    DataCommand, ResetCommand, ResetExecuteOptions, RestoreBeginCopy, RestoreBeginOptions,
+    RestoreCommand, RestoreDataOptions, RestoreVerifyOptions, TargetInventoryOptions,
 };
 
 pub(super) fn parse_maintenance_data(args: &[String]) -> Result<DataCommand, CliError> {
@@ -100,6 +100,7 @@ fn parse_restore(args: &[String]) -> Result<RestoreCommand, CliError> {
                 maintenance_build: options
                     .take_path("--maintenance-build", DataPathRole::ExternalInputFile)?,
                 output: options.take_path("--output", DataPathRole::ControlledPlannedOutput)?,
+                copy: parse_restore_begin_copy(&mut options)?,
             }));
             options.require_write()?;
             options.finish("data restore begin")?;
@@ -110,6 +111,7 @@ fn parse_restore(args: &[String]) -> Result<RestoreCommand, CliError> {
                 id: options.take_scalar("--id")?,
                 backup_root: options.take_directory("--backup-root")?,
                 output: options.take_output("--output")?,
+                config_dir: options.take_optional_directory("--config-dir")?,
                 restore_config_dir: options.take_directory("--restore-config-dir")?,
             });
             options.require_write()?;
@@ -120,6 +122,27 @@ fn parse_restore(args: &[String]) -> Result<RestoreCommand, CliError> {
         _ => Err(CliError::new(format!(
             "未知 data restore 子操作：{operation}"
         ))),
+    }
+}
+
+fn parse_restore_begin_copy(
+    options: &mut NamedOptions,
+) -> Result<Option<RestoreBeginCopy>, CliError> {
+    let publisher = options.take_optional_scalar("--copy-source-plan")?;
+    let id = options.take_optional_scalar("--copy-id")?;
+    match (publisher, id) {
+        (None, None) => Ok(None),
+        (Some(publisher), Some(id)) => Ok(Some(RestoreBeginCopy {
+            publisher_plan: validate_data_path(
+                publisher.into(),
+                "--copy-source-plan",
+                DataPathRole::ControlledInputFile,
+            )?,
+            id,
+        })),
+        _ => Err(CliError::new(
+            "失败副本开始登记必须同时提供 --copy-source-plan 和 --copy-id",
+        )),
     }
 }
 
@@ -148,16 +171,7 @@ fn parse_restore_verify(mut options: NamedOptions) -> Result<RestoreCommand, Cli
         coordinator_root,
         coordinator_sha,
         runner_root,
-        config_dir: options
-            .take_optional_scalar("--config-dir")?
-            .map(|value| {
-                validate_data_path(
-                    value.into(),
-                    "--config-dir",
-                    DataPathRole::ExternalDirectory,
-                )
-            })
-            .transpose()?,
+        config_dir: options.take_optional_directory("--config-dir")?,
         restore_config_dir: options.take_directory("--restore-config-dir")?,
     }));
     options.require_write()?;
@@ -344,6 +358,12 @@ impl NamedOptions {
 
     fn take_directory(&mut self, option: &str) -> Result<PathBuf, CliError> {
         self.take_path(option, DataPathRole::ExternalDirectory)
+    }
+
+    fn take_optional_directory(&mut self, option: &str) -> Result<Option<PathBuf>, CliError> {
+        self.take_optional_scalar(option)?
+            .map(|value| validate_data_path(value.into(), option, DataPathRole::ExternalDirectory))
+            .transpose()
     }
 
     fn take_output(&mut self, option: &str) -> Result<PathBuf, CliError> {

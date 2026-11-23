@@ -53,6 +53,12 @@ pub(super) fn copy(args: &Value) -> Result<Value> {
     inputs::domain::identifier(id)?;
     let manifest = &args["manifest"];
     super::artifact_shape(manifest)?;
+    let source_manifest = root.join("manifest.json");
+    let source_inputs = native::target_verify::guard::Inputs::open([source_manifest.clone()])?;
+    let source_binding = native::resources::common::binding(&source_manifest)?;
+    if native::json::read(&source_manifest)? != *manifest {
+        return Err("副本必须消费原备份目录中的同一清单".into());
+    }
     if manifest["id"] == id {
         return Err("失败演练必须使用独立备份ID".into());
     }
@@ -78,9 +84,13 @@ pub(super) fn copy(args: &Value) -> Result<Value> {
     copied["id"] = json!(id);
     inputs::inventory::verify_artifacts(&target, &copied)?;
     inputs::inventory::verify_artifacts(root, manifest)?;
+    source_inputs.check()?;
+    if native::resources::common::binding(&source_manifest)? != source_binding {
+        return Err("复制期间原备份清单发生变化，保留副本和原件".into());
+    }
     native::json::write_new(&target.join("manifest.json"), &copied)?;
     Ok(
-        json!({"manifest":target.join("manifest.json"),"backup_root":target,
+        json!({"manifest":target.join("manifest.json"),"backup_root":target,"source_manifest":source_binding,
         "next":"先登记有效副本并执行 restore-begin，然后用 damage 注入损坏，再执行 restore-verify-data"}),
     )
 }

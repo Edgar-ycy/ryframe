@@ -10,8 +10,11 @@ use serde_json::{Value, json};
 
 use super::super::{local::Lock, path, proof, text};
 use super::{
-    Phase, begin_proof, combine, expected_images, files, inputs::TargetSnapshot, native,
-    object_images,
+    Phase,
+    begin_copy::{self, CopyWindow, VerifiedCopy},
+    begin_proof, combine, expected_images, files,
+    inputs::TargetSnapshot,
+    native, object_images,
 };
 use crate::{
     Result,
@@ -47,15 +50,29 @@ pub(in super::super) fn run(backend: &Path, options: &RestoreBeginOptions) -> Re
     });
     let snapshot = TargetSnapshot::read(backend, &request, true)?;
     let work = path(&snapshot.chain.reference.value["work_dir"])?;
-    let output = output_file(backend, work, &snapshot, &options.output)?;
     let maintenance = Maintenance::open(&options.maintenance_root, &options.maintenance_build)?;
+    let normal_directory = receipt::directory(&snapshot)?;
+    let directory = if let Some(copy) = &options.copy {
+        begin_copy::directory(normal_directory, copy, &snapshot.product_plan.value)?
+    } else {
+        normal_directory
+    };
+    let output = output_file(backend, work, &snapshot, &directory, &options.output)?;
     files::work(&json!({"plan":snapshot.chain.reference.value}), true)?;
     if !output.parent().is_some_and(Path::is_dir) {
         return Err("恢复运行记录必须写到受管参考演练目录中".into());
     }
-    let directory = receipt::directory(&snapshot)?;
     validate_local_test_path(&directory, backend, LocalTestPathKind::NewDirectory)?;
     let lock = Lock::claim(work)?;
+    let copy_window = options
+        .copy
+        .as_ref()
+        .map(|copy| CopyWindow::open(backend, &snapshot, work, copy))
+        .transpose()?;
+    let copy = copy_window.as_ref().map(|window| &window.copy);
+    if copy.is_some_and(|copy| output.starts_with(&copy.root)) {
+        return Err("失败演练运行记录不能位于被检测的副本目录".into());
+    }
     snapshot.assert_unchanged()?;
     let directory_created = Cell::new(false);
     let registered = registered_stopped_runtime(
@@ -71,14 +88,22 @@ pub(in super::super) fn run(backend: &Path, options: &RestoreBeginOptions) -> Re
                 target_snapshot: &snapshot,
                 maintenance: &maintenance,
                 directory_created: &directory_created,
+                copy,
             };
             active.run(&|| {
                 lock.check()?;
+                if let Some(window) = &copy_window {
+                    window.check()?;
+                }
                 snapshot.check_runtime(&stopped(RestoreChecks::default())?)
             })
         },
     );
-    match combine(registered, lock.check()) {
+    let checked = combine(
+        lock.check(),
+        copy_window.as_ref().map_or(Ok(()), CopyWindow::check),
+    );
+    match combine(registered, checked) {
         Ok((intent, record)) => intent.finish(backend, &record),
         Err(error) if directory_created.get() => {
             combine(Err(error), receipt::record_unconfirmed(backend, &directory))
@@ -91,10 +116,10 @@ fn output_file(
     backend: &Path,
     work: &Path,
     snapshot: &TargetSnapshot,
+    evidence: &Path,
     output: &Path,
 ) -> Result<PathBuf> {
     let output = validate_local_test_path(output, backend, LocalTestPathKind::OutputFile)?;
-    let evidence = receipt::directory(snapshot)?;
     let initialized = path(&snapshot.target.value["fresh_target"]["initialized"]["path"])?;
     let initialized = initialized.parent().ok_or("原目标初始化证据缺少目录")?;
     if !output.starts_with(&work)
@@ -115,6 +140,7 @@ struct Begin<'a> {
     target_snapshot: &'a TargetSnapshot,
     maintenance: &'a Maintenance,
     directory_created: &'a Cell<bool>,
+    copy: Option<&'a VerifiedCopy>,
 }
 
 impl Begin<'_> {
@@ -201,8 +227,9 @@ impl Begin<'_> {
         let registry = Configuration::open(self.backend, selected)?;
         let target_backend = target.inputs().execution_backend()?;
         let target_config = Configuration::open(&target_backend, target.configuration())?;
+        let product_plan = self.execution_plan()?;
         let proof = begin_proof::build(
-            &snapshot.product_plan.value,
+            &product_plan.value,
             &snapshot.target.sha256(),
             text(&snapshot.target.value["fresh_target"]["initialized"]["sha256"])?,
             before,
@@ -214,7 +241,7 @@ impl Begin<'_> {
             check()?;
             registry.check()?;
             target_config.check()?;
-            Ok(())
+            product_plan.assert_unchanged()
         };
         checkpoint()?;
         let intent = receipt::Intent::publish(
@@ -223,23 +250,32 @@ impl Begin<'_> {
             snapshot,
             self.output,
             &self.maintenance.binding,
-            before,
-            &proof,
+            receipt::Evidence {
+                image: before,
+                proof: &proof,
+                copy: self.copy,
+                product_plan: &product_plan,
+            },
         )?;
         let record = (|| -> Result<Document> {
             checkpoint()?;
             intent.check()?;
-            output_file(self.backend, self.work, snapshot, self.output)?;
-            self.invoke(&registry, &target_config, &intent.preimage)?;
+            output_file(
+                self.backend,
+                self.work,
+                snapshot,
+                self.directory,
+                self.output,
+            )?;
+            if let Some(copy) = self.copy {
+                self.register_copy(&registry, copy)?;
+                checkpoint()?;
+                intent.check()?;
+            }
+            self.invoke(&registry, &target_config, &product_plan, &intent.preimage)?;
             checkpoint()?;
             intent.check()?;
-            let record = document::read(self.output, self.backend, "恢复运行记录")?;
-            proof::record(&json!({
-                "plan":snapshot.chain.reference.value,
-                "manifest":snapshot.manifest.value,
-                "record":record.value,
-                "product_plan":snapshot.product_plan.value,
-            }))?;
+            let record = self.verify_running(&product_plan)?;
             self.maintenance.verify_source()?;
             record.assert_unchanged()?;
             Ok(record)
@@ -247,10 +283,76 @@ impl Begin<'_> {
         Ok((intent, record))
     }
 
+    fn verify_running(&self, product_plan: &Document) -> Result<Document> {
+        let snapshot = self.target_snapshot;
+        let mut reference = snapshot.chain.reference.value.clone();
+        let manifest = if let Some(copy) = self.copy {
+            reference["id"] = copy.manifest.value["id"].clone();
+            &copy.manifest
+        } else {
+            &snapshot.manifest
+        };
+        let record = document::read(self.output, self.backend, "恢复运行记录")?;
+        proof::record(&json!({
+            "plan":reference,
+            "manifest":manifest.value,
+            "record":record.value,
+            "product_plan":product_plan.value,
+        }))?;
+        Ok(record)
+    }
+
+    fn execution_plan(&self) -> Result<Document> {
+        let original = &self.target_snapshot.product_plan;
+        let Some(copy) = self.copy else {
+            return Ok(original.clone());
+        };
+        let mut selected = original.value.clone();
+        let id = &copy.manifest.value["id"];
+        selected["id"] = id.clone();
+        selected["backup_id"] = id.clone();
+        let path = self.directory.join("copy-product-plan.json");
+        native::json::publish_new(&path, &selected, "独立失败副本产品计划")?;
+        let plan = document::read(&path, self.backend, "独立失败副本产品计划")?;
+        if plan.value != selected {
+            return Err("独立失败副本产品计划发布后内容不同".into());
+        }
+        Ok(plan)
+    }
+
+    fn register_copy(&self, registry: &Configuration<'_>, copy: &VerifiedCopy) -> Result<()> {
+        let command = CommandSpec {
+            program: self.maintenance.executable.clone(),
+            args: vec![
+                "--config-dir".into(),
+                path_argument(&registry.directory)?,
+                "backup-register".into(),
+                "--manifest".into(),
+                path_argument(&copy.manifest.path)?,
+                "--backup-root".into(),
+                path_argument(&copy.root)?,
+            ],
+            cwd: self.maintenance.root.clone(),
+            environment: BTreeMap::from([("APP_ENV".into(), registry.environment.clone())]),
+            stdin: None,
+            stdout: StdoutTarget::Capture,
+            work_dir: self.directory.to_path_buf(),
+            label: "backup-register".into(),
+            timeout: Duration::from_secs(1800),
+        };
+        let registered = SystemTransport.run(command);
+        receipt::record_command(&self.directory.join("copy-registration.json"), &registered)?;
+        match registered {
+            Ok(output) if output.status.success() => Ok(()),
+            _ => Err("独立失败副本登记未确认；请先只读核对原登记库".into()),
+        }
+    }
+
     fn invoke(
         &self,
         registry: &Configuration<'_>,
         target: &Configuration<'_>,
+        product_plan: &Document,
         preimage: &Document,
     ) -> Result<()> {
         let command = CommandSpec {
@@ -260,7 +362,7 @@ impl Begin<'_> {
                 path_argument(&registry.directory)?,
                 "restore-begin".into(),
                 "--plan".into(),
-                path_argument(&self.target_snapshot.product_plan.path)?,
+                path_argument(&product_plan.path)?,
                 "--restore-config-dir".into(),
                 path_argument(&target.directory)?,
                 "--output".into(),
@@ -276,7 +378,7 @@ impl Begin<'_> {
             timeout: Duration::from_secs(1800),
         };
         let result = SystemTransport.run(command);
-        receipt::record_command(self.directory, &result)?;
+        receipt::record_command(&self.directory.join("command.json"), &result)?;
         match result {
             Ok(output) if output.status.success() => Ok(()),
             _ => Err("恢复开始登记未确认；请核对受管收据和原登记库，禁止直接重放".into()),

@@ -5,8 +5,8 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use super::{
-    Document, Inputs, Result, TargetSnapshot, begin_proof, document, expected_images, native, path,
-    text,
+    Document, Inputs, Result, TargetSnapshot, VerifiedCopy, begin_proof, document, expected_images,
+    native, path, text,
 };
 use native::{export::transport::CommandOutput, resources::common};
 
@@ -38,6 +38,13 @@ pub(super) struct Intent {
     protection: Inputs,
 }
 
+pub(super) struct Evidence<'a> {
+    pub(super) image: &'a Value,
+    pub(super) proof: &'a Value,
+    pub(super) copy: Option<&'a VerifiedCopy>,
+    pub(super) product_plan: &'a Document,
+}
+
 impl Intent {
     pub(super) fn publish(
         backend: &Path,
@@ -45,22 +52,34 @@ impl Intent {
         snapshot: &TargetSnapshot,
         output: &Path,
         maintenance: &Value,
-        image: &Value,
-        proof: &Value,
+        evidence: Evidence<'_>,
     ) -> Result<Self> {
-        let image = publish(backend, &directory.join("resource-image.json"), image)?;
-        let preimage = publish(backend, &directory.join("preimage.json"), proof)?;
-        let value = json!({
+        let image = publish(
+            backend,
+            &directory.join("resource-image.json"),
+            evidence.image,
+        )?;
+        let preimage = publish(backend, &directory.join("preimage.json"), evidence.proof)?;
+        let mut value = json!({
             "format_version":1, "kind":"reference-restore-begin-intent",
             "bindings":bindings(snapshot), "preimage":document::binding(&preimage),
             "resource_image":document::binding(&image), "maintenance":maintenance, "record_path":output,
         });
+        let mut paths = vec![preimage.path.clone(), image.path.clone()];
+        if let Some(copy) = evidence.copy {
+            value["negative_copy"] = json!({
+                "id":copy.manifest.value["id"], "original_copy_receipt":document::binding(&copy.receipt),
+                "manifest":document::binding(&copy.manifest), "execution_plan":document::binding(evidence.product_plan),
+            });
+            paths.extend([
+                copy.receipt.path.clone(),
+                copy.manifest.path.clone(),
+                evidence.product_plan.path.clone(),
+            ]);
+        }
         let intent = publish(backend, &directory.join("intent.json"), &value)?;
-        let protection = Inputs::open([
-            preimage.path.clone(),
-            image.path.clone(),
-            intent.path.clone(),
-        ])?;
+        paths.push(intent.path.clone());
+        let protection = Inputs::open(paths)?;
         let current = Self {
             preimage,
             image,
@@ -83,17 +102,29 @@ impl Intent {
         self.check()?;
         let command = document::read(&directory.join("command.json"), backend, "开始登记命令结果")?;
         check_command(&command.value)?;
-        let outcome = json!({
+        let mut outcome = json!({
             "format_version":1, "kind":"reference-restore-begin-result", "status":"completed",
             "intent":document::binding(&self.intent), "command":document::binding(&command),
             "record":document::binding(record),
         });
         record.assert_unchanged()?;
         command.assert_unchanged()?;
+        let negative = self.intent.value.get("negative_copy").is_some();
+        if negative {
+            let registration = document::read(
+                &directory.join("copy-registration.json"),
+                backend,
+                "独立副本登记结果",
+            )?;
+            check_command(&registration.value)?;
+            outcome["copy_registration"] = document::binding(&registration);
+            registration.assert_unchanged()?;
+        }
         self.check()?;
         let receipt = publish(backend, &directory.join("result.json"), &outcome)?;
         Ok(json!({
-            "status":"restore_begin_registered", "record":document::binding(record),
+            "status":if negative {"negative_restore_begin_registered"} else {"restore_begin_registered"},
+            "record":document::binding(record),
             "receipt":document::binding(&receipt),
         }))
     }
@@ -121,7 +152,7 @@ pub(super) fn record_unconfirmed(backend: &Path, directory: &Path) -> Result<()>
     Ok(())
 }
 
-pub(super) fn record_command(directory: &Path, result: &Result<CommandOutput>) -> Result<()> {
+pub(super) fn record_command(path: &Path, result: &Result<CommandOutput>) -> Result<()> {
     let describe =
         |bytes: &[u8]| json!({"bytes":bytes.len(),"sha256":hex::encode(Sha256::digest(bytes))});
     let status = match result {
@@ -137,7 +168,7 @@ pub(super) fn record_command(directory: &Path, result: &Result<CommandOutput>) -
             "failure":"TransportUnconfirmed",
         }),
     };
-    native::json::write_new(&directory.join("command.json"), &status)
+    native::json::write_new(path, &status)
 }
 
 fn failure_label(stderr: &[u8]) -> &'static str {

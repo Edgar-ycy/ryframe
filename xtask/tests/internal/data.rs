@@ -73,6 +73,7 @@ fn restore_commands_rebuild_every_required_path_without_forwarding_raw_argv() {
             maintenance_root: "maintenance".into(),
             maintenance_build: "maintenance/build.json".into(),
             output: "running.json".into(),
+            copy: None,
         }))),
         None
     );
@@ -81,9 +82,12 @@ fn restore_commands_rebuild_every_required_path_without_forwarding_raw_argv() {
             id: "drill-1".into(),
             backup_root: "backup".into(),
             output: "verified.json".into(),
+            config_dir: Some("source-config".into()),
             restore_config_dir: "config".into(),
         })),
         Some(strings(&[
+            "--config-dir",
+            "source-config",
             "restore-verify-data",
             "--id",
             "drill-1",

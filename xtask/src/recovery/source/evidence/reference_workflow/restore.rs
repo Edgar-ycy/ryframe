@@ -22,6 +22,8 @@ use native::{
 
 #[path = "restore/begin.rs"]
 mod begin;
+#[path = "restore/begin_copy.rs"]
+mod begin_copy;
 #[path = "restore/begin_proof.rs"]
 mod begin_proof;
 #[path = "restore/database_images.rs"]

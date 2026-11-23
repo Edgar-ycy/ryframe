@@ -287,12 +287,15 @@ fn work_is_idempotent_read_only_verify_creates_nothing_and_owner_drift_is_reject
 #[test]
 fn independent_copy_damage_detects_missing_corrupt_and_preserves_original() {
     let fixture = Fixture::new();
+    let original = fixture.root.join("manifest.json");
+    let original_binding = native::resources::common::binding(&original).unwrap();
     for missing in [false, true] {
         let copied = fixture.copy(if missing {
             "bad-missing"
         } else {
             "bad-corrupt"
         });
+        assert_eq!(copied["source_manifest"], original_binding);
         let root = PathBuf::from(copied["backup_root"].as_str().unwrap());
         let manifest = native::json::read(&root.join("manifest.json")).unwrap();
         files::damage(
@@ -302,6 +305,10 @@ fn independent_copy_damage_detects_missing_corrupt_and_preserves_original() {
         .unwrap();
         assert!(inputs::inventory::verify_artifacts(&root, &manifest).is_err());
         inputs::inventory::verify_artifacts(&fixture.root, &fixture.manifest).unwrap();
+        assert_eq!(
+            native::resources::common::binding(&original).unwrap(),
+            original_binding
+        );
     }
     assert!(files::copy(&json!({"work":fixture.plan["work_dir"],"root":fixture.root,"manifest":fixture.manifest,"copy_id":"restore-case"})).is_err());
     assert!(
@@ -311,6 +318,22 @@ fn independent_copy_damage_detects_missing_corrupt_and_preserves_original() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn copy_refuses_a_caller_manifest_other_than_the_source_file() {
+    let fixture = Fixture::new();
+    let mut mismatched = fixture.manifest.clone();
+    mismatched["id"] = json!("unrelated-original");
+    let output = fixture.root.parent().unwrap().join("different-copy");
+    assert!(
+        files::copy(&json!({
+            "work":fixture.plan["work_dir"],"root":fixture.root,"manifest":mismatched,
+            "copy_id":"different-copy",
+        }))
+        .is_err()
+    );
+    assert!(!output.exists());
 }
 
 #[test]

@@ -433,9 +433,10 @@ fn parses_every_restore_operation_into_typed_requests() {
                 backup_root: backup.clone().into(),
                 target_plan: target.into(),
                 runtime_registration: runtime.into(),
-                maintenance_root: maintenance_root.into(),
+                maintenance_root: maintenance_root.clone().into(),
                 maintenance_build: maintenance_build.into(),
                 output: running.into(),
+                copy: None,
             }
         ))))
     );
@@ -450,6 +451,8 @@ fn parses_every_restore_operation_into_typed_requests() {
             &backup,
             "--output",
             &data_output,
+            "--config-dir",
+            &maintenance_root,
             "--restore-config-dir",
             &config,
             "--write",
@@ -459,6 +462,7 @@ fn parses_every_restore_operation_into_typed_requests() {
                 id: "drill-1".into(),
                 backup_root: backup.into(),
                 output: data_output.into(),
+                config_dir: Some(maintenance_root.into()),
                 restore_config_dir: config.clone().into(),
             }
         )))
@@ -613,6 +617,41 @@ fn restore_verify_binds_external_coordinator_plan_without_changing_invocation_ro
                 .contains("--coordinator-sha")
         );
     }
+}
+
+#[test]
+fn restore_begin_accepts_a_paired_negative_copy_source_and_id() {
+    let fixture = DataFixture::new();
+    let options = command(&[
+        "data",
+        "restore",
+        "begin",
+        "--plan",
+        &fixture.path("plan.json"),
+        "--backup-root",
+        &fixture.path("backup"),
+        "--target-plan",
+        &fixture.path("target.json"),
+        "--runtime-registration",
+        &fixture.path("runtime.json"),
+        "--maintenance-root",
+        &fixture.path("config"),
+        "--maintenance-build",
+        &fixture.path("build.json"),
+        "--output",
+        &fixture.path("uncreated-work/negative.json"),
+        "--copy-source-plan",
+        &fixture.path("proof.json"),
+        "--copy-id",
+        "negative-missing",
+        "--write",
+    ]);
+    let Command::Data(DataCommand::Restore(RestoreCommand::Begin(begin))) = options else {
+        panic!("应解析为开始登记");
+    };
+    let copy = begin.copy.expect("应包含副本绑定");
+    assert_eq!(copy.id, "negative-missing");
+    assert_eq!(copy.publisher_plan, fixture.root.join("proof.json"));
 }
 
 #[test]

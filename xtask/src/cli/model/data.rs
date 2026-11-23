@@ -51,6 +51,13 @@ pub(crate) struct RestoreBeginOptions {
     pub(crate) maintenance_root: PathBuf,
     pub(crate) maintenance_build: PathBuf,
     pub(crate) output: PathBuf,
+    pub(crate) copy: Option<RestoreBeginCopy>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RestoreBeginCopy {
+    pub(crate) publisher_plan: PathBuf,
+    pub(crate) id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +65,7 @@ pub(crate) struct RestoreDataOptions {
     pub(crate) id: String,
     pub(crate) backup_root: PathBuf,
     pub(crate) output: PathBuf,
+    pub(crate) config_dir: Option<PathBuf>,
     pub(crate) restore_config_dir: PathBuf,
 }
 
