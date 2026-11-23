@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use super::{CommandFailure, Evidence, Port, mysql_receipt, stdout::VerifiedStdout};
 use crate::{
     Result,
-    job_evidence_process_tests::{
+    mysql_verification_client::{
         MYSQL_TIMEOUT_PARTIAL_STDOUT, MYSQL_VERIFICATION_STDERR, MysqlTimeoutTransport,
         compile_mysql_timeout_client, compile_mysql_verification_client,
     },

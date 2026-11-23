@@ -1,5 +1,5 @@
 use super::*;
-use crate::job_evidence_process_tests::{
+use crate::mysql_verification_client::{
     MYSQL_TIMEOUT_PARTIAL_STDOUT, MYSQL_VERIFICATION_STDERR, MysqlTimeoutTransport,
     compile_mysql_timeout_client, compile_mysql_verification_client,
 };

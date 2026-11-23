@@ -32,6 +32,8 @@ mod local_test_path;
 mod login_budget;
 #[path = "../src/migration.rs"]
 mod migration;
+#[path = "support/mysql_verification_client.rs"]
+mod mysql_verification_client;
 #[path = "../src/process.rs"]
 mod process;
 #[path = "support/process_liveness.rs"]

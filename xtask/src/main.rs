@@ -40,6 +40,9 @@ pub mod clone_arm_storage;
 #[path = "../tests/support/clone_native_fixture.rs"]
 pub mod clone_native_fixture;
 #[cfg(test)]
+#[path = "../tests/support/mysql_verification_client.rs"]
+pub mod mysql_verification_client;
+#[cfg(test)]
 #[path = "../tests/support/published_target_fixture.rs"]
 pub mod published_target_fixture;
 #[cfg(test)]
