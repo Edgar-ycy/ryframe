@@ -140,42 +140,20 @@ impl BackupHealthCache {
 
 /// 备份健康汇总与监控响应共用的 UTC 字符串格式。
 pub mod optional_utc_timestamp {
-    use std::fmt::Write as _;
+    use serde::{Deserialize, Deserializer, Serializer, de::Error as _};
+    use time::{OffsetDateTime, UtcOffset, format_description::well_known::Rfc3339};
 
-    use serde::{Deserialize, Deserializer, Serializer, de::Error as _, ser::Error as _};
-    use time::{
-        OffsetDateTime, UtcOffset, format_description::well_known::Rfc3339,
-        macros::format_description,
-    };
+    const OUT_OF_RANGE: &str = "备份健康时间超出 UTC 表示范围";
 
     pub fn serialize<S: Serializer>(
         value: &Option<OffsetDateTime>,
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
-        let Some(value) = value else {
-            return serializer.serialize_none();
-        };
-        let utc = value
-            .checked_to_offset(UtcOffset::UTC)
-            .ok_or_else(|| S::Error::custom("备份健康时间超出 UTC 表示范围"))?;
-        let mut encoded = utc
-            .format(format_description!(
-                "[year]-[month]-[day]T[hour]:[minute]:[second]"
-            ))
-            .map_err(S::Error::custom)?;
-        let nanos = utc.nanosecond();
-        if nanos != 0 {
-            let (fraction, digits) = if nanos.is_multiple_of(1_000_000) {
-                (nanos / 1_000_000, 3)
-            } else if nanos.is_multiple_of(1_000) {
-                (nanos / 1_000, 6)
-            } else {
-                (nanos, 9)
-            };
-            write!(encoded, ".{fraction:0digits$}").map_err(S::Error::custom)?;
-        }
-        encoded.push('Z');
-        serializer.serialize_some(&encoded)
+        crate::ports::utc_timestamp::serialize_optional_with_range_error(
+            value,
+            serializer,
+            OUT_OF_RANGE,
+        )
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(
@@ -189,7 +167,7 @@ pub mod optional_utc_timestamp {
                 OffsetDateTime::parse(&value, &Rfc3339)
                     .map_err(D::Error::custom)?
                     .checked_to_offset(UtcOffset::UTC)
-                    .ok_or_else(|| D::Error::custom("备份健康时间超出 UTC 表示范围"))
+                    .ok_or_else(|| D::Error::custom(OUT_OF_RANGE))
             })
             .transpose()
     }

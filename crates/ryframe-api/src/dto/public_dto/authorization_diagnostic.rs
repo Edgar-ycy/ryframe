@@ -1,11 +1,13 @@
-use chrono::{DateTime, Utc};
-use ryframe_application::system::platform as service;
+use ryframe_application::{ports::utc_timestamp, system::platform as service};
 use serde::Serialize;
+use time::OffsetDateTime;
 use utoipa::ToSchema;
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct AuthorizationDiagnosticVo {
-    pub calculated_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub calculated_at: OffsetDateTime,
     pub user: AuthorizationDiagnosticUserVo,
     pub tenant: AuthorizationDiagnosticTenantVo,
     pub roles: Vec<AuthorizationDiagnosticRoleVo>,
@@ -34,7 +36,9 @@ pub struct AuthorizationDiagnosticTenantVo {
     pub tenant_id: String,
     pub name: String,
     pub status: String,
-    pub expire_at: Option<DateTime<Utc>>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub expire_at: Option<OffsetDateTime>,
     pub available: bool,
 }
 
@@ -254,5 +258,109 @@ impl From<service::AuthorizationDiagnosticRefreshVo> for AuthorizationDiagnostic
                 .response_header_epoch_fallback_available,
             websocket_online_state_asserted: value.websocket_online_state_asserted,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{json, to_value};
+    use time::UtcOffset;
+    use utoipa::PartialSchema;
+
+    fn diagnostic(calculated_at: OffsetDateTime) -> AuthorizationDiagnosticVo {
+        AuthorizationDiagnosticVo {
+            calculated_at,
+            user: AuthorizationDiagnosticUserVo {
+                id: "1".into(),
+                username: "fixture".into(),
+                nickname: "夹具".into(),
+                status: "1".into(),
+                dept_id: None,
+                dept_name: None,
+                enabled: true,
+                final_access_enabled: true,
+            },
+            tenant: AuthorizationDiagnosticTenantVo {
+                tenant_id: "fixture".into(),
+                name: "夹具".into(),
+                status: "enabled".into(),
+                expire_at: None,
+                available: true,
+            },
+            roles: Vec::new(),
+            permissions: Vec::new(),
+            menus: Vec::new(),
+            data_scope: AuthorizationDiagnosticDataScopeVo {
+                scope: "self_only".into(),
+                include_self: true,
+                department_path: Vec::new(),
+                custom_departments: Vec::new(),
+                sources: Vec::new(),
+            },
+            versions: AuthorizationDiagnosticVersionVo {
+                tenant_authorization_epoch: "1".into(),
+                user_authorization_version: 1,
+                cache_status: "disabled".into(),
+                cached_tenant_authorization_epoch: None,
+                cached_user_authorization_version: None,
+            },
+            dynamic_refresh: AuthorizationDiagnosticRefreshVo {
+                websocket_notification_available: false,
+                response_header_epoch_fallback_available: true,
+                websocket_online_state_asserted: false,
+            },
+            warnings: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn diagnostic_timestamps_keep_registered_json_and_openapi() {
+        let base = OffsetDateTime::from_unix_timestamp(1_700_000_000).unwrap();
+        let mut response = diagnostic(base);
+        assert_eq!(
+            to_value(&response).unwrap()["tenant"].get("expire_at"),
+            Some(&serde_json::Value::Null)
+        );
+        let offset = UtcOffset::from_hms(8, 0, 0).unwrap();
+        for (nanos, suffix) in [
+            (0, ""),
+            (100_000_000, ".100"),
+            (123_400_000, ".123400"),
+            (123_456_780, ".123456780"),
+        ] {
+            let instant = base.replace_nanosecond(nanos).unwrap().to_offset(offset);
+            response.calculated_at = instant;
+            response.tenant.expire_at = Some(instant);
+            let encoded = to_value(&response).unwrap();
+            let expected = format!("2023-11-14T22:13:20{suffix}Z");
+            assert_eq!(encoded["calculated_at"], expected);
+            assert_eq!(encoded["tenant"]["expire_at"], expected);
+        }
+
+        let schema = to_value(AuthorizationDiagnosticVo::schema()).unwrap();
+        assert_eq!(
+            schema["properties"]["calculated_at"],
+            json!({"format":"date-time","type":"string"}),
+        );
+        assert!(
+            schema["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|name| name == "calculated_at")
+        );
+        let tenant = to_value(AuthorizationDiagnosticTenantVo::schema()).unwrap();
+        assert_eq!(
+            tenant["properties"]["expire_at"],
+            json!({"format":"date-time","type":["string","null"]}),
+        );
+        assert!(
+            tenant["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|name| name != "expire_at")
+        );
     }
 }

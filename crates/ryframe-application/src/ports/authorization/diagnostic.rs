@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use time::OffsetDateTime;
 
 #[derive(Clone, Debug)]
 pub struct DiagnosticRoleRecord {
@@ -52,7 +52,7 @@ pub struct DiagnosticDepartmentRecord {
 
 #[async_trait::async_trait]
 pub trait AuthorizationDiagnosticReadPort: Send + Sync {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime>;
 
     async fn user_tenant_id(&self, user_id: i64) -> ryframe_kernel::AppResult<Option<String>>;
 
