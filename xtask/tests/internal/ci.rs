@@ -4,7 +4,7 @@ use super::cli::CiCommand;
 use super::{
     check::{
         BackendSnapshotProfile, CheckPlanMode, TaskExecutor, VerifySelection, WorkspaceGraph,
-        preflight_trusted_ref, tasks_for,
+        ci_target_policy_from, preflight_trusted_ref, tasks_for,
     },
     ci::{
         CiJob, ci_execution_plan_for, ci_execution_plan_for_profile, ci_plan_for,
@@ -405,8 +405,10 @@ fn integration_commands_share_the_ci_target_and_jobs() {
 
 #[test]
 fn windows_smoke_commands_share_ci_targets_and_limit_test_jobs() {
+    let targets = ci_target_policy_from(None);
+    assert_eq!(targets.resource, "target/ci/resource");
     assert_eq!(
-        windows_check_args("ryframe"),
+        windows_check_args("ryframe", &targets.backend),
         [
             "check",
             "--locked",
@@ -418,7 +420,7 @@ fn windows_smoke_commands_share_ci_targets_and_limit_test_jobs() {
         ]
     );
     assert_eq!(
-        windows_process_test_args(4),
+        windows_process_test_args(&targets.backend, 4),
         [
             "test",
             "--locked",
@@ -433,6 +435,27 @@ fn windows_smoke_commands_share_ci_targets_and_limit_test_jobs() {
             "--",
             "--nocapture",
         ]
+    );
+
+    let root = if cfg!(windows) {
+        Path::new(r"D:\R")
+    } else {
+        Path::new("/r")
+    };
+    let targets = ci_target_policy_from(Some(root));
+    assert_eq!(Path::new(&targets.backend), root.join("backend"));
+    assert_eq!(Path::new(&targets.resource), root.join("resource"));
+    assert_eq!(
+        windows_check_args("ryframe", &targets.backend)[3],
+        targets.backend
+    );
+    assert_eq!(
+        windows_check_args("xtask", &targets.backend)[3],
+        targets.backend
+    );
+    assert_eq!(
+        windows_process_test_args(&targets.backend, 4)[3],
+        targets.backend
     );
 }
 
