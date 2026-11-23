@@ -32,7 +32,11 @@ pub(super) fn create(
 ) -> Result<Output> {
     let validated = input::validate_with_objects(value, backend, held)?;
     let policy_before = source_policy(&validated.sources)?;
-    let (databases, pending) = database_plan(value, &validated)?;
+    let catalog_sha256 = catalog_hash(&validated)?;
+    let (databases, pending) = match held {
+        Some(held) => held.reuse_databases(value, &validated.artifact_root, &catalog_sha256)?,
+        None => database_plan(value, &validated)?,
+    };
     rebind_all(value, &validated.artifact_root, held)?;
     if source_policy(&validated.sources)? != policy_before {
         return Err("离线核验期间 schema、生成目录或业务目录发生变化".into());
@@ -57,10 +61,7 @@ pub(super) fn create(
     result.insert("source_snapshot".into(), value["source_snapshot"].clone());
     result.insert("source_scope".into(), value["source"]["scope_id"].clone());
     result.insert("target_scope".into(), value["target"]["scope_id"].clone());
-    result.insert(
-        "catalog_sha256".into(),
-        Value::String(catalog_hash(&validated)?),
-    );
+    result.insert("catalog_sha256".into(), Value::String(catalog_sha256));
     result.insert("databases".into(), Value::Array(databases));
     result.insert("objects".into(), Value::Array(validated.objects.entries));
     result.insert("evidence".into(), value["evidence"].clone());
