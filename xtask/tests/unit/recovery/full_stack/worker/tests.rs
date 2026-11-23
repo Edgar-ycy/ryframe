@@ -249,10 +249,30 @@ fn closure_requires_original_stopped_member_proof_without_mutation() {
     let temporary = tempfile::tempdir_in(local).unwrap();
     let directory = operation::canonical(temporary.path()).unwrap();
     let executable = std::env::current_exe().unwrap();
-    // 使用本机可核实为不存在的 PID，避免启动额外进程。
+    // 监督进程和产品使用本机可核实为不存在的 PID。
     let absent = |pid: u32| json!({"pid":pid,"started":"1","executable":executable});
     let supervisor = absent(2_147_482_000);
+    #[cfg(not(target_os = "linux"))]
     let monitor = absent(2_147_482_004);
+    #[cfg(target_os = "linux")]
+    let (mut child, input, held) = {
+        use std::process::{Command, Stdio};
+
+        let mut command = Command::new("/bin/cat");
+        command.stdin(Stdio::piped()).stdout(Stdio::null());
+        let mut child = crate::process::ChildGroup::new()
+            .unwrap()
+            .spawn(command)
+            .unwrap();
+        let input = child.take_stdin_writer().unwrap().unwrap();
+        let pid = child.id();
+        let held = crate::recovery::process_tree::observe_process_group_member(pid, pid)
+            .unwrap()
+            .unwrap();
+        (child, input, held)
+    };
+    #[cfg(target_os = "linux")]
+    let monitor = held.identity().clone();
     let product = absent(2_147_482_008);
     let operation_id = "a".repeat(32);
     let tree = json!({"format_version":2,"kind":"full-stack-process-tree",
@@ -265,7 +285,21 @@ fn closure_requires_original_stopped_member_proof_without_mutation() {
     let path = tree::path(&directory, role::Role::Api, &operation_id, "stopped");
     let timeout = std::time::Duration::ZERO;
     operation::write_new(&path, &original).unwrap();
+    #[cfg(target_os = "linux")]
+    {
+        let error = tree::closure(&tree, timeout, false).unwrap_err();
+        assert!(error.to_string().contains("未在期限内完成回收"));
+        let mut foreign = tree.clone();
+        foreign["monitor"]["started"] = json!(format!("{}0", monitor["started"].as_str().unwrap()));
+        let error = tree::closure(&foreign, timeout, false).unwrap_err();
+        assert!(error.to_string().contains("进程PID已复用"));
+
+        drop(input);
+        assert_monitor_exited_before_reap(child.id(), &held);
+    }
     assert_eq!(tree::closure(&tree, timeout, false).unwrap(), original);
+    #[cfg(target_os = "linux")]
+    assert!(child.wait().unwrap().success());
     std::fs::remove_file(&path).unwrap();
 
     let mut failed = original.clone();
@@ -308,6 +342,20 @@ fn closure_requires_original_stopped_member_proof_without_mutation() {
             std::fs::remove_file(&path).unwrap();
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn assert_monitor_exited_before_reap(pid: u32, held: &crate::recovery::process_tree::Member) {
+    let deadline = Instant::now() + std::time::Duration::from_secs(5);
+    while !held.exited().unwrap() {
+        assert!(Instant::now() < deadline, "原 monitor 必须退出");
+        thread::sleep(std::time::Duration::from_millis(10));
+    }
+    // 在父进程回收前，内核仍保留 stat，但已移除 exe。
+    let proc = std::path::PathBuf::from(format!("/proc/{pid}"));
+    assert!(proc.join("stat").is_file());
+    let error = std::fs::read_link(proc.join("exe")).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
 }
 
 fn fixture() -> Value {

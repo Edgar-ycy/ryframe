@@ -4,6 +4,8 @@ use super::{
     process,
     role::Role,
 };
+#[cfg(target_os = "linux")]
+use crate::recovery::process_tree::{Member, observe_process_group_member};
 use crate::{Result, recovery::clone::native::json};
 use serde_json::{Value, json};
 use std::{
@@ -109,7 +111,15 @@ pub(super) fn closure(tree: &Value, timeout: Duration, external: bool) -> Result
     let role = Role::parse(&tree["role"])?;
     let proof = path(directory, role, id, "stopped");
     let deadline = Instant::now() + timeout;
+    #[cfg(target_os = "linux")]
+    let monitor = linux_monitor(&tree["monitor"])?;
     loop {
+        #[cfg(target_os = "linux")]
+        let monitor_alive = match &monitor {
+            Some(monitor) => !monitor.exited()?,
+            None => false,
+        };
+        #[cfg(not(target_os = "linux"))]
         let monitor_alive = process::alive(&tree["monitor"])?;
         if proof.exists() {
             let value = operation::read(&proof)?;
@@ -134,6 +144,22 @@ pub(super) fn closure(tree: &Value, timeout: Duration, external: bool) -> Result
         thread::sleep(Duration::from_millis(20));
     }
 }
+
+#[cfg(target_os = "linux")]
+fn linux_monitor(identity: &Value) -> Result<Option<Member>> {
+    documents::identity(identity)?;
+    let pid = u32::try_from(identity["pid"].as_u64().ok_or("进程PID无效")?)?;
+    // monitor 是独立进程组的组长。取得原身份后只用该句柄确认退出。
+    let monitor = observe_process_group_member(pid, pid)?;
+    if monitor
+        .as_ref()
+        .is_some_and(|monitor| monitor.identity() != identity)
+    {
+        return Err("进程PID已复用，拒绝操作其他创建身份".into());
+    }
+    Ok(monitor)
+}
+
 fn validate_proof(tree: &Value, value: &Value) -> Result<()> {
     json::exact(
         value,
@@ -177,8 +203,6 @@ fn validate_proof(tree: &Value, value: &Value) -> Result<()> {
 fn proof_member_alive(tree: &Value, member: &Value) -> Result<bool> {
     #[cfg(target_os = "linux")]
     {
-        use crate::recovery::process_tree::observe_process_group_member;
-
         let (Some(pid), Some(group)) = (member["pid"].as_u64(), tree["group_id"].as_u64()) else {
             return Err("整组关闭证明缺少成员 PID 或进程组".into());
         };
