@@ -1,8 +1,9 @@
 use std::{
     io::{Read, Write},
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
     sync::mpsc,
     thread,
+    time::{Duration, Instant},
 };
 
 use serde_json::json;
@@ -11,14 +12,18 @@ use sha2::{Digest, Sha256};
 use super::{Configuration, Operation, PutRequest, Request, response};
 
 fn execute(request: Request) -> crate::Result<serde_json::Value> {
+    execute_with_timeout(request, Duration::from_secs(3))
+}
+
+pub(in crate::recovery::clone::native) fn execute_with_timeout(
+    request: Request,
+    timeout: Duration,
+) -> crate::Result<serde_json::Value> {
     crate::http_session::install_crypto_provider()?;
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
-        .block_on(super::client::execute(
-            request,
-            std::time::Duration::from_secs(3),
-        ))
+        .block_on(super::client::execute(request, timeout))
 }
 
 fn config(endpoint: &str) -> Configuration {
@@ -31,43 +36,50 @@ fn server(response: Vec<u8>) -> (String, mpsc::Receiver<String>, thread::JoinHan
     let (tx, rx) = mpsc::channel();
     listener.set_nonblocking(true).unwrap();
     let task = thread::spawn(move || {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(6);
-        let (mut socket, _) = loop {
-            match listener.accept() {
-                Ok(value) => break value,
-                Err(error)
-                    if error.kind() == std::io::ErrorKind::WouldBlock
-                        && std::time::Instant::now() < deadline =>
-                {
-                    thread::sleep(std::time::Duration::from_millis(5))
-                }
-                Err(error) => panic!("模拟 S3 未在期限内收到连接：{error}"),
-            }
-        };
-        socket.set_nonblocking(false).unwrap();
-        socket
-            .set_read_timeout(Some(std::time::Duration::from_secs(10)))
-            .unwrap();
-        let mut bytes = Vec::new();
-        loop {
-            let mut chunk = [0; 1024];
-            let count = socket.read(&mut chunk).unwrap();
-            if count == 0 {
-                break;
-            }
-            bytes.extend_from_slice(&chunk[..count]);
-            if bytes.windows(4).any(|part| part == b"\r\n\r\n") {
-                break;
-            }
-            assert!(bytes.len() < 32768);
-        }
-        tx.send(String::from_utf8(bytes).unwrap()).unwrap();
+        let mut socket = accept_request(&listener);
+        tx.send(read_request_headers(&mut socket)).unwrap();
         let _ = socket.write_all(&response);
     });
     (endpoint, rx, task)
 }
 
-fn object_response(length: u64, body: &[u8]) -> Vec<u8> {
+pub(in crate::recovery::clone::native) fn accept_request(listener: &TcpListener) -> TcpStream {
+    let deadline = Instant::now() + Duration::from_secs(6);
+    loop {
+        match listener.accept() {
+            Ok((socket, _)) => return socket,
+            Err(error)
+                if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline =>
+            {
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) => panic!("模拟 S3 未在期限内收到连接：{error}"),
+        }
+    }
+}
+
+pub(in crate::recovery::clone::native) fn read_request_headers(socket: &mut TcpStream) -> String {
+    socket.set_nonblocking(false).unwrap();
+    socket
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let mut bytes = Vec::new();
+    loop {
+        let mut chunk = [0; 1024];
+        let count = socket.read(&mut chunk).unwrap();
+        if count == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&chunk[..count]);
+        if bytes.windows(4).any(|part| part == b"\r\n\r\n") {
+            break;
+        }
+        assert!(bytes.len() < 32768);
+    }
+    String::from_utf8(bytes).unwrap()
+}
+
+pub(in crate::recovery::clone::native) fn object_response(length: u64, body: &[u8]) -> Vec<u8> {
     let mut result = format!("HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: {length}\r\nContent-Type: application/octet-stream\r\nETag: \"fixture\"\r\nLast-Modified: Thu, 22 Oct 2026 01:02:03 GMT\r\nx-amz-meta-custom: raw-value\r\n\r\n").into_bytes();
     result.extend_from_slice(body);
     result

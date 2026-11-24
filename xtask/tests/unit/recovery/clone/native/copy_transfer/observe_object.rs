@@ -1,13 +1,18 @@
 use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
-    io::Write,
+    io::{self, Write},
+    net::{Ipv4Addr, Shutdown, TcpListener},
+    sync::mpsc,
+    thread,
+    time::Duration,
 };
 
 use super::*;
 use crate::recovery::clone::native::{
     copy_transfer::images::{TargetObject, object_observed},
     export::transport::{CommandOutput, CommandSpec},
+    s3::tests as native_s3,
 };
 
 const SCOPE: &str = "fixture-target";
@@ -23,6 +28,7 @@ struct Fixture {
     temp: tempfile::TempDir,
     work: PathBuf,
     directory: PathBuf,
+    endpoint: String,
     configuration: Value,
     expected: Value,
     plan: String,
@@ -30,13 +36,17 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_endpoint(ENDPOINT)
+    }
+
+    fn with_endpoint(endpoint: &str) -> Self {
         let temp = tempfile::tempdir_in(crate::workspace::root_dir()).unwrap();
         let config = temp.path().join(".local-tests/config");
         fs::create_dir_all(&config).unwrap();
         fs::write(
             config.join("app.test.toml"),
             format!(
-                "[object_storage]\nendpoint = {ENDPOINT:?}\nregion = {REGION:?}\naccess_key = \"private-fixture-access\"\nsecret_key = \"private-fixture-secret\"\n"
+                "[object_storage]\nendpoint = {endpoint:?}\nregion = {REGION:?}\naccess_key = \"private-fixture-access\"\nsecret_key = \"private-fixture-secret\"\n"
             ),
         )
         .unwrap();
@@ -50,6 +60,7 @@ impl Fixture {
             temp,
             work,
             directory,
+            endpoint: endpoint.to_owned(),
             configuration,
             expected,
             plan: "a".repeat(64),
@@ -64,7 +75,7 @@ impl Fixture {
             directory: &self.directory,
             plan_sha256: &self.plan,
             scope: SCOPE,
-            endpoint: ENDPOINT,
+            endpoint: &self.endpoint,
             region: REGION,
             configuration: &self.configuration,
             bucket: BUCKET,
@@ -98,7 +109,7 @@ impl Fixture {
             &self.plan,
             TargetObject {
                 scope: SCOPE,
-                endpoint: ENDPOINT,
+                endpoint: &self.endpoint,
                 item: &item,
             },
             observed.image_evidence(),
@@ -251,6 +262,10 @@ fn assert_failed(fixture: &Fixture, fake: &FakeS3, stage: &str) {
 
 fn assert_rejected(fixture: &Fixture, fake: &FakeS3, stage: &str, error: &str) {
     fake.exhausted();
+    assert_failed_evidence(fixture, stage, error);
+}
+
+fn assert_failed_evidence(fixture: &Fixture, stage: &str, error: &str) {
     let failure = fixture.proof("failure.json");
     assert_eq!(failure["stage"], stage);
     assert_eq!(failure["remote_writes"], 0);
@@ -260,6 +275,119 @@ fn assert_rejected(fixture: &Fixture, fake: &FakeS3, stage: &str, error: &str) {
     assert!(!fixture.directory.join("observation.json").exists());
     assert!(!error.contains("private-fixture-secret"));
     assert!(!failure.to_string().contains("private-fixture-secret"));
+}
+
+#[derive(Default)]
+struct NativeS3 {
+    calls: Cell<usize>,
+    errors: RefCell<Vec<String>>,
+}
+
+impl Transport for NativeS3 {
+    fn run(&self, _: CommandSpec) -> Result<CommandOutput> {
+        panic!("对象观察不得启动外部命令");
+    }
+
+    fn s3(&self, request: Request) -> Result<Value> {
+        self.calls.set(self.calls.get() + 1);
+        let timeout = if matches!(request.operation, Operation::Head { .. }) {
+            Duration::from_millis(750)
+        } else {
+            Duration::from_secs(3)
+        };
+        let result = native_s3::execute_with_timeout(request, timeout);
+        if let Err(error) = &result {
+            self.errors.borrow_mut().push(error.to_string());
+        }
+        result
+    }
+}
+
+fn serve_owner_and_head(
+    listener: TcpListener,
+    head_response: Option<&[u8]>,
+    finished: mpsc::Receiver<()>,
+) -> usize {
+    let mut owner = native_s3::accept_request(&listener);
+    assert_eq!(
+        native_s3::read_request_headers(&mut owner).lines().next(),
+        Some(format!("GET /{BUCKET}/{SCOPE}/.ryframe-owner HTTP/1.1").as_str())
+    );
+    let marker = owner_marker(SCOPE);
+    owner
+        .write_all(&native_s3::object_response(
+            marker.len() as u64,
+            marker.as_bytes(),
+        ))
+        .unwrap();
+    drop(owner);
+    let mut head = native_s3::accept_request(&listener);
+    assert_eq!(
+        native_s3::read_request_headers(&mut head).lines().next(),
+        Some(format!("HEAD /{BUCKET}/{KEY} HTTP/1.1").as_str())
+    );
+    if let Some(response) = head_response {
+        head.write_all(response).unwrap();
+    }
+    // 超时时保留 HEAD 连接且不回复。观察结束后再排空已抵达的额外连接。
+    let mut extra = 0;
+    let mut draining = false;
+    loop {
+        match listener.accept() {
+            Ok((socket, _)) => {
+                extra += 1;
+                let _ = socket.shutdown(Shutdown::Both);
+            }
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                if draining {
+                    return extra;
+                }
+                draining = finished.recv_timeout(Duration::from_millis(5))
+                    == Err(mpsc::RecvTimeoutError::Disconnected);
+            }
+            Err(error) => panic!("无法观察额外 S3 连接：{error}"),
+        }
+    }
+}
+
+fn assert_native_head_failure(head_response: Option<&[u8]>, reason: &str) {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let fixture = Fixture::with_endpoint(&format!("http://{}", listener.local_addr().unwrap()));
+    let transport = NativeS3::default();
+    let (result, extra) = thread::scope(|scope| {
+        let (done, finished) = mpsc::channel::<()>();
+        let server = scope.spawn(move || serve_owner_and_head(listener, head_response, finished));
+        let result = observe(fixture.request(), &transport, &|| Ok(()));
+        drop(done);
+        (result, server.join().unwrap())
+    });
+
+    assert_eq!(transport.calls.get(), 2);
+    assert_eq!(extra, 0);
+    let errors = transport.errors.borrow();
+    assert_eq!(errors.len(), 1);
+    assert!(errors[0].contains(reason), "{}", errors[0]);
+    let error = result.err().unwrap().to_string();
+    assert_failed_evidence(&fixture, "head-before", &error);
+    assert_eq!(
+        fixture.proof("head-before.diagnostic.json"),
+        json!({"operation":"head-object","returned":false,"checkpoint_passed":true})
+    );
+    assert!(!fixture.directory.join("head-before.json").exists());
+}
+
+#[test]
+fn native_head_403_with_404_reason_never_proves_absence_or_replays() {
+    assert_native_head_failure(
+        Some(b"HTTP/1.1 403 404 NotFound\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"),
+        "HTTP 403",
+    );
+}
+
+#[test]
+fn native_head_timeout_never_proves_absence_or_replays() {
+    assert_native_head_failure(None, "（timeout）");
 }
 
 #[test]
@@ -719,3 +847,6 @@ fn publication_rejects_changes_to_original_evidence_and_preserves_it() {
         }
     }
 }
+
+#[path = "observe_object_saved.rs"]
+mod saved;
