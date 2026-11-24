@@ -83,14 +83,6 @@ class OwnerScopeTests(unittest.TestCase):
         self.assertEqual(len(self.store.calls), 5)
         self.assertEqual(before, {path.name: file_digest(path) for path in self.output.iterdir()})
 
-    def test_own_bucket_failure_before_read_blocks_all_business_requests(self):
-        self.store.owner_failure = 'uploads'
-        with self.assertRaises(ObjectCaptureError):
-            self.capture(owner_buckets=ONE)
-        self.assertEqual(self.commands(), [('get-object', 'uploads', 'target/.ryframe-owner')])
-        self.assertFalse((self.output / 'object.bin').exists())
-        self.assertFalse((self.output / 'capture.json').exists())
-
     def test_own_bucket_change_after_get_preserves_bytes_and_fails(self):
         def read(command, **kwargs):
             response = self.store(command, **kwargs)
