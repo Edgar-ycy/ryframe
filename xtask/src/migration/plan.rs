@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use chrono::Utc;
+use time::OffsetDateTime;
 
 use crate::{
     Result,
@@ -47,7 +47,7 @@ pub(crate) fn run(command: &MigrationCommand) -> Result<()> {
         }
         MigrationCommand::New { scope, name } => {
             let _lock = MigrationLock::acquire(&root_dir(), *scope)?;
-            let timestamp = Utc::now().format("%Y%m%d_%H%M%S").to_string();
+            let timestamp = crate::utc_timestamp::migration_name(OffsetDateTime::now_utc());
             create_migration_under_lock(&root_dir(), *scope, name, &timestamp)
         }
     }

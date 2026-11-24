@@ -10,6 +10,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Instant,
 };
+use time::OffsetDateTime;
 use tokio::sync::Mutex as AsyncMutex;
 
 type Counts = BTreeMap<String, [f64; 3]>;
@@ -99,7 +100,7 @@ impl Pacing {
     }
     pub(crate) async fn prepare_sample(&self, cancel: &Cancellation) -> NativeResult<()> {
         let started = Instant::now();
-        let started_at = chrono::Utc::now().to_rfc3339();
+        let started_at = crate::utc_timestamp::rfc3339(OffsetDateTime::now_utc());
         let requested = self.pacing["sample_prepare_wait_ms"]
             .as_u64()
             .ok_or_else(|| Failure::new("pacing_contract"))?;
@@ -109,7 +110,7 @@ impl Pacing {
         artifacts::write(
             &self.directory.join("sample-preparation.json"),
             &json!({"format_version":1,
-            "reason":"fixed_rate_limit_window", "started_at":started_at, "finished_at":chrono::Utc::now().to_rfc3339(), "requested_ms":requested,
+            "reason":"fixed_rate_limit_window", "started_at":started_at, "finished_at":crate::utc_timestamp::rfc3339(OffsetDateTime::now_utc()), "requested_ms":requested,
             "duration_ms":super::milliseconds(started.elapsed()), "authority_sha256":self.pacing["authority_sha256"],
             "success":result.is_ok(), "failure":result.as_ref().err().map(|error| error.category)}),
         )?;

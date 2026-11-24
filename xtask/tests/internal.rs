@@ -56,6 +56,8 @@ mod source_edit;
 mod source_scan;
 #[path = "support/target_fixture_services.rs"]
 mod target_fixture_services;
+#[path = "../src/utc_timestamp.rs"]
+mod utc_timestamp;
 #[path = "../src/watch.rs"]
 mod watch;
 #[path = "../src/workspace.rs"]

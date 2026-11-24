@@ -6,8 +6,8 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
-use chrono::Utc;
 use serde::Serialize;
+use time::OffsetDateTime;
 
 use crate::process::{install_step_observer, rustc_cache_label};
 
@@ -88,7 +88,7 @@ pub(crate) fn begin(
         sccache_before,
         run: VerifyRun {
             version: 2,
-            started_at: Utc::now().to_rfc3339(),
+            started_at: crate::utc_timestamp::rfc3339(OffsetDateTime::now_utc()),
             backend_commit: git_text(root, &["rev-parse", "HEAD"]),
             scope: scope.to_owned(),
             mode: mode.to_owned(),
