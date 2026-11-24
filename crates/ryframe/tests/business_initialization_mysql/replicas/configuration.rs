@@ -160,15 +160,11 @@ fn image(path: &Path, missing_allowed: bool) -> Result<Option<Vec<u8>>, String> 
 }
 
 fn ordinary(metadata: &fs::Metadata) -> bool {
-    if metadata.file_type().is_symlink() {
-        return false;
-    }
+    let linked = metadata.file_type().is_symlink();
     #[cfg(windows)]
-    {
+    let linked = {
         use std::os::windows::fs::MetadataExt;
-        if metadata.file_attributes() & 0x400 != 0 {
-            return false;
-        }
-    }
-    true
+        linked || metadata.file_attributes() & 0x400 != 0
+    };
+    !linked
 }
