@@ -410,7 +410,7 @@ mod tests {
         changed_hash.sha256 = "ba".repeat(32);
         for tables in [
             vec![business.clone()],
-            vec![business.clone(), preserved.clone(), preserved.clone()],
+            vec![business.clone(), preserved.clone(), preserved],
             vec![business.clone(), table("ryframe_resource_ownership", 1)],
             vec![business, changed_hash],
         ] {
