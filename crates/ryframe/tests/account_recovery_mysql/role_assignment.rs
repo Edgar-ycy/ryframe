@@ -17,6 +17,9 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 
 use super::{NEW_PASSWORD, configuration_fixture, initialize, message, mysql, sql_initialization};
 
+#[path = "large_custom_scope.rs"]
+mod large_custom_scope;
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tenant_without_super_role_assigns_roles_through_http_and_preserves_boundaries() {
     if !mysql::integration_enabled() {
