@@ -239,12 +239,12 @@ impl<'a> Context<'a> {
     }
 
     fn check_protected(&self) -> Result<()> {
-        self.protected.check()?;
         #[cfg(windows)]
         if let Some(held) = &self.held_source_proofs {
-            held.checkpoint()?;
+            self.protected.check_identities()?;
+            return held.checkpoint();
         }
-        Ok(())
+        self.protected.check()
     }
 
     #[cfg(windows)]
@@ -267,6 +267,12 @@ impl<'a> Context<'a> {
 
     pub(super) fn check_end(&self) -> Result<()> {
         let checked = self.check();
+        #[cfg(windows)]
+        let checked = if self.held_source_proofs.is_some() {
+            super::files::combine(checked, self.protected.check())
+        } else {
+            checked
+        };
         #[cfg(windows)]
         let checked = super::files::combine(
             checked,
