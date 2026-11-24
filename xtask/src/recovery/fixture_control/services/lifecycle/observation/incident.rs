@@ -109,6 +109,8 @@ fn capture(
 }
 
 fn directory(backend: &Path, root: &Path, evidence: &[PathBuf]) -> Result<(u64, u64)> {
+    use crate::recovery::runtime::dataset_authority::reads::history as history_reads;
+
     common::local_directory(backend, root, "RustFS 事故原运行目录")?;
     let mut expected: BTreeSet<_> = START_FILES
         .iter()
@@ -119,7 +121,7 @@ fn directory(backend: &Path, root: &Path, evidence: &[PathBuf]) -> Result<(u64, 
         let name = path.file_name().ok_or("RustFS 事故证据缺少文件名")?;
         check(expected.insert(name.to_owned()), "RustFS 事故证据文件重复")?;
     }
-    for entry in fs::read_dir(root)? {
+    for entry in history_reads::entries(root)? {
         let entry = entry?;
         let metadata = fs::symlink_metadata(entry.path())?;
         check(

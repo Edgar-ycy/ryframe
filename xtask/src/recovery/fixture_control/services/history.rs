@@ -3,7 +3,13 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
-use crate::{Result, recovery::clone::native::lifecycle::state};
+use crate::{
+    Result,
+    recovery::{
+        clone::native::lifecycle::state,
+        runtime::dataset_authority::reads::history as history_reads,
+    },
+};
 
 #[path = "history/evidence.rs"]
 pub(super) mod evidence;
@@ -201,7 +207,7 @@ fn close(
             )?;
             let (_, directory) = generation::paths(run, &history["active_generation"])?;
             let runtime_path = directory.join("runtime.json");
-            let registered = if runtime_path.try_exists()? {
+            let registered = if history_reads::try_exists(&runtime_path)? {
                 evidence::read(&runtime_path)?
             } else {
                 Value::Null

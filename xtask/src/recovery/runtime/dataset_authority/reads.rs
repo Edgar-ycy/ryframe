@@ -7,6 +7,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[path = "reads/history.rs"]
+pub(in crate::recovery) mod history;
+
 thread_local! {
     static ACTIVE: RefCell<Option<ReadSet>> = const { RefCell::new(None) };
     // with_set 临时取出集合期间也必须保持同线程读取，直到 Window 释放。
@@ -49,7 +52,7 @@ impl Window {
     fn open(track_directories: bool) -> Result<Self> {
         ACTIVE.with(|slot| {
             let mut slot = slot.borrow_mut();
-            if is_active() {
+            if is_active() || history::is_active() {
                 return Err("恢复静态读取窗口不能嵌套".into());
             }
             *slot = Some(ReadSet {
@@ -160,6 +163,8 @@ fn with_set(action: impl FnOnce(&mut ReadSet) -> Result<()>) -> Result<()> {
 }
 
 pub(crate) fn file(path: &Path) -> Result<()> {
+    #[cfg(windows)]
+    history::file(path)?;
     with_set(|set| record_file(set, path))
 }
 
@@ -175,18 +180,34 @@ fn record_file(set: &mut ReadSet, path: &Path) -> Result<()> {
 }
 
 pub(crate) fn directory(path: &Path) -> Result<()> {
+    if history::is_active() {
+        history::entries(path)?;
+        return Ok(());
+    }
     with_set(|set| remember_directory(set, path))
 }
 
-pub(crate) fn entries(path: impl AsRef<Path>) -> Result<std::fs::ReadDir> {
-    directory(path.as_ref())?;
-    Ok(std::fs::read_dir(path)?)
+pub(in crate::recovery) fn entries(path: impl AsRef<Path>) -> Result<history::Entries> {
+    entries_with(path.as_ref(), |path| Ok(std::fs::read_dir(path)?))
 }
 
+pub(in crate::recovery) fn entries_with(
+    path: &Path,
+    open: impl FnOnce(&Path) -> Result<std::fs::ReadDir>,
+) -> Result<history::Entries> {
+    if history::is_active() {
+        return history::entries(path);
+    }
+    directory(path)?;
+    Ok(history::Entries::Native(open(path)?))
+}
+
+#[cfg_attr(all(test, windows), track_caller)]
 pub(crate) fn source(
     root: &Path,
     value: &crate::recovery::clone::native::source::Inventory,
 ) -> Result<()> {
+    history::require_explicit_facts("Git 来源")?;
     with_set(|set| {
         for file in &value.files {
             let path = std::path::absolute(root.join(&file.path))?;
@@ -209,6 +230,9 @@ pub(crate) fn source(
 }
 
 pub(crate) fn optional(path: &Path) -> Result<()> {
+    if history::optional_file(path)? {
+        return Ok(());
+    }
     with_set(|set| {
         if path.try_exists()? {
             record_file(set, path)

@@ -501,11 +501,13 @@ fn prove_external(
 }
 
 fn directory_files(output: &Path) -> Result<Vec<String>> {
+    use crate::recovery::runtime::dataset_authority::reads::history as history_reads;
+
     if digest::linked_path(output)?.contains(&true) {
         return Err("Windows Redis 运行目录不能经过链接".into());
     }
     let mut files = Vec::new();
-    for entry in std::fs::read_dir(output)? {
+    for entry in history_reads::entries(output)? {
         let entry = entry?;
         let name = entry
             .file_name()
@@ -522,6 +524,11 @@ fn directory_files(output: &Path) -> Result<Vec<String>> {
 }
 
 pub(super) fn entry_exists(path: &Path) -> Result<bool> {
+    use crate::recovery::runtime::dataset_authority::reads::history as history_reads;
+
+    if history_reads::is_active() {
+        return history_reads::try_exists(path);
+    }
     match std::fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),

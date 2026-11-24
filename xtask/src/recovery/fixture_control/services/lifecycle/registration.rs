@@ -1,6 +1,9 @@
 //! 按冻结首代和追加代次核对服务归属，不依据当前进程补造历史。
 use super::*;
-use crate::recovery::clone::native::resources::{common, storage};
+use crate::recovery::{
+    clone::native::resources::{common, storage},
+    runtime::dataset_authority::reads::history as history_reads,
+};
 
 pub(super) fn load(
     runtime: &mut dyn Runtime,
@@ -124,7 +127,11 @@ fn initial(runtime: &mut dyn Runtime, context: &Context) -> Result<Services> {
         )?;
         requests[role] = read(&path)?;
     }
-    common::directory_identity(backend, &requests["rustfs"]["data_directory"])?;
+    let data = &requests["rustfs"]["data_directory"];
+    let directory = common::directory_identity(backend, data)?;
+    if history_reads::directory(&directory)? {
+        common::directory_identity(backend, data)?;
+    }
     let storage = common::read_bound(backend, &attempts[0]["result"], "RustFS 首代结果")?;
     let tree_binding = storage["tree"].clone();
     check(
@@ -261,7 +268,7 @@ pub(super) fn inspect(
         "存储进程可执行文件不符；核对原请求，禁止操作其他程序",
     )?;
     let launch_path = output.join("launch.json");
-    let launch = if launch_path.exists() {
+    let launch = if history_reads::exists(&launch_path)? {
         check(
             read(&launch_path)?
                 == json!({"format_version":1,"scope_id":request["scope_id"],

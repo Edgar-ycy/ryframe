@@ -15,6 +15,16 @@ pub(super) fn prepared(
     evidence: &Value,
     descriptor: &Value,
 ) -> Result<Value> {
+    prepared_with_history(backend, target, evidence, descriptor, None)
+}
+
+pub(super) fn prepared_with_history(
+    backend: &Path,
+    target: &Path,
+    evidence: &Value,
+    descriptor: &Value,
+    held_storage: Option<&Path>,
+) -> Result<Value> {
     json_io::exact(
         evidence,
         &["descriptor", "registration", "predecessor"],
@@ -67,7 +77,14 @@ pub(super) fn prepared(
         "fresh 目标 prepare 文件快照、registration 或 predecessor 绑定无效",
     )?;
     let request = read(backend, &bound(backend, descriptor)?)?;
-    validate(backend, target, &snapshot["files"], descriptor, &request)?;
+    validate_with_history(
+        backend,
+        target,
+        &snapshot["files"],
+        descriptor,
+        &request,
+        held_storage,
+    )?;
     check(
         binding(backend, &path)? == evidence["descriptor"]
             && binding(backend, &registration_path)? == evidence["registration"],
@@ -83,14 +100,28 @@ pub(super) fn document(
     descriptor: &Value,
     request: &Value,
 ) -> Result<()> {
+    document_with_history(backend, prepared, descriptor, request, || {
+        selection::history(backend, target, request)
+    })
+    .map(|_| ())
+}
+
+fn document_with_history(
+    backend: &Path,
+    prepared: &Value,
+    descriptor: &Value,
+    request: &Value,
+    history: impl FnOnce() -> Result<Vec<selection::Selected>>,
+) -> Result<Vec<selection::Selected>> {
     json_io::exact(prepared, super::resume_model::PREPARE, "prepare")?;
     check(
         read(backend, &bound(backend, descriptor)?)? == *request,
         "prepare 固定请求与调用方正文不同",
     )?;
     let generation = &prepared["generation"];
+    let candidates = history()?;
     check(
-        selection::history(backend, target, request)?
+        candidates
             .iter()
             .any(|item| item.value == generation["storage"]),
         "prepare 存储代次未绑定固定请求的完整合法历史",
@@ -149,7 +180,8 @@ pub(super) fn document(
                 .iter()
                 .all(|key| generation[*key].is_object()),
         "fresh prepare 声明、来源或空资源前像无效",
-    )
+    )?;
+    Ok(candidates)
 }
 
 pub(crate) fn validate(
@@ -159,6 +191,17 @@ pub(crate) fn validate(
     descriptor: &Value,
     request: &Value,
 ) -> Result<()> {
+    validate_with_history(backend, target, files, descriptor, request, None)
+}
+
+fn validate_with_history(
+    backend: &Path,
+    target: &Path,
+    files: &Value,
+    descriptor: &Value,
+    request: &Value,
+    held_storage: Option<&Path>,
+) -> Result<()> {
     let values = bound_files(backend, target, files)?;
     let names = values.keys().cloned().collect::<BTreeSet<_>>();
     let consumed = BTreeSet::from(["request.json".to_owned(), "prepare.json".to_owned()]);
@@ -166,13 +209,10 @@ pub(crate) fn validate(
         consumed.is_subset(&names) && read(backend, &target.join("request.json"))? == *request,
         "fresh prepare 快照缺少固定请求或结果",
     )?;
-    document(
-        backend,
-        target,
-        &read(backend, &target.join("prepare.json"))?,
-        descriptor,
-        request,
-    )?;
+    let prepared = read(backend, &target.join("prepare.json"))?;
+    let mut history = History::new(backend, target, request, held_storage);
+    let candidates =
+        document_with_history(backend, &prepared, descriptor, request, || history.first())?;
     if names.contains("failure.json") {
         super::prepare_state::failure(backend, target)?;
     }
@@ -190,14 +230,24 @@ pub(crate) fn validate(
             "fresh prepare 失败续作谱系没有完整确认",
         )?;
     }
-    let candidates = selection::history(backend, target, request)?;
+    let candidates = history.second(candidates)?;
+    validate_groups(backend, target, request, groups, &candidates)
+}
+
+fn validate_groups(
+    backend: &Path,
+    target: &Path,
+    request: &Value,
+    groups: Vec<prepare_groups::Group>,
+    candidates: &[selection::Selected],
+) -> Result<()> {
     let mut complete = false;
     for group in groups {
         let published = read(backend, &target.join("prepare.json"))?;
         let mut matches = BTreeSet::new();
         let mut best = None;
         let mut furthest = 0;
-        for candidate in &candidates {
+        for candidate in candidates {
             if group.published && candidate.value != published["generation"]["storage"] {
                 continue;
             }
@@ -231,6 +281,70 @@ pub(crate) fn validate(
         complete |= group.complete;
     }
     check(complete, "prepare 缺少完整只读观察组")
+}
+
+struct History<'a> {
+    backend: &'a Path,
+    target: &'a Path,
+    request: &'a Value,
+    #[cfg(windows)]
+    held_storage: Option<&'a Path>,
+    #[cfg(windows)]
+    fence: Option<crate::recovery::runtime::dataset_authority::reads::history::Fence>,
+}
+
+impl<'a> History<'a> {
+    fn new(
+        backend: &'a Path,
+        target: &'a Path,
+        request: &'a Value,
+        held_storage: Option<&'a Path>,
+    ) -> Self {
+        #[cfg(not(windows))]
+        let _ = held_storage;
+        Self {
+            backend,
+            target,
+            request,
+            #[cfg(windows)]
+            held_storage,
+            #[cfg(windows)]
+            fence: None,
+        }
+    }
+
+    fn first(&mut self) -> Result<Vec<selection::Selected>> {
+        #[cfg(windows)]
+        {
+            use crate::recovery::runtime::dataset_authority::reads;
+            if let Some(storage) = self.held_storage
+                && !reads::is_active()
+                && selection::supports_held_history(
+                    self.backend,
+                    self.target,
+                    self.request,
+                    storage,
+                )?
+            {
+                let (selected, fence) = reads::history::Fence::capture(|| {
+                    selection::history(self.backend, self.target, self.request)
+                })?;
+                self.fence = Some(fence);
+                return Ok(selected);
+            }
+        }
+        selection::history(self.backend, self.target, self.request)
+    }
+
+    fn second(self, first: Vec<selection::Selected>) -> Result<Vec<selection::Selected>> {
+        #[cfg(windows)]
+        if let Some(fence) = self.fence {
+            fence.check()?;
+            return Ok(first);
+        }
+        let _ = first;
+        selection::history(self.backend, self.target, self.request)
+    }
 }
 
 fn bound_files(
