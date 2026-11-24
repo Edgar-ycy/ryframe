@@ -212,6 +212,41 @@ fn unknown_missing_extra_events_and_invalid_completion_times_are_rejected() {
 }
 
 #[test]
+fn completion_time_preserves_calendar_boundaries() {
+    let project_completion = |completed_at| {
+        project(&[
+            created(),
+            opened("session-one", "apply"),
+            json!({"type":"closed","outcome":"publishing","completed_at":completed_at}),
+        ])
+    };
+    for completed_at in [
+        "0001-W01-1T00:00:00Z",
+        "2019-W01-1T00:00:00Z",
+        "2020-W53-7T23:59:59-23:59:59",
+        "2020W537T235959Z",
+        "9999-W52-5T23:59:59Z",
+        "20000229T000000Z",
+    ] {
+        let state = project_completion(completed_at).unwrap();
+        assert_eq!(state.session.unwrap().completed_at, completed_at);
+    }
+    for (completed_at, reason) in [
+        ("0000-W01-1T00:00:00Z", "账本完成日期无效"),
+        ("9999-W52-6T00:00:00Z", "账本完成日期无效"),
+        ("2021-W53-1T00:00:00Z", "账本完成日期无效"),
+        ("2020W538T000000Z", "账本完成日期无效"),
+        ("1900-02-29T00:00:00Z", "账本完成日期无效"),
+        ("2000-00-01T00:00:00Z", "账本完成日期无效"),
+        ("2000-02-29T23:59:60Z", "账本完成时间无效"),
+        ("2000-02-29T00:00:00+24:00:00", "账本完成时区无效"),
+    ] {
+        let error = project_completion(completed_at).unwrap_err();
+        assert_eq!(error.to_string(), reason, "{completed_at}");
+    }
+}
+
+#[test]
 fn reconciliation_mismatch_blocks_other_resume_and_attempt_count_is_checked() {
     let one = database('c', 'd');
     let one_after = database('c', 'e');

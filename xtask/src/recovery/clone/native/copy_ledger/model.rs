@@ -5,6 +5,7 @@ use crate::{
 };
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
+use time::{Date, Month, Weekday};
 #[path = "model/step.rs"]
 mod step;
 
@@ -205,7 +206,7 @@ fn digits(value: &str) -> Option<u32> {
     value.parse().ok()
 }
 fn date_end(text: &str) -> Option<usize> {
-    let year = digits(text.get(..4)?)?;
+    let year = i32::try_from(digits(text.get(..4)?)?).ok()?;
     if !(1..=9999).contains(&year) {
         return None;
     }
@@ -232,24 +233,24 @@ fn date_end(text: &str) -> Option<usize> {
         (0, 0)
     };
     if week_start != 0 {
-        let week = digits(text.get(week_start..week_start + 2)?)?;
+        let week = u8::try_from(digits(text.get(week_start..week_start + 2)?)?).ok()?;
         let day = if end == week_start + 2 {
             1
         } else {
             digits(text.get(end - 1..end)?)?
         };
         let weekday = match day {
-            1 => chrono::Weekday::Mon,
-            2 => chrono::Weekday::Tue,
-            3 => chrono::Weekday::Wed,
-            4 => chrono::Weekday::Thu,
-            5 => chrono::Weekday::Fri,
-            6 => chrono::Weekday::Sat,
-            7 => chrono::Weekday::Sun,
+            1 => Weekday::Monday,
+            2 => Weekday::Tuesday,
+            3 => Weekday::Wednesday,
+            4 => Weekday::Thursday,
+            5 => Weekday::Friday,
+            6 => Weekday::Saturday,
+            7 => Weekday::Sunday,
             _ => return None,
         };
-        let date = chrono::NaiveDate::from_isoywd_opt(year as i32, week, weekday)?;
-        if !(1..=9999).contains(&chrono::Datelike::year(&date)) {
+        let date = Date::from_iso_week_date(year, week, weekday).ok()?;
+        if !(1..=9999).contains(&date.year()) {
             return None;
         }
         return Some(end);
@@ -259,7 +260,9 @@ fn date_end(text: &str) -> Option<usize> {
     } else {
         (digits(text.get(4..6)?)?, digits(text.get(6..8)?)?, 8)
     };
-    chrono::NaiveDate::from_ymd_opt(year as i32, month, day)?;
+    let month = Month::try_from(u8::try_from(month).ok()?).ok()?;
+    let day = u8::try_from(day).ok()?;
+    Date::from_calendar_date(year, month, day).ok()?;
     Some(end)
 }
 fn clock_parts(text: &str) -> Option<[u32; 3]> {
