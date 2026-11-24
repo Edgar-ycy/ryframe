@@ -144,7 +144,7 @@ fn stopping_process_group_reclaims_descendant_after_direct_child_exits() {
     let _ = fs::remove_file(&ready_file);
 
     let group = process::ChildGroup::new().expect("应能创建进程树工厂");
-    let mut command = helper_command(
+    let command = helper_command(
         &HelperRequest::Parent {
             pid_file: pid_file.clone(),
             ready_file: ready_file.clone(),
