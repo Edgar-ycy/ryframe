@@ -73,6 +73,19 @@ pub(crate) fn migration_name(value: OffsetDateTime) -> String {
     )
 }
 
+pub(crate) fn s3_signing_timestamp(value: OffsetDateTime) -> String {
+    let utc = value.to_offset(UtcOffset::UTC);
+    format!(
+        "{}{:02}{:02}T{:02}{:02}{:02}Z",
+        year(utc.year()),
+        utc.month() as u8,
+        utc.day(),
+        utc.hour(),
+        utc.minute(),
+        utc.second(),
+    )
+}
+
 pub(crate) fn run_directory_parts(value: OffsetDateTime) -> (String, String) {
     let utc = value.to_offset(UtcOffset::UTC);
     let year = year(utc.year());

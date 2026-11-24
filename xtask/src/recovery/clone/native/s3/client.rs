@@ -1,19 +1,20 @@
 use std::{fs::OpenOptions, io::Write, time::Duration};
 
-use chrono::Utc;
 use futures_util::stream;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use time::OffsetDateTime;
 use tokio::io::AsyncReadExt;
 
 use super::{Operation, Request, response, signing, write};
 use crate::Result;
+use crate::utc_timestamp::s3_signing_timestamp;
 
 pub(super) async fn execute(request: Request, timeout: Duration) -> Result<Value> {
     let (method, url, mut headers) = request.prepare()?;
     let configuration = &request.configuration;
     let payload_hash = hex::encode(Sha256::digest([]));
-    let date = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    let date = s3_signing_timestamp(OffsetDateTime::now_utc());
     let host = match url.port() {
         Some(port) => format!("{}:{port}", url.host().ok_or("对象端点缺少 host")?),
         None => url.host().ok_or("对象端点缺少 host")?.to_string(),
@@ -74,7 +75,7 @@ pub(super) async fn execute(request: Request, timeout: Duration) -> Result<Value
 
 pub(super) async fn put_if_absent(request: write::Prepared, timeout: Duration) -> Result<Value> {
     let mut headers = request.headers.clone();
-    let date = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    let date = s3_signing_timestamp(OffsetDateTime::now_utc());
     let host = match request.url.port() {
         Some(port) => format!("{}:{port}", request.url.host().ok_or("对象端点缺少 host")?),
         None => request.url.host().ok_or("对象端点缺少 host")?.to_string(),
@@ -152,7 +153,7 @@ pub(super) async fn create_bucket(request: Request, timeout: Duration) -> Result
     let (method, url, mut headers) = request.prepare()?;
     let configuration = &request.configuration;
     let payload_hash = hex::encode(Sha256::digest([]));
-    let date = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    let date = s3_signing_timestamp(OffsetDateTime::now_utc());
     let host = match url.port() {
         Some(port) => format!("{}:{port}", url.host().ok_or("对象端点缺少 host")?),
         None => url.host().ok_or("对象端点缺少 host")?.to_string(),
