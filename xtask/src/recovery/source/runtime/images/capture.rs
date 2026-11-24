@@ -8,6 +8,7 @@ use std::{
 use serde_json::{Value, json};
 
 use super::{document, objects, schema};
+use crate::utc_timestamp::now_rfc3339;
 use crate::{
     Result,
     recovery::{
@@ -43,7 +44,7 @@ pub(in crate::recovery::source::evidence) fn run<T: Transport + Sync>(
     let redis_generation = &storage["redis"];
     let redis = resources.redis_state(redis_generation)?;
     let models = schema::models(resources.execution)?;
-    let observed_at = chrono::Utc::now().to_rfc3339();
+    let observed_at = now_rfc3339();
     database::verify_migrations(context, resources.transport, "migrations")?;
     let columns = database::schema_snapshot(context, &models, resources.transport, "before")?;
     let captured = resources.capture_databases(

@@ -3,6 +3,7 @@ use super::super::{
     model,
     session::{Session, policy},
 };
+use crate::utc_timestamp::now_rfc3339;
 use crate::{
     Result,
     recovery::clone::native::{export::transport::Transport, json as document},
@@ -25,7 +26,7 @@ struct Progress {
 
 pub(super) fn run<T: Transport + Sync>(session: &Session<'_, T>) -> Result<Value> {
     let mut state = Progress {
-        started: chrono::Utc::now().to_rfc3339(),
+        started: now_rfc3339(),
         old_rows: Vec::new(),
         upper_id: 0,
         node: Value::Null,

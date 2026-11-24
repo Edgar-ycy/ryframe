@@ -1,6 +1,7 @@
 //! 一次缓存尝试与独立执行结果；已有尝试永不再次授权 EXEC。
 use super::super::super::{cache, running};
 use super::{cache_context, documents, receipts};
+use crate::utc_timestamp::now_rfc3339;
 use crate::{
     Result,
     recovery::clone::native::{digest, resources::common, source},
@@ -71,7 +72,7 @@ impl Frame {
         }
         let value = json!({"format_version":1,"kind":"source-cache-cleanup-attempt","recovery_intent":recovery,
             "bindings":self.bindings,"scope_id":self.bindings["scope_id"],"observation":observation,
-            "observation_sha256":digest::plan_hash(observation)?,"started_at":chrono::Utc::now().to_rfc3339()});
+            "observation_sha256":digest::plan_hash(observation)?,"started_at":now_rfc3339()});
         common::write_new(&self.directory.join(ATTEMPT), &value)?;
         self.unchanged()?;
         common::binding(&self.directory.join(ATTEMPT))
@@ -123,7 +124,7 @@ impl Frame {
         };
         let value = json!({"format_version":1,"kind":"source-cache-cleanup-execution","attempt":attempt,
             "status":status,"cause":outcome["status"],"deleted":outcome["deleted"],"expired":outcome["expired"],
-            "completed_at":chrono::Utc::now().to_rfc3339()});
+            "completed_at":now_rfc3339()});
         common::write_new(&self.directory.join(EXECUTION), &value)?;
         self.state()
     }

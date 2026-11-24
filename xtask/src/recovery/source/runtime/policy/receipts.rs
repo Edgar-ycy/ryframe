@@ -1,6 +1,7 @@
 //! 来源运行收据与原始行证据只读取同代文件；不承担远端写入。
 use super::super::super::inventory;
 use super::{documents, model};
+use crate::utc_timestamp::now_rfc3339;
 use crate::{Result, recovery::clone::native::resources::common};
 use serde_json::{Value, json};
 use std::{
@@ -76,7 +77,7 @@ pub(super) fn create(args: &Value) -> Result<Value> {
         "cache_cleanup":common::binding(&directory.join("cache-cleanup.json"))?,"evidence":{
             "before":inventory::manifest(&directory.join("before"))?,"after":inventory::manifest(&directory.join("after"))?,
             "audit":inventory::manifest(&directory.join("audit"))?},"write_effects":args["effects"],
-        "started_at":args["started_at"],"verified_at":chrono::Utc::now().to_rfc3339(),
+        "started_at":args["started_at"],"verified_at":now_rfc3339(),
         "remote_writes":model::remote_writes(&json!({"cleanup":args["cleanup"],"recovered":!args["recovery"].is_null()}))?,
         "restore_qualified":false});
     if !args["recovery"].is_null() {

@@ -3,6 +3,7 @@ use super::super::{
     images, inventory, model, ready,
     session::{Session, policy},
 };
+use crate::utc_timestamp::now_rfc3339;
 use crate::{
     Result,
     recovery::clone::native::{export::transport::Transport, json as document, resources::common},
@@ -120,7 +121,7 @@ fn intent<T: Transport>(session: &Session<'_, T>, prefix: &Prefix) -> Result<Val
     fields.remove("subjects");
     fields.insert("pre_manifest".into(), json!(before));
     fields.insert("authorization_cache".into(), observation);
-    fields.insert("started_at".into(), json!(chrono::Utc::now().to_rfc3339()));
+    fields.insert("started_at".into(), json!(now_rfc3339()));
     let value = policy("recovery-intent", arguments)?;
     document::write_new(&path, &value)?;
     Ok(value)
@@ -167,7 +168,7 @@ fn step<T: Transport + Sync>(
             let value = policy(
                 "recovery-receipt",
                 json!({"backend":session.backend,"directory":session.directory,
-                "cleanup":s.cleanup,"after":s.after,"completed_at":chrono::Utc::now().to_rfc3339()}),
+                "cleanup":s.cleanup,"after":s.after,"completed_at":now_rfc3339()}),
             )?;
             document::write_new(&session.directory.join(RECEIPT), &value)?;
         }

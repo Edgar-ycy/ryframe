@@ -4,6 +4,7 @@ use std::{collections::BTreeMap, path::Path, time::Duration};
 use serde_json::{Value, json};
 
 use super::{binding, producer::launch, ready};
+use crate::utc_timestamp::now_rfc3339;
 use crate::{
     Result,
     recovery::clone::native::{
@@ -211,7 +212,7 @@ impl<T: Transport> Resources<'_, T> {
             .ok_or("来源审计缺少 verification 目录")?;
         let value = self.policy("login-create",json!({"backend":self.backend,"directory":directory,
             "old_before":hex::encode(before),"old_after":hex::encode(&old),"upper_id":upper,"new_raw":added,
-            "lineage":lineage,"subjects":subjects,"started_at":started,"completed_at":chrono::Utc::now().to_rfc3339()}))?;
+            "lineage":lineage,"subjects":subjects,"started_at":started,"completed_at":now_rfc3339()}))?;
         document::write_new(&self.output.join("login-audit.json"), &value)?;
         Ok(value)
     }

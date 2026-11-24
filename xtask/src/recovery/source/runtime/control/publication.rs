@@ -1,5 +1,6 @@
 //! 正常停止后的后继请求与 generation 证明；复用现有原生证明权威，不自行签简化收据。
 use super::window::Window;
+use crate::utc_timestamp::now_rfc3339;
 use crate::{
     Result,
     recovery::{
@@ -42,7 +43,7 @@ pub(super) fn finish<T: Transport + Sync>(window: &Window<'_, '_, T>) -> Result<
             "intent":common::binding(&output.join("intent.json"))?,
             "runtime":common::binding(&runtime.join("runtime.json"))?,
             "roles":observed_roles,"physical_binding":window.facts["source"]["generation"]["physical_binding"],
-            "ports_idle":["api","worker"],"observed_stopped_at":chrono::Utc::now().to_rfc3339(),
+            "ports_idle":["api","worker"],"observed_stopped_at":now_rfc3339(),
         }),
     )?;
     let build = common::read_bound(

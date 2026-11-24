@@ -1,6 +1,7 @@
 //! 在启动前持久化精确 intent；内核身份登记前不向生产者提供 stdin 授权。
 use super::super::{inventory, staging};
 use super::Inputs;
+use crate::utc_timestamp::now_rfc3339;
 use crate::{
     Result,
     recovery::clone::native::{digest, json as document, resources::common},
@@ -76,7 +77,7 @@ pub(super) fn prepare(inputs: &Inputs<'_>, operation: &str) -> Result<Value> {
         "controller":controller,"source_generation":inputs.start,"dataset_lineage":inputs.lineage,
         "executable":inputs.tool,"source":common::binding(&inputs.backend.join("xtask/src/recovery/dataset_prepare/existing_native.rs"))?,
         "configuration":common::binding(&configuration_path)?,"argv":command["argv"],"cwd":inputs.backend,
-        "environment_sha256":digest::plan_hash(&json!(inputs.environment))?,"started_at":chrono::Utc::now().to_rfc3339(),
+        "environment_sha256":digest::plan_hash(&json!(inputs.environment))?,"started_at":now_rfc3339(),
         "coordinator_source":inputs.coordinator,"execution_sha":inputs.execution_sha,"staging":descriptor,"inputs":files});
     document::write_new(
         &inputs.directory.join("source-producer-intent.json"),
@@ -143,6 +144,6 @@ pub(super) fn complete(
         "kind":"restore-source-producer-completion","operation_id":producer["operation_id"],
         "intent":common::binding(&inputs.directory.join("source-producer-intent.json"))?,
         "producer":common::binding(&inputs.directory.join("source-producer.json"))?,"ready":ready,"stdout":stdout,
-        "stderr":stderr,"process":producer["process"],"exit_code":code,"completed_at":chrono::Utc::now().to_rfc3339()}),
+        "stderr":stderr,"process":producer["process"],"exit_code":code,"completed_at":now_rfc3339()}),
     )
 }

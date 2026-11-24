@@ -1,6 +1,7 @@
 //! 缓存端口只采集真实响应并执行原生唯一决策；已有 attempt 永远不再次 EXEC。
 use super::{Resources, Transport, document, json, ready};
 use crate::Result;
+use crate::utc_timestamp::now_rfc3339;
 use serde_json::Value;
 
 impl<T: Transport> Resources<'_, T> {
@@ -109,7 +110,7 @@ impl<T: Transport> Resources<'_, T> {
             "cache-publication",
             json!({"backend":self.backend,"directory":directory,
             "output":directory.join("cache-cleanup.json"),"observation":observation,"after":after,
-            "cleaned_at":chrono::Utc::now().to_rfc3339()}),
+            "cleaned_at":now_rfc3339()}),
         )?;
         let path = directory.join("cache-cleanup.json");
         let mut bytes = serde_json::to_vec_pretty(&value)?;

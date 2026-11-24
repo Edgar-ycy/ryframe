@@ -4,6 +4,7 @@ use super::{
     session::{self, Client},
 };
 use crate::Result;
+use crate::utc_timestamp::now_rfc3339;
 use serde_json::{Value, json};
 use std::{
     fs::{self, OpenOptions},
@@ -23,7 +24,7 @@ pub(super) async fn run(inputs: &Inputs) -> Result<Value> {
     )?;
     fs::create_dir(&directory)?;
     let catalog = session::catalog(&inputs.root)?;
-    let started = chrono::Utc::now().to_rfc3339();
+    let started = now_rfc3339();
     let mut clients = create_clients(inputs, &directory, &catalog).await?;
     let failure = AtomicBool::new(false);
     let prepared =
@@ -58,7 +59,7 @@ pub(super) async fn run(inputs: &Inputs) -> Result<Value> {
     let object_bytes = upload_objects(inputs, &directory, &mut clients, &mut tenants).await?;
     inputs.unchanged()?;
     let settings = &plan["dataset"];
-    let result = json!({"format_version":1,"plan_sha256":model::hash(plan)?,"source_scope_id":plan["source"]["scope_id"],"started_at":started,"completed_at":chrono::Utc::now().to_rfc3339(),"records":settings["records"],"object_bytes":object_bytes,"tenants":tenants,"request_interval_ms":settings["request_interval_ms"],"post_concurrency":11,"post_batch":batch["result"]});
+    let result = json!({"format_version":1,"plan_sha256":model::hash(plan)?,"source_scope_id":plan["source"]["scope_id"],"started_at":started,"completed_at":now_rfc3339(),"records":settings["records"],"object_bytes":object_bytes,"tenants":tenants,"request_interval_ms":settings["request_interval_ms"],"post_concurrency":11,"post_batch":batch["result"]});
     documents::write_new(&directory.join("result.json"), &result)?;
     Ok(result)
 }
