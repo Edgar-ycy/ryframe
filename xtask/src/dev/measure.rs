@@ -11,14 +11,16 @@ use std::{
     time::{Duration, Instant},
 };
 
-use chrono::{DateTime, Utc};
+use chrono::DateTime;
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 use crate::{
     Result,
     cli::DevOptions,
     process::{ChildGroup, ManagedChild, child_command, stop_child},
     source_edit::SourceEdit,
+    utc_timestamp::{rfc3339, unix_timestamp_millis},
     watch::{ChangeBatch, SourceWatcher},
     workspace::remove_isolated_directory,
 };
@@ -228,7 +230,7 @@ fn measure_cancellation(
     let target = state_root.join(format!(
         "cancellation-{}-{}",
         std::process::id(),
-        Utc::now().timestamp_millis()
+        unix_timestamp_millis(OffsetDateTime::now_utc())
     ));
     fs::create_dir(&target)?;
     #[cfg(windows)]
@@ -252,7 +254,7 @@ fn measure_cancellation(
     let label = format!(
         "cancel-{}-{}",
         std::process::id(),
-        Utc::now().timestamp_millis()
+        unix_timestamp_millis(OffsetDateTime::now_utc())
     );
     let saved = SourceEdit::apply(&root.join(source.relative), &label, source.comment_prefix);
     #[cfg(windows)]
@@ -273,7 +275,7 @@ fn measure_cancellation(
         Ok(SaveMeasurement {
             schema_version: 1,
             case: SaveCase::Cancellation,
-            started_at: DateTime::<Utc>::from(started.wall_clock).to_rfc3339(),
+            started_at: rfc3339(OffsetDateTime::from(started.wall_clock)),
             save_to_ready_ms: started.monotonic.elapsed().as_secs_f64() * 1_000.0,
             cargo_invocations: 1,
             ready_kind: ReadyKind::Superseded,
@@ -426,9 +428,13 @@ fn measure_cycle(
         SaveCase::Locales => roots.locales_dir.join("zh-CN.toml"),
         _ => cycle.root.join(source.relative),
     };
-    let label = format!("{}-{}", std::process::id(), Utc::now().timestamp_millis());
+    let label = format!(
+        "{}-{}",
+        std::process::id(),
+        unix_timestamp_millis(OffsetDateTime::now_utc())
+    );
     let (mut edit, started) = SourceEdit::apply(&path, &label, source.comment_prefix)?;
-    let started_at = DateTime::<Utc>::from(started.wall_clock);
+    let started_at = OffsetDateTime::from(started.wall_clock);
     let outcome = (|| {
         let batch = wait_for_save_event(watcher, cycle.shutdown, source.relative)?;
         let plan = BuildPlan::from_changes(&batch);
@@ -453,7 +459,7 @@ fn measure_cycle(
         Ok(SaveMeasurement {
             schema_version: 1,
             case,
-            started_at: started_at.to_rfc3339(),
+            started_at: rfc3339(started_at),
             save_to_ready_ms: started.monotonic.elapsed().as_secs_f64() * 1_000.0,
             cargo_invocations,
             ready_kind,

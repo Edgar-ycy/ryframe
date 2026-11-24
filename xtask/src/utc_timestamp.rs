@@ -16,6 +16,10 @@ pub(crate) fn now_rfc3339() -> String {
     rfc3339(time::OffsetDateTime::now_utc())
 }
 
+pub(crate) fn unix_timestamp_millis(value: OffsetDateTime) -> i128 {
+    value.unix_timestamp_nanos().div_euclid(1_000_000)
+}
+
 pub(crate) fn rfc3339_micros(value: OffsetDateTime) -> String {
     encode(value, Precision::Micros, "+00:00")
 }
