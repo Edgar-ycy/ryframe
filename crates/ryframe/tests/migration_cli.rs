@@ -9,12 +9,19 @@ mod bootstrap;
 #[path = "boot_contract/configuration_fixture.rs"]
 mod configuration_fixture;
 
-fn run(output: &Path, mode: &str, password: Option<&str>) -> Output {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+fn workspace_root() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
         .parent()
-        .unwrap();
+        .unwrap()
+}
+
+fn run(output: &Path, mode: &str, password: Option<&str>) -> Output {
+    run_from(workspace_root(), output, mode, password)
+}
+
+fn run_from(root: &Path, output: &Path, mode: &str, password: Option<&str>) -> Output {
     let configuration = directory();
     let config = configuration.path().join("config");
     configuration_fixture::write_configuration(&config, 8080, 9091, password);
@@ -38,12 +45,7 @@ fn run(output: &Path, mode: &str, password: Option<&str>) -> Output {
 }
 
 fn directory() -> tempfile::TempDir {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join(".local-tests");
+    let root = workspace_root().join(".local-tests");
     fs::create_dir_all(&root).unwrap();
     tempfile::Builder::new()
         .prefix("migration-cli-")
@@ -51,9 +53,16 @@ fn directory() -> tempfile::TempDir {
         .unwrap()
 }
 
+fn external_directory() -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix("migration-cli-external-")
+        .tempdir_in(workspace_root().parent().unwrap())
+        .unwrap()
+}
+
 #[test]
 fn sql_plan_does_not_read_secrets_or_create_output_directories() {
-    let directory = directory();
+    let directory = external_directory();
     let output = directory.path().join("not-created/init.sql");
     let result = run(&output, "--plan", Some("invalid"));
     assert!(
@@ -95,8 +104,8 @@ fn ownership_plan_is_offline_and_separate_from_business_adoption() {
 
 #[test]
 fn export_requires_explicit_password_and_refuses_overwrite() {
-    let directory = directory();
-    let output = directory.path().join("init.sql");
+    let directory = external_directory();
+    let output = directory.path().join("new-parent/init.sql");
     let missing = run(&output, "--write", None);
     assert!(!missing.status.success());
     assert!(!output.exists());
@@ -122,7 +131,7 @@ fn export_requires_explicit_password_and_refuses_overwrite() {
     let repeated = run(&output, "--write", Some("AnotherAdmin123!"));
     assert!(!repeated.status.success());
     assert_eq!(fs::read_to_string(&output).unwrap(), sql);
-    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+    assert_eq!(fs::read_dir(output.parent().unwrap()).unwrap().count(), 1);
 }
 
 #[test]
@@ -139,6 +148,85 @@ fn sql_export_refuses_escape_from_private_directory() {
             .join("escaped-init.sql")
             .exists()
     );
+}
+
+#[test]
+fn sql_export_refuses_other_checkouts_before_creating_directories() {
+    let directory = external_directory();
+    for marker in ["repository", "linked-worktree"] {
+        let checkout = directory.path().join(marker);
+        fs::create_dir(&checkout).unwrap();
+        if marker == "repository" {
+            fs::create_dir(checkout.join(".git")).unwrap();
+        } else {
+            fs::write(checkout.join(".git"), "gitdir: linked-checkout\n").unwrap();
+        }
+        let output = checkout.join("new-parent/init.sql");
+        let result = run(&output, "--write", Some("InitialAdmin123!"));
+        let error = String::from_utf8_lossy(&result.stderr);
+        assert!(!result.status.success());
+        assert!(error.contains("Git 检出目录之外"), "{error}");
+        assert!(!output.parent().unwrap().exists());
+    }
+}
+
+#[test]
+fn sql_export_refuses_the_current_source_tree_without_git_metadata() {
+    let directory = external_directory();
+    let root = directory.path();
+    fs::write(root.join("Cargo.toml"), "[workspace]\n").unwrap();
+    fs::create_dir_all(root.join("crates/ryframe")).unwrap();
+    let output = root.join("new-parent/init.sql");
+    let result = run_from(root, &output, "--write", Some("InitialAdmin123!"));
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(!result.status.success());
+    assert!(error.contains("当前后端源码树之外"), "{error}");
+    assert!(!output.parent().unwrap().exists());
+}
+
+#[test]
+fn sql_export_refuses_an_ordinary_relative_output() {
+    let directory = directory();
+    let output = Path::new(directory.path().file_name().unwrap()).join("new-parent/init.sql");
+    let result = run(&output, "--write", Some("InitialAdmin123!"));
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(!result.status.success());
+    assert!(
+        error.contains("私有文件须使用检出目录之外的绝对路径"),
+        "{error}"
+    );
+    assert!(!workspace_root().join(output).parent().unwrap().exists());
+}
+
+#[cfg(any(unix, windows))]
+#[test]
+fn sql_export_refuses_linked_external_parents_and_existing_directories() {
+    let directory = external_directory();
+    let ordinary = directory.path().join("ordinary");
+    fs::create_dir(&ordinary).unwrap();
+    let link = directory.path().join("link");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&ordinary, &link).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(&ordinary, &link).unwrap();
+    let result = run(
+        &link.join("new-parent/init.sql"),
+        "--write",
+        Some("InitialAdmin123!"),
+    );
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(!result.status.success());
+    assert!(
+        error.contains("符号链接") || error.contains("重解析点"),
+        "{error}"
+    );
+    assert!(!ordinary.join("new-parent").exists());
+
+    let result = run(&ordinary, "--write", Some("InitialAdmin123!"));
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(!result.status.success());
+    assert!(error.contains("目标文件已存在"), "{error}");
+    assert_eq!(fs::read_dir(&ordinary).unwrap().count(), 0);
 }
 
 #[cfg(windows)]
@@ -220,17 +308,18 @@ fn sql_export_accepts_verbatim_private_paths_and_preserves_namespace_guards() {
     let result = run(&outside, "--write", Some("VerbatimExport-Test-Admin42!"));
     assert!(!result.status.success());
     assert!(!outside_parent.exists());
+    let case_alias = PathBuf::from(outside.display().to_string().to_ascii_uppercase());
+    let result = run(&case_alias, "--write", Some("VerbatimExport-Test-Admin42!"));
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(!result.status.success());
+    assert!(error.contains("当前后端源码树之外"), "{error}");
+    assert!(!outside_parent.exists());
     assert_eq!(fs::read(&output).unwrap(), original);
 }
 
 fn adoption(args: &[&str]) -> Output {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
     Command::new(env!("CARGO_BIN_EXE_ryframe-migrate"))
-        .current_dir(root)
+        .current_dir(workspace_root())
         .args(args)
         .args(["--config-dir", "must-not-read-for-plan"])
         .env("APP_ENV", "must-not-read-for-plan")
@@ -334,9 +423,12 @@ fn adoption_rejects_ambiguous_scopes_missing_values_and_implicit_writes() {
 #[test]
 fn malformed_adoption_plan_fails_before_loading_runtime_configuration() {
     let directory = directory();
-    let path = directory.path().join("bad-plan.json");
+    let marker = directory.path().join(".git");
+    fs::write(&marker, "gitdir: fixture-checkout\n").unwrap();
+    let absolute = directory.path().join("bad-plan.json");
+    let path = absolute.strip_prefix(workspace_root()).unwrap();
     for malformed in ["{invalid", r#"{"manifest":"PRIVATE-PLAN-VALUE"}"#] {
-        fs::write(&path, malformed).unwrap();
+        fs::write(&absolute, malformed).unwrap();
         let result = adoption(&[
             "control",
             "adopt",
@@ -348,10 +440,39 @@ fn malformed_adoption_plan_fails_before_loading_runtime_configuration() {
         let error = String::from_utf8_lossy(&result.stderr);
         assert!(error.contains("格式错误"), "{error}");
         assert!(!error.contains("must-not-read-for-plan"));
-        assert_eq!(fs::read_to_string(&path).unwrap(), malformed);
+        assert_eq!(fs::read_to_string(&absolute).unwrap(), malformed);
         assert!(!error.contains("PRIVATE-PLAN-VALUE"));
         assert!(error.contains("阶段=读取原接管计划"));
     }
+    assert_eq!(
+        fs::read_to_string(marker).unwrap(),
+        "gitdir: fixture-checkout\n"
+    );
+}
+
+#[test]
+fn adoption_reads_explicit_external_plans_before_runtime_configuration() {
+    let directory = external_directory();
+    let path = directory.path().join("bad-plan.json");
+    let body = "{invalid";
+    fs::write(&path, body).unwrap();
+    for (command, diagnostic) in [("adopt", "格式错误"), ("ownership-adopt", "at line")] {
+        let result = adoption(&["control", command, "--inspect", path.to_str().unwrap()]);
+        let error = String::from_utf8_lossy(&result.stderr);
+        assert!(!result.status.success());
+        assert!(error.contains(diagnostic), "{error}");
+        assert!(!error.contains("must-not-read-for-plan"), "{error}");
+        assert_eq!(fs::read_to_string(&path).unwrap(), body);
+    }
+    let result = adoption(&[
+        "control",
+        "adopt",
+        "--inspect",
+        directory.path().to_str().unwrap(),
+    ]);
+    let error = String::from_utf8_lossy(&result.stderr);
+    assert!(!result.status.success());
+    assert!(error.contains("私有计划必须是普通文件"), "{error}");
 }
 
 #[test]

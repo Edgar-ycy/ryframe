@@ -12,14 +12,14 @@
 
 ## 控制库初始化 SQL
 
-- 预览：`cargo migrate -- control export-sql --output .local-tests/control-init.sql --plan`
-- 导出：`cargo migrate -- control export-sql --output .local-tests/control-init.sql --write`
+- 预览：`cargo migrate -- control export-sql --output D:/ryframe-private/migration/control-init.sql --plan`
+- 导出：`cargo migrate -- control export-sql --output D:/ryframe-private/migration/control-init.sql --write`
 
-`control export-sql --plan` 不读密码、应用配置或数据库，也不写文件；实际 `--write` 导出按需创建产物的父目录，通过 `APP_ENV` 和 `--config-dir <directory>` 加载文件配置并读取 `[bootstrap] admin_password` 生成哈希，不连接数据库。正式 `control export-sql` 从选定配置的 `scope_id` 生成 control 与 tenant-data 两类归属，并覆盖同一物理库的控制面与 `shared-control` 租户数据面：控制库结构、后置约束、系统数据、fence/slot/投影基础表和初始化行、两个框架迁移账本，以及已注册 Control 与 Tenant 业务初始化迁移及单一业务账本，不包含明文密码；手写业务迁移必须提供与 `up` 同源的 schema 和初始化 SQL。导出文件含密码哈希，须按凭据保管；输出文件必须新建，不能覆盖旧文件。选择空库并使用客户端遇错停止，不使用 `--force`。下例为本机库；客户端主机、端口、账号和数据库须与所选文件一致，远程生产还须显式选择主机名校验和相应 CA，不能依赖客户端默认 TLS 模式。PowerShell 使用：
+`control export-sql --plan` 不读密码、应用配置或数据库，也不写文件；实际 `--write` 导出按需创建产物的父目录，通过 `APP_ENV` 和 `--config-dir <directory>` 加载文件配置并读取 `[bootstrap] admin_password` 生成哈希，不连接数据库。正式 `control export-sql` 从选定配置的 `scope_id` 生成 control 与 tenant-data 两类归属，并覆盖同一物理库的控制面与 `shared-control` 租户数据面：控制库结构、后置约束、系统数据、fence/slot/投影基础表和初始化行、两个框架迁移账本，以及已注册 Control 与 Tenant 业务初始化迁移及单一业务账本，不包含明文密码；手写业务迁移必须提供与 `up` 同源的 schema 和初始化 SQL。导出文件含密码哈希，须按凭据保管。将示例的 `--output` 换成自己选择的工作树外私有文件的绝对路径，路径中不能含有 `..`，目标文件已存在时会拒绝。选择空库并使用客户端遇错停止，不使用 `--force`。下例为本机库；客户端主机、端口、账号和数据库须与所选配置一致。远程生产还须显式选择主机名校验和相应 CA，不能依赖客户端默认 TLS 模式。PowerShell 下将 `source` 指向本次导出的文件：
 
-- `mysql --default-character-set=utf8mb4 -h 127.0.0.1 -P 3306 -u ryframe_app -p ryframe_dev --execute="source .local-tests/control-init.sql"`
+- `mysql --default-character-set=utf8mb4 -h 127.0.0.1 -P 3306 -u ryframe_app -p ryframe_dev --execute="source D:/ryframe-private/migration/control-init.sql"`
 
-bash 可使用 `< .local-tests/control-init.sql`；PowerShell 不支持该重定向，不要把 bash 命令原样用于 PowerShell。导入后执行：
+Linux 上可用 bash 的 `< /home/dev/ryframe-private/migration/control-init.sql` 重定向，将路径换成本次导出的文件。PowerShell 不支持该重定向。导入后执行：
 
 - 校验控制面：`cargo migrate -- control verify`
 - 校验租户数据面：`cargo migrate -- tenant-data verify --target shared-control`
@@ -42,13 +42,13 @@ bash 可使用 `< .local-tests/control-init.sql`；PowerShell 不支持该重定
 已有表只能显式接管。在正常控制库另加未登记的业务表后，启动校验拒绝未知表属于预期边界；保留表及数据，不能把生成模型后直接 `serve` 当成接管。先停止 API/Worker 等生产者，准备已登记模块及匹配模型、迁移，并使用包含该登记的当前迁移程序。接管前置只读核验控制库框架账本、完整物理结构和目标边界；新增业务权限/菜单不必预先 seed，业务结构、物理目标、来源摘要和其他账本约束仍由接管计划逐次核对。保存预览和 inspect 不写数据库，apply 只登记已核对的 adopted 账本元数据，不执行历史业务 DDL 或更改业务行。应用后先 inspect 原计划；需要初始化新增访问目录或执行已审阅的后续迁移时，再显式执行对应范围的 `up`，最后完整 verify。以下新模块示例用 `control up` 初始化访问目录，再校验；API/Worker 启动前仍要求完整业务权限与菜单通过，不存在宽松启动路径：
 
 ```powershell
-cargo migrate -- control adopt --module order --output .local-tests/order-adopt.json --write
-cargo migrate -- control adopt --inspect .local-tests/order-adopt.json
-cargo migrate -- control adopt --apply .local-tests/order-adopt.json --write
-cargo migrate -- control adopt --inspect .local-tests/order-adopt.json
+cargo migrate -- control adopt --module order --output D:/ryframe-private/migration/order-adopt.json --write
+cargo migrate -- control adopt --inspect D:/ryframe-private/migration/order-adopt.json
+cargo migrate -- control adopt --apply D:/ryframe-private/migration/order-adopt.json --write
+cargo migrate -- control adopt --inspect D:/ryframe-private/migration/order-adopt.json
 ```
 
-租户表的接管与 inspect 使用 `tenant-data adopt`，必须显式提供单个 `--target business-shared`，不接受 `--all`。后续 `tenant-data up`、`verify` 和 `status` 可选择单个 `--target`，也可显式使用 `--all` 处理全部已登记目标；业务权限/菜单仍由控制库的 `control up` 初始化并经 `control verify` 核验，不能把这一步改成只迁移租户目标。`--output` 必须配合 `--write`，`--inspect` 禁止写入，计划只能使用 `.local-tests` 内的新路径，保存计划时命令自动创建产物的父目录。普通开发配置继续使用工作树外的私有目录。`adopt --plan` 不读取应用配置、不连接数据库、不写入；它与实际读取结构并保存接管计划的 `adopt --output ... --write` 不同。接管只登记现有结构，不执行历史 DDL、不更改业务行；部分登记、结构漂移或未知结果先 inspect 原计划，不能换计划重放。目标为空时按正常 `up` 建表。
+租户表的接管与 inspect 使用 `tenant-data adopt`，必须显式提供单个 `--target business-shared`，不接受 `--all`。后续 `tenant-data up`、`verify` 和 `status` 可选择单个 `--target`，也可显式使用 `--all` 处理全部已登记目标；业务权限/菜单仍由控制库的 `control up` 初始化并经 `control verify` 核验，不能把这一步改成只迁移租户目标。为接管计划选择工作树外的私有绝对文件路径，路径中不能含有 `..`。`--output` 必须配合 `--write`，命令按需创建父目录，目标文件已存在时会拒绝。`--inspect` 只读，随后用同一文件执行 `--apply`。`adopt --plan` 不读取应用配置、不连接数据库、不写入；它与实际读取结构并保存接管计划的 `adopt --output ... --write` 不同。接管只登记现有结构，不执行历史 DDL、不更改业务行；部分登记、结构漂移或未知结果先 inspect 原计划，不能换计划重放。目标为空时按正常 `up` 建表。
 
 授权、任务领取、导出申请、删除受理和配置迁移使用主库与显式事务。可接受陈旧的列表读才使用 eventual consistency；执行前校验、下载和状态转换使用 strong consistency。租户数据范围由 `sys_tenant.data_scope_version` 驱动：控制库事务写入 outbox，Worker 在 active placement 目标发布并原子切换投影；认证主体版本落后或投影不可用时失败关闭。用户创建、更新、删除，以及实际插入用户的导入批次，在记录数据范围变更的同一事务内推进租户授权代次，缓存启用时按既有策略写入镜像 outbox；提交后同步租户授权缓存，使其他主体的旧快照失效并在下次请求重建。更新和删除仍推进目标用户授权版本、拒绝旧令牌；无实际插入的导入批次及回滚不推进代次。提交后镜像同步失败按现有缓存策略报告，已提交写入不重放，由持久 outbox 恢复。
 
@@ -188,13 +188,13 @@ replica 只服务显式 `ReadConsistency::Eventual` 读取：健康副本轮询�
 既有无归属数据库使用显式物理接管，不能用 up 补 marker，也不能运行 reset 代替接管：
 
 ```powershell
-cargo migrate -- --config-dir <directory> control ownership-adopt --output .local-tests/control-ownership.json --write
-cargo migrate -- --config-dir <directory> control ownership-adopt --inspect .local-tests/control-ownership.json
-cargo migrate -- --config-dir <directory> control ownership-adopt --apply .local-tests/control-ownership.json --write
-cargo migrate -- --config-dir <directory> tenant-data ownership-adopt --target <key> --output .local-tests/tenant-ownership.json --write
-cargo migrate -- --config-dir <directory> tenant-data ownership-adopt --target <key> --apply .local-tests/tenant-ownership.json --write
+cargo migrate -- --config-dir <directory> control ownership-adopt --output D:/ryframe-private/migration/control-ownership.json --write
+cargo migrate -- --config-dir <directory> control ownership-adopt --inspect D:/ryframe-private/migration/control-ownership.json
+cargo migrate -- --config-dir <directory> control ownership-adopt --apply D:/ryframe-private/migration/control-ownership.json --write
+cargo migrate -- --config-dir <directory> tenant-data ownership-adopt --target <key> --output D:/ryframe-private/migration/tenant-ownership.json --write
+cargo migrate -- --config-dir <directory> tenant-data ownership-adopt --target <key> --apply D:/ryframe-private/migration/tenant-ownership.json --write
 ```
 
-- 先停止 API、Worker、scheduler 和其他生产者，并在绑定配置声明 `reset.services_stopped=true`。该字段在本命令中仅确认运维停止边界，不执行 reset，也不是自动取得的进程停止证明。`--plan` 只显示任务图；不带写入选项的预览只读数据库并输出计划。计划只允许保存到当前后端 `.local-tests` 的新文件。执行 `--output ... --write` 时，命令会按需创建缺失的父目录。示例中的 `.local-tests` 路径用于保存命令生成的接管计划。先审阅物理 UUID/schema、scope、配置指纹、完整结构/账本、归属前像及 fence/placement 绑定，再显式 apply。未知对象、部分初始化、在途或不能解释的 fence/placement、配置漂移及已有归属冲突均拒绝；命令不会修复业务数据或重放历史 DDL。
+- 先停止 API、Worker、scheduler 和其他生产者，并在绑定配置声明 `reset.services_stopped=true`。该字段在本命令中仅确认运维停止边界，不执行 reset，也不是自动取得的进程停止证明。`--plan` 只显示任务图；不带写入选项的预览只读数据库并输出计划。为每个计划选择工作树外的私有绝对文件路径，路径中不能含有 `..`。执行 `--output ... --write` 时，命令按需创建父目录，目标文件已存在时会拒绝。用 `--inspect` 读取该计划，审阅物理 UUID/schema、scope、配置指纹、完整结构/账本、归属前像及 fence/placement 绑定，再用同一文件显式执行 `--apply`。未知对象、部分初始化、在途或不能解释的 fence/placement、配置漂移及已有归属冲突均拒绝；命令不会修复业务数据或重放历史 DDL。
 - 物理 `ownership-adopt` 与业务 `adopt --module` 分开：后者只接管业务迁移账本，前者要求适用业务账本和结构已经有效。提交结果未知时先 inspect 原计划核对完整前后像，不修改计划、不自动重放。独立控制库与目标库的一致性依赖外部生产者停止边界，不宣称跨库原子提交。
 - 物理相同的共享别名只在路由及槽语义相容时合并。没有 fence 路由时选择确定代表键；已有 fence 时只能采用组内唯一的已有路由键。dedicated、多个不同路由及组外 fence 均拒绝。该选择在迁移互斥内再次核对，不能任取字典序首键。

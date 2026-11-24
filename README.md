@@ -62,10 +62,10 @@ cargo serve -- --config-dir ../ryframe-dev-config
 `APP_ENV=dev|test|prod` 是唯一项目配置环境入口。配置按可省略的公共 `app.toml`、必须存在的 `app.<environment>.toml` 依次递归合并；省略公共文件时，环境文件须完整提供必填配置，已存在但不可读或损坏的公共文件仍失败；密码、JWT、监控、Redis 与存储凭据直接使用明文字段。CLI 通过 `--config-dir <directory>` 选择配置目录，默认 `config`，本页本机示例统一显式使用仓库外的 `../ryframe-dev-config`；应用相对路径以当前工作目录解析，生成器相对路径以后端 Workspace 根目录解析。数组在环境文件中整体替换，不能只覆盖其中一项。多库的 primary、replicas、sources，租户共享控制库、共享业务库、独立库，placement、TLS、连接池和完整数据库拓扑 TOML 片段（须合并到应用配置）见[数据指南](docs/data.md#租户路由)。`app.locales_dir` 在 TOML 中显式指定，默认 `locales`，普通应用相对进程当前工作目录解析；不读取 `APP_LOCALES_DIR`，生产缺少资源严格失败，开发环境可使用内嵌回退。框架维护者的共享 MySQL 测试配置见[集成验证](docs/development.md#集成验证)。部署四角色模板与私有配置目录已集成，资产结构及 CI 工具测试通过；真实容器、镜像和部署整链仍未验收，局部验证不等于整体门禁通过。
 
 ```powershell
-cargo migrate -- --config-dir ../ryframe-dev-config control export-sql --output .local-tests/control-init.sql --write
+cargo migrate -- --config-dir ../ryframe-dev-config control export-sql --output D:/ryframe-private/migration/control-init.sql --write
 ```
 
-推荐使用迁移命令初始化。需要直接导入时，先用上方命令导出完整 SQL。导出命令自动创建产物的父目录。`.local-tests/control-init.sql` 是命令生成的私有 SQL 文件。随后选择空库，按[数据指南](docs/data.md#控制库初始化-sql)遇错即停导入，再执行 `cargo migrate -- --config-dir ../ryframe-dev-config control verify`。正式导出包含密码哈希、后置约束、种子和迁移账本；`sql/ryframe_config.sql` 仅供源码审阅，不能代替正式文件。导入中断不自动重放或清库，也不通过 `control up` 猜测补齐。该 SQL 一次初始化所选物理控制库内的控制面与 `shared-control` 租户数据面，包含两账本及已注册的两侧业务迁移；导入成功后直接执行 `control verify` 与 `tenant-data verify --target shared-control`，无需补初始化 `up`。独立 MySQL 租户目标仍须另行执行 `tenant-data up` 和 `verify`，不会由一份 SQL 跨实例初始化。SQL 在登记每次业务迁移前核验实际结构，最后复核框架结构、业务结构和账本；不一致即停止，不能把合法但偏离声明的 DDL 记为完成。
+推荐使用迁移命令初始化。需要直接导入时，先用上方命令导出完整 SQL。将示例的 `--output` 换成自己选择的工作树外私有文件的绝对路径，路径中不能含有 `..`。导出命令按需创建父目录，目标文件已存在时会拒绝。随后选择空库，按[数据指南](docs/data.md#控制库初始化-sql)遇错即停导入，再执行 `cargo migrate -- --config-dir ../ryframe-dev-config control verify`。正式导出包含密码哈希、后置约束、种子和迁移账本；`sql/ryframe_config.sql` 仅供源码审阅，不能代替正式文件。导入中断不自动重放或清库，也不通过 `control up` 猜测补齐。该 SQL 一次初始化所选物理控制库内的控制面与 `shared-control` 租户数据面，包含两账本及已注册的两侧业务迁移；导入成功后直接执行 `control verify` 与 `tenant-data verify --target shared-control`，无需补初始化 `up`。独立 MySQL 租户目标仍须另行执行 `tenant-data up` 和 `verify`，不会由一份 SQL 跨实例初始化。SQL 在登记每次业务迁移前核验实际结构，最后复核框架结构、业务结构和账本；不一致即停止，不能把合法但偏离声明的 DDL 记为完成。
 
 租户业务库先创建空库并登记目标，再显式执行 `cargo migrate -- --config-dir ../ryframe-dev-config tenant-data up --target <target-key>` 和 `verify`。`--target` 使用配置中的目标键，不是数据库名；`--all` 只处理已登记目标。非生产重建使用 `cargo reset -- <参数>`，先停止 API、Worker 和调度器，步骤见[运维指南](docs/operations.md)。
 

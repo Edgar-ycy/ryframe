@@ -61,7 +61,7 @@
 
 ### 已有表接管
 
-已有表接管要求模型、迁移与数据库物理结构完全一致。先在业务 crate 导入或手写模型并登记描述符，用 `cargo generate -- resource --package order-business` 预览、审阅后加 `--write`；导入的字段类型、排序规则、索引、外键和迁移历史必须保留。停止目标上的 API、Worker 和调度写入，控制库先完成框架初始化；tenant 表必须选择单个目标键，`adopt` 不接受 `--all`。 生成接管计划时控制库运行 `cargo migrate -- --config-dir ../ryframe-dev-config control adopt --module order --output .local-tests/order-adopt.json --write`，租户库把 `control` 改为 `tenant-data` 并增加 `--target business-shared`，输出另取新文件。保存计划时命令自动创建产物的父目录，`.local-tests/order-adopt.json` 是该命令生成的私有计划。先 `--inspect` 该计划，只读核对物理实例、数据库、表、迁移前缀和指纹，再用同一计划 `--apply ... --write` 和对应 `verify`。`--module` 预览的 `--plan` 不读配置或数据库；`--output` 必须配 `--write`，`--inspect` 拒绝写入。部分登记、前像不符、来源不同或结构漂移都失败关闭；未知结果先 inspect 原计划，不能换计划重放。目标为空、只把已有表当结构模板时不需要 adopt，按正常 `up` 建表。
+已有表接管要求模型、迁移与数据库物理结构完全一致。先在业务 crate 导入或手写模型并登记描述符，用 `cargo generate -- resource --package order-business` 预览、审阅后加 `--write`；导入的字段类型、排序规则、索引、外键和迁移历史必须保留。停止目标上的 API、Worker 和调度写入，控制库先完成框架初始化；tenant 表必须选择单个目标键，`adopt` 不接受 `--all`。生成接管计划时控制库运行 `cargo migrate -- --config-dir ../ryframe-dev-config control adopt --module order --output D:/ryframe-private/migration/order-adopt.json --write`，租户库把 `control` 改为 `tenant-data` 并增加 `--target business-shared`，输出另取新文件。为 `--output` 选择工作树外的私有绝对文件路径，路径中不能含有 `..`。保存计划时命令按需创建父目录，目标文件已存在时会拒绝。先 `--inspect` 该计划，只读核对物理实例、数据库、表、迁移前缀和指纹，再用同一计划 `--apply ... --write` 和对应 `verify`。`--module` 预览的 `--plan` 不读配置或数据库；`--output` 必须配 `--write`，`--inspect` 拒绝写入。部分登记、前像不符、来源不同或结构漂移都失败关闭；未知结果先 inspect 原计划，不能换计划重放。目标为空、只把已有表当结构模板时不需要 adopt，按正常 `up` 建表。
 
 ### 模型结构演进
 

@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const USAGE: &str = "用法：cargo migrate -- control export-sql --output .local-tests/control-init.sql [--plan|--write]";
+const USAGE: &str = "用法：cargo migrate -- control export-sql --output <源码检出之外的新私有绝对路径> [--plan|--write]";
 
 pub(super) fn parse(args: &[String]) -> Result<Command, Box<dyn Error>> {
     let mut output = None;
