@@ -6,9 +6,10 @@ use std::{
     time::Duration,
 };
 
-use chrono::{SecondsFormat, Utc};
 use serde_json::{Value, json};
+use time::OffsetDateTime;
 
+use crate::utc_timestamp::rfc3339_micros_z;
 use crate::{
     Result,
     recovery::clone::native::{digest, json as json_io},
@@ -125,7 +126,7 @@ fn handle(
         return response(stream, 400, b"");
     }
     let value = json!({
-        "received_at": Utc::now().to_rfc3339_opts(SecondsFormat::Micros, true),
+        "received_at": rfc3339_micros_z(OffsetDateTime::now_utc()),
         "remote": remote.to_string(),
         "payload": payload,
     });

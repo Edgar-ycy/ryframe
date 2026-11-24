@@ -4,9 +4,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use chrono::{SecondsFormat, Utc};
 use serde_json::{Value, json};
+use time::OffsetDateTime;
 
+use crate::utc_timestamp::rfc3339_micros_z;
 use crate::{
     Result,
     cli::MonitoringBindOptions,
@@ -161,7 +162,7 @@ fn binding_value(
             "external_receivers": [],
         },
         "allowed_writes": ["alertmanager-data", "configs", "evidence", "processes", "prometheus-data"],
-        "created_at": Utc::now().to_rfc3339_opts(SecondsFormat::Micros, true),
+        "created_at": rfc3339_micros_z(OffsetDateTime::now_utc()),
     })
 }
 

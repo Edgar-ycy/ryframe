@@ -7,10 +7,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use chrono::{SecondsFormat, Utc};
 use serde_json::{Map, Value, json};
+use time::OffsetDateTime;
 use uuid::Uuid;
 
+use crate::utc_timestamp::rfc3339_micros_z;
 use crate::{
     Result,
     recovery::{
@@ -524,5 +525,5 @@ pub(crate) fn expect_root(run: &Path, expected: BTreeSet<&str>) -> Result<()> {
 }
 
 fn utc_now() -> String {
-    Utc::now().to_rfc3339_opts(SecondsFormat::Micros, true)
+    rfc3339_micros_z(OffsetDateTime::now_utc())
 }

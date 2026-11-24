@@ -9,7 +9,7 @@ enum Precision {
 }
 
 pub(crate) fn rfc3339(value: OffsetDateTime) -> String {
-    encode(value, Precision::AutoSi)
+    encode(value, Precision::AutoSi, "+00:00")
 }
 
 pub(crate) fn now_rfc3339() -> String {
@@ -17,14 +17,18 @@ pub(crate) fn now_rfc3339() -> String {
 }
 
 pub(crate) fn rfc3339_micros(value: OffsetDateTime) -> String {
-    encode(value, Precision::Micros)
+    encode(value, Precision::Micros, "+00:00")
+}
+
+pub(crate) fn rfc3339_micros_z(value: OffsetDateTime) -> String {
+    encode(value, Precision::Micros, "Z")
 }
 
 pub(crate) fn rfc3339_seconds_or_micros(value: OffsetDateTime) -> String {
-    encode(value, Precision::SecondsOrMicros)
+    encode(value, Precision::SecondsOrMicros, "+00:00")
 }
 
-fn encode(value: OffsetDateTime, precision: Precision) -> String {
+fn encode(value: OffsetDateTime, precision: Precision, suffix: &str) -> String {
     let utc = value.to_offset(UtcOffset::UTC);
     let mut encoded = format!(
         "{}-{:02}-{:02}T{:02}:{:02}:{:02}",
@@ -52,7 +56,7 @@ fn encode(value: OffsetDateTime, precision: Precision) -> String {
     if let Some((fraction, digits)) = fraction {
         encoded.push_str(&format!(".{fraction:0digits$}"));
     }
-    encoded.push_str("+00:00");
+    encoded.push_str(suffix);
     encoded
 }
 

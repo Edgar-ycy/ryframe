@@ -6,10 +6,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use chrono::{SecondsFormat, Utc};
 use serde_json::{Map, Value, json};
+use time::OffsetDateTime;
 use uuid::Uuid;
 
+use crate::utc_timestamp::rfc3339_micros_z;
 use crate::{
     Result,
     recovery::monitoring::{
@@ -384,8 +385,8 @@ pub(crate) fn verify_delivery_with_timeout(
     timeout: Duration,
 ) -> Result<Value> {
     let probe = Uuid::new_v4().simple().to_string();
-    let started = Utc::now();
-    let started_text = started.to_rfc3339_opts(SecondsFormat::Micros, true);
+    let started = OffsetDateTime::now_utc();
+    let started_text = rfc3339_micros_z(started);
     let endpoint = format!(
         "{}/api/v2/alerts",
         binding["endpoints"]["alertmanager"]
@@ -454,14 +455,14 @@ pub(crate) fn verify_delivery_with_timeout(
 fn alert_body(
     binding: &Value,
     probe: &str,
-    started: chrono::DateTime<Utc>,
+    started: OffsetDateTime,
     resolved: bool,
 ) -> Result<Vec<u8>> {
-    let now = Utc::now();
+    let now = OffsetDateTime::now_utc();
     let end = if resolved {
-        now - chrono::Duration::seconds(1)
+        now - time::Duration::seconds(1)
     } else {
-        now + chrono::Duration::minutes(10)
+        now + time::Duration::minutes(10)
     };
     Ok(serde_json::to_vec(&json!([{
         "labels": {
@@ -471,8 +472,8 @@ fn alert_body(
             "probe_id": probe,
         },
         "annotations": {"summary": "RyFrame 隔离监控投递验收"},
-        "startsAt": started.to_rfc3339_opts(SecondsFormat::Micros, true),
-        "endsAt": end.to_rfc3339_opts(SecondsFormat::Micros, true),
+        "startsAt": rfc3339_micros_z(started),
+        "endsAt": rfc3339_micros_z(end),
         "generatorURL": binding["endpoints"]["prometheus"],
     }]))?)
 }
@@ -579,5 +580,5 @@ pub(crate) fn probe_event(
 }
 
 fn utc_now() -> String {
-    Utc::now().to_rfc3339_opts(SecondsFormat::Micros, true)
+    rfc3339_micros_z(OffsetDateTime::now_utc())
 }

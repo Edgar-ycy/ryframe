@@ -3,8 +3,8 @@ use std::{
     path::Path,
 };
 
-use chrono::{SecondsFormat, Utc};
 use serde_json::{Map, Value, json};
+use time::OffsetDateTime;
 
 use super::{
     contract::{
@@ -13,6 +13,7 @@ use super::{
     },
     receipts::{process_trees, read_start, validate_close, validate_observation, validate_result},
 };
+use crate::utc_timestamp::rfc3339_micros_z;
 use crate::{Result, recovery::clone::native::resources::common};
 
 pub(crate) fn status(backend: &Path, binding_path: &Path) -> Result<Value> {
@@ -210,5 +211,5 @@ fn require_closed(url: &str, port: u16) -> Result<()> {
 }
 
 fn utc_now() -> String {
-    Utc::now().to_rfc3339_opts(SecondsFormat::Micros, true)
+    rfc3339_micros_z(OffsetDateTime::now_utc())
 }
