@@ -84,7 +84,7 @@ pub(super) fn link(
     }))
 }
 
-fn check_generation(
+pub(super) fn check_generation(
     run: &Path,
     phase: &Path,
     third: &Restart<'_>,

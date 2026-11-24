@@ -122,7 +122,7 @@ fn parent_identity(backend: &Path, path: &Path) -> Result<(u64, u64)> {
     common::device_inode_for(path, &fs::symlink_metadata(path)?)
 }
 
-fn guard_identity(target: &Path) -> Result<(u64, u64)> {
+pub(in crate::recovery::clone::native) fn guard_identity(target: &Path) -> Result<(u64, u64)> {
     let path = target.join(Role::Target.guard_name());
     let metadata = fs::symlink_metadata(&path)?;
     if !metadata.is_file()

@@ -66,6 +66,106 @@ fn registered(runtime: &mut FakeRuntime) -> Result<Value> {
     registration::load(runtime, &backend, &context, true)
 }
 
+fn publish_restart_fixture(
+    run: &Path,
+    number: u64,
+    operation: &str,
+    previous: &Value,
+    rustfs: &Value,
+) -> (Value, Value) {
+    let (status, kind, file) = if operation == "restart" {
+        (
+            "services_restarted",
+            "reference-fixture-service-generation",
+            "restart.json",
+        )
+    } else {
+        (
+            "redis_restarted",
+            "reference-fixture-redis-generation",
+            "restart-redis.json",
+        )
+    };
+    let output = run.join(format!("lifecycle-{number:04}"));
+    fs::create_dir(&output).unwrap();
+    let proof = json!({"kind":kind,"run":run,"attempt":number,
+        "previous_generation":previous,"rustfs":rustfs});
+    let generation = output.join(file);
+    json_io::write_new(&generation, &proof).unwrap();
+    let path = state::result_path(run, number);
+    json_io::write_new(
+        &path,
+        &json!({"kind":"reference-fixture-service-lifecycle","run":run,"operation":operation,
+            "status":status,"generation":binding(&generation).unwrap(),"previous_generation":previous}),
+    )
+    .unwrap();
+    let attempt = json!({"number":number,"stage":"fixture-services","mode":operation,"status":"passed",
+        "result":binding(&path).unwrap(),"sources":{"previous_generation":previous}});
+    (attempt, proof)
+}
+
+#[test]
+fn redis_only_chain_keeps_the_original_rustfs_anchor_and_rejects_detached_predecessors() {
+    let runtime = FakeRuntime::new();
+    let run = &runtime.fixture.run;
+    let rustfs = json!({"request":{"path":run.join("lifecycle-0004/rustfs/request.json")},
+        "storage":{"tree":{"path":run.join("lifecycle-0004/rustfs/rustfs-tree.json")}}});
+    let (first, expected) =
+        publish_restart_fixture(run, 4, "restart", &json!({"kind":"initial"}), &rustfs);
+    let (middle, _) = publish_restart_fixture(run, 5, "restart-redis", &first["result"], &rustfs);
+    let (latest, current) =
+        publish_restart_fixture(run, 6, "restart-redis", &middle["result"], &rustfs);
+    let ledger = json!({"attempts":[first,middle,latest]});
+    assert_eq!(
+        registration::inherited_rustfs(run, &ledger, &current).unwrap(),
+        Some(expected)
+    );
+
+    let mut invalid = current.clone();
+    invalid["previous_generation"] = ledger["attempts"][2]["result"].clone();
+    assert!(registration::inherited_rustfs(run, &ledger, &invalid).is_err());
+    invalid = current.clone();
+    invalid["rustfs"]["storage"]["tree"]["path"] = json!(run.join("other-tree.json"));
+    assert!(registration::inherited_rustfs(run, &ledger, &invalid).is_err());
+    let missing = json!({"attempts":[ledger["attempts"][1],ledger["attempts"][2]]});
+    assert!(registration::inherited_rustfs(run, &missing, &current).is_err());
+    let other = FakeRuntime::new();
+    assert!(registration::inherited_rustfs(&other.fixture.run, &ledger, &current).is_err());
+}
+
+#[test]
+fn redis_only_predecessor_requires_the_exact_incomplete_cleanup_incident() {
+    let fixture = FakeRuntime::new();
+    let run = &fixture.fixture.run;
+    let output = run.join("incident-fixture");
+    fs::create_dir(&output).unwrap();
+    let request = json!({"port":34219});
+    let runtime = json!({"output":output,"supervisor":{"pid":31},"process":{"pid":32},
+        "redis":{"port":request["port"]}});
+    let runtime_path = output.join("runtime.json");
+    let failure_path = output.join("failed.json");
+    json_io::write_new(&runtime_path, &runtime).unwrap();
+    json_io::write_new(&failure_path, &json!({"cleanup_completed":false})).unwrap();
+    let incident = json!({"kind":history::evidence::INCOMPLETE_REDIS_CLEANUP,
+        "runtime":binding(&runtime_path).unwrap(),"failure":binding(&failure_path).unwrap(),
+        "supervisor":runtime["supervisor"],"process":runtime["process"],"port":request["port"],
+        "normal_job_exit_proof":null});
+    restart_redis::require_incident(run, &request, &runtime, &incident, true).unwrap();
+    restart_redis::require_incident(run, &request, &runtime, &incident, false).unwrap();
+
+    let legacy = json!({"kind":"windows-redis-accepted-failure"});
+    restart_redis::require_incident(run, &request, &runtime, &legacy, false).unwrap();
+    assert!(restart_redis::require_incident(run, &request, &runtime, &legacy, true).is_err());
+    let mut changed = incident.clone();
+    changed["normal_job_exit_proof"] = json!({});
+    assert!(restart_redis::require_incident(run, &request, &runtime, &changed, true).is_err());
+    changed = incident.clone();
+    changed["process"]["pid"] = json!(33);
+    assert!(restart_redis::require_incident(run, &request, &runtime, &changed, true).is_err());
+    json_io::write_replace(&failure_path, &json!({"cleanup_completed":true})).unwrap();
+    assert!(restart_redis::require_incident(run, &request, &runtime, &incident, true).is_err());
+}
+
 #[test]
 fn frozen_requests_tree_results_and_launch_evidence_must_agree() {
     let mut runtime = frozen();

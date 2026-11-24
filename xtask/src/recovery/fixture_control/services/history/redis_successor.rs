@@ -4,7 +4,7 @@ use std::path::Path;
 use serde_json::{Value, json};
 
 use super::{
-    evidence::{bound, check, exact, path_is, read},
+    evidence::{INCOMPLETE_REDIS_CLEANUP, bound, check, exact, path_is, read, restart_generation},
     generation,
 };
 use crate::{
@@ -35,12 +35,7 @@ pub(super) fn validate(
             && result["next_operation"] == "close",
         "Redis 单独接续未绑定唯一活跃前代或夹具状态不可用",
     )?;
-    let predecessor = bound(run, previous)?;
-    check(
-        predecessor["operation"] == "restart" && predecessor["status"] == "services_restarted",
-        "Redis 单独接续要求已登记的普通重启前代",
-    )?;
-    let predecessor = bound(run, &predecessor["generation"])?;
+    let predecessor = restart_generation(run, previous)?;
     let root = run.join(format!("lifecycle-{number:04}"));
     check(
         path_is(
@@ -109,8 +104,10 @@ fn check_generation(
     let backend = crate::workspace::root_dir();
     let incident = host_control::accepted_failure(&backend, &old_request, old_runtime, false)?;
     check(
-        bound(run, &proof["incident"])? == incident,
-        "Redis 单独接续不属于原已接受的完整清理事故",
+        (previous["kind"] != "reference-fixture-redis-generation"
+            || incident["kind"] == INCOMPLETE_REDIS_CLEANUP)
+            && bound(run, &proof["incident"])? == incident,
+        "Redis 单独接续未绑定原已确认事故或当前前驱不支持该事故证据",
     )?;
     let original = read(&run.join("redis/request.json"))?;
     let request = bound(run, &redis["request"])?;

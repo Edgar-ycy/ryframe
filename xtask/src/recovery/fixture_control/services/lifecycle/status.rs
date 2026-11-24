@@ -51,10 +51,15 @@ pub(super) fn run(runtime: &mut dyn Runtime, context: &Context) -> Result<Value>
                     let proof =
                         restart_redis::observe_incident(runtime, context, &history, &services)
                             .map_err(|_| original)?;
+                    let redis = if proof["kind"] == history::evidence::INCOMPLETE_REDIS_CLEANUP {
+                        "failed-incomplete-cleanup"
+                    } else {
+                        "failed-cleaned"
+                    };
                     reconciliation = json!({"owner":context.value["sources"]["state_before"],
                     "redis_incident":proof});
                     next = "restart-redis";
-                    json!({"redis":"failed-cleaned","rustfs":"running","termination":null})
+                    json!({"redis":redis,"rustfs":"running","termination":null})
                 }
             };
         if !observations["termination"].is_null() {

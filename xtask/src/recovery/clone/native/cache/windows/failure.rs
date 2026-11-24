@@ -77,6 +77,16 @@ fn read_failure(
         {
             return Err("Windows Redis 失败收据不属于原请求、启动意图或取消".into());
         }
+        if let Some(runtime) = published
+            && records.required("failed.json")?["cleanup_completed"] == false
+        {
+            let proof =
+                super::observe::incident::incomplete_cleanup(backend, request, runtime, live)?;
+            if files(output)? != bindings {
+                return Err("Windows Redis 事故目录证据在核验期间变化".into());
+            }
+            return Ok(proof);
+        }
         let proof = evidence(&launch, &records)?;
         let runtime = published
             .map(|runtime| require_published(&launch, &records, runtime))

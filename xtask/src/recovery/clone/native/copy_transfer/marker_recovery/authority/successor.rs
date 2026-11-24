@@ -8,6 +8,7 @@ use crate::{
     recovery::{clone::native::digest, fixture_control::services::history},
 };
 
+mod continued;
 #[path = "successor/incident.rs"]
 mod incident;
 #[path = "successor/redis_incident.rs"]
@@ -58,12 +59,22 @@ impl<'a> Restart<'a> {
     }
 }
 
-pub(super) fn load(backend: &Path, run: &Path, target: &Target) -> Result<Fixture> {
+pub(super) fn load(
+    backend: &Path,
+    run: &Path,
+    target: &Target,
+    completed: bool,
+) -> Result<Fixture> {
     let manifest = common::binding(&run.join("manifest.json"))?;
     history::validate_manifest(&common::read_bound(backend, &manifest, "原夹具服务清单")?)?;
     let saved = state::load(run, true)?;
     let ledger = history::validate(run, &saved, true, true)?;
-    let attempts = state::attempts(&saved)?;
+    let all_attempts = state::attempts(&saved)?;
+    let (ledger, attempts, fifth) = continued::split(&ledger, all_attempts, completed)?;
+    if completed && fifth.is_none() {
+        return Err("完整复制后的标记恢复只接受原第四代的第五代后继".into());
+    }
+    let attempts = attempts.as_slice();
     let (first, second, third, redis) = restarts(&ledger, attempts)?;
     let mut evidence = Evidence {
         backend,
@@ -101,7 +112,16 @@ pub(super) fn load(backend: &Path, run: &Path, target: &Target) -> Result<Fixtur
     let mut lineage = prior["lineage"].clone();
     lineage["accepted_redis_failure"] = accepted;
     let current = fixture_binding(&manifest, &redis, &external, Some(lineage));
-    finish_fixture(evidence, target, &redis, current)
+    let Some(fifth) = &fifth else {
+        return finish_fixture(evidence, target, &redis, current);
+    };
+    let active = Restart::read(&mut evidence, fifth)?;
+    let mut accepted = continued::link(&mut evidence, run, initial, &redis, fifth, &active)?;
+    accepted["previous_fixture_sha256"] = json!(digest::plan_hash(&current)?);
+    let mut lineage = current["lineage"].clone();
+    lineage["post_copy_redis_failure"] = accepted;
+    let current = fixture_binding(&manifest, &active, &external, Some(lineage));
+    finish_fixture(evidence, target, &active, current)
 }
 
 fn fixture(

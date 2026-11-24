@@ -211,15 +211,15 @@ cache 两项生命周期原语保留独立进程的整次 180 秒边界和原 4 
 
 Windows 本地夹具在首次审阅前，通过工具配置的 `[verification.windows_redis]` 绑定绝对 `redis-server.exe` 路径、SHA-256 及全部同目录依赖 DLL。原生 v3 启动、观察与关闭使用 Windows 进程创建身份、监督 Job、独占回环端口和同一认证连接；正常关闭须有原 Job 清空及精确进程退出证明。未就绪、超时或未知结果保留原收据，按同一账本显式核对。首次 RustFS、Redis 和五桶初始化在正式恢复演练内连续执行，后续阶段沿用已登记的隔离资源。现行生命周期使用已登记的 Windows 工具和运行代次。旧 Redis 收据仅用于只读历史核对，保留原始文件、摘要与前后关系。认证就绪、进程身份、监督树及对外 ready 必须绑定同一代次。按实际阶段核对超时或失败，保留原收据及尚未确认的进程状态。停止失败后只读核对原退出证据。 Windows Redis v3 的原 Job 退出记录为非零退出码，且 Redis 与 RustFS 的原退出证明都早于一次失败的服务关闭时，先检查 `services status`。仅当返回 `reconcile`，才用 `cargo xtask check recovery fixture services reconcile --review <review-receipt> --environment <bootstrap.json> --owner-binding <state.json> --write` 接续，其中 owner 使用状态返回的当前原文件。工具核对原关闭阶段未发布停止结果、原 Redis 进程及 Job 完整退出和 RustFS 已停止的完整成员，并复核三处端口。和解记录保留原退出码与证明，两个服务均不再接收停止请求。和解成功后，按状态返回的 `restart` 在同一账本追加新代次。 若 Windows 重启前的同一登记代次留有 Redis 已接受但 Job 清理未确认的失败收据，以及 RustFS 资源不足（1450）的监督和成员关闭失败收据，先查看 status。只有工具确认原身份早于内核启动刻度、原进程不再运行、三个登记端口空闲、全部原证据和资源绑定一致并给出 recover 后，才用返回的当前 owner 追加事故核对；原失败收据保留，仍无正常关闭证明。按新状态执行 restart 后复用原资源；第三次重启用于原复制的 Redis 标记恢复时，必须有这条直接前驱，且其他代次无写入意图。完整空前像才允许一次原子写入，失联只核对原意图。不会据此认定正式恢复完成或重新初始化数据库和对象桶。 Windows 来源夹具的 RustFS 原整树已关闭且复制仍绑定原对象存储时，可在原 `source_to_seed` 运行用 `cargo xtask check recovery clone storage --run-dir <原运行> --side source --operation restart --request <原绑定请求> --write` 单独启动来源 RustFS。原请求、夹具审阅、已通过的服务代次、完整成员停止、配置摘要和数据目录必须一致；Windows 以不继承调用端句柄的短时控制器执行启动，由控制器通过受管文件回传结果，并记录新内核身份和核验后的独占监听。若无法确认控制器结果，保留原票据和阶段收据，按实际进程身份与端口状态核对后接续。该步骤不启动 Redis、不重做对象桶或数据库初始化；原复制仍须按原导出核对来源对象。
 
-死亡控制器通过同一入口的 `recover --review <review-receipt> --environment <bootstrap.json> --owner-binding <owner-file-binding-json-from-status> --write` 显式恢复。它只清理已核对的本地控制锁并追加账本，不停止服务或重放未收尾操作；PID 已复用、来源改变、未知启动或关闭结果均须保留现场核对完整前后像。已关闭代次不能再签发 fresh-target 请求；已登记目标只接受严格核验过的已收尾生命周期追加。隔离参考夹具的 Redis 禁用持久化；服务重启成功不能证明已初始化的目标前像仍成立。若 owner 或 sentinel 已丢失，保留原初始化和失败证据，严格关闭原服务树后新建隔离目标；不得补写标记、忽略进程代次或重放旧初始化。此限制针对验收夹具，不要求应用 Redis 服务采用同一持久化策略。
+死亡控制器通过同一入口的 `recover --review <review-receipt> --environment <bootstrap.json> --owner-binding <owner-file-binding-json-from-status> --write` 显式恢复。它只清理已核对的本地控制锁并追加账本，不停止服务或重放未收尾操作；PID 已复用、来源改变、未知启动或关闭结果均须保留现场核对完整前后像。已关闭代次不能再签发 fresh-target 请求；已登记目标只接受严格核验过的已收尾生命周期追加。隔离参考夹具的 Redis 禁用持久化。服务重启后须另行核对已初始化目标的完整前像。若 owner 或 sentinel 已丢失，保留原初始化和失败证据，按服务状态判断是否满足下述显式接续和标记恢复条件。其余场景仍按原流程关闭服务树并新建隔离目标。此持久化设置用于验收夹具。
 
-当 Windows Redis 的原进程和 Job 已完整关闭、RustFS 仍以原身份运行，且 `status` 返回 `restart-redis` 时，使用该结果中的当前账本路径显式接续 Redis。
+当原 RustFS 仍以登记身份运行且 `status` 返回 `restart-redis` 时，使用该结果中的当前账本路径显式接续 Windows Redis。原 Job 完整关闭的场景使用退出与清理收据。同一次 Windows 启动期间发生清理未确认事故时，工具绑定原启动和失败收据，在原端口实际确认可绑定前后各查一次原 Redis 和监督器的进程身份，均须确认退出。历史记录保留该事故及其关闭证明的实际状态。
 
 ```text
 cargo xtask check recovery fixture services restart-redis --review <review-receipt> --environment <bootstrap.json> --owner-binding <state.json> --write
 ```
 
-接续阶段绑定原 Redis 的退出与清理收据，只创建一个 Redis 后继。原 RustFS 进程、数据目录、数据库和对象数据继续沿用。随后用原复制账本的 `target-cache-markers` 核对上一代已确认的标记结果及新代的完整初始像。仅在新代的两个标记和受管 namespace 均为空时执行原子写入。写入结果未知时，用 `target-cache-markers` 的 `reconcile` 模式读取确认。
+每次接续只创建一个 Redis 后继。原 RustFS 进程、数据目录、数据库和对象数据继续沿用。随后用原复制账本的 `target-cache-markers` 核对此前已确认的标记结果及新代的完整初始像。已经完成复制并登记复制后准备的场景，仅在准备已失败、尚未创建运行配置或启动产品，并能核对原完成收据和上一代标记证明时接续。仅在新代的两个标记和受管 namespace 均为空时执行原子写入。写入结果未知时，用 `target-cache-markers` 的 `reconcile` 模式读取确认。
 
 记录时间线、影响租户、请求或任务 ID、根因、处置和验证结果。配置字段以配置结构为准，指标和告警以部署资产为准，不在本文维护重复清单。
 

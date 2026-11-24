@@ -39,6 +39,7 @@ impl Receipts {
         let lineage = &recovery.binding["fixture"]["lineage"];
         let prior_marker_root = if lineage.get("reboot_incident").is_some()
             || lineage.get("accepted_redis_failure").is_some()
+            || lineage.get("post_copy_redis_failure").is_some()
         {
             Some(Inputs::directory(&root)?)
         } else {
@@ -58,7 +59,10 @@ impl Receipts {
             prior_marker_root,
             prior: None,
         };
-        if let Some(incident) = lineage.get("accepted_redis_failure") {
+        if let Some(incident) = lineage
+            .get("post_copy_redis_failure")
+            .or_else(|| lineage.get("accepted_redis_failure"))
+        {
             let (prior, proof) = confirmed::Prior::load(
                 &receipts,
                 &incident["previous_fixture_sha256"],
@@ -79,11 +83,25 @@ impl Receipts {
         if let Some(guard) = &self.prior_marker_root {
             guard.check()?;
             let root = self.directory.parent().ok_or("缺少标记逻辑运行目录")?;
-            let allowed = self.prior.as_ref().map(confirmed::Prior::intent);
-            reject_prior_intents(root, &self.directory, allowed, |path| {
+            let verify = |path: &std::path::Path| {
                 common::local_directory(&self.backend, path, "先前 Redis 标记代次目录")?;
                 Ok(())
-            })?;
+            };
+            if self.binding.get("completed_copy").is_some() {
+                reject_prior_chain(
+                    root,
+                    &self.directory,
+                    |path| self.prior.as_ref().is_some_and(|p| p.allows(path)),
+                    verify,
+                )?;
+            } else {
+                reject_prior_intents(
+                    root,
+                    &self.directory,
+                    self.prior.as_ref().map(confirmed::Prior::intent),
+                    verify,
+                )?;
+            }
             guard.check()?;
         }
         Ok(())
@@ -283,6 +301,20 @@ fn reject_prior_intents(
     allowed: Option<&std::path::Path>,
     verify_directory: impl Fn(&std::path::Path) -> Result<()>,
 ) -> Result<()> {
+    reject_prior_chain(
+        root,
+        current,
+        |path| allowed == Some(path),
+        verify_directory,
+    )
+}
+
+fn reject_prior_chain(
+    root: &std::path::Path,
+    current: &std::path::Path,
+    allowed: impl Fn(&std::path::Path) -> bool,
+    verify_directory: impl Fn(&std::path::Path) -> Result<()>,
+) -> Result<()> {
     for entry in fs::read_dir(root)? {
         let entry = entry?;
         if entry.path() == current {
@@ -301,7 +333,7 @@ fn reject_prior_intents(
         verify_directory(&entry.path())?;
         let intent = entry.path().join("intent.json");
         match fs::symlink_metadata(&intent) {
-            Ok(_) if allowed == Some(intent.as_path()) => {}
+            Ok(_) if allowed(intent.as_path()) => {}
             Ok(_) => return Err("先前 Redis 代次存在原写入意图，禁止跨代次发送标记写入".into()),
             Err(error) if error.kind() == ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
