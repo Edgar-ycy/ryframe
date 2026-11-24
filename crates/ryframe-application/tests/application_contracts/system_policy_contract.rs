@@ -22,6 +22,7 @@ use ryframe_application::{
     system::{content::*, identity::*, operations::*, platform::*},
 };
 use ryframe_kernel::{ActorContext, AppError, DataScope};
+use time::{Duration as TimeDuration, OffsetDateTime, macros::datetime};
 
 #[test]
 fn global_business_requires_system_tenant_even_without_request_binding() {
@@ -46,7 +47,7 @@ fn diagnostic_menu(status: &str, menu_type: &str, perm_id: Option<i64>) -> Diagn
     }
 }
 
-fn file_reservation(status: &str, expires_at: chrono::DateTime<Utc>) -> FileCleanupRecord {
+fn file_reservation(status: &str, expires_at: OffsetDateTime) -> FileCleanupRecord {
     FileCleanupRecord {
         id: 1,
         tenant_id: "tenant-a".to_owned(),
@@ -271,21 +272,27 @@ fn storage_errors_map_to_stable_application_errors() {
 
 #[test]
 fn expired_file_reservations_follow_cleanup_lifecycle() {
-    let now = Utc::now();
-    let grace = Duration::minutes(5);
-    let pending = file_reservation(FILE_UPLOAD_STATUS_PENDING, now - Duration::seconds(1));
+    let now = datetime!(2026-08-21 01:02:03.654321 UTC);
+    let grace = TimeDuration::minutes(5);
+    let pending = file_reservation(FILE_UPLOAD_STATUS_PENDING, now);
     assert_eq!(
         plan_expired_reservation(&pending, now, grace),
         Some(ExpiredReservationPlan::BeginCleanup {
             cleanup_after: now + grace,
         })
     );
-    let cleanup = file_reservation(FILE_UPLOAD_STATUS_CLEANUP, now - Duration::seconds(1));
+    let cleanup = file_reservation(
+        FILE_UPLOAD_STATUS_CLEANUP,
+        now - TimeDuration::microseconds(1),
+    );
     assert_eq!(
         plan_expired_reservation(&cleanup, now, grace),
         Some(ExpiredReservationPlan::DeleteCleanup)
     );
-    let active = file_reservation(FILE_UPLOAD_STATUS_PENDING, now + Duration::seconds(1));
+    let active = file_reservation(
+        FILE_UPLOAD_STATUS_PENDING,
+        now + TimeDuration::microseconds(1),
+    );
     assert_eq!(plan_expired_reservation(&active, now, grace), None);
     let mut deleted = cleanup;
     deleted.del_flag = "1".to_owned();

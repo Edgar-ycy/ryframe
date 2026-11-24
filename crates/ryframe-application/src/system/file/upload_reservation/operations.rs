@@ -247,7 +247,7 @@ impl FileService {
                 &existing.tenant_id,
                 existing.id,
                 reservation_token,
-                Utc::now(),
+                OffsetDateTime::now_utc(),
             )
             .await
         {
@@ -321,7 +321,7 @@ impl FileService {
                 &reservation.tenant_id,
                 reservation.id,
                 reservation_token,
-                Utc::now(),
+                OffsetDateTime::now_utc(),
             )
             .await;
         match result {

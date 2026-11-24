@@ -1,8 +1,8 @@
 use std::{sync::Arc, time::Duration};
 
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sha2::{Digest, Sha256};
+use time::{Duration as TimeDuration, OffsetDateTime};
 
 use crate::{
     TransactionAuditMode,
@@ -34,25 +34,23 @@ const JANITOR_MAX_ERROR_BACKOFF_SECONDS: u64 = 300;
 const CLEANUP_RETRY_BACKOFF_SECONDS: i64 = 60;
 const CLEANUP_CLAIM_SECONDS: i64 = 300;
 
-pub(super) fn reservation_expires_at(now: DateTime<Utc>) -> DateTime<Utc> {
-    now + chrono::Duration::minutes(RESERVATION_TTL_MINUTES)
+pub(super) fn reservation_expires_at(now: OffsetDateTime) -> OffsetDateTime {
+    now + TimeDuration::minutes(RESERVATION_TTL_MINUTES)
 }
 
-fn cleanup_grace(storage: &dyn ArtifactStore) -> chrono::Duration {
+fn cleanup_grace(storage: &dyn ArtifactStore) -> TimeDuration {
     cleanup_grace_for_bound(storage.late_put_completion_bound())
 }
 
-fn cleanup_grace_for_bound(late_completion_bound: Duration) -> chrono::Duration {
+fn cleanup_grace_for_bound(late_completion_bound: Duration) -> TimeDuration {
     let late_completion_seconds =
         i64::try_from(late_completion_bound.as_secs()).unwrap_or(i64::MAX / 2);
-    chrono::Duration::seconds(
-        MIN_CLEANUP_GRACE_SECONDS.max(late_completion_seconds.saturating_mul(2)),
-    )
+    TimeDuration::seconds(MIN_CLEANUP_GRACE_SECONDS.max(late_completion_seconds.saturating_mul(2)))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExpiredReservationPlan {
-    BeginCleanup { cleanup_after: DateTime<Utc> },
+    BeginCleanup { cleanup_after: OffsetDateTime },
     DeleteCleanup,
 }
 
@@ -64,8 +62,8 @@ enum CompensationPlan {
 
 pub fn plan_expired_reservation(
     reservation: &FileCleanupRecord,
-    now: DateTime<Utc>,
-    cleanup_grace: chrono::Duration,
+    now: OffsetDateTime,
+    cleanup_grace: TimeDuration,
 ) -> Option<ExpiredReservationPlan> {
     if reservation.del_flag != FILE_DEL_FLAG_NORMAL
         || !reservation

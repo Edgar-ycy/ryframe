@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sha2::{Digest, Sha256};
+use time::{Duration, OffsetDateTime};
 
 use crate::{
     TransactionAuditMode,
@@ -22,7 +22,7 @@ mod upload_reservation;
 pub use policy::UploadPolicy;
 pub use support::{map_storage_read_error, map_storage_write_error};
 
-use support::{generate_storage_filename, validate_extension};
+use support::{generate_storage_filename, upload_date_prefix, validate_extension};
 pub use upload_reservation::{ExpiredReservationPlan, plan_expired_reservation};
 use upload_reservation::{ReservationOutcome, UploadReservationGuard, storage_error_is_not_found};
 
@@ -265,9 +265,9 @@ impl FileService {
         } = prepare_upload_data(self.content.as_ref(), original_name, data, compress).await?;
 
         let storage_name = generate_storage_filename(&final_name);
-        let date_prefix = Utc::now().format("%Y/%m/%d").to_string();
+        let date_prefix = upload_date_prefix(OffsetDateTime::now_utc());
         let object_key = format!("{tenant_id}/{date_prefix}/{storage_name}");
-        let now = Utc::now();
+        let now = OffsetDateTime::now_utc();
         let reservation_token = uuid::Uuid::new_v4().to_string();
         let file_id = crate::next_id()?;
         let model = FileUploadRecord {
@@ -422,7 +422,7 @@ impl FileService {
         &self,
         tenant_id: &str,
         file_id: i64,
-        expired_before: DateTime<Utc>,
+        expired_before: OffsetDateTime,
     ) -> AppResult<bool> {
         let expected_bucket = IMPORT_BUCKET;
         let transaction = self.cleanup.begin().await?;
@@ -443,7 +443,7 @@ impl FileService {
         }
 
         let claimed_at = transaction.database_now().await?;
-        let claim_until = claimed_at + chrono::Duration::seconds(INTERNAL_DELETE_CLAIM_SECONDS);
+        let claim_until = claimed_at + Duration::seconds(INTERNAL_DELETE_CLAIM_SECONDS);
         let claim_token = uuid::Uuid::new_v4().to_string();
         if !transaction
             .claim_expired_import(
@@ -493,7 +493,7 @@ impl FileService {
                     file_id,
                     &claim_token,
                     retry_at,
-                    retry_at + chrono::Duration::seconds(INTERNAL_DELETE_RETRY_SECONDS),
+                    retry_at + Duration::seconds(INTERNAL_DELETE_RETRY_SECONDS),
                 )
                 .await
             {

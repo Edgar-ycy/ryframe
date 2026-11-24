@@ -26,7 +26,7 @@ pub(crate) async fn ensure_config_package_file_ready_in_txn(
                 tenant_id,
                 file_id,
                 CONFIG_PACKAGE_BUCKET,
-                now,
+                crate::application_ports::files::utc_time_from_chrono(now)?,
             )
             .await?
     {

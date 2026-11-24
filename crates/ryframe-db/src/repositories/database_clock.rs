@@ -1,12 +1,30 @@
 use crate::DbResultExt;
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
-use sea_orm::{ConnectionTrait, Statement};
+use sea_orm::{ConnectionTrait, Statement, TryGetable};
+use time::{OffsetDateTime, PrimitiveDateTime};
 
 /// 读取主数据库的 UTC 时钟，统一租约、过期和任务状态的时间基准。
 pub async fn utc_now<C>(database: &C) -> AppResult<DateTime<Utc>>
 where
     C: ConnectionTrait + ?Sized,
+{
+    let value = read_utc_now(database).await?;
+    Ok(DateTime::from_naive_utc_and_offset(value, Utc))
+}
+
+pub(crate) async fn utc_now_time<C>(database: &C) -> AppResult<OffsetDateTime>
+where
+    C: ConnectionTrait + ?Sized,
+{
+    let value: PrimitiveDateTime = read_utc_now(database).await?;
+    Ok(value.assume_utc())
+}
+
+async fn read_utc_now<C, T>(database: &C) -> AppResult<T>
+where
+    C: ConnectionTrait + ?Sized,
+    T: TryGetable,
 {
     let row = database
         .query_one_raw(Statement::from_string(
@@ -16,6 +34,5 @@ where
         .await
         .db()?
         .ok_or_else(|| AppError::Database("数据库时钟查询没有返回记录".into()))?;
-    let value: chrono::NaiveDateTime = row.try_get("", "db_now").db()?;
-    Ok(DateTime::from_naive_utc_and_offset(value, Utc))
+    row.try_get("", "db_now").db()
 }

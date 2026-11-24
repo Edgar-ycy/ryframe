@@ -2,8 +2,8 @@ use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{ControlDatabaseCluster, FileRepository, TenantRepository, entities::sys_file};
-use chrono::{DateTime, Utc};
 use sea_orm::{DatabaseTransaction, TransactionTrait};
+use time::{OffsetDateTime, PrimitiveDateTime};
 
 use ryframe_application::ports::files::{
     FileCleanupPersistencePort, FileCleanupRecord, FileCleanupTransaction,
@@ -40,13 +40,13 @@ impl FileCleanupPersistencePort for DatabaseFileCleanupPersistence {
             .map(|record| record.map(map_record))
     }
 
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>> {
-        crate::repositories::database_utc_now(self.database.write()).await
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime> {
+        crate::repositories::database_utc_now_time(self.database.write()).await
     }
 
     async fn find_stale_config_packages(
         &self,
-        ready_before: DateTime<Utc>,
+        ready_before: OffsetDateTime,
         limit: u64,
     ) -> ryframe_kernel::AppResult<Vec<FileCleanupRecord>> {
         FileRepository
@@ -57,7 +57,7 @@ impl FileCleanupPersistencePort for DatabaseFileCleanupPersistence {
 
     async fn find_expired_reservations(
         &self,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
         limit: u64,
     ) -> ryframe_kernel::AppResult<Vec<FileCleanupRecord>> {
         FileRepository
@@ -70,8 +70,8 @@ impl FileCleanupPersistencePort for DatabaseFileCleanupPersistence {
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
-        now: DateTime<Utc>,
-        cleanup_after: DateTime<Utc>,
+        now: OffsetDateTime,
+        cleanup_after: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         FileRepository
             .begin_expired_cleanup(
@@ -89,8 +89,8 @@ impl FileCleanupPersistencePort for DatabaseFileCleanupPersistence {
         tenant_id: &'a str,
         file_id: i64,
         claim_token: &'a str,
-        claimed_at: DateTime<Utc>,
-        claim_until: DateTime<Utc>,
+        claimed_at: OffsetDateTime,
+        claim_until: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         FileRepository
             .claim_expired_cleanup(
@@ -109,7 +109,7 @@ impl FileCleanupPersistencePort for DatabaseFileCleanupPersistence {
         tenant_id: &'a str,
         file_id: i64,
         reservation_token: &'a str,
-        cleanup_after: DateTime<Utc>,
+        cleanup_after: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         FileRepository
             .begin_cleanup(
@@ -127,8 +127,8 @@ impl FileCleanupPersistencePort for DatabaseFileCleanupPersistence {
         tenant_id: &'a str,
         file_id: i64,
         claim_token: &'a str,
-        updated_at: DateTime<Utc>,
-        retry_at: DateTime<Utc>,
+        updated_at: OffsetDateTime,
+        retry_at: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         FileRepository
             .defer_cleanup_claim(
@@ -174,8 +174,8 @@ impl FileCleanupTransaction for DatabaseFileCleanupTransaction {
             .map(|record| record.map(map_record))
     }
 
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>> {
-        crate::repositories::database_utc_now(&self.transaction).await
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime> {
+        crate::repositories::database_utc_now_time(&self.transaction).await
     }
 
     async fn claim_expired_import<'a>(
@@ -183,8 +183,8 @@ impl FileCleanupTransaction for DatabaseFileCleanupTransaction {
         tenant_id: &'a str,
         file_id: i64,
         claim_token: &'a str,
-        expired_before: DateTime<Utc>,
-        claim_until: DateTime<Utc>,
+        expired_before: OffsetDateTime,
+        claim_until: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         FileRepository
             .claim_ready_expired_import_artifact_in_txn(
@@ -202,8 +202,8 @@ impl FileCleanupTransaction for DatabaseFileCleanupTransaction {
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
-        now: DateTime<Utc>,
-        cleanup_after: DateTime<Utc>,
+        now: OffsetDateTime,
+        cleanup_after: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         FileRepository
             .mark_unreferenced_config_package_for_cleanup_in_txn(
@@ -240,7 +240,9 @@ fn map_record(file: sys_file::Model) -> FileCleanupRecord {
         storage_path: file.storage_path,
         upload_status: file.upload_status,
         reservation_token: file.reservation_token,
-        reservation_expires_at: file.reservation_expires_at,
+        reservation_expires_at: file
+            .reservation_expires_at
+            .map(PrimitiveDateTime::assume_utc),
         del_flag: file.del_flag,
     }
 }

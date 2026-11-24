@@ -1,6 +1,7 @@
 use crate::DbResultExt;
 use ryframe_kernel::AppResult;
 use sea_orm::{ColumnTrait, Condition, DatabaseTransaction, EntityTrait, QueryFilter};
+use time::{OffsetDateTime, PrimitiveDateTime};
 
 use crate::entities::sys_file;
 
@@ -16,8 +17,8 @@ impl FileRepository {
         txn: &DatabaseTransaction,
         tenant_id: &str,
         id: i64,
-        now: chrono::DateTime<chrono::Utc>,
-        cleanup_after: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
+        cleanup_after: OffsetDateTime,
     ) -> AppResult<bool> {
         sys_file::Entity::update_many()
             .col_expr(
@@ -30,11 +31,11 @@ impl FileRepository {
             )
             .col_expr(
                 sys_file::Column::ReservationExpiresAt,
-                sea_orm::sea_query::Expr::value(cleanup_after),
+                sea_orm::sea_query::Expr::value(sys_file::utc_datetime(cleanup_after)),
             )
             .col_expr(
                 sys_file::Column::UpdatedAt,
-                sea_orm::sea_query::Expr::value(now),
+                sea_orm::sea_query::Expr::value(sys_file::utc_datetime(now)),
             )
             .filter(sys_file::Column::Id.eq(id))
             .filter(sys_file::Column::TenantId.eq(tenant_id))
@@ -53,8 +54,8 @@ impl FileRepository {
         txn: &DatabaseTransaction,
         tenant_id: &str,
         id: i64,
-        now: chrono::DateTime<chrono::Utc>,
-        cleanup_after: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
+        cleanup_after: OffsetDateTime,
     ) -> AppResult<bool> {
         sys_file::Entity::update_many()
             .col_expr(
@@ -67,11 +68,11 @@ impl FileRepository {
             )
             .col_expr(
                 sys_file::Column::ReservationExpiresAt,
-                sea_orm::sea_query::Expr::value(cleanup_after),
+                sea_orm::sea_query::Expr::value(sys_file::utc_datetime(cleanup_after)),
             )
             .col_expr(
                 sys_file::Column::UpdatedAt,
-                sea_orm::sea_query::Expr::value(now),
+                sea_orm::sea_query::Expr::value(sys_file::utc_datetime(now)),
             )
             .filter(sys_file::Column::Id.eq(id))
             .filter(sys_file::Column::TenantId.eq(tenant_id))
@@ -96,8 +97,8 @@ impl FileRepository {
         txn: &DatabaseTransaction,
         tenant_id: &str,
         id: i64,
-        now: chrono::DateTime<chrono::Utc>,
-        cleanup_after: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
+        cleanup_after: OffsetDateTime,
     ) -> AppResult<bool> {
         sys_file::Entity::update_many()
             .col_expr(
@@ -110,11 +111,11 @@ impl FileRepository {
             )
             .col_expr(
                 sys_file::Column::ReservationExpiresAt,
-                sea_orm::sea_query::Expr::value(cleanup_after),
+                sea_orm::sea_query::Expr::value(sys_file::utc_datetime(cleanup_after)),
             )
             .col_expr(
                 sys_file::Column::UpdatedAt,
-                sea_orm::sea_query::Expr::value(now),
+                sea_orm::sea_query::Expr::value(sys_file::utc_datetime(now)),
             )
             .filter(sys_file::Column::Id.eq(id))
             .filter(sys_file::Column::TenantId.eq(tenant_id))
@@ -142,7 +143,7 @@ impl FileRepository {
         txn: &DatabaseTransaction,
         tenant_id: &str,
         id: i64,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<bool> {
         sys_file::Entity::update_many()
             .col_expr(
@@ -155,11 +156,11 @@ impl FileRepository {
             )
             .col_expr(
                 sys_file::Column::ReservationExpiresAt,
-                sea_orm::sea_query::Expr::value(Option::<chrono::DateTime<chrono::Utc>>::None),
+                sea_orm::sea_query::Expr::value(Option::<PrimitiveDateTime>::None),
             )
             .col_expr(
                 sys_file::Column::UpdatedAt,
-                sea_orm::sea_query::Expr::value(now),
+                sea_orm::sea_query::Expr::value(sys_file::utc_datetime(now)),
             )
             .filter(sys_file::Column::Id.eq(id))
             .filter(sys_file::Column::TenantId.eq(tenant_id))
@@ -183,7 +184,7 @@ impl FileRepository {
         tenant_id: &str,
         id: i64,
         bucket: &str,
-        updated_at: chrono::DateTime<chrono::Utc>,
+        updated_at: OffsetDateTime,
     ) -> AppResult<bool> {
         sys_file::Entity::update_many()
             .col_expr(
@@ -196,11 +197,11 @@ impl FileRepository {
             )
             .col_expr(
                 sys_file::Column::ReservationExpiresAt,
-                sea_orm::sea_query::Expr::value(Option::<chrono::DateTime<chrono::Utc>>::None),
+                sea_orm::sea_query::Expr::value(Option::<PrimitiveDateTime>::None),
             )
             .col_expr(
                 sys_file::Column::UpdatedAt,
-                sea_orm::sea_query::Expr::value(updated_at),
+                sea_orm::sea_query::Expr::value(sys_file::utc_datetime(updated_at)),
             )
             .filter(sys_file::Column::Id.eq(id))
             .filter(sys_file::Column::TenantId.eq(tenant_id))
@@ -223,7 +224,7 @@ impl FileRepository {
         txn: &DatabaseTransaction,
         tenant_id: &str,
         id: i64,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<bool> {
         sys_file::Entity::update_many()
             .col_expr(
@@ -236,11 +237,11 @@ impl FileRepository {
             )
             .col_expr(
                 sys_file::Column::ReservationExpiresAt,
-                sea_orm::sea_query::Expr::value(Option::<chrono::DateTime<chrono::Utc>>::None),
+                sea_orm::sea_query::Expr::value(Option::<PrimitiveDateTime>::None),
             )
             .col_expr(
                 sys_file::Column::UpdatedAt,
-                sea_orm::sea_query::Expr::value(now),
+                sea_orm::sea_query::Expr::value(sys_file::utc_datetime(now)),
             )
             .filter(sys_file::Column::Id.eq(id))
             .filter(sys_file::Column::TenantId.eq(tenant_id))
@@ -268,9 +269,10 @@ impl FileRepository {
         tenant_id: &str,
         id: i64,
         claim_token: &str,
-        expired_before: chrono::DateTime<chrono::Utc>,
-        claim_until: chrono::DateTime<chrono::Utc>,
+        expired_before: OffsetDateTime,
+        claim_until: OffsetDateTime,
     ) -> AppResult<bool> {
+        let expired_before = sys_file::utc_datetime(expired_before);
         sys_file::Entity::update_many()
             .col_expr(
                 sys_file::Column::UploadStatus,
@@ -282,7 +284,7 @@ impl FileRepository {
             )
             .col_expr(
                 sys_file::Column::ReservationExpiresAt,
-                sea_orm::sea_query::Expr::value(claim_until),
+                sea_orm::sea_query::Expr::value(sys_file::utc_datetime(claim_until)),
             )
             .col_expr(
                 sys_file::Column::UpdatedAt,
@@ -309,9 +311,9 @@ impl FileRepository {
                      AND (retained.status NOT IN ('succeeded', 'partial', 'failed', 'cancelled') \
                           OR retained.completed_at IS NULL OR retained.completed_at >= ?))",
                 [
-                    sea_orm::Value::from(expired_before.naive_utc()),
-                    sea_orm::Value::from(expired_before.naive_utc()),
-                    sea_orm::Value::from(expired_before.naive_utc()),
+                    sea_orm::Value::from(expired_before),
+                    sea_orm::Value::from(expired_before),
+                    sea_orm::Value::from(expired_before),
                 ],
             ))
             .exec(txn)

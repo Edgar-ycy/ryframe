@@ -7,6 +7,7 @@ use sea_orm::{
 };
 
 use crate::{Repository, entities::sys_file};
+use time::{OffsetDateTime, PrimitiveDateTime};
 
 mod cleanup;
 mod reservation_cleanup;
@@ -68,7 +69,13 @@ impl Repository<sys_file::Model, i64> for FileRepository {
     }
 
     async fn delete(&self, db: &DatabaseConnection, tenant_id: &str, id: i64) -> AppResult<()> {
-        soft_delete_entity!(sys_file, db, tenant_id, id)
+        soft_delete_entity!(
+            sys_file,
+            db,
+            tenant_id,
+            id,
+            sys_file::utc_datetime(OffsetDateTime::now_utc())
+        )
     }
 }
 
@@ -255,7 +262,7 @@ impl FileRepository {
         tenant_id: &str,
         id: i64,
         reservation_token: &str,
-        updated_at: chrono::DateTime<chrono::Utc>,
+        updated_at: OffsetDateTime,
     ) -> AppResult<bool>
     where
         C: ConnectionTrait,
@@ -271,11 +278,11 @@ impl FileRepository {
             )
             .col_expr(
                 sys_file::Column::ReservationExpiresAt,
-                sea_orm::sea_query::Expr::value(Option::<chrono::DateTime<chrono::Utc>>::None),
+                sea_orm::sea_query::Expr::value(Option::<PrimitiveDateTime>::None),
             )
             .col_expr(
                 sys_file::Column::UpdatedAt,
-                sea_orm::sea_query::Expr::value(updated_at),
+                sea_orm::sea_query::Expr::value(sys_file::utc_datetime(updated_at)),
             )
             .filter(sys_file::Column::Id.eq(id))
             .filter(sys_file::Column::TenantId.eq(tenant_id))
@@ -295,16 +302,16 @@ impl FileRepository {
         tenant_id: &str,
         id: i64,
         reservation_token: &str,
-        expires_at: chrono::DateTime<chrono::Utc>,
+        expires_at: OffsetDateTime,
     ) -> AppResult<bool> {
         sys_file::Entity::update_many()
             .col_expr(
                 sys_file::Column::ReservationExpiresAt,
-                sea_orm::sea_query::Expr::value(expires_at),
+                sea_orm::sea_query::Expr::value(sys_file::utc_datetime(expires_at)),
             )
             .col_expr(
                 sys_file::Column::UpdatedAt,
-                sea_orm::sea_query::Expr::value(chrono::Utc::now()),
+                sea_orm::sea_query::Expr::value(sys_file::utc_datetime(OffsetDateTime::now_utc())),
             )
             .filter(sys_file::Column::Id.eq(id))
             .filter(sys_file::Column::TenantId.eq(tenant_id))

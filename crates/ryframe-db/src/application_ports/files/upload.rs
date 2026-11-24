@@ -4,8 +4,8 @@ use std::sync::Arc;
 use crate::{
     ControlDatabaseCluster, FileRepository, Repository, TenantRepository, entities::sys_file,
 };
-use chrono::{DateTime, Utc};
 use sea_orm::{DatabaseTransaction, TransactionTrait};
+use time::{OffsetDateTime, PrimitiveDateTime};
 
 use ryframe_application::{
     PersistenceTransaction, TransactionAuditMode,
@@ -32,8 +32,8 @@ impl FileUploadPersistencePort for DatabaseFileUploadPersistence {
             as Box<dyn FileUploadTransaction>)
     }
 
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>> {
-        crate::repositories::database_utc_now(self.database.write()).await
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime> {
+        crate::repositories::database_utc_now_time(self.database.write()).await
     }
 
     async fn renew_pending<'a>(
@@ -41,7 +41,7 @@ impl FileUploadPersistencePort for DatabaseFileUploadPersistence {
         tenant_id: &'a str,
         file_id: i64,
         reservation_token: &'a str,
-        expires_at: DateTime<Utc>,
+        expires_at: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         FileRepository
             .renew_pending_reservation(
@@ -86,8 +86,8 @@ impl FileUploadTransaction for DatabaseFileUploadTransaction {
             .map(|_| ())
     }
 
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>> {
-        crate::repositories::database_utc_now(&self.transaction).await
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime> {
+        crate::repositories::database_utc_now_time(&self.transaction).await
     }
 
     async fn find_by_sha256_for_update<'a>(
@@ -107,7 +107,7 @@ impl FileUploadTransaction for DatabaseFileUploadTransaction {
         tenant_id: &'a str,
         file_id: i64,
         bucket: &'a str,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         FileRepository
             .restore_file_for_reference_in_txn(&self.transaction, tenant_id, file_id, bucket, now)
@@ -140,7 +140,7 @@ impl FileUploadTransaction for DatabaseFileUploadTransaction {
         tenant_id: &'a str,
         file_id: i64,
         reservation_token: &'a str,
-        updated_at: DateTime<Utc>,
+        updated_at: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         FileRepository
             .mark_ready(
@@ -189,10 +189,12 @@ pub fn map_record(file: sys_file::Model) -> FileUploadRecord {
         upload_by: file.upload_by,
         upload_status: file.upload_status,
         reservation_token: file.reservation_token,
-        reservation_expires_at: file.reservation_expires_at,
+        reservation_expires_at: file
+            .reservation_expires_at
+            .map(PrimitiveDateTime::assume_utc),
         del_flag: file.del_flag,
-        created_at: file.created_at,
-        updated_at: file.updated_at,
+        created_at: file.created_at.assume_utc(),
+        updated_at: file.updated_at.assume_utc(),
     }
 }
 
@@ -211,9 +213,9 @@ pub fn map_model(file: FileUploadRecord) -> sys_file::Model {
         upload_by: file.upload_by,
         upload_status: file.upload_status,
         reservation_token: file.reservation_token,
-        reservation_expires_at: file.reservation_expires_at,
+        reservation_expires_at: file.reservation_expires_at.map(sys_file::utc_datetime),
         del_flag: file.del_flag,
-        created_at: file.created_at,
-        updated_at: file.updated_at,
+        created_at: sys_file::utc_datetime(file.created_at),
+        updated_at: sys_file::utc_datetime(file.updated_at),
     }
 }

@@ -280,7 +280,7 @@ impl UserImportTransaction for DatabaseUserImportTransaction {
                 &self.transaction,
                 tenant_id,
                 source_file_id,
-                now,
+                crate::application_ports::files::utc_time_from_chrono(now)?,
             )
             .await
     }
@@ -321,8 +321,8 @@ impl UserImportTransaction for DatabaseUserImportTransaction {
                 &self.transaction,
                 tenant_id,
                 source_file_id,
-                now,
-                cleanup_after,
+                crate::application_ports::files::utc_time_from_chrono(now)?,
+                crate::application_ports::files::utc_time_from_chrono(cleanup_after)?,
             )
             .await
     }

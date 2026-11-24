@@ -1,4 +1,5 @@
 use super::*;
+use time::OffsetDateTime;
 
 impl DataRetentionService {
     pub(super) fn import_artifact_cutoff(&self, now: DateTime<Utc>) -> DateTime<Utc> {
@@ -10,6 +11,9 @@ impl DataRetentionService {
         now: DateTime<Utc>,
     ) -> AppResult<RetentionCleanupResult> {
         let before = self.import_artifact_cutoff(now);
+        let file_cutoff = OffsetDateTime::from_unix_timestamp(before.timestamp())
+            .and_then(|instant| instant.replace_nanosecond(before.timestamp_subsec_nanos()))
+            .map_err(|_| AppError::Database("导入文件保留截止时间无法精确表示为 UTC".into()))?;
         let maximum = self.config.max_rows_per_resource_per_run;
         let mut deleted = 0_u64;
         let mut after_id = None;
@@ -32,7 +36,11 @@ impl DataRetentionService {
                 after_id = Some(artifact.file_id);
                 if self
                     .file
-                    .delete_expired_import_artifact(&artifact.tenant_id, artifact.file_id, before)
+                    .delete_expired_import_artifact(
+                        &artifact.tenant_id,
+                        artifact.file_id,
+                        file_cutoff,
+                    )
                     .await?
                 {
                     deleted = deleted.saturating_add(1);

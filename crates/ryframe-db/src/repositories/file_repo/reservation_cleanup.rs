@@ -4,6 +4,8 @@ use sea_orm::{
     ColumnTrait, Condition, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
 };
 
+use time::OffsetDateTime;
+
 use super::FileRepository;
 
 impl FileRepository {
@@ -13,7 +15,7 @@ impl FileRepository {
         tenant_id: &str,
         id: i64,
         reservation_token: &str,
-        cleanup_after: chrono::DateTime<chrono::Utc>,
+        cleanup_after: OffsetDateTime,
     ) -> AppResult<bool> {
         let result = sys_file::Entity::update_many()
             .col_expr(
@@ -22,11 +24,11 @@ impl FileRepository {
             )
             .col_expr(
                 sys_file::Column::ReservationExpiresAt,
-                sea_orm::sea_query::Expr::value(cleanup_after),
+                sea_orm::sea_query::Expr::value(sys_file::utc_datetime(cleanup_after)),
             )
             .col_expr(
                 sys_file::Column::UpdatedAt,
-                sea_orm::sea_query::Expr::value(chrono::Utc::now()),
+                sea_orm::sea_query::Expr::value(sys_file::utc_datetime(OffsetDateTime::now_utc())),
             )
             .filter(sys_file::Column::Id.eq(id))
             .filter(sys_file::Column::TenantId.eq(tenant_id))
@@ -46,7 +48,7 @@ impl FileRepository {
     pub async fn find_expired_reservations(
         &self,
         db: &DatabaseConnection,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
         limit: u64,
     ) -> AppResult<Vec<sys_file::Model>> {
         sys_file::Entity::find()
@@ -56,7 +58,7 @@ impl FileRepository {
                     .add(sys_file::Column::UploadStatus.eq(sys_file::Model::UPLOAD_STATUS_PENDING))
                     .add(sys_file::Column::UploadStatus.eq(sys_file::Model::UPLOAD_STATUS_CLEANUP)),
             )
-            .filter(sys_file::Column::ReservationExpiresAt.lte(now))
+            .filter(sys_file::Column::ReservationExpiresAt.lte(sys_file::utc_datetime(now)))
             .order_by_asc(sys_file::Column::ReservationExpiresAt)
             .limit(limit)
             .all(db)
@@ -70,7 +72,7 @@ impl FileRepository {
     pub async fn find_stale_unreferenced_config_packages(
         &self,
         db: &DatabaseConnection,
-        ready_before: chrono::DateTime<chrono::Utc>,
+        ready_before: OffsetDateTime,
         limit: u64,
     ) -> AppResult<Vec<sys_file::Model>> {
         sys_file::Entity::find()
@@ -78,7 +80,7 @@ impl FileRepository {
             .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
             .filter(sys_file::Column::UploadStatus.eq(sys_file::Model::UPLOAD_STATUS_READY))
             .filter(sys_file::Column::ReservationToken.is_null())
-            .filter(sys_file::Column::UpdatedAt.lte(ready_before))
+            .filter(sys_file::Column::UpdatedAt.lte(sys_file::utc_datetime(ready_before)))
             .filter(
                 Condition::all()
                     .add(sea_orm::sea_query::Expr::cust(
@@ -103,8 +105,8 @@ impl FileRepository {
         db: &DatabaseConnection,
         tenant_id: &str,
         id: i64,
-        now: chrono::DateTime<chrono::Utc>,
-        cleanup_after: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
+        cleanup_after: OffsetDateTime,
     ) -> AppResult<bool> {
         let result = sys_file::Entity::update_many()
             .col_expr(
@@ -113,17 +115,17 @@ impl FileRepository {
             )
             .col_expr(
                 sys_file::Column::ReservationExpiresAt,
-                sea_orm::sea_query::Expr::value(cleanup_after),
+                sea_orm::sea_query::Expr::value(sys_file::utc_datetime(cleanup_after)),
             )
             .col_expr(
                 sys_file::Column::UpdatedAt,
-                sea_orm::sea_query::Expr::value(now),
+                sea_orm::sea_query::Expr::value(sys_file::utc_datetime(now)),
             )
             .filter(sys_file::Column::Id.eq(id))
             .filter(sys_file::Column::TenantId.eq(tenant_id))
             .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
             .filter(sys_file::Column::UploadStatus.eq(sys_file::Model::UPLOAD_STATUS_PENDING))
-            .filter(sys_file::Column::ReservationExpiresAt.lte(now))
+            .filter(sys_file::Column::ReservationExpiresAt.lte(sys_file::utc_datetime(now)))
             .exec(db)
             .await
             .db()?;
@@ -140,8 +142,8 @@ impl FileRepository {
         tenant_id: &str,
         id: i64,
         claim_token: &str,
-        claimed_at: chrono::DateTime<chrono::Utc>,
-        claim_until: chrono::DateTime<chrono::Utc>,
+        claimed_at: OffsetDateTime,
+        claim_until: OffsetDateTime,
     ) -> AppResult<bool> {
         sys_file::Entity::update_many()
             .col_expr(
@@ -150,17 +152,17 @@ impl FileRepository {
             )
             .col_expr(
                 sys_file::Column::ReservationExpiresAt,
-                sea_orm::sea_query::Expr::value(claim_until),
+                sea_orm::sea_query::Expr::value(sys_file::utc_datetime(claim_until)),
             )
             .col_expr(
                 sys_file::Column::UpdatedAt,
-                sea_orm::sea_query::Expr::value(claimed_at),
+                sea_orm::sea_query::Expr::value(sys_file::utc_datetime(claimed_at)),
             )
             .filter(sys_file::Column::Id.eq(id))
             .filter(sys_file::Column::TenantId.eq(tenant_id))
             .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
             .filter(sys_file::Column::UploadStatus.eq(sys_file::Model::UPLOAD_STATUS_CLEANUP))
-            .filter(sys_file::Column::ReservationExpiresAt.lte(claimed_at))
+            .filter(sys_file::Column::ReservationExpiresAt.lte(sys_file::utc_datetime(claimed_at)))
             .exec(db)
             .await
             .map(|result| result.rows_affected == 1)
@@ -194,17 +196,17 @@ impl FileRepository {
         tenant_id: &str,
         id: i64,
         claim_token: &str,
-        updated_at: chrono::DateTime<chrono::Utc>,
-        retry_at: chrono::DateTime<chrono::Utc>,
+        updated_at: OffsetDateTime,
+        retry_at: OffsetDateTime,
     ) -> AppResult<bool> {
         sys_file::Entity::update_many()
             .col_expr(
                 sys_file::Column::ReservationExpiresAt,
-                sea_orm::sea_query::Expr::value(retry_at),
+                sea_orm::sea_query::Expr::value(sys_file::utc_datetime(retry_at)),
             )
             .col_expr(
                 sys_file::Column::UpdatedAt,
-                sea_orm::sea_query::Expr::value(updated_at),
+                sea_orm::sea_query::Expr::value(sys_file::utc_datetime(updated_at)),
             )
             .filter(sys_file::Column::Id.eq(id))
             .filter(sys_file::Column::TenantId.eq(tenant_id))

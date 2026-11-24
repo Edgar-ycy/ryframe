@@ -31,7 +31,7 @@ impl FileService {
                 tenant_id,
                 file_id,
                 now,
-                now + chrono::Duration::minutes(ORPHAN_GRACE_MINUTES),
+                now + Duration::minutes(ORPHAN_GRACE_MINUTES),
             )
             .await?;
         if marked {

@@ -40,7 +40,7 @@ impl FileService {
         let stale_config_packages = self
             .cleanup
             .find_stale_config_packages(
-                now - chrono::Duration::hours(CONFIG_PACKAGE_ORPHAN_AGE_HOURS),
+                now - TimeDuration::hours(CONFIG_PACKAGE_ORPHAN_AGE_HOURS),
                 STALE_CONFIG_PACKAGE_BATCH_SIZE,
             )
             .await?;
@@ -89,7 +89,7 @@ impl FileService {
                     reservation.id,
                     &claim_token,
                     claimed_at,
-                    claimed_at + chrono::Duration::seconds(CLEANUP_CLAIM_SECONDS),
+                    claimed_at + TimeDuration::seconds(CLEANUP_CLAIM_SECONDS),
                 )
                 .await?
             {
@@ -116,7 +116,7 @@ impl FileService {
                         reservation.id,
                         &claim_token,
                         retry_at,
-                        retry_at + chrono::Duration::seconds(CLEANUP_RETRY_BACKOFF_SECONDS),
+                        retry_at + TimeDuration::seconds(CLEANUP_RETRY_BACKOFF_SECONDS),
                     )
                     .await?;
                 continue;

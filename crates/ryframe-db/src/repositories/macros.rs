@@ -37,7 +37,10 @@ macro_rules! update_entity {
 }
 
 macro_rules! soft_delete_entity {
-    ($entity:ident, $db:expr, $tenant_id:expr, $id:expr) => {{
+    ($entity:ident, $db:expr, $tenant_id:expr, $id:expr) => {
+        soft_delete_entity!($entity, $db, $tenant_id, $id, chrono::Utc::now())
+    };
+    ($entity:ident, $db:expr, $tenant_id:expr, $id:expr, $updated_at:expr) => {{
         use $crate::DbResultExt as _;
 
         ryframe_kernel::TenantId::parse($tenant_id)?;
@@ -48,7 +51,7 @@ macro_rules! soft_delete_entity {
             )
             .col_expr(
                 $entity::Column::UpdatedAt,
-                sea_orm::sea_query::Expr::value(chrono::Utc::now()),
+                sea_orm::sea_query::Expr::value($updated_at),
             )
             .filter($entity::Column::Id.eq($id))
             .filter($entity::Column::TenantId.eq($tenant_id))

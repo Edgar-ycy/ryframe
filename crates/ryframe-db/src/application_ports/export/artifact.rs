@@ -59,6 +59,9 @@ impl ExportArtifactTransaction for DatabaseExportArtifactTransaction {
         tenant_id: &'a str,
         file: ExportArtifactFileDraft,
     ) -> ryframe_kernel::AppResult<ExportArtifactFileRecord> {
+        let created_at = sys_file::utc_datetime(
+            crate::application_ports::files::utc_time_from_chrono(file.created_at)?,
+        );
         let model = sys_file::Model {
             id: file.id,
             tenant_id: tenant_id.to_owned(),
@@ -75,8 +78,8 @@ impl ExportArtifactTransaction for DatabaseExportArtifactTransaction {
             reservation_token: None,
             reservation_expires_at: None,
             del_flag: sys_file::Model::DEL_FLAG_NORMAL.into(),
-            created_at: file.created_at,
-            updated_at: file.created_at,
+            created_at,
+            updated_at: created_at,
         };
         FileRepository
             .insert_in_txn(&self.transaction, tenant_id, model)

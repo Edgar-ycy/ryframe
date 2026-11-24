@@ -228,7 +228,12 @@ impl ProfileTransaction for DatabaseProfileTransaction {
         now: chrono::DateTime<chrono::Utc>,
     ) -> ryframe_kernel::AppResult<bool> {
         FileRepository
-            .restore_avatar_file_for_reference_in_txn(&self.transaction, tenant_id, file_id, now)
+            .restore_avatar_file_for_reference_in_txn(
+                &self.transaction,
+                tenant_id,
+                file_id,
+                crate::application_ports::files::utc_time_from_chrono(now)?,
+            )
             .await
     }
 
@@ -274,8 +279,8 @@ impl ProfileTransaction for DatabaseProfileTransaction {
                 &self.transaction,
                 tenant_id,
                 file_id,
-                now,
-                cleanup_after,
+                crate::application_ports::files::utc_time_from_chrono(now)?,
+                crate::application_ports::files::utc_time_from_chrono(cleanup_after)?,
             )
             .await
     }

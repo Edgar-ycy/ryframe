@@ -1,9 +1,10 @@
-use chrono::{Duration, TimeZone, Utc};
+use chrono::{Duration, TimeZone, Timelike, Utc};
 use ryframe_application::{
     EnqueueJob,
     ports::{files::FileUploadRecord, jobs::JobScheduleRecord},
 };
 use ryframe_db::{
+    AutoFill, FillContext,
     application_ports::{
         files::{map_upload_model, map_upload_record},
         jobs::{database_enqueue, schedule_active, to_claimed_event, to_job_record},
@@ -12,9 +13,10 @@ use ryframe_db::{
 };
 use sea_orm::ActiveValue::Set;
 use serde_json::json;
+use time::{Duration as TimeDuration, UtcOffset, macros::datetime};
 
 fn upload_record() -> FileUploadRecord {
-    let created_at = Utc.with_ymd_and_hms(2026, 8, 21, 1, 2, 3).unwrap();
+    let created_at = datetime!(2026-08-21 01:02:03.654321 +08:00);
     FileUploadRecord {
         id: 42,
         tenant_id: "tenant-a".to_owned(),
@@ -30,7 +32,7 @@ fn upload_record() -> FileUploadRecord {
         upload_by: Some("operator".to_owned()),
         upload_status: "pending".to_owned(),
         reservation_token: Some("token".to_owned()),
-        reservation_expires_at: Some(created_at + Duration::minutes(5)),
+        reservation_expires_at: Some(created_at + TimeDuration::minutes(5)),
         del_flag: "0".to_owned(),
         created_at,
         updated_at: created_at,
@@ -39,10 +41,47 @@ fn upload_record() -> FileUploadRecord {
 
 #[test]
 fn upload_record_mapping_preserves_every_field() {
+    let model = map_upload_model(upload_record());
+    assert_eq!(model.created_at, datetime!(2026-08-20 17:02:03.654321));
+    assert_eq!(model.updated_at, model.created_at);
     assert_eq!(
-        map_upload_record(map_upload_model(upload_record())),
-        upload_record()
+        model.reservation_expires_at,
+        Some(datetime!(2026-08-20 17:07:03.654321))
     );
+
+    let readback = map_upload_record(model);
+    assert_eq!(readback.created_at.offset(), UtcOffset::UTC);
+    assert_eq!(readback, upload_record());
+
+    let mut ready = upload_record();
+    ready.reservation_expires_at = None;
+    let ready_model = map_upload_model(ready);
+    assert!(ready_model.reservation_expires_at.is_none());
+    assert!(
+        map_upload_record(ready_model)
+            .reservation_expires_at
+            .is_none()
+    );
+}
+
+#[test]
+fn file_update_fill_uses_the_context_timestamp_and_preserves_other_fields() {
+    let mut model = map_upload_model(upload_record());
+    let mut expected = model.clone();
+    expected.updated_at = datetime!(2026-08-21 02:03:04.123456789);
+    let context = FillContext {
+        now: Utc
+            .with_ymd_and_hms(2026, 8, 21, 2, 3, 4)
+            .unwrap()
+            .with_nanosecond(123_456_789)
+            .unwrap(),
+        user_id: Some(7),
+        username: Some("maintainer".into()),
+    };
+
+    model.fill_on_update(&context).unwrap();
+
+    assert_eq!(model, expected);
 }
 
 #[test]

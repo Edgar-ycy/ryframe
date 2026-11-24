@@ -188,8 +188,8 @@ impl DatabaseTenantConfigRetentionPersistence {
                 &transaction,
                 &candidate.tenant_id,
                 file_id,
-                now,
-                now + Duration::minutes(15),
+                crate::application_ports::files::utc_time_from_chrono(now)?,
+                crate::application_ports::files::utc_time_from_chrono(now + Duration::minutes(15))?,
             )
             .await?;
         transaction.commit().await.db()?;
@@ -279,8 +279,8 @@ impl DatabaseTenantConfigRetentionPersistence {
                 &transaction,
                 &candidate.tenant_id,
                 file_id,
-                now,
-                now + Duration::minutes(15),
+                crate::application_ports::files::utc_time_from_chrono(now)?,
+                crate::application_ports::files::utc_time_from_chrono(now + Duration::minutes(15))?,
             )
             .await?;
         transaction.commit().await.db()?;

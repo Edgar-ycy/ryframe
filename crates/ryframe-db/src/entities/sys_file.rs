@@ -1,13 +1,14 @@
-use chrono::{DateTime, Utc};
-use ryframe_macro::AutoFill;
+use ryframe_kernel::AppResult;
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
+use time::{OffsetDateTime, PrimitiveDateTime};
 
-#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize, AutoFill)]
+use crate::auto_fill::{AutoFill, FillContext};
+
+#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "sys_file")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
-    #[auto_fill(snowflake)]
     pub id: i64,
     pub tenant_id: String,
     pub original_name: String,
@@ -22,10 +23,10 @@ pub struct Model {
     pub upload_by: Option<String>,
     pub upload_status: String,
     pub reservation_token: Option<String>,
-    pub reservation_expires_at: Option<DateTime<Utc>>,
+    pub reservation_expires_at: Option<PrimitiveDateTime>,
     pub del_flag: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: PrimitiveDateTime,
+    pub updated_at: PrimitiveDateTime,
 }
 
 impl Model {
@@ -35,6 +36,27 @@ impl Model {
 
     pub const DEL_FLAG_NORMAL: &str = "0";
     pub const DEL_FLAG_DELETED: &str = "2";
+}
+
+impl AutoFill for Model {
+    fn fill_on_insert(&mut self, context: &FillContext) -> AppResult<()> {
+        let now = context.sql_utc_datetime()?;
+        self.created_at = now;
+        self.updated_at = now;
+        self.id = crate::next_id()?;
+        Ok(())
+    }
+
+    fn fill_on_update(&mut self, context: &FillContext) -> AppResult<()> {
+        self.updated_at = context.sql_utc_datetime()?;
+        Ok(())
+    }
+}
+
+/// 将应用层的绝对时刻投影为 MySQL DATETIME 中保存的 UTC 值。
+pub(crate) fn utc_datetime(instant: OffsetDateTime) -> PrimitiveDateTime {
+    let utc = instant.to_utc();
+    PrimitiveDateTime::new(utc.date(), utc.time())
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

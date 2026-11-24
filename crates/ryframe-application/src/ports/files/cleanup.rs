@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use time::OffsetDateTime;
 
 pub const FILE_DEL_FLAG_NORMAL: &str = "0";
 pub const FILE_UPLOAD_STATUS_PENDING: &str = "pending";
@@ -13,7 +13,7 @@ pub struct FileCleanupRecord {
     pub storage_path: String,
     pub upload_status: String,
     pub reservation_token: Option<String>,
-    pub reservation_expires_at: Option<DateTime<Utc>>,
+    pub reservation_expires_at: Option<OffsetDateTime>,
     pub del_flag: String,
 }
 
@@ -28,23 +28,23 @@ pub trait FileCleanupTransaction: crate::PersistenceTransaction + Send + Sync {
         file_id: i64,
     ) -> ryframe_kernel::AppResult<Option<FileCleanupRecord>>;
 
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime>;
 
     async fn claim_expired_import<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
         claim_token: &'a str,
-        expired_before: DateTime<Utc>,
-        claim_until: DateTime<Utc>,
+        expired_before: OffsetDateTime,
+        claim_until: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool>;
 
     async fn mark_unreferenced_config_package<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
-        now: DateTime<Utc>,
-        cleanup_after: DateTime<Utc>,
+        now: OffsetDateTime,
+        cleanup_after: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool>;
 }
 
@@ -59,17 +59,17 @@ pub trait FileCleanupPersistencePort: Send + Sync {
         file_id: i64,
     ) -> ryframe_kernel::AppResult<Option<FileCleanupRecord>>;
 
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime>;
 
     async fn find_stale_config_packages(
         &self,
-        ready_before: DateTime<Utc>,
+        ready_before: OffsetDateTime,
         limit: u64,
     ) -> ryframe_kernel::AppResult<Vec<FileCleanupRecord>>;
 
     async fn find_expired_reservations(
         &self,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
         limit: u64,
     ) -> ryframe_kernel::AppResult<Vec<FileCleanupRecord>>;
 
@@ -77,8 +77,8 @@ pub trait FileCleanupPersistencePort: Send + Sync {
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
-        now: DateTime<Utc>,
-        cleanup_after: DateTime<Utc>,
+        now: OffsetDateTime,
+        cleanup_after: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool>;
 
     async fn claim_expired_cleanup<'a>(
@@ -86,8 +86,8 @@ pub trait FileCleanupPersistencePort: Send + Sync {
         tenant_id: &'a str,
         file_id: i64,
         claim_token: &'a str,
-        claimed_at: DateTime<Utc>,
-        claim_until: DateTime<Utc>,
+        claimed_at: OffsetDateTime,
+        claim_until: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool>;
 
     async fn begin_owned_cleanup<'a>(
@@ -95,7 +95,7 @@ pub trait FileCleanupPersistencePort: Send + Sync {
         tenant_id: &'a str,
         file_id: i64,
         reservation_token: &'a str,
-        cleanup_after: DateTime<Utc>,
+        cleanup_after: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool>;
 
     async fn defer_claim<'a>(
@@ -103,8 +103,8 @@ pub trait FileCleanupPersistencePort: Send + Sync {
         tenant_id: &'a str,
         file_id: i64,
         claim_token: &'a str,
-        updated_at: DateTime<Utc>,
-        retry_at: DateTime<Utc>,
+        updated_at: OffsetDateTime,
+        retry_at: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool>;
 
     async fn complete_claim<'a>(
