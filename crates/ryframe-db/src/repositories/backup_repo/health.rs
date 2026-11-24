@@ -4,7 +4,7 @@ use ryframe_application::ports::backup::{BackupHealth, RestoreStatus};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
 use std::collections::BTreeMap;
-use time::OffsetDateTime;
+use time::{OffsetDateTime, PrimitiveDateTime};
 
 const CANDIDATE_BATCH_SIZE: usize = 64;
 
@@ -12,9 +12,9 @@ const CANDIDATE_BATCH_SIZE: usize = 64;
 struct ResourceHealth {
     resource_key: String,
     valid_id: Option<String>,
-    valid_capture: Option<DateTime<Utc>>,
-    invalid_capture: Option<DateTime<Utc>>,
-    expired_capture: Option<DateTime<Utc>>,
+    valid_capture: Option<PrimitiveDateTime>,
+    invalid_capture: Option<PrimitiveDateTime>,
+    expired_capture: Option<PrimitiveDateTime>,
 }
 
 #[derive(FromQueryResult)]
@@ -56,15 +56,18 @@ pub async fn backup_health<C: ConnectionTrait>(
         .filter_map(|row| row.valid_id.clone())
         .collect::<std::collections::BTreeSet<_>>();
     let (mut health, oldest_capture) = aggregate_resources(required, rows);
+    health.oldest_capture = oldest_capture.map(PrimitiveDateTime::assume_utc);
     if health.missing_resources == 0
         && health.invalid_resources == 0
         && health.expired_resources == 0
     {
-        let oldest = oldest_capture
+        let oldest = health
+            .oldest_capture
             .ok_or_else(|| AppError::Validation("健康备份缺少实际采集时间".into()))?;
+        let oldest = DateTime::from_timestamp(oldest.unix_timestamp(), oldest.nanosecond())
+            .ok_or_else(|| AppError::Database("备份健康时间超出 UTC 表示范围".into()))?;
         validate_healthy_candidates(db, scope_id, now, oldest, &valid_ids).await?;
     }
-    health.oldest_capture = oldest_capture.map(health_timestamp).transpose()?;
     let last = RestoreId::find_by_statement(Statement::from_sql_and_values(DbBackend::MySql,
         "SELECT r.id FROM sys_restore_run r JOIN sys_backup_set b ON b.id = r.backup_id \
          WHERE b.scope_id = ? AND r.completed_at IS NOT NULL ORDER BY r.completed_at DESC, r.id DESC LIMIT 1",
@@ -139,7 +142,7 @@ async fn validate_healthy_candidates<C: ConnectionTrait>(
 fn aggregate_resources(
     required: &[String],
     rows: Vec<ResourceHealth>,
-) -> (BackupHealth, Option<DateTime<Utc>>) {
+) -> (BackupHealth, Option<PrimitiveDateTime>) {
     let rows = rows
         .into_iter()
         .map(|row| (row.resource_key.clone(), row))
@@ -148,7 +151,7 @@ fn aggregate_resources(
         required_resources: required.len() as u64,
         ..Default::default()
     };
-    let mut oldest_capture: Option<DateTime<Utc>> = None;
+    let mut oldest_capture: Option<PrimitiveDateTime> = None;
     for resource in required {
         let Some(row) = rows.get(resource) else {
             health.missing_resources += 1;
@@ -186,10 +189,12 @@ fn health_timestamp(value: DateTime<Utc>) -> AppResult<OffsetDateTime> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use time::Duration;
 
     #[test]
     fn health_uses_oldest_actual_capture_and_keeps_failure_categories() {
-        let time = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let captured = OffsetDateTime::from_unix_timestamp(1_700_000_000).unwrap();
+        let time = PrimitiveDateTime::new(captured.date(), captured.time());
         let required = ["a", "b", "missing", "invalid", "expired"].map(String::from);
         let row = |key: &str, valid, invalid, expired| ResourceHealth {
             resource_key: key.into(),
@@ -202,18 +207,13 @@ mod tests {
             &required,
             vec![
                 row("a", Some(time), None, None),
-                row("b", Some(time - chrono::Duration::hours(23)), None, None),
+                row("b", Some(time - Duration::hours(23)), None, None),
                 row("invalid", None, Some(time), None),
                 row("expired", None, None, Some(time)),
-                row(
-                    "not-required",
-                    Some(time - chrono::Duration::days(5)),
-                    None,
-                    None,
-                ),
+                row("not-required", Some(time - Duration::days(5)), None, None),
             ],
         );
-        assert_eq!(oldest_capture, Some(time - chrono::Duration::hours(23)));
+        assert_eq!(oldest_capture, Some(time - Duration::hours(23)));
         assert_eq!(
             (
                 health.required_resources,

@@ -1,4 +1,3 @@
-use chrono::Utc;
 use ryframe_adapters::RedisNamespace;
 use ryframe_application::system::operations::UserSession;
 use ryframe_kernel::{AppError, AppResult};
@@ -6,7 +5,7 @@ use ryframe_kernel::{AppError, AppResult};
 use super::keyspace::session_key;
 
 pub(super) fn remaining_ttl(absolute_exp: i64) -> Option<u64> {
-    let remaining = absolute_exp - Utc::now().timestamp();
+    let remaining = absolute_exp - time::OffsetDateTime::now_utc().unix_timestamp();
     (remaining > 0).then_some(remaining as u64)
 }
 

@@ -228,7 +228,7 @@ impl OnlineUserService {
 }
 
 fn remaining_ttl(absolute_exp: i64) -> Option<u64> {
-    let remaining = absolute_exp - Utc::now().timestamp();
+    let remaining = absolute_exp - time::OffsetDateTime::now_utc().unix_timestamp();
     (remaining > 0).then_some(remaining as u64)
 }
 

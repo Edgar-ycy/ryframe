@@ -111,7 +111,7 @@ impl AuthService {
         };
         let sid = jwt::new_sid();
         let refresh_jti = jwt::generate_jti();
-        let now = chrono::Utc::now().timestamp() as usize;
+        let now = time::OffsetDateTime::now_utc().unix_timestamp() as usize;
         let expires_in = self.token_settings.access_token_ttl_seconds();
         let refresh_ttl = self
             .token_settings
@@ -162,7 +162,7 @@ impl AuthService {
         claims: &jwt::Claims,
         rotation_attempt_id: &str,
     ) -> AppResult<LoginResult> {
-        let now = chrono::Utc::now().timestamp();
+        let now = time::OffsetDateTime::now_utc().unix_timestamp();
         if claims.exp <= now as usize {
             return Err(AppError::Authentication("refresh token expired".into()));
         }

@@ -25,7 +25,7 @@ async fn backup_transactions_health_and_restore_states_use_real_mysql() {
         ryframe_db::migration::up(&database, Some(&super::bootstrap_hashes())).await.map_err(|error| error.to_string())?;
         let repository = application_ports::backup::port(ControlDatabaseCluster::single(database.clone()));
         let now = repository.database_now().await.map_err(|error| error.to_string())?;
-        let now = DateTime::from_timestamp(now.timestamp(), 0).ok_or("数据库时间无效")?;
+        let now = DateTime::from_timestamp(now.timestamp(), 123_456_000).ok_or("数据库时间无效")?;
         let record = record(now);
         let transaction = repository.begin().await.map_err(|error| error.to_string())?;
         transaction.save_backup(&record).await.map_err(|error| error.to_string())?;
@@ -90,7 +90,7 @@ async fn check_health(
         .map_err(|error| error.to_string())?;
     check(
         health.missing_resources == 0 && health.oldest_capture == Some(expected_capture),
-        "登记时间不能替代实际采集时间",
+        "备份健康时间必须保留实际采集时间和六位微秒",
     )?;
     let unrelated = repository
         .health("another-scope", &required, now)
@@ -116,8 +116,9 @@ async fn check_health(
         1,
     )
     .await?;
+    let expires_at = record.manifest.retention_until;
     let health = repository
-        .health(scope, &required, now)
+        .health(scope, &required, expires_at - Duration::microseconds(1))
         .await
         .map_err(|error| error.to_string())?;
     check(
@@ -125,7 +126,7 @@ async fn check_health(
         "较新的失败备份不能掩盖有效备份年龄",
     )?;
     let expired = repository
-        .health(scope, &required, now + Duration::days(10))
+        .health(scope, &required, expires_at)
         .await
         .map_err(|error| error.to_string())?;
     check(
