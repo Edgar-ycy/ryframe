@@ -138,11 +138,7 @@ fn resource_model_types_map_to_supported_form_widgets() {
         field("id", "i64", true),
         field("enabled", "bool", false),
         field("due_on", "ryframe_sdk::time::Date", false),
-        field(
-            "happens_at",
-            "ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>",
-            false,
-        ),
+        field("happens_at", "ryframe_sdk::time::OffsetDateTime", false),
         field("amount", "ryframe_sdk::rust_decimal::Decimal", false),
         field("metadata", "ryframe_sdk::serde_json::Value", false),
         field("note", "String", false),

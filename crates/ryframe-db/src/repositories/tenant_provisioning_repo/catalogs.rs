@@ -44,6 +44,7 @@ async fn copy_posts(
     posts: Vec<TenantPostTemplate>,
     now: DateTime<Utc>,
 ) -> AppResult<()> {
+    let now = crate::repositories::utc_time_from_chrono(now).db_context("岗位初始化时间")?;
     let models = posts
         .into_iter()
         .map(|source| -> AppResult<_> {

@@ -113,7 +113,9 @@ pub struct NoticeVo {
     pub notice_type: Option<String>,
     pub status: String,
     pub created_by: Option<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    #[serde(serialize_with = "crate::http::utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub created_at: time::OffsetDateTime,
     pub revision: String,
 }
 

@@ -177,7 +177,10 @@ impl NoticeTransaction for DatabaseNoticeTransaction {
         self.ensure_tenant(tenant_id)?;
         let result = entity::Entity::update_many()
             .col_expr(entity::Column::DelFlag, Expr::value(String::from("2")))
-            .col_expr(entity::Column::UpdatedAt, Expr::value(chrono::Utc::now()))
+            .col_expr(
+                entity::Column::UpdatedAt,
+                Expr::value(time::OffsetDateTime::now_utc()),
+            )
             .filter(entity::Column::Id.eq(id))
             .filter(entity::Column::TenantId.eq(tenant_id))
             .filter(entity::Column::DelFlag.eq(String::from("0")))

@@ -270,9 +270,9 @@ pub struct Order {
     #[resource(unique, filter, sort)]
     pub code: String,
     #[resource(read_only)]
-    pub created_at: ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>,
+    pub created_at: ryframe_sdk::time::OffsetDateTime,
     #[resource(read_only)]
-    pub updated_at: ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>,
+    pub updated_at: ryframe_sdk::time::OffsetDateTime,
 }
 "#,
     )

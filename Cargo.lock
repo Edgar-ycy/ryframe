@@ -3461,7 +3461,6 @@ version = "0.13.1"
 dependencies = [
  "async-trait",
  "axum",
- "chrono",
  "rust_decimal",
  "ryframe-api",
  "ryframe-application",
@@ -3498,6 +3497,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "thiserror",
+ "time",
  "tokio",
  "tracing",
 ]

@@ -24,12 +24,16 @@ fn date_fields_preserve_string_schema_calendar_and_null() {
     use ryframe_sdk::{
         PaginationPolicy,
         axum::extract::Query,
-        time::{Date, Month},
+        time::{Date, Month, OffsetDateTime},
     };
 
     let date = Date::from_calendar_date(2024, Month::February, 9).unwrap();
-    let input: CreateInvoiceDto =
-        serde_json::from_value(json!({"code":"first","starts_on":"2024-2-9"})).unwrap();
+    let input: CreateInvoiceDto = serde_json::from_value(json!({
+        "code": "first",
+        "starts_on": "2024-2-9",
+        "starts_at": "2024-02-09T00:00:00Z"
+    }))
+    .unwrap();
     assert_eq!(input.starts_on, date);
     assert_eq!(input.ends_on, None);
     let update: UpdateInvoiceDto =
@@ -51,7 +55,12 @@ fn date_fields_preserve_string_schema_calendar_and_null() {
             .starts_on,
         Some(date)
     );
-    assert!(serde_json::from_value::<CreateInvoiceDto>(json!({"code":"missing"})).is_err());
+    assert!(
+        serde_json::from_value::<CreateInvoiceDto>(
+            json!({"code":"missing","starts_at":"2024-02-09T00:00:00Z"})
+        )
+        .is_err()
+    );
     for invalid in [json!("2023-2-29"), json!("10000-2-9"), json!([2024, 40])] {
         assert!(serde_json::from_value::<UpdateInvoiceDto>(json!({"ends_on":invalid})).is_err());
     }
@@ -60,7 +69,7 @@ fn date_fields_preserve_string_schema_calendar_and_null() {
             .is_err()
     );
 
-    let timestamp = ryframe_sdk::chrono::DateTime::from_timestamp(0, 0).unwrap();
+    let timestamp = OffsetDateTime::UNIX_EPOCH;
     let view = InvoiceVo::from(InvoiceRecord {
         id: 1,
         tenant_id: "tenant-example".into(),
@@ -70,6 +79,8 @@ fn date_fields_preserve_string_schema_calendar_and_null() {
         owner_id: 2,
         starts_on: date,
         ends_on: None,
+        starts_at: timestamp,
+        ends_at: None,
         created_at: timestamp,
         updated_at: timestamp,
     });
@@ -93,6 +104,91 @@ fn date_fields_preserve_string_schema_calendar_and_null() {
         .find(|value| value["name"] == "starts_on")
         .unwrap();
     assert_eq!(date_parameter["schema"]["format"], "date");
+}
+
+#[test]
+fn datetime_keeps_utc_json_shapes_and_query_contract() {
+    use invoice_business::generated::{
+        dto::invoice::{CreateInvoiceDto, InvoiceListQuery, InvoiceVo, UpdateInvoiceDto},
+        models::invoice::InvoiceRecord,
+    };
+    use ryframe_sdk::utoipa::{IntoParams, PartialSchema};
+    use ryframe_sdk::{PaginationPolicy, axum::extract::Query, time::OffsetDateTime};
+
+    let input: CreateInvoiceDto = serde_json::from_value(json!({
+        "code": "timed",
+        "starts_on": "2024-02-09",
+        "starts_at": "2024-02-09T12:00:00.123456789+08:00",
+        "ends_at": null
+    }))
+    .unwrap();
+    assert_eq!(input.starts_at.offset(), ryframe_sdk::time::UtcOffset::UTC);
+    assert_eq!(input.starts_at.hour(), 4);
+    assert_eq!(input.starts_at.nanosecond(), 123_456_789);
+    assert_eq!(input.ends_at, None);
+    let missing: UpdateInvoiceDto = serde_json::from_value(json!({})).unwrap();
+    assert_eq!(missing.ends_at, None);
+    assert!(
+        serde_json::from_value::<CreateInvoiceDto>(
+            json!({"code":"missing","starts_on":"2024-02-09"})
+        )
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<UpdateInvoiceDto>(json!({"ends_at":"2024-02-09T12:00:00"}))
+            .is_err()
+    );
+    let Query(query) = Query::<InvoiceListQuery>::try_from_uri(
+        &"/?starts_at=2024-02-09T12:00:00.123456789%2B08:00"
+            .parse()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        query
+            .into_service_params(PaginationPolicy::new(20, 100))
+            .unwrap()
+            .starts_at,
+        Some(input.starts_at)
+    );
+
+    let view = InvoiceVo::from(InvoiceRecord {
+        id: 1,
+        tenant_id: "tenant-example".into(),
+        code: "timed".into(),
+        memo: None,
+        amount: 0,
+        owner_id: 2,
+        starts_on: input.starts_on,
+        ends_on: None,
+        starts_at: input.starts_at,
+        ends_at: None,
+        created_at: OffsetDateTime::UNIX_EPOCH,
+        updated_at: OffsetDateTime::UNIX_EPOCH
+            .replace_nanosecond(123_456_000)
+            .unwrap(),
+    });
+    let body = serde_json::to_value(view).unwrap();
+    assert_eq!(body["starts_at"], "2024-02-09T04:00:00.123456789Z");
+    assert!(body["ends_at"].is_null());
+    assert_eq!(body["updated_at"], "1970-01-01T00:00:00.123456Z");
+
+    let schema = serde_json::to_value(CreateInvoiceDto::schema()).unwrap();
+    assert_eq!(schema["properties"]["starts_at"]["type"], "string");
+    assert_eq!(schema["properties"]["starts_at"]["format"], "date-time");
+    assert_eq!(
+        schema["properties"]["ends_at"]["type"],
+        json!(["string", "null"])
+    );
+    assert_eq!(schema["properties"]["ends_at"]["format"], "date-time");
+    let parameters = serde_json::to_value(InvoiceListQuery::into_params(|| None)).unwrap();
+    let parameter = parameters
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|value| value["name"] == "starts_at")
+        .unwrap();
+    assert_eq!(parameter["schema"]["format"], "date-time");
 }
 
 #[test]

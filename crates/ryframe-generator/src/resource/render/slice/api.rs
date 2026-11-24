@@ -103,10 +103,13 @@ fn render_list_query(resource: &ResourceIr, output: &mut String) {
     output.push_str("    #[param(minimum = 1)]\n    pub page: Option<u64>,\n");
     output.push_str("    #[param(minimum = 1)]\n    pub page_size: Option<u64>,\n");
     for field in filter_fields(resource) {
-        if field.value_type == ValueType::Date
+        if matches!(field.value_type, ValueType::Date | ValueType::DateTime)
             && let Some(attribute) = deserialization_attribute(field, true)
         {
             output.push_str(&format!("    {attribute}\n"));
+        }
+        if field.value_type == ValueType::DateTime {
+            output.push_str("    #[param(value_type = Option<String>, format = DateTime)]\n");
         }
         output.push_str(&format!(
             "    pub {}: Option<{}>,\n",
@@ -138,6 +141,18 @@ fn render_view(resource: &ResourceIr, output: &mut String) {
             output.push_str(&format!(
                 "    #[serde(serialize_with = \"crate::http::date::serialize_{optional}date\")]\n"
             ));
+        } else if field.value_type == ValueType::DateTime {
+            let serializer = if field.nullable {
+                "serialize_optional"
+            } else {
+                "serialize"
+            };
+            output.push_str(&format!(
+                "    #[serde(serialize_with = \"crate::http::utc_timestamp::{serializer}\")]\n"
+            ));
+            let attribute =
+                schema_attribute(field, field.nullable).expect("时间字段已有 OpenAPI 类型");
+            output.push_str(&format!("    {attribute}\n"));
         }
         output.push_str(&format!("    pub {}: {},\n", field.name, wire_type(field)));
     }

@@ -13,17 +13,29 @@ pub fn serialize<S: Serializer>(value: &OffsetDateTime, serializer: S) -> Result
 }
 
 pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<OffsetDateTime, D::Error> {
-    let value = String::deserialize(deserializer)?;
+    parse(&String::deserialize(deserializer)?)
+}
+
+pub fn deserialize_optional<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<OffsetDateTime>, D::Error> {
+    Option::<String>::deserialize(deserializer)?
+        .as_deref()
+        .map(parse)
+        .transpose()
+}
+
+fn parse<E: de::Error>(value: &str) -> Result<OffsetDateTime, E> {
     if !matches!(value.as_bytes().get(10), Some(b'T' | b't')) {
-        return Err(de::Error::custom("时间必须使用 RFC3339 格式"));
+        return Err(E::custom("时间必须使用 RFC3339 格式"));
     }
     if value.get(17..19) == Some("60") {
-        return Err(de::Error::custom("时间不能精确表示闰秒"));
+        return Err(E::custom("时间不能精确表示闰秒"));
     }
-    OffsetDateTime::parse(&value, &Rfc3339)
-        .map_err(de::Error::custom)?
+    OffsetDateTime::parse(value, &Rfc3339)
+        .map_err(E::custom)?
         .checked_to_offset(UtcOffset::UTC)
-        .ok_or_else(|| de::Error::custom(OUT_OF_RANGE))
+        .ok_or_else(|| E::custom(OUT_OF_RANGE))
 }
 
 pub fn format_with_offset(value: &OffsetDateTime) -> Result<String, fmt::Error> {

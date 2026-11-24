@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 
-use chrono::Utc;
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult};
+use time::OffsetDateTime;
 
 use crate::{TransactionAuditMode, complete_transaction};
 
@@ -41,7 +41,7 @@ impl NoticeService {
         command: CreateNoticeCommand,
     ) -> AppResult<NoticeRecord> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let now = Utc::now();
+        let now = OffsetDateTime::now_utc();
         let record = NoticeRecord {
             id: crate::next_id()?,
             tenant_id: tenant_id.to_owned(),
@@ -87,7 +87,7 @@ impl NoticeService {
                 .revision
                 .checked_add(1)
                 .ok_or_else(|| AppError::Conflict("记录版本已达上限".into()))?;
-            let now = Utc::now();
+            let now = OffsetDateTime::now_utc();
             record.title = command.title;
             record.content_markdown = command.content_markdown;
             record.notice_type = command.notice_type;

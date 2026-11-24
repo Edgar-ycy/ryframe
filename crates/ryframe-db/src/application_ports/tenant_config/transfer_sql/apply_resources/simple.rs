@@ -7,6 +7,7 @@ pub(super) async fn upsert_posts(
     changed: &BTreeSet<(String, String)>,
     now: DateTime<Utc>,
 ) -> AppResult<()> {
+    let now = crate::repositories::utc_time_from_chrono(now).db_context("岗位配置应用时间")?;
     for item in &resources.posts {
         if !changed.contains(&("post".to_owned(), normalize_stable_key(&item.code))) {
             continue;

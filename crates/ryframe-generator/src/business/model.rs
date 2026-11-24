@@ -349,7 +349,6 @@ fn value_type(rust_type: &str) -> Result<(ValueType, bool), ResourceError> {
         .and_then(|value| value.strip_suffix('>'))
         .map_or((compact.as_str(), false), |value| (value, true));
     let inner = inner
-        .replace("ryframe_sdk::chrono::", "chrono::")
         .replace("ryframe_sdk::rust_decimal::", "rust_decimal::")
         .replace("ryframe_sdk::serde_json::", "serde_json::")
         .replace("ryframe_sdk::time::", "time::");
@@ -366,7 +365,7 @@ fn value_type(rust_type: &str) -> Result<(ValueType, bool), ResourceError> {
         "rust_decimal::Decimal" => ValueType::Decimal,
         "bool" => ValueType::Bool,
         "time::Date" => ValueType::Date,
-        "chrono::DateTime<chrono::Utc>" => ValueType::DateTime,
+        "time::OffsetDateTime" => ValueType::DateTime,
         "serde_json::Value" => ValueType::Json,
         _ => {
             return Err(error(format!(

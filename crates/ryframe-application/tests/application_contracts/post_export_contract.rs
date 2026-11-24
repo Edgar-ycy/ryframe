@@ -1,7 +1,6 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use chrono::{TimeZone, Utc};
 use ryframe_application::{
     TenantContext,
     ports::export::{PostExportReadFilter, PostExportReadPort, PostExportRow},
@@ -9,6 +8,7 @@ use ryframe_application::{
     with_tenant_context,
 };
 use ryframe_kernel::{ActorContext, AppResult, DataScope, ExportCursorWindow};
+use time::macros::datetime;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ReadCall {
@@ -75,10 +75,7 @@ fn row() -> PostExportRow {
         sort: 1,
         status: "1".into(),
         remark: Some("导出测试".into()),
-        created_at: Utc
-            .with_ymd_and_hms(2026, 8, 23, 0, 0, 0)
-            .single()
-            .expect("测试时间应有效"),
+        created_at: datetime!(2026-08-23 0:00 UTC),
     }
 }
 

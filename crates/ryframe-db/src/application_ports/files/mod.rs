@@ -12,7 +12,6 @@ pub use upload::port as upload;
 pub use upload::{map_model as map_upload_model, map_record as map_upload_record};
 
 pub(super) fn utc_time_from_chrono(instant: DateTime<Utc>) -> AppResult<OffsetDateTime> {
-    OffsetDateTime::from_unix_timestamp(instant.timestamp())
-        .and_then(|utc| utc.replace_nanosecond(instant.timestamp_subsec_nanos()))
+    crate::repositories::utc_time_from_chrono(instant)
         .map_err(|_| AppError::Database("文件时间无法精确表示为 UTC".into()))
 }

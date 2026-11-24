@@ -172,10 +172,14 @@ fn record() -> MemoItemRecord {
         large_count: u64::MAX,
         price: Decimal::from_str_exact("0.125000").unwrap(),
         discount: None,
-        created_at: ryframe_sdk::chrono::DateTime::from_timestamp(1_000_000_000, 123_456_000)
-            .unwrap(),
-        updated_at: ryframe_sdk::chrono::DateTime::from_timestamp(1_000_000_000, 123_456_000)
-            .unwrap(),
+        created_at: ryframe_sdk::time::OffsetDateTime::from_unix_timestamp_nanos(
+            1_000_000_000_123_456_000,
+        )
+        .unwrap(),
+        updated_at: ryframe_sdk::time::OffsetDateTime::from_unix_timestamp_nanos(
+            1_000_000_000_123_456_000,
+        )
+        .unwrap(),
     }
 }
 

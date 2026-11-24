@@ -15,8 +15,8 @@ pub struct PostRecord {
     pub status: String,
     pub remark: Option<String>,
     pub del_flag: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: time::OffsetDateTime,
+    pub updated_at: time::OffsetDateTime,
 }
 
 #[derive(Clone, Debug)]

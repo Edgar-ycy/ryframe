@@ -96,7 +96,9 @@ pub struct PostVo {
     pub sort: i32,
     pub status: String,
     pub remark: Option<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    #[serde(serialize_with = "crate::http::utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub created_at: time::OffsetDateTime,
 }
 
 impl From<PostRecord> for PostVo {

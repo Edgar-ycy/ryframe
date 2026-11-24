@@ -13,7 +13,7 @@ fn record(id: u64) -> unsigned_auto::model::OrderRecord {
         id,
         name: format!("order-{id}"),
         status: 1,
-        created_at: chrono::Utc::now(),
+        created_at: time::OffsetDateTime::now_utc(),
         updated_at: None,
         del_flag: 0,
     }
@@ -76,10 +76,10 @@ async fn unsigned_explicit_ids_preserve_maximum_and_transaction_visibility() {
     let transaction = fake.begin("tenant-a").await.unwrap();
     let inserted = transaction.insert(row).await.unwrap();
     let created_at = inserted.created_at;
-    assert_eq!(created_at.timestamp_subsec_micros() % 1000, 0);
+    assert_eq!(created_at.microsecond() % 1000, 0);
     assert!(inserted.updated_at.is_some());
     let mut changed = inserted;
-    let ignored = chrono::DateTime::from_timestamp(0, 0).unwrap();
+    let ignored = time::OffsetDateTime::UNIX_EPOCH;
     changed.created_at = ignored;
     changed.updated_at = Some(ignored);
     changed.name = "changed".into();

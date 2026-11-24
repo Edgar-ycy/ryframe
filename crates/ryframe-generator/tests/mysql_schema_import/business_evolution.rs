@@ -1,7 +1,11 @@
 use std::{fs, path::Path, process::Command};
 
 use ryframe_generator::business::{BusinessGenerateOptions, generate_business_package};
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement, prelude::TimeDate};
+use sea_orm::{
+    ConnectionTrait, DatabaseConnection, DbBackend, Statement,
+    prelude::{TimeDate, TimeDateTimeWithTimeZone},
+    sea_query::value::prelude::time::UtcOffset,
+};
 
 use super::mysql;
 
@@ -64,6 +68,9 @@ async fn imported_physical_types_match_existing_table_and_generated_ddl() {
         assert!(model.contains("sql_type = \"varchar(32)\""));
         assert!(model.contains("sql_type = \"datetime(3)\""));
         assert!(model.contains("pub due_on: Option<ryframe_sdk::time::Date>"));
+        for column in ["whole_second", "occurred_at", "updated_at"] {
+            assert!(model.contains(&format!("pub {column}: Option<ryframe_sdk::time::OffsetDateTime>,")));
+        }
         assert!(model.contains("collation = \"utf8mb4_0900_ai_ci\""));
         assert!(model.contains("collation = \"utf8mb4_bin\""));
         let model = model.replace("name = \"biz_evolution\"", "name = \"evolution\"")
@@ -97,6 +104,7 @@ async fn imported_physical_types_match_existing_table_and_generated_ddl() {
         mysql::execute(&database, "UPDATE biz_evolution SET updated_at='2000-01-01 00:00:00' WHERE id=42").await?;
         mysql::execute(&database, "UPDATE biz_evolution SET memo=CONCAT(memo,'!') WHERE id=42").await?;
         mysql::require_count(&database, "SELECT COUNT(*) AS value FROM biz_evolution WHERE id=42 AND updated_at>'2000-01-01 00:00:00'", 1).await?;
+        verify_typed_datetime(&database).await?;
         let repeat = generate(workspace.path())?;
         assert!(repeat.created.is_empty() && repeat.updated.is_empty() && repeat.removed.is_empty());
         Ok(())
@@ -132,6 +140,57 @@ async fn verify_typed_date(database: &DatabaseConnection) -> Result<(), String> 
                 .map_err(mysql::db_error)?,
             expected
         );
+    }
+    Ok(())
+}
+
+async fn verify_typed_datetime(database: &DatabaseConnection) -> Result<(), String> {
+    let offset = UtcOffset::from_hms(8, 0, 0).map_err(message)?;
+    let local = TimeDate::from_ordinal_date(2026, 288)
+        .and_then(|date| date.with_hms_micro(2, 20, 30, 123_456))
+        .map_err(message)?
+        .assume_offset(offset);
+    let values = [
+        local.replace_nanosecond(0).map_err(message)?,
+        local.replace_nanosecond(123_000_000).map_err(message)?,
+        local,
+    ];
+    let updated = database
+        .execute_raw(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            "UPDATE biz_evolution SET whole_second = ?, occurred_at = ?, updated_at = ? WHERE id = 42",
+            values.map(Into::into),
+        ))
+        .await
+        .map_err(mysql::db_error)?;
+    assert_eq!(updated.rows_affected(), 1);
+
+    let utc = values.map(|value| value.to_offset(UtcOffset::UTC));
+    let rows = database
+        .query_all_raw(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            "SELECT id, whole_second, occurred_at, updated_at FROM biz_evolution \
+             WHERE (whole_second = ? AND occurred_at = ? AND updated_at = ?) OR id = 43 ORDER BY id",
+            utc.map(Into::into),
+        ))
+        .await
+        .map_err(mysql::db_error)?;
+    assert_eq!(rows.len(), 2);
+    for ((row, id), expected) in rows.iter().zip([42, 43]).zip([utc.map(Some), [None; 3]]) {
+        assert_eq!(row.try_get::<i64>("", "id").map_err(mysql::db_error)?, id);
+        for (column, expected) in ["whole_second", "occurred_at", "updated_at"]
+            .into_iter()
+            .zip(expected)
+        {
+            let actual = row
+                .try_get::<Option<TimeDateTimeWithTimeZone>>("", column)
+                .map_err(mysql::db_error)?;
+            assert_eq!(
+                actual.map(|value| (value, value.offset())),
+                expected.map(|value| (value, UtcOffset::UTC)),
+                "{column}",
+            );
+        }
     }
     Ok(())
 }

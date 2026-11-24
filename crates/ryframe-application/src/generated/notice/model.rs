@@ -15,8 +15,8 @@ pub struct NoticeRecord {
     pub status: String,
     pub created_by: Option<i64>,
     pub del_flag: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: time::OffsetDateTime,
+    pub updated_at: time::OffsetDateTime,
     pub revision: u64,
 }
 

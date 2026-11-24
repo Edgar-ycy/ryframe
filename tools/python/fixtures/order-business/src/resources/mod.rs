@@ -1,5 +1,10 @@
 #[derive(ryframe_sdk::ResourceModel)]
-#[resource(name = "order", title = "订单", table = "biz_order", database = "tenant")]
+#[resource(
+    name = "order",
+    title = "订单",
+    table = "biz_order",
+    database = "tenant"
+)]
 pub struct Order {
     #[resource(primary_key)]
     pub tenant_id: String,
@@ -8,9 +13,9 @@ pub struct Order {
     #[resource(unique, filter, sort)]
     pub code: String,
     #[resource(read_only)]
-    pub created_at: ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>,
+    pub created_at: ryframe_sdk::time::OffsetDateTime,
     #[resource(read_only)]
-    pub updated_at: ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>,
+    pub updated_at: ryframe_sdk::time::OffsetDateTime,
 }
 
 /// 登记验收模型；模块和进程 feature 由正式脚手架装配。

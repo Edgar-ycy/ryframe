@@ -136,16 +136,19 @@ impl ExportService {
         let Some(last_id) = last_batch_id(&batch, window, |item| &item.id)? else {
             return Ok(None);
         };
-        let progress = append_rows(
-            writer,
-            batch.into_iter().map(|item| {
-                serde_json::json!({
+        let rows = batch
+            .into_iter()
+            .map(|item| {
+                let created_at = crate::ports::utc_timestamp::format_with_offset(&item.created_at)
+                    .map_err(|_| AppError::Internal("岗位导出时间无法精确表示为 UTC".into()))?;
+                Ok(serde_json::json!({
                     "post_id": item.id, "name": item.name, "code": item.code,
                     "sort": item.sort, "status": item.status, "remark": item.remark,
-                    "created_at": item.created_at.to_rfc3339(),
-                })
-            }),
-        )?;
+                    "created_at": created_at,
+                }))
+            })
+            .collect::<AppResult<Vec<_>>>()?;
+        let progress = append_rows(writer, rows.into_iter())?;
         Ok(Some(AppendedBatch { last_id, progress }))
     }
 

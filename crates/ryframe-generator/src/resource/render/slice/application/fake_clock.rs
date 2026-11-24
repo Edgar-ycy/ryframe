@@ -9,8 +9,13 @@ fn clock(field: &FieldIr) -> String {
     let precision = expression
         .strip_prefix("CURRENT_TIMESTAMP(")
         .and_then(|value| value.strip_suffix(')'))
-        .unwrap_or("0");
-    let value = format!("chrono::SubsecRound::trunc_subsecs(now, {precision})");
+        .map_or(0, |value| {
+            value.parse().expect("DATETIME 精度已经由 IR 校验")
+        });
+    let factor = 10_u32.pow(9 - precision);
+    let value = format!(
+        "now.replace_nanosecond(now.nanosecond() / {factor} * {factor}).expect(\"截断后的纳秒在 0..=999_999_999 范围内\")"
+    );
     if field.nullable {
         format!("Some({value})")
     } else {
@@ -41,7 +46,7 @@ pub(super) fn insert(resource: &ResourceIr) -> String {
         ""
     };
     format!(
-        "        let now = chrono::Utc::now();\n        let {mutable}record = {}Record {{\n{fields}\n        }};\n",
+        "        let now = time::OffsetDateTime::now_utc();\n        let {mutable}record = {}Record {{\n{fields}\n        }};\n",
         resource.pascal_name
     )
 }
@@ -68,7 +73,7 @@ pub(super) fn update(resource: &ResourceIr) -> String {
         String::new()
     } else {
         format!(
-            "        if record != previous {{\n            let now = chrono::Utc::now();\n{updates}        }}\n"
+            "        if record != previous {{\n            let now = time::OffsetDateTime::now_utc();\n{updates}        }}\n"
         )
     };
     format!(

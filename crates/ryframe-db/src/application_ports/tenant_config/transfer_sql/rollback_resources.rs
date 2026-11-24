@@ -297,6 +297,7 @@ async fn soft_delete_simple_extras(
     now: DateTime<Utc>,
 ) -> AppResult<()> {
     let post_codes = created_keys(created, "post").collect::<BTreeSet<_>>();
+    let post_now = crate::repositories::utc_time_from_chrono(now).db_context("岗位配置回滚时间")?;
     for mut item in post::Entity::find()
         .filter(post::Column::TenantId.eq(tenant_id))
         .filter(post::Column::DelFlag.eq(post::SOFT_DELETE_ACTIVE))
@@ -306,7 +307,7 @@ async fn soft_delete_simple_extras(
     {
         if post_codes.contains(&normalize_stable_key(&item.code)) {
             item.del_flag = post::SOFT_DELETE_DELETED.to_owned();
-            item.updated_at = now;
+            item.updated_at = post_now;
             post::ActiveModel::from(item)
                 .reset_all()
                 .update(transaction)

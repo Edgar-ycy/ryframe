@@ -17,9 +17,7 @@ pub fn mysql_rust_type(column_type: &str, is_nullable: bool) -> Result<String, S
         ("decimal" | "numeric", _) => "ryframe_sdk::rust_decimal::Decimal",
         ("float", _) => "f32",
         ("double", _) => "f64",
-        ("datetime" | "timestamp", false) => {
-            "ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>"
-        }
+        ("datetime" | "timestamp", false) => "ryframe_sdk::time::OffsetDateTime",
         ("date", false) => "ryframe_sdk::time::Date",
         ("json", false) => "ryframe_sdk::serde_json::Value",
         ("binary" | "varbinary" | "tinyblob" | "blob" | "mediumblob" | "longblob", false) => {

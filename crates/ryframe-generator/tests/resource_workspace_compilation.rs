@@ -582,11 +582,11 @@ fn write_order_fake_transaction_test(backend: &Path) {
     fs::create_dir_all(&tests).expect("应创建临时 application tests");
     fs::write(
         tests.join("generated_order_fake.rs"),
-        r#"use chrono::Utc;
-use ryframe_application::TransactionAuditMode;
+        r#"use ryframe_application::TransactionAuditMode;
 use ryframe_application::generated::order::{
     OrderFailure, OrderFakePersistence, OrderPersistencePort, OrderRecord,
 };
+use time::OffsetDateTime;
 
 fn record(id: i64) -> OrderRecord {
     OrderRecord {
@@ -594,7 +594,7 @@ fn record(id: i64) -> OrderRecord {
         id: id + 100,
         name: format!("order-{id}"),
         status: 1,
-        created_at: Utc::now(),
+        created_at: OffsetDateTime::now_utc(),
         updated_at: None,
         del_flag: 0,
     }

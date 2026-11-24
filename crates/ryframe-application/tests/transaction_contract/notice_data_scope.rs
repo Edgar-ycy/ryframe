@@ -3,7 +3,7 @@ use ryframe_application::generated::notice::NoticeListParams;
 
 fn fixture(owner: Option<i64>) -> (Arc<NoticeFakePersistence>, NoticeService) {
     let persistence = Arc::new(NoticeFakePersistence::default());
-    let mut item = record(Utc.with_ymd_and_hms(2026, 8, 20, 0, 0, 0).single().unwrap());
+    let mut item = record(time::macros::datetime!(2026-08-20 0:00 UTC));
     item.created_by = owner;
     persistence.insert_record("tenant-a", item);
     let service = NoticeService::new(persistence.clone());
@@ -31,7 +31,7 @@ fn command() -> UpdateNoticeCommand {
 
 fn matrix_fixture() -> (Arc<NoticeFakePersistence>, NoticeService) {
     let persistence = Arc::new(NoticeFakePersistence::default());
-    let timestamp = Utc.with_ymd_and_hms(2026, 8, 20, 0, 0, 0).single().unwrap();
+    let timestamp = time::macros::datetime!(2026-08-20 0:00 UTC);
     for (id, owner) in [(1, Some(1)), (2, Some(2)), (3, Some(3)), (4, None)] {
         let mut item = record(timestamp);
         item.id = id;

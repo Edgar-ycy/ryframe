@@ -103,17 +103,17 @@ pub(crate) fn service(resource: &ResourceIr, header: &str) -> String {
             .any(|field| field.name == audit.updated_at && !field.database_update())
     });
     let time_import = if create_time || update_time {
-        "use chrono::Utc;\n"
+        "use time::OffsetDateTime;\n"
     } else {
         ""
     };
     let create_clock = if create_time {
-        "        let now = Utc::now();\n"
+        "        let now = OffsetDateTime::now_utc();\n"
     } else {
         ""
     };
     let update_clock = if update_time {
-        "            let now = Utc::now();\n"
+        "            let now = OffsetDateTime::now_utc();\n"
     } else {
         ""
     };

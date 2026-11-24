@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 
-use chrono::Utc;
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult};
+use time::OffsetDateTime;
 
 use crate::{TransactionAuditMode, complete_transaction};
 
@@ -33,7 +33,7 @@ impl PostService {
         command: CreatePostCommand,
     ) -> AppResult<PostRecord> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let now = Utc::now();
+        let now = OffsetDateTime::now_utc();
         let record = PostRecord {
             id: crate::next_id()?,
             tenant_id: tenant_id.to_owned(),
@@ -80,7 +80,7 @@ impl PostService {
                 .find_by_id_for_update(tenant_id, id)
                 .await?
                 .ok_or_else(|| AppError::NotFound("岗位不存在".into()))?;
-            let now = Utc::now();
+            let now = OffsetDateTime::now_utc();
             record.name = command.name;
             if let Some(value) = command.sort {
                 record.sort = value;

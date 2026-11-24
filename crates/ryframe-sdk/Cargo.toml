@@ -18,7 +18,6 @@ persistence = ["sea-orm/with-rust_decimal", "runtime", "dep:async-trait", "dep:r
 [dependencies]
 async-trait = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
-chrono = { workspace = true }
 rust_decimal = { workspace = true }
 ryframe-api = { path = "../ryframe-api", optional = true }
 ryframe-application = { path = "../ryframe-application", default-features = false, optional = true }

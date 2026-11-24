@@ -1,5 +1,5 @@
-use chrono::TimeZone;
 use ryframe_kernel::DataScope;
+use time::{OffsetDateTime, macros::datetime};
 
 use super::*;
 use ryframe_application::{
@@ -10,7 +10,7 @@ use ryframe_application::{
     },
 };
 
-fn record(timestamp: chrono::DateTime<Utc>) -> PostRecord {
+fn record(timestamp: OffsetDateTime) -> PostRecord {
     PostRecord {
         id: 7,
         tenant_id: "tenant-a".into(),
@@ -42,10 +42,7 @@ fn actor() -> ActorContext {
 
 #[tokio::test]
 async fn update_owns_transaction_order() {
-    let timestamp = Utc
-        .with_ymd_and_hms(2026, 8, 20, 0, 0, 0)
-        .single()
-        .expect("测试时间应有效");
+    let timestamp = datetime!(2026-08-20 0:00 UTC);
     let persistence = Arc::new(PostFakePersistence::default());
     persistence.insert_record("tenant-a", record(timestamp));
     let service = PostService::new(persistence.clone());
@@ -101,10 +98,7 @@ async fn update_owns_transaction_order() {
 
 #[tokio::test]
 async fn update_without_sort_keeps_the_existing_value() {
-    let timestamp = Utc
-        .with_ymd_and_hms(2026, 8, 20, 0, 0, 0)
-        .single()
-        .expect("测试时间应有效");
+    let timestamp = datetime!(2026-08-20 0:00 UTC);
     let persistence = Arc::new(PostFakePersistence::default());
     let mut existing = record(timestamp);
     existing.sort = 17;
@@ -139,10 +133,7 @@ async fn update_without_sort_keeps_the_existing_value() {
 
 #[tokio::test]
 async fn create_rolls_back_on_duplicate_code() {
-    let timestamp = Utc
-        .with_ymd_and_hms(2026, 8, 20, 0, 0, 0)
-        .single()
-        .expect("测试时间应有效");
+    let timestamp = datetime!(2026-08-20 0:00 UTC);
     let persistence = Arc::new(PostFakePersistence::default());
     persistence.insert_record("tenant-a", record(timestamp));
     let service = PostService::new(persistence.clone());
@@ -188,10 +179,7 @@ async fn create_rolls_back_on_duplicate_code() {
 
 #[tokio::test]
 async fn exact_status_filter_treats_none_and_empty_as_unfiltered() {
-    let timestamp = Utc
-        .with_ymd_and_hms(2026, 8, 20, 0, 0, 0)
-        .single()
-        .expect("测试时间应有效");
+    let timestamp = datetime!(2026-08-20 0:00 UTC);
     let persistence = Arc::new(PostFakePersistence::default());
     let active = record(timestamp);
     let mut disabled = record(timestamp);
@@ -231,10 +219,7 @@ async fn exact_status_filter_treats_none_and_empty_as_unfiltered() {
 
 #[tokio::test]
 async fn reads_hide_soft_deleted_rows_and_follow_declared_sort_order() {
-    let timestamp = Utc
-        .with_ymd_and_hms(2026, 8, 20, 0, 0, 0)
-        .single()
-        .expect("测试时间应有效");
+    let timestamp = datetime!(2026-08-20 0:00 UTC);
     let persistence = Arc::new(PostFakePersistence::default());
 
     let mut later = record(timestamp);
@@ -288,10 +273,7 @@ async fn reads_hide_soft_deleted_rows_and_follow_declared_sort_order() {
 
 #[tokio::test]
 async fn transaction_rejects_cross_tenant_records_before_writing() {
-    let timestamp = Utc
-        .with_ymd_and_hms(2026, 8, 20, 0, 0, 0)
-        .single()
-        .expect("测试时间应有效");
+    let timestamp = datetime!(2026-08-20 0:00 UTC);
     let persistence = PostFakePersistence::default();
     let mut cross_tenant = record(timestamp);
     cross_tenant.id = 70;

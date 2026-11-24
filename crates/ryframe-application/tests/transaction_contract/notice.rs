@@ -1,5 +1,5 @@
-use chrono::TimeZone;
 use ryframe_kernel::DataScope;
+use time::{OffsetDateTime, macros::datetime};
 
 #[path = "notice_data_scope.rs"]
 mod data_scope;
@@ -13,7 +13,7 @@ use ryframe_application::{
     },
 };
 
-fn record(timestamp: chrono::DateTime<Utc>) -> NoticeRecord {
+fn record(timestamp: OffsetDateTime) -> NoticeRecord {
     NoticeRecord {
         id: 8,
         tenant_id: "tenant-a".into(),
@@ -31,10 +31,7 @@ fn record(timestamp: chrono::DateTime<Utc>) -> NoticeRecord {
 
 #[tokio::test]
 async fn update_failure_rolls_back_the_same_transaction() {
-    let timestamp = Utc
-        .with_ymd_and_hms(2026, 8, 20, 0, 0, 0)
-        .single()
-        .expect("测试时间应有效");
+    let timestamp = datetime!(2026-08-20 0:00 UTC);
     let persistence = Arc::new(NoticeFakePersistence::default());
     persistence.insert_record("tenant-a", record(timestamp));
     persistence.fail_next(NoticeFailure::Update);
@@ -88,10 +85,7 @@ fn actor() -> ActorContext {
 
 #[tokio::test]
 async fn update_locks_row_without_configuration_version_transaction_steps() {
-    let timestamp = Utc
-        .with_ymd_and_hms(2026, 8, 20, 0, 0, 0)
-        .single()
-        .expect("测试时间应有效");
+    let timestamp = datetime!(2026-08-20 0:00 UTC);
     let persistence = Arc::new(NoticeFakePersistence::default());
     persistence.insert_record("tenant-a", record(timestamp));
     let service = NoticeService::new(persistence.clone());

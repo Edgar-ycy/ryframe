@@ -339,9 +339,9 @@ fn soft_delete_updated_at(resource: &ResourceIr) -> Option<(&FieldIr, &'static s
         .find(|field| field.name == audit.updated_at)
         .expect("审计字段已由 IR 校验");
     let value = if field.nullable {
-        "Some(chrono::Utc::now())"
+        "Some(time::OffsetDateTime::now_utc())"
     } else {
-        "chrono::Utc::now()"
+        "time::OffsetDateTime::now_utc()"
     };
     (!field.database_update()).then_some((field, value))
 }

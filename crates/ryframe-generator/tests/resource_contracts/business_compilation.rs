@@ -310,12 +310,12 @@ fn import_table(name: &str) -> TableInfo {
         ),
         (
             "created_at",
-            "ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>",
+            "ryframe_sdk::time::OffsetDateTime",
             "datetime(6)",
         ),
         (
             "updated_at",
-            "ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>",
+            "ryframe_sdk::time::OffsetDateTime",
             "datetime(6)",
         ),
     ]
@@ -386,10 +386,13 @@ pub struct Invoice {
     #[resource(filter)]
     pub starts_on: ryframe_sdk::time::Date,
     pub ends_on: Option<ryframe_sdk::time::Date>,
+    #[resource(filter)]
+    pub starts_at: ryframe_sdk::time::OffsetDateTime,
+    pub ends_at: Option<ryframe_sdk::time::OffsetDateTime>,
     #[resource(read_only)]
-    pub created_at: ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>,
+    pub created_at: ryframe_sdk::time::OffsetDateTime,
     #[resource(read_only)]
-    pub updated_at: ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>,
+    pub updated_at: ryframe_sdk::time::OffsetDateTime,
 }
 
 pub fn descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {
@@ -413,8 +416,8 @@ pub struct GlobalItem {
     pub code: String,
     pub payload: Option<ryframe_sdk::serde_json::Value>,
     #[resource(read_only)]
-    pub created_at: ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>,
+    pub created_at: ryframe_sdk::time::OffsetDateTime,
     #[resource(read_only)]
-    pub updated_at: ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>,
+    pub updated_at: ryframe_sdk::time::OffsetDateTime,
 }
 "#;

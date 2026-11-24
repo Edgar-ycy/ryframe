@@ -189,7 +189,7 @@ impl PostTransaction for DatabasePostTransaction {
             .ok_or_else(|| AppError::NotFound("资源不存在".into()))?;
         let mut active: entity::ActiveModel = model.into();
         active.del_flag = Set(String::from("2"));
-        active.updated_at = Set(chrono::Utc::now());
+        active.updated_at = Set(time::OffsetDateTime::now_utc());
         active.update(&self.transaction).await.db()?;
         Ok(())
     }

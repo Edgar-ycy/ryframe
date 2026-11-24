@@ -21,6 +21,13 @@ where
     Ok(value.assume_utc())
 }
 
+pub(crate) fn utc_time_from_chrono(
+    instant: DateTime<Utc>,
+) -> Result<OffsetDateTime, time::error::ComponentRange> {
+    OffsetDateTime::from_unix_timestamp(instant.timestamp())
+        .and_then(|utc| utc.replace_nanosecond(instant.timestamp_subsec_nanos()))
+}
+
 async fn read_utc_now<C, T>(database: &C) -> AppResult<T>
 where
     C: ConnectionTrait + ?Sized,

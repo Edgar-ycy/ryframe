@@ -1,6 +1,6 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppResult, ExportCursorWindow};
+use time::OffsetDateTime;
 
 /// 岗位导出的稳定筛选条件。
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -20,7 +20,7 @@ pub struct PostExportRow {
     pub sort: i32,
     pub status: String,
     pub remark: Option<String>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: OffsetDateTime,
 }
 
 /// 岗位导出专用只读端口，业务 CRUD 不承担导出读取职责。

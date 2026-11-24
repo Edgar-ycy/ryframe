@@ -97,7 +97,6 @@ fn scoped_soft_delete_updates_the_locked_tenant_row_without_a_second_select() {
         "self.ensure_tenant(tenant_id)?",
         "entity::Entity::update_many()",
         "Column::DelFlag, Expr::value(String::from(\"2\"))",
-        "Column::UpdatedAt, Expr::value(chrono::Utc::now())",
         "Column::Id.eq(id)",
         "Column::TenantId.eq(tenant_id)",
         "Column::DelFlag.eq(String::from(\"0\"))",
@@ -107,6 +106,13 @@ fn scoped_soft_delete_updates_the_locked_tenant_row_without_a_second_select() {
     ] {
         assert!(delete.contains(expected), "软删除缺少约束 {expected}");
     }
+    assert!(
+        delete
+            .split_whitespace()
+            .collect::<String>()
+            .contains("Column::UpdatedAt,Expr::value(time::OffsetDateTime::now_utc())"),
+        "软删除须以同一 UPDATE 刷新 UTC 审计时间"
+    );
     assert!(!delete.contains(".one("));
 
     let service = &rendered
@@ -183,7 +189,7 @@ fn post_slice_preserves_control_configuration_and_conflict_semantics() {
     assert!(repository.contains("filter.status.filter(|value| !value.is_empty())"));
     assert!(repository.contains("entity::Column::Status.eq(value)"));
     assert!(!repository.contains("entity::Column::Status.contains(value)"));
-    assert!(repository.contains("active.updated_at = Set(chrono::Utc::now())"));
+    assert!(repository.contains("active.updated_at = Set(time::OffsetDateTime::now_utc())"));
     assert!(repository.contains("struct DatabasePostTransaction"));
     assert!(repository.contains("tenant_id: String"));
     assert!(repository.contains("tenant_id: tenant_id.to_owned()"));
@@ -359,7 +365,7 @@ fn assert_order_backend_contracts(assets: &[GeneratedAsset]) {
     assert!(
         repository
             .content
-            .contains("active.updated_at = Set(Some(chrono::Utc::now()))")
+            .contains("active.updated_at = Set(Some(time::OffsetDateTime::now_utc()))")
     );
 
     for forbidden in ["IndexDescriptor", "MigrationDescriptor"] {

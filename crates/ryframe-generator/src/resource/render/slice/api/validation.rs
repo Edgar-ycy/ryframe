@@ -174,6 +174,11 @@ fn numeric_bound(value: i64, value_type: ValueType) -> String {
 
 pub(super) fn schema_attribute(field: &FieldIr, optional: bool) -> Option<String> {
     let mut parts = Vec::new();
+    if field.value_type == ValueType::DateTime {
+        let value_type = if optional { "Option<String>" } else { "String" };
+        parts.push(format!("value_type = {value_type}"));
+        parts.push("format = DateTime".into());
+    }
     if matches!(
         field.value_type,
         ValueType::I64 | ValueType::U64 | ValueType::Decimal
@@ -214,6 +219,13 @@ pub(super) fn deserialization_attribute(field: &FieldIr, optional: bool) -> Opti
         ),
         ValueType::Decimal => format!("decimal::deserialize_{prefix}decimal"),
         ValueType::Date => format!("date::deserialize_{prefix}date"),
+        ValueType::DateTime => {
+            if optional {
+                "utc_timestamp::deserialize_optional".into()
+            } else {
+                "utc_timestamp::deserialize".into()
+            }
+        }
         _ => return None,
     };
     Some(format!(

@@ -69,7 +69,7 @@ impl ValueType {
             Self::Decimal => "rust_decimal::Decimal",
             Self::Bool => "bool",
             Self::Date => "time::Date",
-            Self::DateTime => "chrono::DateTime<chrono::Utc>",
+            Self::DateTime => "time::OffsetDateTime",
             Self::Json => "serde_json::Value",
         }
     }
