@@ -24,8 +24,7 @@ where
 pub(crate) fn utc_time_from_chrono(
     instant: DateTime<Utc>,
 ) -> Result<OffsetDateTime, time::error::ComponentRange> {
-    OffsetDateTime::from_unix_timestamp(instant.timestamp())
-        .and_then(|utc| utc.replace_nanosecond(instant.timestamp_subsec_nanos()))
+    ryframe_application::ports::utc_timestamp::from_chrono(instant)
 }
 
 async fn read_utc_now<C, T>(database: &C) -> AppResult<T>

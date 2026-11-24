@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde_json::Value;
+use time::OffsetDateTime;
 
 use crate::PersistenceTransaction;
 
@@ -14,16 +15,16 @@ pub struct MessageRecord {
     pub args_json: Option<Value>,
     pub severity: String,
     pub payload_json: Option<Value>,
-    pub published_at: DateTime<Utc>,
-    pub expires_at: Option<DateTime<Utc>>,
+    pub published_at: OffsetDateTime,
+    pub expires_at: Option<OffsetDateTime>,
 }
 
 #[derive(Debug)]
 pub struct MessageRecipientRecord {
     pub tenant_id: String,
     pub user_id: i64,
-    pub acked_at: Option<DateTime<Utc>>,
-    pub read_at: Option<DateTime<Utc>>,
+    pub acked_at: Option<OffsetDateTime>,
+    pub read_at: Option<OffsetDateTime>,
     pub message: MessageRecord,
 }
 

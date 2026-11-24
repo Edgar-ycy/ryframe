@@ -51,7 +51,11 @@ impl MessagePersistencePort for DatabaseMessagePersistence {
             )
             .await?;
         Ok(MessagePage {
-            records: page.records.into_iter().map(to_recipient_record).collect(),
+            records: page
+                .records
+                .into_iter()
+                .map(to_recipient_record)
+                .collect::<ryframe_kernel::AppResult<_>>()?,
             next_cursor: page.next_cursor,
         })
     }
@@ -79,7 +83,7 @@ impl MessagePersistencePort for DatabaseMessagePersistence {
                     .await?
             }
         };
-        Ok(records.into_iter().map(to_recipient_record).collect())
+        records.into_iter().map(to_recipient_record).collect()
     }
 
     async fn unread_count<'a>(
@@ -97,11 +101,12 @@ impl MessagePersistencePort for DatabaseMessagePersistence {
         &self,
         message_id: i64,
     ) -> ryframe_kernel::AppResult<Option<MessageRecord>> {
-        Ok(message::Entity::find_by_id(message_id)
+        message::Entity::find_by_id(message_id)
             .one(self.database.write())
             .await
             .db()?
-            .map(to_message_record))
+            .map(to_message_record)
+            .transpose()
     }
 
     async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn MessageTransaction>> {
@@ -154,7 +159,7 @@ impl MessageTransaction for DatabaseMessageTransaction {
         let tenant_id = std::mem::take(&mut published.message.tenant_id);
         Ok(PublishedMessageRecord {
             tenant_id,
-            message: to_message_record(published.message),
+            message: to_message_record(published.message)?,
             recipient_count: published.recipient_count,
             inserted: published.inserted,
         })
@@ -270,18 +275,30 @@ impl PersistenceTransaction for DatabaseMessageTransaction {
     }
 }
 
-fn to_recipient_record(record: RecipientMessage) -> MessageRecipientRecord {
-    MessageRecipientRecord {
+fn to_recipient_record(
+    record: RecipientMessage,
+) -> ryframe_kernel::AppResult<MessageRecipientRecord> {
+    Ok(MessageRecipientRecord {
         tenant_id: record.recipient.tenant_id,
         user_id: record.recipient.user_id,
-        acked_at: record.recipient.acked_at,
-        read_at: record.recipient.read_at,
-        message: to_message_record(record.message),
-    }
+        acked_at: record
+            .recipient
+            .acked_at
+            .map(crate::repositories::utc_time_from_chrono)
+            .transpose()
+            .db_context("读取消息确认时间")?,
+        read_at: record
+            .recipient
+            .read_at
+            .map(crate::repositories::utc_time_from_chrono)
+            .transpose()
+            .db_context("读取消息已读时间")?,
+        message: to_message_record(record.message)?,
+    })
 }
 
-fn to_message_record(message: message::Model) -> MessageRecord {
-    MessageRecord {
+fn to_message_record(message: message::Model) -> ryframe_kernel::AppResult<MessageRecord> {
+    Ok(MessageRecord {
         id: message.id,
         topic: message.topic,
         title_text: message.title_text,
@@ -291,7 +308,12 @@ fn to_message_record(message: message::Model) -> MessageRecord {
         args_json: message.args_json,
         severity: message.severity,
         payload_json: message.payload_json,
-        published_at: message.published_at,
-        expires_at: message.expires_at,
-    }
+        published_at: crate::repositories::utc_time_from_chrono(message.published_at)
+            .db_context("读取消息发布时间")?,
+        expires_at: message
+            .expires_at
+            .map(crate::repositories::utc_time_from_chrono)
+            .transpose()
+            .db_context("读取消息过期时间")?,
+    })
 }

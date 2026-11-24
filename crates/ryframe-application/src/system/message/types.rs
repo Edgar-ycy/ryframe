@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
+use time::OffsetDateTime;
 
 use crate::ports::system::{MessagePage, MessageRecipientRecord, MessageRecord};
 
@@ -63,10 +64,10 @@ pub struct MessageTemplate {
     pub args: BTreeMap<String, String>,
     pub severity: String,
     pub payload: Option<Value>,
-    pub published_at: DateTime<Utc>,
-    pub expires_at: Option<DateTime<Utc>>,
-    pub acked_at: Option<DateTime<Utc>>,
-    pub read_at: Option<DateTime<Utc>>,
+    pub published_at: OffsetDateTime,
+    pub expires_at: Option<OffsetDateTime>,
+    pub acked_at: Option<OffsetDateTime>,
+    pub read_at: Option<OffsetDateTime>,
 }
 
 /// 游标收件箱的服务层结果。
@@ -95,8 +96,8 @@ pub struct MessageDelivery {
 impl MessageTemplate {
     pub(super) fn from_record(
         message: MessageRecord,
-        acked_at: Option<DateTime<Utc>>,
-        read_at: Option<DateTime<Utc>>,
+        acked_at: Option<OffsetDateTime>,
+        read_at: Option<OffsetDateTime>,
     ) -> Self {
         Self {
             id: message.id.to_string(),

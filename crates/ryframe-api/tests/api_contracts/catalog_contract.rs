@@ -19,6 +19,70 @@ fn generated_post_router_composes_with_manual_export_extension() {
         .nest("/posts", export);
 }
 
+#[test]
+fn message_response_preserves_utc_precision_null_and_schema() {
+    use ryframe_api::message_presenter::MessageVo;
+    use ryframe_application::ports::utc_timestamp::from_chrono;
+    use serde_json::json;
+    use utoipa::PartialSchema;
+
+    for (nanoseconds, fraction) in [
+        (0, ""),
+        (120_000_000, ".120"),
+        (123_400_000, ".123400"),
+        (123_456_700, ".123456700"),
+    ] {
+        let historical = chrono::DateTime::from_timestamp(-1, nanoseconds).unwrap();
+        let timestamp = from_chrono(historical).unwrap();
+        assert_eq!(timestamp.offset(), time::UtcOffset::UTC);
+        assert_eq!(timestamp.unix_timestamp(), -1);
+        assert_eq!(timestamp.nanosecond(), nanoseconds);
+        let expected = format!("1969-12-31T23:59:59{fraction}Z");
+        let mut message = MessageVo {
+            id: "42".into(),
+            topic: "fixture".into(),
+            title: "测试消息".into(),
+            content: "消息正文".into(),
+            severity: "info".into(),
+            payload: None,
+            published_at: timestamp,
+            expires_at: None,
+            acked_at: Some(timestamp),
+            read_at: None,
+        };
+        let body = serde_json::to_value(&message).unwrap();
+        assert_eq!(body["published_at"], expected);
+        assert_eq!(body["acked_at"], expected);
+        assert!(body["expires_at"].is_null());
+        assert!(body["read_at"].is_null());
+        message.expires_at = Some(timestamp);
+        message.acked_at = None;
+        message.read_at = Some(timestamp);
+        let body = serde_json::to_value(message).unwrap();
+        assert_eq!(body["expires_at"], expected);
+        assert_eq!(body["read_at"], expected);
+        assert!(body["acked_at"].is_null());
+    }
+
+    let schema = serde_json::to_value(MessageVo::schema()).unwrap();
+    for name in ["published_at", "expires_at", "acked_at", "read_at"] {
+        let property = &schema["properties"][name];
+        assert_eq!(property["format"], "date-time");
+        assert_eq!(
+            property["type"],
+            if name == "published_at" {
+                json!("string")
+            } else {
+                json!(["string", "null"])
+            }
+        );
+    }
+    let leap = chrono::DateTime::from_timestamp(1_483_228_799, 1_123_456_000).unwrap();
+    assert!(from_chrono(leap).is_err());
+    let out_of_range = chrono::DateTime::from_timestamp(253_402_300_800, 0).unwrap();
+    assert!(from_chrono(out_of_range).is_err());
+}
+
 mod permission_catalog {
     use std::collections::BTreeSet;
 

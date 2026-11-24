@@ -8,6 +8,14 @@ use time::{
 
 const OUT_OF_RANGE: &str = "时间超出 UTC 表示范围";
 
+/// 将 Chrono UTC 时刻精确转换为当前 UTC 表示。
+pub fn from_chrono(
+    instant: chrono::DateTime<chrono::Utc>,
+) -> Result<OffsetDateTime, time::error::ComponentRange> {
+    OffsetDateTime::from_unix_timestamp(instant.timestamp())
+        .and_then(|utc| utc.replace_nanosecond(instant.timestamp_subsec_nanos()))
+}
+
 pub fn serialize<S: Serializer>(value: &OffsetDateTime, serializer: S) -> Result<S::Ok, S::Error> {
     serializer.serialize_str(&encode::<S::Error>(value, "Z", OUT_OF_RANGE)?)
 }

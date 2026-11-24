@@ -1,7 +1,9 @@
 use serde::Serialize;
+use time::OffsetDateTime;
 use utoipa::ToSchema;
 
 use crate::http::HttpResult;
+use ryframe_application::ports::utc_timestamp;
 use ryframe_application::system::operations::{
     MessageInbox, MessageTemplate, MessageText, PublishedMessage,
 };
@@ -16,10 +18,18 @@ pub struct MessageVo {
     pub content: String,
     pub severity: String,
     pub payload: Option<serde_json::Value>,
-    pub published_at: chrono::DateTime<chrono::Utc>,
-    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub acked_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub read_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub published_at: OffsetDateTime,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub expires_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub acked_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub read_at: Option<OffsetDateTime>,
 }
 
 /// 面向 REST 客户端的游标收件箱响应。
