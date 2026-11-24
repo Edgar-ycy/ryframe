@@ -614,6 +614,15 @@ jobs:
         working-directory: ryframe-vue3
         run: corepack pnpm install --frozen-lockfile
 
+      - name: 准备离线生成器的锁定 Cargo 依赖
+        working-directory: ryframe
+        shell: pwsh
+        run: |
+          cargo fetch --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo metadata --locked --offline --format-version 1 | Out-Null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: 执行 Windows 产品、工具、进程与资源 Workspace 门禁
         working-directory: ryframe
         shell: pwsh
