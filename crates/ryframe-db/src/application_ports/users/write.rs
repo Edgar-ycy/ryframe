@@ -177,7 +177,7 @@ impl UserWriteTransaction for DatabaseUserWriteTransaction {
             .user_has_super_role_in_txn(&self.transaction, tenant_id, user_id)
             .await?;
         Ok(Some(ManageableUserState {
-            user: to_user_record(user),
+            user: to_user_record(user)?,
             has_super_role,
         }))
     }
@@ -210,7 +210,7 @@ impl UserWriteTransaction for DatabaseUserWriteTransaction {
             .insert(&self.transaction)
             .await
             .db()?;
-        Ok(to_user_record(saved))
+        to_user_record(saved)
     }
 
     async fn update_user<'a>(
@@ -232,7 +232,7 @@ impl UserWriteTransaction for DatabaseUserWriteTransaction {
             .update(&self.transaction)
             .await
             .db()?;
-        Ok(to_user_record(saved))
+        to_user_record(saved)
     }
 
     async fn update_status<'a>(
@@ -311,8 +311,8 @@ fn to_assignment_role(role: role::Model) -> UserAssignmentRole {
     }
 }
 
-pub fn to_user_record(user: user::Model) -> UserWriteRecord {
-    UserWriteRecord {
+pub fn to_user_record(user: user::Model) -> ryframe_kernel::AppResult<UserWriteRecord> {
+    Ok(UserWriteRecord {
         id: user.id,
         username: user.username,
         nickname: user.nickname,
@@ -322,6 +322,7 @@ pub fn to_user_record(user: user::Model) -> UserWriteRecord {
         status: user.status,
         dept_id: user.dept_id,
         remark: user.remark,
-        created_at: user.created_at,
-    }
+        created_at: crate::repositories::utc_time_from_chrono(user.created_at)
+            .db_context("读取用户创建时间")?,
+    })
 }

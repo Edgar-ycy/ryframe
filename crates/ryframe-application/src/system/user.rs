@@ -41,7 +41,8 @@ pub struct UserVo {
     pub dept_id: Option<String>,
     pub dept_name: Option<String>,
     pub remark: Option<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize")]
+    pub created_at: time::OffsetDateTime,
 }
 
 impl From<UserWriteRecord> for UserVo {

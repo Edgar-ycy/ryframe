@@ -3,8 +3,7 @@ use ryframe_db::{application_ports::users::to_user_record, entities::user};
 
 #[test]
 fn user_mapping_exposes_only_application_fields() {
-    let created_at = chrono::DateTime::<chrono::Utc>::UNIX_EPOCH;
-    let record = to_user_record(user::Model {
+    let model = |created_at| user::Model {
         id: 17,
         tenant_id: "tenant-a".to_owned(),
         username: "alice".to_owned(),
@@ -25,11 +24,24 @@ fn user_mapping_exposes_only_application_fields() {
         del_flag: user::Model::DEL_FLAG_NORMAL.to_owned(),
         created_at,
         updated_at: created_at,
-    });
-
-    assert_eq!(record.id, 17);
-    assert_eq!(record.username, "alice");
-    assert_eq!(record.nickname, "Alice");
-    assert_eq!(record.dept_id, Some(5));
-    assert_eq!(record.created_at, created_at);
+    };
+    for nanos in [0, 120_000_000, 123_400_000, 123_456_700] {
+        let original = chrono::DateTime::from_timestamp(-1, nanos).unwrap();
+        let record = to_user_record(model(original)).unwrap();
+        assert_eq!(record.id, 17);
+        assert_eq!(record.username, "alice");
+        assert_eq!(record.nickname, "Alice");
+        assert_eq!(record.dept_id, Some(5));
+        assert_eq!(record.created_at.offset(), time::UtcOffset::UTC);
+        assert_eq!(record.created_at.unix_timestamp(), -1);
+        assert_eq!(record.created_at.nanosecond(), nanos);
+    }
+    for invalid in [
+        chrono::DateTime::from_timestamp(1_483_228_799, 1_123_456_000).unwrap(),
+        chrono::DateTime::from_timestamp(253_402_300_800, 0).unwrap(),
+    ] {
+        let error = to_user_record(model(invalid)).unwrap_err();
+        assert!(matches!(error, ryframe_kernel::AppError::Database(message)
+            if message.starts_with("读取用户创建时间:")));
+    }
 }

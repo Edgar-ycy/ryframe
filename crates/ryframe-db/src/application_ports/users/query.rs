@@ -1,8 +1,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{
-    ControlDatabaseCluster, DeptRepository, ReadConsistency, Repository, RoleRepository,
-    UserFilter, UserRepository,
+    ControlDatabaseCluster, DbResultExt, DeptRepository, ReadConsistency, Repository,
+    RoleRepository, UserFilter, UserRepository,
 };
 use ryframe_kernel::{DataScopeContextRef, ExportCursorWindow, PageResult, ValidatedPageQuery};
 use sea_orm::DatabaseConnection;
@@ -38,7 +38,7 @@ impl UserQueryReadPort for DatabaseUserQueryPersistence {
             .await?
             .into_iter()
             .map(to_user)
-            .collect();
+            .collect::<ryframe_kernel::AppResult<Vec<_>>>()?;
         fill_department_names(&database, tenant_id, records).await
     }
 
@@ -62,7 +62,11 @@ impl UserQueryReadPort for DatabaseUserQueryPersistence {
                 scope,
             )
             .await?;
-        let records = page.records.into_iter().map(to_user).collect();
+        let records = page
+            .records
+            .into_iter()
+            .map(to_user)
+            .collect::<ryframe_kernel::AppResult<Vec<_>>>()?;
         let records = fill_department_names(&database, tenant_id, records).await?;
         Ok(PageResult::new(records, page.total, &query))
     }
@@ -78,12 +82,12 @@ impl UserQueryReadPort for DatabaseUserQueryPersistence {
             .database
             .select_read(ReadConsistency::Strong)
             .connection;
-        Ok(UserRepository
+        UserRepository
             .find_options_with_data_scope(&database, tenant_id, query, scope, limit)
             .await?
             .into_iter()
             .map(to_user)
-            .collect())
+            .collect()
     }
 
     async fn detail<'a>(
@@ -109,7 +113,7 @@ impl UserQueryReadPort for DatabaseUserQueryPersistence {
                 .map(to_department),
             None => None,
         };
-        let mut user = to_user(user);
+        let mut user = to_user(user)?;
         user.dept_name = department
             .as_ref()
             .map(|department| department.name.clone());
@@ -164,8 +168,8 @@ fn to_filter(filter: UserQueryFilter<'_>) -> UserFilter<'_> {
     }
 }
 
-fn to_user(user: crate::entities::user::Model) -> UserQueryRecord {
-    UserQueryRecord {
+fn to_user(user: crate::entities::user::Model) -> ryframe_kernel::AppResult<UserQueryRecord> {
+    Ok(UserQueryRecord {
         id: user.id,
         username: user.username,
         nickname: user.nickname,
@@ -176,8 +180,9 @@ fn to_user(user: crate::entities::user::Model) -> UserQueryRecord {
         dept_id: user.dept_id,
         dept_name: None,
         remark: user.remark,
-        created_at: user.created_at,
-    }
+        created_at: crate::repositories::utc_time_from_chrono(user.created_at)
+            .db_context("读取用户创建时间")?,
+    })
 }
 
 fn to_department(department: crate::entities::dept::Model) -> DeptRecord {

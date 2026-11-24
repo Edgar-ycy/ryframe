@@ -1,5 +1,5 @@
-use chrono::{DateTime, Utc};
 use ryframe_kernel::DataScopeContextRef;
+use time::OffsetDateTime;
 
 pub const USER_STATUS_DISABLED: &str = "0";
 pub const USER_STATUS_NORMAL: &str = "1";
@@ -17,7 +17,7 @@ pub struct UserWriteRecord {
     pub status: String,
     pub dept_id: Option<i64>,
     pub remark: Option<String>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: OffsetDateTime,
 }
 
 #[derive(Debug)]

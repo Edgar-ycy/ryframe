@@ -137,6 +137,62 @@ fn product_plan_version_response_preserves_published_at_utc_and_schema() {
     assert_eq!(property["type"], json!(["string", "null"]));
 }
 
+#[test]
+fn user_response_preserves_created_at_utc_precision_and_required_schema() {
+    use ryframe_api::dto::public_dto::UserVo;
+    use ryframe_application::system::identity::UserVo as ServiceUser;
+    use serde_json::json;
+    use time::{OffsetDateTime, UtcOffset};
+    use utoipa::PartialSchema;
+
+    let response = |created_at| {
+        let service_user = ServiceUser {
+            id: "42".into(),
+            username: "tester".into(),
+            nickname: "测试用户".into(),
+            email: String::new(),
+            phone: String::new(),
+            avatar: None,
+            status: "1".into(),
+            dept_id: None,
+            dept_name: None,
+            remark: None,
+            created_at,
+        };
+        let service_json = serde_json::to_value(&service_user).unwrap();
+        let response_json = serde_json::to_value(UserVo::from(service_user)).unwrap();
+        assert_eq!(response_json["created_at"], service_json["created_at"]);
+        response_json
+    };
+    let non_utc = UtcOffset::from_hms(8, 0, 0).unwrap();
+    for (nanos, fraction) in [
+        (0, ""),
+        (120_000_000, ".120"),
+        (123_400_000, ".123400"),
+        (123_456_700, ".123456700"),
+    ] {
+        let instant = OffsetDateTime::from_unix_timestamp(-1)
+            .unwrap()
+            .replace_nanosecond(nanos)
+            .unwrap()
+            .to_offset(non_utc);
+        assert_eq!(
+            response(instant)["created_at"],
+            format!("1969-12-31T23:59:59{fraction}Z")
+        );
+    }
+    let schema = serde_json::to_value(UserVo::schema()).unwrap();
+    let property = &schema["properties"]["created_at"];
+    assert_eq!(property["format"], "date-time");
+    assert_eq!(property["type"], json!("string"));
+    assert!(
+        schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("created_at"))
+    );
+}
+
 mod permission_catalog {
     use std::collections::BTreeSet;
 

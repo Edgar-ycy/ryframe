@@ -22,7 +22,7 @@ fn detail(dept_id: Option<i64>, department: Option<DeptRecord>) -> UserQueryDeta
                 .as_ref()
                 .map(|department| department.name.clone()),
             remark: None,
-            created_at: DateTime::<Utc>::UNIX_EPOCH,
+            created_at: time::OffsetDateTime::UNIX_EPOCH,
         },
         department,
         roles: Vec::new(),

@@ -1,5 +1,5 @@
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{DataScopeContextRef, ExportCursorWindow, PageResult, ValidatedPageQuery};
+use time::OffsetDateTime;
 
 use crate::ports::system::DeptRecord;
 
@@ -17,7 +17,7 @@ pub struct UserQueryRecord {
     pub dept_id: Option<i64>,
     pub dept_name: Option<String>,
     pub remark: Option<String>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: OffsetDateTime,
 }
 
 impl UserQueryRecord {

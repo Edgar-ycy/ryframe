@@ -45,7 +45,7 @@ fn user(status: &str) -> UserQueryRecord {
         dept_id: None,
         dept_name: None,
         remark: None,
-        created_at: Utc::now(),
+        created_at: time::OffsetDateTime::UNIX_EPOCH,
     }
 }
 
