@@ -142,20 +142,6 @@ class CloneToolsTests(unittest.TestCase):
                 self.assertEqual({tuple(command) for command in self.version_commands},
                                  {("rustc", "-Vv"), ("cargo", "-V")})
 
-    def test_readonly_cargo_event_binding_requires_unique_current_workspace_artifact(self):
-        for path, manifest, duplicate in (("relative.exe", "current", False),
-                                          (str(self.backend / "x.exe"), "foreign", False),
-                                          (str(self.backend / "x.exe"), "current", True)):
-            event = {"reason": "compiler-artifact", "target": {"name": "ryframe-migrate", "kind": ["bin"]},
-                     "manifest_path": str(self.backend / ("crates/ryframe/Cargo.toml" if manifest == "current" else "other/Cargo.toml")),
-                     "executable": path}
-            content = (json.dumps(event) + "\n") * (2 if duplicate else 1)
-            with self.subTest(path=path, manifest=manifest, duplicate=duplicate):
-                before = self.raw_files()
-                with self.assertRaises(ValueError):
-                    tools.recorded_cargo_path(self.backend, "ryframe-migrate", content)
-                self.assertEqual(self.raw_files(), before)
-
     def test_same_head_dirty_change_rejects_old_tool_receipt(self):
         self.product.write_bytes(b"changed tracked product\n")
         self.assertEqual(self.git("rev-parse", "HEAD").decode().strip(), self.head)

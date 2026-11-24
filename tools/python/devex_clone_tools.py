@@ -40,10 +40,6 @@ def target_directory(backend: Path) -> Path:
     return Path(native_source("maintenance-target-directory", root=str(backend)))
 
 
-def recorded_cargo_path(backend: Path, name: str, content: str) -> Path:
-    return Path(native_build("maintenance-artifact-path", backend, {"name": name, "content": content}))
-
-
 def verify_evidence(backend: Path, filename: Path, receipt: dict | None = None) -> dict:
     return native_build("maintenance-evidence", backend, {"filename": str(filename), "receipt": receipt})
 

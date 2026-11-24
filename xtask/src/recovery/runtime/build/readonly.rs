@@ -44,14 +44,6 @@ pub(in crate::recovery) fn request(args: &Value) -> Result<Value> {
                 (!value["receipt"].is_null()).then_some(&value["receipt"]),
             )
         }
-        "maintenance-artifact-path" => {
-            document::exact(value, &["name", "content"], "维护 Cargo 事件输入")?;
-            Ok(json!(maintenance::recorded_cargo_path(
-                root,
-                document::text(&value["name"], "维护产物名")?,
-                document::text(&value["content"], "Cargo 事件")?
-            )?))
-        }
         "artifacts" => {
             bridge::verify_restore_artifacts(value)?;
             Ok(json!({"verified":true}))
