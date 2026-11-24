@@ -2,6 +2,7 @@
 use super::*;
 use crate::recovery::clone::native::digest;
 use std::io::{Read, Write};
+use time::OffsetDateTime;
 
 pub(super) fn begin(run: &Path, operation: &str, sources: &Value) -> Result<(u64, Value)> {
     let mut value = state::load(run, true)?;
@@ -86,5 +87,5 @@ pub(super) fn write(run: &Path, previous: &Value, next: &Value) -> Result<()> {
 }
 
 fn now() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, false)
+    crate::utc_timestamp::rfc3339_micros(OffsetDateTime::now_utc())
 }

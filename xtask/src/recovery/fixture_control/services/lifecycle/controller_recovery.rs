@@ -10,6 +10,7 @@ use crate::{
 };
 use serde_json::{Value, json};
 use std::path::Path;
+use time::OffsetDateTime;
 
 pub(super) fn run(backend: &Path, run: &Path, descriptor: &Value) -> Result<Value> {
     let path = common::bound_file(backend, descriptor, "待恢复控制器")?;
@@ -99,8 +100,9 @@ fn interrupt(run: &Path, saved: &mut Value, owner: &Value, selected: Option<u64>
         }
         if selected.is_none_or(|expected| expected == number) {
             attempt["status"] = json!("failed");
-            attempt["finished_at"] =
-                json!(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, false));
+            attempt["finished_at"] = json!(crate::utc_timestamp::rfc3339_micros(
+                OffsetDateTime::now_utc()
+            ));
             attempt["error_type"] = json!("ControllerInterrupted");
         }
     }
