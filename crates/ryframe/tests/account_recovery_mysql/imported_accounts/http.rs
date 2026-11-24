@@ -44,6 +44,10 @@ impl Server {
                 profile_router().with_state(state.clone()),
             )
             .layer(from_fn_with_state(state.auth, auth_middleware));
+        Self::start_router(app).await
+    }
+
+    pub(super) async fn start_router(app: Router) -> Result<Self, String> {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .map_err(message)?;
@@ -87,7 +91,7 @@ impl Server {
             "Content-Type: multipart/form-data; boundary=account-import-boundary\r\nIdempotency-Key: imported-accounts-password-cycle\r\n", body).await
     }
 
-    async fn request(
+    pub(super) async fn request(
         &self,
         method: &str,
         path: &str,
