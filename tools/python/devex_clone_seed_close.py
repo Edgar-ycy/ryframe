@@ -82,10 +82,6 @@ def _runtime_guard(value, requirement, runtime, handoff, identities=None, *, ope
                             "identities": identities}, label=labels.get(requirement, "seed 固定 handoff 运行状态"))
 
 
-def validate_control(value, operation, roles, runtime, handoff):
-    return _runtime_guard(value, "validate", runtime, handoff, operation=operation, roles=roles)
-
-
 def require_initial_running(value, runtime, handoff):
     return _runtime_guard(value, "initial", runtime, handoff)
 
