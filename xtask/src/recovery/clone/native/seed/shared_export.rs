@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use super::super::{
     bridge::scope::Scope,
-    export::{capture, frozen, input::Context, proof, recovery},
+    export::{capture, frozen, input::Context, proof, recovery, transport::SystemTransport},
     json as document,
     lifecycle::{
         identity, lock,
@@ -146,9 +146,12 @@ impl<'a> Window<'a> {
         let intent_binding = common::binding(&intent_path)?;
         let output = context.output();
         fs::create_dir(&output)?;
-        let exported = match capture::capture_data(context, &|| self.generation(), &|| {
-            self.storage()
-        }) {
+        let exported = match capture::capture_data(
+            context,
+            &SystemTransport,
+            &|| self.generation(),
+            &|| self.storage(),
+        ) {
             Ok(exported) => exported,
             Err(error) => {
                 document::write_new(

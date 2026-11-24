@@ -82,7 +82,12 @@ fn capture(context: &Context) -> Result<Value> {
         }
         Ok(())
     };
-    let exported = capture_data(context, &|| proof::generation(context), &check_storage)?;
+    let exported = capture_data(
+        context,
+        &SystemTransport,
+        &|| proof::generation(context),
+        &check_storage,
+    )?;
     let verified = verify::binding(context, &exported)?;
     recovery::record_verified(context, &verified)?;
     Ok(json!({
@@ -96,13 +101,13 @@ fn capture(context: &Context) -> Result<Value> {
 
 pub(crate) fn capture_data(
     context: &Context,
+    transport: &impl Transport,
     generation: &dyn Fn() -> Result<Value>,
     check_storage: &dyn Fn() -> Result<()>,
 ) -> Result<Value> {
-    let transport = SystemTransport;
     let request_digest = digest::file(&context.request_path)?;
-    let frame = capture_before(context, &transport, generation)?;
-    capture_after(context, &transport, &frame, generation)?;
+    let frame = capture_before(context, transport, generation)?;
+    capture_after(context, transport, &frame, generation)?;
     check_storage()?;
     let output = context.output();
     verify_files(&output, &frame.dumps, &frame.objects)?;
@@ -117,7 +122,7 @@ pub(crate) fn capture_data(
 
 fn capture_before(
     context: &Context,
-    transport: &SystemTransport,
+    transport: &impl Transport,
     generation: &dyn Fn() -> Result<Value>,
 ) -> Result<CaptureFrame> {
     let output = context.output();
@@ -213,7 +218,7 @@ pub(crate) fn capture_dumps<T: Transport>(
 
 fn capture_after(
     context: &Context,
-    transport: &SystemTransport,
+    transport: &impl Transport,
     frame: &CaptureFrame,
     generation: &dyn Fn() -> Result<Value>,
 ) -> Result<()> {
@@ -297,11 +302,7 @@ fn build_export(
     }))
 }
 
-fn verify_databases(
-    context: &Context,
-    transport: &SystemTransport,
-    _models: &Models,
-) -> Result<()> {
+fn verify_databases(context: &Context, transport: &impl Transport, _models: &Models) -> Result<()> {
     let scope = context.source()["scope_id"]
         .as_str()
         .ok_or("源 scope 无效")?;

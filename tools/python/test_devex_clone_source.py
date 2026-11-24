@@ -19,7 +19,6 @@ from restore_reference_plan import configuration_binding
 from devex_clone_export import schema_snapshot
 from devex_clone_model import schema_fingerprints
 from devex_clone_source_fixture import SourceFixture
-from devex_clone_jobs_fixture import add_cleanup
 from restore_reference_io import ExternalTools
 from process_environment import Environments, configured
 from rate_limit_client import load_app_table
@@ -256,19 +255,6 @@ class SourceExportTests(unittest.TestCase):
         self.assertTrue((self.fixture.output / "databases/shared-control.sql").exists())
         self.assertTrue((self.fixture.output / "inventory-after.json").exists())
 
-    def test_invalid_sql_relations_fail_before_any_business_object_capture(self):
-        _, job, _ = add_cleanup(self.fixture.case)
-        job["job_type"] = "unreviewed.cleanup"
-        self.fixture.case.refresh()
-        with patch.object(source, "capture_objects", wraps=source.capture_objects) as capture:
-            self.failed("source_row_state_before_objects")
-            capture.assert_not_called()
-        self.assertFalse((self.fixture.output / "objects").exists())
-        reads = [request for request in self.fixture.native_requests
-                 if request["kind"] == "ryframe-native-s3-read"]
-        self.assertTrue(reads)
-        self.assertTrue(all(request["key"].endswith("/.ryframe-owner") for request in reads))
-
     def test_inventory_objects_are_only_early_evidence_and_captured_index_is_rechecked(self):
         calls, check, capture = [], source.validate_dump_state, source.capture_objects
 
@@ -285,34 +271,6 @@ class SourceExportTests(unittest.TestCase):
         with patch.object(source, "validate_dump_state", side_effect=validate), patch.object(source, "capture_objects", side_effect=capture_changed):
             self.failed("source_row_state")
         self.assertEqual(calls, ["state", "capture", "state"])
-        self.assertEqual(self.fixture.inventory_count, 1)
-
-    def test_real_system_cleanup_sql_is_checked_before_and_after_objects(self):
-        for index in range(3):
-            add_cleanup(self.fixture.case, index)
-        self.fixture.case.refresh()
-        with patch.object(source, "validate_dump_state", wraps=source.validate_dump_state) as check:
-            result = self.export()
-        self.assertEqual(check.call_count, 2)
-        self.assertEqual(len(result["enabled_system_schedule_rows"]), 3)
-        self.assertFalse(result["clone_verified"])
-
-    def test_changed_schedule_after_objects_is_rejected_before_final_inventory(self):
-        schedule, _, _ = add_cleanup(self.fixture.case)
-        self.fixture.case.refresh()
-        original = source.capture_objects
-
-        def changed(*args):
-            result = original(*args)
-            schedule["version"] += 1
-            self.fixture.case.refresh()
-            path = self.fixture.output / "databases/shared-control.sql"
-            path.write_bytes((self.fixture.case.root / "shared-control.sql").read_bytes())
-            return result
-
-        with patch.object(source, "capture_objects", side_effect=changed):
-            self.failed("source_row_state")
-        # 复验先重核完整 SQL 文件绑定，已变化的行不会进入最终 inventory。
         self.assertEqual(self.fixture.inventory_count, 1)
 
     def test_enabled_system_schedule_is_only_a_full_row_fact_not_an_action(self):

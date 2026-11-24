@@ -34,6 +34,8 @@ mod inventory_tests;
 mod recovery_tests;
 #[path = "export_native/saved_captures.rs"]
 mod saved_captures;
+#[path = "export_native/schedule_order.rs"]
+mod schedule_order;
 #[path = "export_native/schema.rs"]
 mod schema_tests;
 
