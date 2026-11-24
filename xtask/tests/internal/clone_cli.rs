@@ -331,21 +331,27 @@ fn held_prepare_and_lock_recovery_require_explicit_bound_operations() {
             ])
             .is_err()
     );
-    let observe = [
-        "prepare-lock-observe",
-        "--run-dir",
-        run,
-        "--owner-binding",
-        owner,
-        "--output",
-        Fixture::value(&output),
-        "--write",
-    ];
-    assert!(matches!(
-        fixture.parse(&observe),
-        Ok(CloneCommand::ObservePrepareTargetLock { output: path, .. }) if path == output
-    ));
-    assert!(fixture.parse(&observe[..observe.len() - 1]).is_err());
+    for (operation, expected) in [
+        ("prepare-lock-observe", false),
+        ("prepare-lock-observe-interrupted", true),
+    ] {
+        let observe = [
+            operation,
+            "--run-dir",
+            run,
+            "--owner-binding",
+            owner,
+            "--output",
+            Fixture::value(&output),
+            "--write",
+        ];
+        assert!(matches!(
+            fixture.parse(&observe),
+            Ok(CloneCommand::ObservePrepareTargetLock { output: path, after_exit, .. })
+                if path == output && after_exit == expected
+        ));
+        assert!(fixture.parse(&observe[..observe.len() - 1]).is_err());
+    }
     let recover = [
         "prepare-lock-recover",
         "--run-dir",

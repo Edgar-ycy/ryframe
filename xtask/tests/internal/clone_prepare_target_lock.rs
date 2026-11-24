@@ -3,7 +3,8 @@ use crate::{
     Result,
     process::{ChildGroup, ManagedChild, command_output_result_with_timeout},
     recovery::clone::native::{
-        lifecycle::{identity, state},
+        copy_owner::Role,
+        lifecycle::{identity, lock::ProcessGuard, state},
         resources::common,
         target_verify::guard::Generation,
     },
@@ -26,6 +27,15 @@ const EXIT: i32 = 37;
 
 #[test]
 fn real_prepare_interruption_recovers_the_original_target_lock_on_the_same_run() {
+    exercise_interruption(false);
+}
+
+#[test]
+fn real_prepare_interruption_can_observe_the_original_lock_after_exit() {
+    exercise_interruption(true);
+}
+
+fn exercise_interruption(after_exit: bool) {
     let mut fixture = Fixture::new();
     fixture.retain_evidence = true;
     eprintln!("本次合成账本与实际进程收据：{}", fixture.local.display());
@@ -68,30 +78,108 @@ fn real_prepare_interruption_recovers_the_original_target_lock_on_the_same_run()
     let original_id = directory_id(&original_lock);
     assert!(fs::read_dir(&original_lock).unwrap().next().is_none());
     let observation = fixture.run.join("prepare-target-lock-0003.json");
-    let observed = succeeded(cli(
-        &fixture,
-        "observe",
-        &[
-            "prepare-lock-observe",
-            "--owner-binding",
-            controller.to_str().unwrap(),
-            "--output",
-            observation.to_str().unwrap(),
-        ],
-    ));
-    assert_eq!(observed["attempt"]["number"], 3);
-    assert_eq!(observed["owner"]["identity"], process);
-    assert_eq!(observed, read_json(&observation));
+    let observe = [
+        if after_exit {
+            "prepare-lock-observe-interrupted"
+        } else {
+            "prepare-lock-observe"
+        },
+        "--owner-binding",
+        controller.to_str().unwrap(),
+        "--output",
+        observation.to_str().unwrap(),
+    ];
     let recovery = [
         "prepare-lock-recover",
         "--request",
         observation.to_str().unwrap(),
     ];
-    let live = cli(&fixture, "reject-live", &recovery);
-    assert!(!live.status.success());
-    assert!(!observation.with_extension("recovering.json").exists());
-    assert_eq!(directory_id(&original_lock), original_id);
+    if after_exit {
+        reject_observation(&fixture, &observation, &observe, "reject-live-observation");
+    } else {
+        assert_observation(&fixture, &observation, &observe, &process, false);
+        assert!(!cli(&fixture, "reject-live", &recovery).status.success());
+        assert!(!observation.with_extension("recovering.json").exists());
+        assert_eq!(directory_id(&original_lock), original_id);
+    }
+    witness_exit(&fixture, input, &handle, &mut child, &process);
+    if after_exit {
+        reject_unavailable_or_written(&fixture, &target, &observation, &observe);
+        assert_observation(&fixture, &observation, &observe, &process, true);
+    }
+    recover_interrupted(
+        &fixture,
+        &controller,
+        &observation,
+        &original_lock,
+        original_id,
+        &recovery,
+    );
+    verify_next_prepare(&fixture, &target, &observation, &original_lock, original_id);
+    for (path, bytes) in original {
+        assert_eq!(fs::read(&path).unwrap(), bytes, "{}", path.display());
+    }
+}
 
+fn assert_observation(
+    fixture: &Fixture,
+    output: &Path,
+    args: &[&str],
+    process: &Value,
+    after_exit: bool,
+) {
+    let before = fs::read(fixture.run.join("state.json")).unwrap();
+    let observed = succeeded(cli(fixture, "observe", args));
+    assert_eq!(observed["attempt"]["number"], 3);
+    assert_eq!(observed["owner"]["identity"], *process);
+    let kind = if after_exit {
+        "devex-post-copy-prepare-target-lock-after-exit"
+    } else {
+        "devex-post-copy-prepare-target-lock"
+    };
+    assert_eq!(observed["kind"], kind);
+    assert_eq!(observed, read_json(output));
+    assert_eq!(fs::read(fixture.run.join("state.json")).unwrap(), before);
+    assert!(fixture.run.join("run.lock/owner.json").is_file());
+}
+
+fn reject_observation(fixture: &Fixture, output: &Path, args: &[&str], label: &str) {
+    let before = fs::read(fixture.run.join("state.json")).unwrap();
+    assert!(!cli(fixture, label, args).status.success());
+    assert!(!output.exists());
+    assert_eq!(fs::read(fixture.run.join("state.json")).unwrap(), before);
+}
+
+fn reject_unavailable_or_written(fixture: &Fixture, target: &Path, output: &Path, args: &[&str]) {
+    for (directory, name, label) in [
+        (
+            fixture.run.as_path(),
+            "run-control.guard",
+            "reject-busy-run",
+        ),
+        (target, Role::Target.guard_name(), "reject-busy-target"),
+    ] {
+        let guard = ProcessGuard::acquire_existing_named(directory, name).unwrap();
+        reject_observation(fixture, output, args, label);
+        guard.check().unwrap();
+    }
+    let config = fixture.run.join("post-copy/runtime-configuration");
+    fs::create_dir(&config).unwrap();
+    let existing = config.join("app.test.toml");
+    fs::write(&existing, b"fixture").unwrap();
+    reject_observation(fixture, output, args, "reject-existing-config");
+    assert_eq!(fs::read(&existing).unwrap(), b"fixture");
+    fs::remove_file(existing).unwrap();
+    fs::remove_dir(config).unwrap();
+}
+
+fn witness_exit(
+    fixture: &Fixture,
+    mut input: impl Write,
+    handle: &HPROCESS,
+    child: &mut ManagedChild,
+    process: &Value,
+) {
     input.write_all(b"x").unwrap();
     drop(input);
     assert_eq!(
@@ -107,18 +195,6 @@ fn real_prepare_interruption_recovers_the_original_target_lock_on_the_same_run()
             "exit_code": EXIT, "job_active_process_count": 0,
         }),
     );
-    recover_interrupted(
-        &fixture,
-        &controller,
-        &observation,
-        &original_lock,
-        original_id,
-        &recovery,
-    );
-    verify_next_prepare(&fixture, &target, &observation, &original_lock, original_id);
-    for (path, bytes) in original {
-        assert_eq!(fs::read(&path).unwrap(), bytes, "{}", path.display());
-    }
 }
 
 fn verify_next_prepare(

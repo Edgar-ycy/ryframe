@@ -47,7 +47,9 @@ pub(super) fn parse(args: &[String]) -> Result<CloneCommand, CliError> {
         "runtime" => parse_runtime(rest)?,
         "recover" => parse_recover(rest, false)?,
         "recover-copy" => parse_recover(rest, true)?,
-        "prepare-lock-observe" => parse_prepare_lock_observe(rest)?,
+        "prepare-lock-observe" | "prepare-lock-observe-interrupted" => {
+            parse_prepare_lock_observe(name, rest)?
+        }
         "prepare-lock-recover" => parse_prepare_lock_recover(rest)?,
         "bridge" => parse_bridge(rest)?,
         "post-copy" => parse_post_copy(rest)?,
@@ -60,9 +62,9 @@ pub(super) fn parse(args: &[String]) -> Result<CloneCommand, CliError> {
     Ok(command)
 }
 
-fn parse_prepare_lock_observe(args: &[String]) -> Result<CloneCommand, CliError> {
+fn parse_prepare_lock_observe(name: &str, args: &[String]) -> Result<CloneCommand, CliError> {
     let options = parse_options(args, &["--run-dir", "--owner-binding", "--output"], false)?;
-    require_write("prepare-lock-observe", &options, true)?;
+    require_write(name, &options, true)?;
     Ok(CloneCommand::ObservePrepareTargetLock {
         run_dir: run_dir(&options)?,
         owner_binding: path(
@@ -75,6 +77,7 @@ fn parse_prepare_lock_observe(args: &[String]) -> Result<CloneCommand, CliError>
             "--output",
             LocalTestPathKind::OutputFile,
         )?,
+        after_exit: name == "prepare-lock-observe-interrupted",
     })
 }
 

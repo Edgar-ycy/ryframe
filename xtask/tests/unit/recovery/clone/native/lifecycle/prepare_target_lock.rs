@@ -57,6 +57,22 @@ fn only_the_original_interrupted_prepare_and_its_entire_history_are_accepted() {
     assert!(interrupted_number(&saved, &receipt).is_err());
 }
 
+#[cfg(windows)]
+#[test]
+fn observation_after_exit_rejects_an_owner_that_is_still_live() {
+    let (_temp, run) = temporary();
+    let sha256 = "0".repeat(64);
+    let manifest = json!({"sha256": sha256});
+    let owner = json!({
+        "format_version": 1,
+        "identity": identity::current().unwrap(),
+        "directory": manifest::path_text(&run, "合成运行目录").unwrap(),
+        "manifest_sha256": manifest["sha256"],
+    });
+    require_process(&run, &owner, &manifest, true).unwrap();
+    assert!(require_process(&run, &owner, &manifest, false).is_err());
+}
+
 #[test]
 fn acquiring_recovery_never_creates_a_replacement_guard_or_accepts_a_new_directory() {
     let (temp, receipt, _) = original();

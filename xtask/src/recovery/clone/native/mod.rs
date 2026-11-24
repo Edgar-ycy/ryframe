@@ -52,7 +52,14 @@ pub(crate) fn run(command: &CloneCommand, backend: &Path) -> Result<()> {
             run_dir,
             owner_binding,
             output,
-        } => lifecycle::prepare_target_lock::observe(backend, run_dir, owner_binding, output)?,
+            after_exit,
+        } => lifecycle::prepare_target_lock::observe(
+            backend,
+            run_dir,
+            owner_binding,
+            output,
+            *after_exit,
+        )?,
         CloneCommand::RecoverPrepareTargetLock { run_dir, receipt } => {
             lifecycle::prepare_target_lock::recover(backend, run_dir, receipt)?
         }

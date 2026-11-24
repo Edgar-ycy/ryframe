@@ -20,6 +20,12 @@ use crate::{
 };
 
 const KIND: &str = "devex-post-copy-prepare-target-lock";
+const INTERRUPTED_KIND: &str = "devex-post-copy-prepare-target-lock-after-exit";
+
+struct ObservationGuards {
+    run: lock::ProcessGuard,
+    target: lock::ProcessGuard,
+}
 
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -49,17 +55,22 @@ pub(crate) fn observe(
     run: &Path,
     controller: &Path,
     output: &Path,
+    after_exit: bool,
 ) -> Result<Value> {
     validate_local_test_path(run, backend, LocalTestPathKind::ExistingDirectory)?;
     validate_local_test_path(output, backend, LocalTestPathKind::OutputFile)?;
     post_process::files::absent(output)?;
     let root = Inputs::directory(output.parent().ok_or("观察收据缺少父目录")?)?;
-    let first = observe_live(backend, run, controller, output)?;
+    let guards = after_exit
+        .then(|| acquire_observation_guards(backend, run))
+        .transpose()?;
+    let capture = || observe_prepare(backend, run, controller, output, guards.as_ref());
+    let first = capture()?;
     let value = serde_json::to_value(&first)?;
     root.check()?;
     document::publish_new(output, &value, "准备目标空锁前置收据")?;
     // 如果阶段已越过前像边界，保留原观察，回收入口仍须重新核对现场。
-    if first != observe_live(backend, run, controller, output)? {
+    if first != capture()? {
         return Err("发布前置收据时原准备状态变化，保留现场".into());
     }
     root.check()?;
@@ -69,7 +80,30 @@ pub(crate) fn observe(
     Ok(value)
 }
 
-fn observe_live(backend: &Path, run: &Path, controller: &Path, output: &Path) -> Result<Receipt> {
+fn acquire_observation_guards(backend: &Path, run: &Path) -> Result<ObservationGuards> {
+    if !cfg!(windows) {
+        return Err("准备控制器退出后的空锁观察只支持 Windows".into());
+    }
+    let run_guard = lock::ProcessGuard::acquire_existing(run)?;
+    let manifest = state::manifest_binding(run)?;
+    let request = common::read_bound(backend, &manifest, "原运行清单")?;
+    let initialized = initialized_path(backend, &request["initialized"])?;
+    let target = initialized.parent().ok_or("已初始化目标缺少目录")?;
+    let target_guard =
+        lock::ProcessGuard::acquire_existing_named(target, Role::Target.guard_name())?;
+    Ok(ObservationGuards {
+        run: run_guard,
+        target: target_guard,
+    })
+}
+
+fn observe_prepare(
+    backend: &Path,
+    run: &Path,
+    controller: &Path,
+    output: &Path,
+    held: Option<&ObservationGuards>,
+) -> Result<Receipt> {
     let saved = state::load(run, true)?;
     let running = state::running_attempt(&saved)?.ok_or("当前没有运行中的准备阶段")?;
     let number = prepare_number(running)?;
@@ -85,19 +119,36 @@ fn observe_live(backend: &Path, run: &Path, controller: &Path, output: &Path) ->
         return Err("原准备控制器与运行锁归属不一致".into());
     }
     let context = context(backend, run, number, &saved)?;
-    require_process(run, &owner, &context.manifest, true)?;
-    lock::ProcessGuard::require_existing_named_held(run, "run-control.guard")?;
-    let initialized = initialized_path(backend, &context)?;
+    let live = held.is_none();
+    require_process(run, &owner, &context.manifest, live)?;
+    if let Some(guards) = held {
+        guards.run.check()?;
+    } else {
+        lock::ProcessGuard::require_existing_named_held(run, "run-control.guard")?;
+    }
+    let initialized = initialized_path(backend, &context.initialized)?;
     let target = initialized.parent().ok_or("已初始化目标缺少目录")?;
-    lock::ProcessGuard::require_existing_named_held(target, Role::Target.guard_name())?;
+    if let Some(guards) = held {
+        guards
+            .target
+            .check_named(target, Role::Target.guard_name())?;
+    } else {
+        lock::ProcessGuard::require_existing_named_held(target, Role::Target.guard_name())?;
+    }
     let empty = prepare_lock::observe(backend, target)?;
     if state::load(run, true)? != saved || lock::lock_snapshot(run)? != outer {
         return Err("读取前置收据时原准备或运行锁变化".into());
     }
-    require_process(run, &owner, &context.manifest, true)?;
+    require_process(run, &owner, &context.manifest, live)?;
+    if let Some(guards) = held {
+        guards.run.check()?;
+        guards
+            .target
+            .check_named(target, Role::Target.guard_name())?;
+    }
     Ok(Receipt {
         format_version: 1,
-        kind: KIND.into(),
+        kind: if live { KIND } else { INTERRUPTED_KIND }.into(),
         path: manifest::path_text(output, "目标空锁前置收据")?,
         state_sha256: digest::plan_hash(&saved)?,
         attempt: running.clone(),
@@ -128,7 +179,7 @@ fn recover_with_publisher(
     let receipt: Receipt =
         serde_json::from_value(common::read_bound(backend, &descriptor, "原空锁观察")?)?;
     if receipt.format_version != 1
-        || receipt.kind != KIND
+        || !matches!(receipt.kind.as_str(), KIND | INTERRUPTED_KIND)
         || receipt.path != manifest::path_text(path, "原空锁观察")?
     {
         return Err("目标空锁观察格式或原路径无效".into());
@@ -146,7 +197,7 @@ fn recover_with_publisher(
         interrupted(backend, run, &receipt)
     };
     let state_binding = checked()?;
-    let initialized = initialized_path(backend, &receipt.context)?;
+    let initialized = initialized_path(backend, &receipt.context.initialized)?;
     let target = initialized.parent().ok_or("已初始化目标缺少目录")?;
     let recovery = prepare_lock::Recovery::acquire(backend, target, &archive, receipt.lock)?;
     let intent = json!({
@@ -347,8 +398,8 @@ fn context(backend: &Path, run: &Path, number: u64, saved: &Value) -> Result<Pre
     })
 }
 
-fn initialized_path(backend: &Path, context: &PrepareContext) -> Result<std::path::PathBuf> {
-    let path = common::bound_file(backend, &context.initialized, "已初始化目标")?;
+fn initialized_path(backend: &Path, initialized: &Value) -> Result<std::path::PathBuf> {
+    let path = common::bound_file(backend, initialized, "已初始化目标")?;
     if path.file_name().and_then(|name| name.to_str()) != Some("initialized.json") {
         return Err("清单的已初始化结果路径无效".into());
     }
