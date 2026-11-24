@@ -1,4 +1,3 @@
-use chrono::Utc;
 use redis::{AsyncCommands, aio::ConnectionLike};
 use ryframe_adapters::RedisClient;
 use ryframe_application::system::operations::{OnlineSessionMetadataStore, UserSession};
@@ -290,7 +289,7 @@ pub(super) async fn touch(client: &RedisClient, tenant_id: &str, sid: &str) -> A
         tracing::warn!(%key, "拒绝更新身份不匹配的在线用户元数据");
         return Ok(false);
     }
-    session.last_access_time = Utc::now();
+    session.last_access_time = time::OffsetDateTime::now_utc();
     let replacement = encode(&session)
         .ok()
         .zip(remaining_ttl(session.absolute_exp));

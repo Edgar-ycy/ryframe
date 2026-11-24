@@ -326,12 +326,11 @@ pub async fn list_sessions(
     let sessions = sessions
         .into_iter()
         .map(|session| {
-            let expires_at =
-                chrono::DateTime::<chrono::Utc>::from_timestamp(session.absolute_exp, 0)
-                    .ok_or_else(|| {
-                        tracing::error!(sid = %session.sid, "登录设备绝对过期时间超出可表示范围");
-                        AppError::ServiceUnavailable("登录设备数据暂不可用".into())
-                    })?;
+            let expires_at = time::OffsetDateTime::from_unix_timestamp(session.absolute_exp)
+                .map_err(|_| {
+                    tracing::error!(sid = %session.sid, "登录设备绝对过期时间超出可表示范围");
+                    AppError::ServiceUnavailable("登录设备数据暂不可用".into())
+                })?;
             Ok(AuthSessionResponse {
                 current: session.sid == claims.sid,
                 sid: session.sid,

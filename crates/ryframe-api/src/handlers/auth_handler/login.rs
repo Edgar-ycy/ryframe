@@ -106,7 +106,7 @@ async fn add_online_user(
     use ryframe_application::system::operations::UserSession;
 
     let login_location = crate::client_ip::get_ip_location(ip);
-    let now = chrono::Utc::now();
+    let now = time::OffsetDateTime::now_utc();
 
     state
         .services

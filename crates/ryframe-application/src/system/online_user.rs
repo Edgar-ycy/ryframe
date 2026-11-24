@@ -1,15 +1,15 @@
 use std::{cmp::Reverse, sync::Arc};
 
-use chrono::Utc;
 use ryframe_kernel::{ActorContext, AppError, AppResult, ValidatedPageQuery};
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 mod keyspace;
 mod memory_backend;
 
 pub use memory_backend::InMemoryOnlineSessionMetadata;
 
-use crate::ports::auth::RefreshSessionPort;
+use crate::ports::{auth::RefreshSessionPort, utc_timestamp};
 
 /// 在线用户信息。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,8 +38,10 @@ pub struct UserSession {
     pub login_location: Option<String>,
     pub browser: Option<String>,
     pub os: Option<String>,
-    pub login_time: chrono::DateTime<Utc>,
-    pub last_access_time: chrono::DateTime<Utc>,
+    #[serde(with = "utc_timestamp")]
+    pub login_time: OffsetDateTime,
+    #[serde(with = "utc_timestamp")]
+    pub last_access_time: OffsetDateTime,
     /// 刷新令牌族的绝对过期时间。展示元数据不能比权威会话存活更久。
     pub absolute_exp: i64,
 }
@@ -184,12 +186,11 @@ impl OnlineUserService {
     pub async fn list_online_users(&self, actor: &ActorContext) -> AppResult<Vec<OnlineUserVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let metadata = self.metadata.list(tenant_id).await?;
-        Ok(self
-            .authoritative_sessions(tenant_id, metadata, None)
+        self.authoritative_sessions(tenant_id, metadata, None)
             .await?
             .into_iter()
             .map(session_into_vo)
-            .collect())
+            .collect()
     }
 
     /// 严格更新已经存在的设备元数据，不会根据访问令牌重新创建缺失记录。
@@ -232,8 +233,12 @@ fn remaining_ttl(absolute_exp: i64) -> Option<u64> {
     (remaining > 0).then_some(remaining as u64)
 }
 
-fn session_into_vo(session: UserSession) -> OnlineUserVo {
-    OnlineUserVo {
+fn session_into_vo(session: UserSession) -> AppResult<OnlineUserVo> {
+    let display_time = |value: &OffsetDateTime| {
+        utc_timestamp::format_with_offset(value)
+            .map_err(|_| AppError::ServiceUnavailable("登录设备元数据损坏".into()))
+    };
+    Ok(OnlineUserVo {
         sid: session.sid,
         username: session.username,
         dept_name: session.dept_name,
@@ -241,7 +246,7 @@ fn session_into_vo(session: UserSession) -> OnlineUserVo {
         login_location: session.login_location,
         browser: session.browser,
         os: session.os,
-        login_time: session.login_time.to_rfc3339(),
-        last_access_time: session.last_access_time.to_rfc3339(),
-    }
+        login_time: display_time(&session.login_time)?,
+        last_access_time: display_time(&session.last_access_time)?,
+    })
 }

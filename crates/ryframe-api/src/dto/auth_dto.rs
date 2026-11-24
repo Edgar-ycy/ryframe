@@ -1,6 +1,6 @@
-use chrono::{DateTime, Utc};
-use ryframe_application::{LoginResult, UserInfo as ServiceUserInfo};
+use ryframe_application::{LoginResult, UserInfo as ServiceUserInfo, ports::utc_timestamp};
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 use utoipa::ToSchema;
 
 use super::product_dto::SessionCapabilityVo;
@@ -135,9 +135,15 @@ pub struct AuthSessionResponse {
     pub login_location: Option<String>,
     pub browser: Option<String>,
     pub os: Option<String>,
-    pub login_time: DateTime<Utc>,
-    pub last_access_time: DateTime<Utc>,
-    pub expires_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub login_time: OffsetDateTime,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub last_access_time: OffsetDateTime,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub expires_at: OffsetDateTime,
 }
 
 /// 批量撤销其他登录设备的结果。

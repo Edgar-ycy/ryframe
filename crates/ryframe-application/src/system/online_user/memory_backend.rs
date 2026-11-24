@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
-use chrono::Utc;
 use ryframe_kernel::AppResult;
+use time::OffsetDateTime;
 use tokio::sync::RwLock;
 
 use super::{OnlineSessionMetadataStore, UserSession, keyspace::session_key, remaining_ttl};
@@ -55,7 +55,7 @@ async fn touch(sessions: &Sessions, tenant_id: &str, sid: &str) -> bool {
         sessions.remove(&key);
         false
     } else if let Some(session) = sessions.get_mut(&key) {
-        session.last_access_time = Utc::now();
+        session.last_access_time = OffsetDateTime::now_utc();
         true
     } else {
         false
