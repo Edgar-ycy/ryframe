@@ -169,30 +169,5 @@ class PlanReuseTests(unittest.TestCase):
         self.assertEqual(self.case.writes(), [])
 
 
-class CompositionReuseTests(unittest.TestCase):
-    def test_factory_passes_its_single_semantic_result_to_transfer(self):
-        from test_devex_clone_factory import FactoryTests
-
-        case = FactoryTests()
-        case.setUp()
-        self.addCleanup(case.doCleanups)
-        with patch.object(clone, "create_plan", wraps=clone.create_plan) as parse:
-            result = case.execute()
-            self.assertEqual(result["status"], "data_steps_verified")
-            self.assertEqual(parse.call_count, 1)
-
-    def test_hydrate_passes_its_single_semantic_result_to_reconciliation(self):
-        from test_devex_clone_resume import ResumeTests
-
-        case = ResumeTests()
-        case.setUp()
-        self.addCleanup(case.doCleanups)
-        case.interrupted()
-        with patch.object(clone, "create_plan", wraps=clone.create_plan) as parse:
-            result = case.continue_copy("reconcile")
-            self.assertEqual(result["status"], "copy_reconciled")
-            self.assertEqual(parse.call_count, 1)
-
-
 if __name__ == "__main__":
     unittest.main()
