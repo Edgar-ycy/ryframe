@@ -3,7 +3,10 @@ use crate::{
     Result,
     recovery::{
         clone::native::{digest, json as strict},
-        inputs::document::{self, Document},
+        inputs::{
+            document::{self, Document},
+            reference::is_independent_b1,
+        },
     },
 };
 use serde_json::Value;
@@ -61,29 +64,42 @@ fn produce(
         "恢复启动工具未绑定当前协调后端",
     )?;
     let reference = registration::reference(inputs, &documents.launch.value, &target)?;
-    let (chain, verified, _product) =
-        crate::recovery::inputs::target_plan::verify(backend, reference, &target.path)?;
-    crate::recovery::source::evidence::comparison::verify(
-        backend,
-        &chain.comparison_document.value,
-        true,
-    )?;
+    let (verified, plan, backup) = if is_independent_b1(&reference.value) {
+        let projection = independent::read(
+            backend,
+            &reference,
+            &target,
+            &documents.launch.value["request"]["registration"]["registration"],
+            &documents.bindings.value,
+            inputs,
+        )?;
+        (projection.target, projection.reference, projection.backup)
+    } else {
+        let (chain, verified, _) =
+            crate::recovery::inputs::target_plan::verify(backend, reference, &target.path)?;
+        crate::recovery::source::evidence::comparison::verify(
+            backend,
+            &chain.comparison_document.value,
+            true,
+        )?;
+        (verified, chain.reference.value, chain.backup)
+    };
     let tools = commands::current_tools(backend, &std::env::current_exe()?, inputs)?;
     cross::verify(
         &runtime.value,
         &verified,
-        &chain.reference.value,
-        &chain.backup.manifest,
+        &plan,
+        &backup.manifest,
         &documents,
     )?;
     environment::verify(inputs, &documents.launch.value["request"])?;
-    lifecycle::verify(inputs, &documents.launch, &chain.reference.value, &tools)?;
-    let dataset = lineage::extract(inputs, &chain.backup.result)?;
+    lifecycle::verify(inputs, &documents.launch, &plan, &tools)?;
+    let dataset = lineage::extract(inputs, &backup.result)?;
     Ok(project(
         runtime,
         &target,
         &dataset,
-        &chain.reference.value["target"],
+        &plan["target"],
         &verified["product_execution"]["roots"]["execution_backend"],
     ))
 }
@@ -120,6 +136,7 @@ pub(crate) mod commands;
 pub(super) mod configuration_registration;
 pub(super) mod cross;
 pub(super) mod environment;
+pub(super) mod independent;
 pub(super) mod inputs;
 mod lifecycle;
 mod lineage;

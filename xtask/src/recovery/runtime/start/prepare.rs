@@ -12,14 +12,18 @@ use crate::{
         clone::native::digest,
         frontend_build,
         inputs::{
-            chain::{self, Chain},
+            chain,
             document::{self, Document},
+            reference::is_independent_b1,
             target_plan,
         },
         runtime::{
             bind::canonical_input,
             dataset_authority::{
-                check, commands, cross, environment, inputs::Inputs, path, registration,
+                check, commands, cross, environment,
+                independent::{self, TargetProjection},
+                inputs::Inputs,
+                path, registration,
             },
             status::Bound,
             verify::same_path,
@@ -43,9 +47,8 @@ impl Prepared {
         inputs: &mut Inputs,
     ) -> Result<Self> {
         let bound = Bound::read(backend, &options.control, inputs)?;
-        let (chain, target) = verified_target(backend, &bound, inputs)?;
-        let bindings = inputs.read(&canonical_input(&options.bindings, ExistingFile)?)?;
-        let execution = &target["product_execution"];
+        let (projection, bindings) = verified_target(backend, &bound, &options.bindings, inputs)?;
+        let execution = &projection.target["product_execution"];
         let backend_build = registered_build(
             inputs,
             &options.build_receipt,
@@ -57,12 +60,12 @@ impl Prepared {
             registered_build(inputs, &frontend_path, &execution["builds"]["frontend"])?;
         let authority = cross::start_authority(
             &bindings.value,
-            &target,
-            &chain.reference.value,
-            &chain.backup.manifest,
+            &projection.target,
+            &projection.reference,
+            &projection.backup.manifest,
         )?;
         bound.check_stop_authority(&authority)?;
-        let build_environment = &chain::source_arm(&chain)?["backend_environment"];
+        let build_environment = &projection.backend_environment;
         let environment_binding = document::binding_shape(build_environment, "已登记后端构建环境")?;
         inputs.protect(&environment_binding.path)?;
         let roots = sources::read(
@@ -112,14 +115,41 @@ fn registered_build(inputs: &mut Inputs, selected: &Path, descriptor: &Value) ->
     Ok(registered)
 }
 
-fn verified_target(backend: &Path, bound: &Bound, inputs: &mut Inputs) -> Result<(Chain, Value)> {
+fn verified_target(
+    backend: &Path,
+    bound: &Bound,
+    bindings_path: &Path,
+    inputs: &mut Inputs,
+) -> Result<(TargetProjection, Document)> {
     let registered = inputs.bound(&bound.binding["registration"])?;
     let target = inputs.bound(&bound.binding["target_plan"])?;
     let reference = registration::read_binding(inputs, &bound.binding, &target, &registered)?;
+    if is_independent_b1(&reference.value) {
+        let bindings = inputs.read(&canonical_input(bindings_path, ExistingFile)?)?;
+        let projection = independent::read(
+            backend,
+            &reference,
+            &target,
+            &bound.binding["registration"],
+            &bindings.value,
+            inputs,
+        )?;
+        return Ok((projection, bindings));
+    }
     let (chain, verified, _) = target_plan::verify(backend, reference, &target.path)?;
     check(verified == target.value, "启动目标计划与原登记不同")?;
     comparison::verify(backend, &chain.comparison_document.value, true)?;
-    Ok((chain, verified))
+    let bindings = inputs.read(&canonical_input(bindings_path, ExistingFile)?)?;
+    let backend_environment = chain::source_arm(&chain)?["backend_environment"].clone();
+    Ok((
+        TargetProjection {
+            reference: chain.reference.value,
+            target: verified,
+            backup: chain.backup,
+            backend_environment,
+        },
+        bindings,
+    ))
 }
 
 fn pin_execution(request: &Value, inputs: &mut Inputs) -> Result<()> {

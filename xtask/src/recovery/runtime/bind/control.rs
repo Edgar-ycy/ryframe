@@ -13,7 +13,7 @@ use crate::{
     local_test_path::LocalTestPathKind::ExistingFile,
     recovery::inputs::{
         document::{self, Document},
-        domain,
+        domain, reference,
     },
 };
 
@@ -109,6 +109,7 @@ pub(in crate::recovery::runtime) fn runtime_target(
     reference: &Value,
     target: &Value,
 ) -> Result<(PathBuf, Value)> {
+    let reference = runtime_reference(reference, target)?;
     let selected = &reference["target"];
     let product = &target["product_plan"];
     for key in ["fresh_target", "maintenance_execution", "product_execution"] {
@@ -128,6 +129,32 @@ pub(in crate::recovery::runtime) fn runtime_target(
         "恢复登记的目标侧或 scope 与参考计划不同",
     )?;
     Ok((path(&selected["runtime_dir"])?, endpoints))
+}
+
+fn runtime_reference<'a>(reference: &'a Value, target: &Value) -> Result<&'a Value> {
+    if !reference::is_independent_b1(reference) {
+        return Ok(reference);
+    }
+    document::exact(
+        reference,
+        &[
+            "format_version",
+            "kind",
+            "reference_plan",
+            "arm_input",
+            "source_export",
+        ],
+        "独立 B1 原参考计划封装",
+    )?;
+    let plan = &reference["reference_plan"];
+    check(
+        reference["format_version"] == 1
+            && target["kind"] == "restore-reference-target-plan"
+            && target["reference_plan_sha256"] == document::hash(reference)?
+            && plan["target_side"] == "candidate",
+        "恢复运行必须使用目标绑定的原独立 B1 计划封装",
+    )?;
+    Ok(plan)
 }
 
 fn running(
@@ -169,4 +196,36 @@ fn running(
         "恢复运行启动收据与已登记代次的路径、摘要或原字节不同",
     )?;
     Ok(document)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn independent_runtime_target_checks_the_original_envelope_before_using_its_plan() -> Result<()>
+    {
+        let work = crate::workspace::root_dir().join(".local-tests/runtime-case");
+        let plan = json!({
+            "target_side":"candidate",
+            "target":{"runtime_dir":work,"scope_id":"test-arm","frontend_url":"http://127.0.0.1:4123"}
+        });
+        let mut reference = json!({
+            "format_version":1,"kind":"restore-reference-independent-b1-plan",
+            "reference_plan":plan,"arm_input":{},"source_export":{}
+        });
+        let target = json!({
+            "kind":"restore-reference-target-plan","target_side":"candidate",
+            "reference_plan_sha256":document::hash(&reference)?,
+            "product_plan":{"scope_id":"test-arm","frontend_sha":"b".repeat(40),
+                "api_ready_url":"http://127.0.0.1:4121/readyz","worker_ready_url":"http://127.0.0.1:4122/readyz"},
+            "fresh_target":{}, "maintenance_execution":{}, "product_execution":{}
+        });
+        let (directory, endpoints) = runtime_target(&reference, &target)?;
+        assert_eq!(directory, work);
+        assert_eq!(endpoints["frontend"], "http://127.0.0.1:4123");
+        reference["source_export"] = json!({"different":true});
+        assert!(runtime_target(&reference, &target).is_err());
+        Ok(())
+    }
 }

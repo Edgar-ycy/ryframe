@@ -237,15 +237,50 @@ impl SealedBegin {
         Self::read(backend, directory, record)
     }
 
+    pub(in super::super) fn open_recorded(
+        backend: &Path,
+        plan: &Value,
+        target: &Value,
+    ) -> Result<(Self, Document)> {
+        let directory = receipt::directory_for(plan, target)?;
+        let (directory_guard, result) = Self::read_result(backend, &directory)?;
+        if result.value["format_version"] != 1
+            || result.value["kind"] != "reference-restore-begin-result"
+            || result.value["status"] != "completed"
+        {
+            return Err("独立 B1 原开始登记尚未成功完成".into());
+        }
+        let binding = document::binding_shape(&result.value["record"], "原 Running 记录")?;
+        independent::verify_output_name(path(&plan["work_dir"])?, &directory, &binding.path)?;
+        let record = receipt::bound(backend, &binding.path, &result.value["record"])?;
+        let begin = Self::verify_result(backend, directory, directory_guard, result, &record)?;
+        Ok((begin, record))
+    }
+
     fn read(backend: &Path, directory: PathBuf, record: &Document) -> Result<Self> {
-        validate_local_test_path(&directory, backend, LocalTestPathKind::ExistingDirectory)?;
-        let directory_guard = Inputs::directory(&directory)?;
-        require_no_failures(&directory)?;
+        let (directory_guard, result) = Self::read_result(backend, &directory)?;
+        Self::verify_result(backend, directory, directory_guard, result, record)
+    }
+
+    fn read_result(backend: &Path, directory: &Path) -> Result<(Inputs, Document)> {
+        validate_local_test_path(directory, backend, LocalTestPathKind::ExistingDirectory)?;
+        let directory_guard = Inputs::directory(directory)?;
+        require_no_failures(directory)?;
         let result = document::read(
             &directory.join("result.json"),
             backend,
             "独立 B1 开始登记结果",
         )?;
+        Ok((directory_guard, result))
+    }
+
+    fn verify_result(
+        backend: &Path,
+        directory: PathBuf,
+        directory_guard: Inputs,
+        result: Document,
+        record: &Document,
+    ) -> Result<Self> {
         receipt::check_result(&result.value, record, true)?;
         let intent = receipt::bound(
             backend,
@@ -428,6 +463,14 @@ mod tests {
     #[test]
     fn independent_begin_receipt_rejects_substituted_running_and_work_binding() -> Result<()> {
         let (_temporary, backend, directory, record) = fixture()?;
+        let work = directory.parent().ok_or("开始登记测试目录缺少父目录")?;
+        let plan = json!({"work_dir":work,"target_side":"candidate"});
+        let target = json!({"target_side":"candidate"});
+        let (recorded, selected) = SealedBegin::open_recorded(&backend, &plan, &target)?;
+        assert_eq!(document::binding(&selected), document::binding(&record));
+        recorded.check()?;
+        drop(recorded);
+
         let original = SealedBegin::read(&backend, directory.clone(), &record)?;
         original.check()?;
         let mut result = original.result.value.clone();
@@ -440,6 +483,10 @@ mod tests {
             &record.value,
         )?;
         assert!(SealedBegin::read(&backend, directory.clone(), &other_record).is_err());
+        let mut substituted = result.clone();
+        substituted["record"] = document::binding(&other_record);
+        write(&backend, &directory.join("result.json"), &substituted)?;
+        assert!(SealedBegin::open_recorded(&backend, &plan, &target).is_err());
         intent["reference_work"]["directory_identity"]["inode"] = json!(99);
         let replaced = write(&backend, &directory.join("intent.json"), &intent)?;
         result["intent"] = document::binding(&replaced);

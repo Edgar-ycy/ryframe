@@ -28,6 +28,8 @@ mod begin;
 mod begin_copy;
 #[path = "restore/begin_proof.rs"]
 mod begin_proof;
+#[path = "restore/begun.rs"]
+mod begun;
 #[path = "restore/completed.rs"]
 mod completed;
 #[path = "restore/database_images.rs"]
@@ -48,6 +50,7 @@ mod object_write;
 mod writes;
 
 pub(super) use begin::run as run_begin;
+pub(in crate::recovery) use begun::with_begun_independent_target;
 pub(in crate::recovery) use completed::CompletedIndependentRestore;
 use inputs::Snapshot;
 

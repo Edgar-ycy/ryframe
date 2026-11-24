@@ -141,6 +141,8 @@ Continue the restore with `cargo xtask check recovery reference restore --plan <
 
 After product data verification succeeds, use the `check recovery inputs bindings` command above with the same arm's DataVerified record. The tool checks the original external restore completion receipt, full before- and after-images, formal backup and original Running record, and confirms that data verification finished within the original drill deadline. Preview reads the existing evidence. Supplying an explicit output and `--write` publishes the data binding in the same format.
 
+The independent arm uses the runtime control commands above. Starting it requires the data binding just published, the original runtime registration, the complete B1 target plan, and the original registered builds. The controller checks the same DataVerified record and formal backup and verifies every byte of the private API and Worker configuration against the original target request. Before runtime starts, the status command can verify the original registration, a completed begin stage, or a completed external restore. If the reference working directory is still locked, the restore output is partial, or a failure is unresolved, the check stops and preserves the original receipts.
+
 ## Non-production Rebuilds
 
 MySQL rebuild preflight accepts schema-level grants on the exact database names in the manifest. Each migration connection needs the required DDL and DML privileges for its target. The connection holding the lock on a physical server also needs `SELECT`, `CREATE`, and `DROP` on every database it handles. Resource writes begin after both checks pass.

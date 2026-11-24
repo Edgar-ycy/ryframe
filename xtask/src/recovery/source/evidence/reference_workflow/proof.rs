@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, FixedOffset, Utc};
 use serde_json::{Value, json};
 
 use super::{exact, inputs, native, text};
@@ -86,7 +86,25 @@ pub(super) fn backup_result(args: &Value) -> Result<Value> {
 
 pub(super) fn record(args: &Value) -> Result<Value> {
     exact(args, &["plan", "manifest", "record", "product_plan"])?;
-    let record = &args["record"];
+    let started = running_record(
+        &args["plan"],
+        &args["manifest"],
+        &args["record"],
+        &args["product_plan"],
+    )?;
+    let elapsed = Utc::now().signed_duration_since(started);
+    if elapsed < chrono::Duration::zero() || elapsed > chrono::Duration::hours(1) {
+        return Err("恢复操作尚未开始、时钟回退或已超过60分钟".into());
+    }
+    Ok(Value::Bool(true))
+}
+
+pub(super) fn running_record(
+    plan: &Value,
+    manifest: &Value,
+    record: &Value,
+    product_plan: &Value,
+) -> Result<DateTime<FixedOffset>> {
     exact(
         record,
         &[
@@ -101,14 +119,14 @@ pub(super) fn record(args: &Value) -> Result<Value> {
         ],
     )?;
     let product = &record["plan"];
-    if *product != args["product_plan"] || record["plan_hash"] != product_hash(product)? {
+    if product != product_plan || record["plan_hash"] != product_hash(product)? {
         return Err("restore-begin记录与目标计划内嵌产品计划或产品摘要不完全一致".into());
     }
     for field in ["id", "backup_id"] {
         inputs::domain::identifier(text(&product[field])?)?;
     }
     inputs::domain::scope_identifier(text(&product["scope_id"])?)?;
-    let target = &args["plan"]["target"];
+    let target = &plan["target"];
     let expected = native::json::array(&target["databases"], "目标数据库")?
         .iter()
         .map(|database| {
@@ -133,8 +151,8 @@ pub(super) fn record(args: &Value) -> Result<Value> {
         })
         .collect::<Result<BTreeSet<_>>>()?;
     if record["status"] != "running"
-        || product["backup_id"] != args["manifest"]["id"]
-        || product["backup_id"] != args["plan"]["id"]
+        || product["backup_id"] != manifest["id"]
+        || product["backup_id"] != plan["id"]
         || product["scope_id"] != target["scope_id"]
         || actual != expected
         || actual_values.len() != expected.len()
@@ -148,13 +166,9 @@ pub(super) fn record(args: &Value) -> Result<Value> {
     }
     let started = DateTime::parse_from_rfc3339(text(&record["started_at"])?)?;
     let recovered = DateTime::parse_from_rfc3339(text(&record["recovered_at"])?)?;
-    let captured = DateTime::parse_from_rfc3339(text(&args["manifest"]["captured_at"])?)?;
+    let captured = DateTime::parse_from_rfc3339(text(&manifest["captured_at"])?)?;
     if recovered != captured || recovered > started {
         return Err("恢复记录的恢复点与同一备份清单不一致".into());
     }
-    let elapsed = Utc::now().signed_duration_since(started);
-    if elapsed < chrono::Duration::zero() || elapsed > chrono::Duration::hours(1) {
-        return Err("恢复操作尚未开始、时钟回退或已超过60分钟".into());
-    }
-    Ok(Value::Bool(true))
+    Ok(started)
 }

@@ -3,12 +3,14 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use super::{check, cross, inputs::Inputs, lineage, path, reads::Window, registration, schema};
+use super::{
+    check, cross, independent, inputs::Inputs, lineage, path, reads::Window, registration, schema,
+};
 use crate::{
     Result,
     cli::{RuntimeSources, RuntimeVerifyOptions},
     recovery::{
-        inputs::{backup, document::Document, target_plan},
+        inputs::{backup, document::Document, reference::is_independent_b1, target_plan},
         runtime::live_verify,
         source::evidence::comparison,
     },
@@ -36,23 +38,30 @@ impl VerifiedTarget {
         let target = inputs.read(target_path)?;
         let documents = cross::read(inputs, &runtime.value)?;
         let reference = registration::reference(inputs, &documents.launch.value, &target)?;
-        let (chain, value, _) = target_plan::verify(backend, reference, &target.path)?;
-        comparison::verify(backend, &chain.comparison_document.value, true)?;
-        backup::verify_frozen_source(backend, &chain.backup)?;
-        let authority = cross::verify(
-            &runtime.value,
-            &value,
-            &chain.reference.value,
-            &chain.backup.manifest,
-            &documents,
-        )?;
-        let lineage = lineage::extract(inputs, &chain.backup.result)?;
+        let (value, plan, backup) = if is_independent_b1(&reference.value) {
+            let projection = independent::read(
+                backend,
+                &reference,
+                &target,
+                &documents.launch.value["request"]["registration"]["registration"],
+                &documents.bindings.value,
+                inputs,
+            )?;
+            (projection.target, projection.reference, projection.backup)
+        } else {
+            let (chain, value, _) = target_plan::verify(backend, reference, &target.path)?;
+            comparison::verify(backend, &chain.comparison_document.value, true)?;
+            backup::verify_frozen_source(backend, &chain.backup)?;
+            (value, chain.reference.value, chain.backup)
+        };
+        let authority = cross::verify(&runtime.value, &value, &plan, &backup.manifest, &documents)?;
+        let lineage = lineage::extract(inputs, &backup.result)?;
         Ok(Self {
             runtime,
             target,
             documents,
             value,
-            manifest: chain.backup.manifest,
+            manifest: backup.manifest,
             authority,
             lineage,
         })

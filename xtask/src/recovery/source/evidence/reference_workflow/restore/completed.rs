@@ -215,6 +215,10 @@ impl<'a> CompletedIndependentRestore<'a> {
         &self.running
     }
 
+    pub(in crate::recovery) fn registration(&self) -> &Document {
+        &self.registration
+    }
+
     pub(in crate::recovery) fn manifest(&self) -> &Document {
         &self.manifest
     }

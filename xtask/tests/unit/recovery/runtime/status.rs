@@ -43,6 +43,7 @@ fn status_distinguishes_first_creation_cut_and_registered_never_started() {
         target: PathBuf::new(),
         endpoints: Value::Null,
         scope: Value::Null,
+        independent_b1: false,
     };
     assert_eq!(
         before.operation("status").unwrap(),

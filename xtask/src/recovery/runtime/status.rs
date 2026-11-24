@@ -24,7 +24,7 @@ use crate::{
     local_test_path::{LocalTestPathKind, validate_local_test_path},
     recovery::{
         clone::native::{json as strict, target_verify::authority::require_closed},
-        inputs::document,
+        inputs::{document, reference},
     },
 };
 
@@ -40,6 +40,7 @@ pub(super) struct Bound {
     target: PathBuf,
     endpoints: Value,
     scope: Value,
+    independent_b1: bool,
 }
 
 pub(super) fn run(root: &Path, options: &RuntimeControlInputs) -> Result<Value> {
@@ -80,6 +81,7 @@ impl Bound {
         });
         let reference = read_binding(inputs, &binding, &target, &registration)?;
         let (runtime, endpoints) = runtime_target(&reference.value, &target.value)?;
+        let independent_b1 = reference::is_independent_b1(&reference.value);
         let runtime = protocol_path(&runtime)?;
         validate_local_test_path(&runtime, backend, LocalTestPathKind::StateDirectory)?;
         Ok(Self {
@@ -90,6 +92,7 @@ impl Bound {
             target: target.path,
             endpoints,
             scope: target.value["product_plan"]["scope_id"].clone(),
+            independent_b1,
         })
     }
 
@@ -129,13 +132,23 @@ impl Bound {
     }
 
     pub(super) fn verify_not_started(&self, backend: &Path) -> Result<()> {
-        registration::verify_not_started(
-            backend,
-            &self.reference,
-            &self.target,
-            &path(&self.binding["registration"]["path"])?,
-            &self.registration,
-        )?;
+        if self.independent_b1 {
+            let (_, registration) =
+                document::bound_file(backend, &self.binding["registration"], "原恢复运行登记")?;
+            let (_, target) =
+                document::bound_file(backend, &self.binding["target_plan"], "原恢复目标计划")?;
+            let (_, reference) =
+                document::bound_file(backend, &registration.value["reference_plan"], "原参考计划")?;
+            registration::verify_independent_status(backend, &reference, &target, &registration)?;
+        } else {
+            registration::verify_not_started(
+                backend,
+                &self.reference,
+                &self.target,
+                &path(&self.binding["registration"]["path"])?,
+                &self.registration,
+            )?;
+        }
         self.require_registered_directory(backend)
     }
 

@@ -13,7 +13,10 @@ use super::{
         ownership::{Owner, control_root},
         validate_output,
     },
-    dataset_authority::{configuration_registration, reads::Window},
+    dataset_authority::{
+        configuration_registration, path,
+        reads::{self, Window},
+    },
     verify::same_path,
 };
 use crate::{
@@ -25,12 +28,15 @@ use crate::{
         fixture_control::{git_root, portable_path},
         inputs::{
             RestoreChecks,
+            bindings::with_completed_target,
             document::{self, Document},
+            independent_b1::Verified,
             publish::publish_verified,
             reference::{self, CheckWorkOwner},
             target::TargetRequest,
             target_plan::{self, evidence::Frame, independent},
         },
+        source::evidence::reference_workflow::with_begun_independent_target,
     },
 };
 
@@ -113,6 +119,60 @@ pub(super) fn verify_independent_not_started(
     )?;
     evidence.check()?;
     frame.check()
+}
+
+pub(super) fn verify_independent_status(
+    backend: &Path,
+    reference: &Document,
+    target: &Document,
+    registration: &Document,
+) -> Result<()> {
+    let work = path(&reference.value["reference_plan"]["work_dir"])?;
+    validate_local_test_path(&work, backend, LocalTestPathKind::StateDirectory)?;
+    let check = |evidence: &Verified<'_>| {
+        verify_independent_projection(
+            backend,
+            reference,
+            target,
+            registration,
+            evidence.reference_plan(),
+            &evidence.arm.target_request,
+        )
+    };
+    if missing(&work)? {
+        let frame = Frame::published(backend, reference, target.clone())?;
+        let (evidence, _) = independent::verify(backend, &frame, None)?;
+        check(&evidence)?;
+        evidence.check()?;
+        return frame.check();
+    }
+    if missing(&work.join("restore-candidate.json"))? {
+        return with_begun_independent_target(backend, reference, target, registration, check);
+    }
+    let (_, backup) = document::bound_file(backend, &target.value["backup_receipt"], "原正式备份")?;
+    with_completed_target(
+        backend,
+        reference,
+        target,
+        &backup,
+        |evidence, completed| {
+            if document::binding(completed.registration()) != document::binding(registration) {
+                return Err("已完成还原的原运行登记与本次状态观察不同".into());
+            }
+            check(evidence)
+        },
+    )
+}
+
+fn missing(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(false),
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            reads::optional(path)?;
+            Ok(true)
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 
 pub(in crate::recovery) fn verify_independent_projection(

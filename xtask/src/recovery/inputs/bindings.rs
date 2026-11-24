@@ -12,6 +12,7 @@ use crate::{Result, cli::BindingsInputOptions};
 
 #[path = "bindings/independent.rs"]
 mod independent;
+pub(in crate::recovery) use independent::{verify_advance, with_completed_target};
 
 pub(crate) fn build(backend: &Path, options: &BindingsInputOptions) -> Result<Value> {
     let reference = super::document::read(&options.reference_plan, backend, "参考计划")?;
