@@ -1,13 +1,15 @@
-use chrono::{DateTime, Utc};
-use ryframe_application::system::operations as service;
+use ryframe_application::{ports::utc_timestamp, system::operations as service};
 use serde::Serialize;
+use time::OffsetDateTime;
 use utoipa::ToSchema;
 
 use crate::monitor::ServerInfo;
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct MonitorOverviewVo {
-    pub calculated_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub calculated_at: OffsetDateTime,
     pub dependencies: MonitorOverviewDependenciesVo,
     pub system: MonitorOverviewSystemVo,
     pub database_pool: MonitorOverviewDatabasePoolVo,
@@ -99,7 +101,9 @@ impl From<service::OverviewCoreSnapshot> for MonitorOverviewJobsVo {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct MonitorOverviewTrendsVo {
-    pub calculated_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub calculated_at: OffsetDateTime,
     pub range: String,
     pub bucket_seconds: u32,
     pub buckets: Vec<MonitorOverviewTrendBucketVo>,
@@ -107,7 +111,9 @@ pub struct MonitorOverviewTrendsVo {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct MonitorOverviewTrendBucketVo {
-    pub started_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub started_at: OffsetDateTime,
     pub background_jobs_created: u64,
     pub schedule_enqueued: u64,
     pub schedule_skipped_misfire: u64,

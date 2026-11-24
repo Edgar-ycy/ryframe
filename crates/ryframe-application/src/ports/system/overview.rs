@@ -1,6 +1,6 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use ryframe_kernel::AppResult;
+use time::OffsetDateTime;
 
 #[derive(Clone, Debug)]
 pub struct OverviewTrendCount {
@@ -25,20 +25,20 @@ pub struct OverviewTrendSeries {
 
 #[async_trait]
 pub trait OverviewPersistencePort: Send + Sync {
-    async fn database_utc_now(&self) -> AppResult<DateTime<Utc>>;
+    async fn database_utc_now(&self) -> AppResult<OffsetDateTime>;
 
     async fn schedule_stats(
         &self,
         tenant_id: &str,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<ScheduleOverviewStats>;
 
     async fn trends(
         &self,
         tenant_id: &str,
         include_platform: bool,
-        start: DateTime<Utc>,
-        end: DateTime<Utc>,
+        start: OffsetDateTime,
+        end: OffsetDateTime,
         bucket_seconds: u32,
     ) -> AppResult<OverviewTrendSeries>;
 }

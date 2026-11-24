@@ -1,10 +1,13 @@
 use std::sync::Arc;
 
-use chrono::{DateTime, Duration, Utc};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use serde::Serialize;
+use time::{Duration, OffsetDateTime};
 
-use crate::{BackgroundJobQueueStats, JobQueue, ports::system::OverviewPersistencePort};
+use crate::{
+    BackgroundJobQueueStats, JobQueue,
+    ports::{system::OverviewPersistencePort, utc_timestamp},
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OverviewRange {
@@ -49,7 +52,8 @@ impl OverviewRange {
 
 #[derive(Debug, Serialize)]
 pub struct OverviewCoreSnapshot {
-    pub calculated_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    pub calculated_at: OffsetDateTime,
     pub jobs_mode: String,
     pub scheduler_enabled: bool,
     pub background_jobs: BackgroundJobQueueStats,
@@ -57,9 +61,10 @@ pub struct OverviewCoreSnapshot {
     pub schedule_lag_seconds: f64,
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct OverviewTrendBucket {
-    pub started_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    pub started_at: OffsetDateTime,
     pub background_jobs_created: u64,
     pub schedule_enqueued: u64,
     pub schedule_skipped_misfire: u64,
@@ -72,9 +77,28 @@ pub struct OverviewTrendBucket {
     pub operation_failure: u64,
 }
 
+impl Default for OverviewTrendBucket {
+    fn default() -> Self {
+        Self {
+            started_at: OffsetDateTime::UNIX_EPOCH,
+            background_jobs_created: 0,
+            schedule_enqueued: 0,
+            schedule_skipped_misfire: 0,
+            schedule_skipped_concurrency: 0,
+            schedule_target_unavailable: 0,
+            schedule_invalid_configuration: 0,
+            login_success: 0,
+            login_failure: 0,
+            operation_success: 0,
+            operation_failure: 0,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct OverviewTrends {
-    pub calculated_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    pub calculated_at: OffsetDateTime,
     pub range: String,
     pub bucket_seconds: u32,
     pub buckets: Vec<OverviewTrendBucket>,
@@ -148,7 +172,7 @@ impl OverviewService {
             )
             .ok_or_else(|| AppError::Internal("运维趋势时间范围溢出".into()))?;
         let start = calculated_at
-            .checked_sub_signed(Duration::seconds(total_seconds))
+            .checked_sub(Duration::seconds(total_seconds))
             .ok_or_else(|| AppError::Internal("运维趋势起始时间溢出".into()))?;
         let include_platform = tenant_id == "system";
         let trends = self

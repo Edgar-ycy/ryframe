@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use crate::{ControlDatabaseCluster, OverviewRepository};
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use ryframe_kernel::AppResult;
+use time::OffsetDateTime;
 
 use ryframe_application::ports::system::{
     OverviewPersistencePort, OverviewTrendCount, OverviewTrendSeries, ScheduleOverviewStats,
@@ -19,14 +19,14 @@ struct DatabaseOverviewPersistence {
 
 #[async_trait]
 impl OverviewPersistencePort for DatabaseOverviewPersistence {
-    async fn database_utc_now(&self) -> AppResult<DateTime<Utc>> {
-        crate::repositories::database_utc_now(self.database.write()).await
+    async fn database_utc_now(&self) -> AppResult<OffsetDateTime> {
+        crate::repositories::database_utc_now_time(self.database.write()).await
     }
 
     async fn schedule_stats(
         &self,
         tenant_id: &str,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<ScheduleOverviewStats> {
         OverviewRepository
             .schedule_stats(self.database.write(), tenant_id, now)
@@ -41,8 +41,8 @@ impl OverviewPersistencePort for DatabaseOverviewPersistence {
         &self,
         tenant_id: &str,
         include_platform: bool,
-        start: DateTime<Utc>,
-        end: DateTime<Utc>,
+        start: OffsetDateTime,
+        end: OffsetDateTime,
         bucket_seconds: u32,
     ) -> AppResult<OverviewTrendSeries> {
         let database = self.database.write();

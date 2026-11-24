@@ -1,7 +1,7 @@
 use crate::DbResultExt;
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{ConnectionTrait, DatabaseConnection, Statement, Value};
+use time::OffsetDateTime;
 
 #[derive(Clone, Debug)]
 pub struct OverviewTrendCount {
@@ -24,8 +24,8 @@ impl OverviewRepository {
         db: &DatabaseConnection,
         tenant_id: &str,
         include_platform: bool,
-        start: DateTime<Utc>,
-        end: DateTime<Utc>,
+        start: OffsetDateTime,
+        end: OffsetDateTime,
         bucket_seconds: u32,
     ) -> AppResult<Vec<OverviewTrendCount>> {
         self.query_trends(
@@ -58,8 +58,8 @@ ORDER BY bucket_index
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
-        start: DateTime<Utc>,
-        end: DateTime<Utc>,
+        start: OffsetDateTime,
+        end: OffsetDateTime,
         bucket_seconds: u32,
     ) -> AppResult<Vec<OverviewTrendCount>> {
         self.query_trends(
@@ -88,8 +88,8 @@ ORDER BY bucket_index, `outcome`
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
-        start: DateTime<Utc>,
-        end: DateTime<Utc>,
+        start: OffsetDateTime,
+        end: OffsetDateTime,
         bucket_seconds: u32,
     ) -> AppResult<Vec<OverviewTrendCount>> {
         self.query_trends(
@@ -118,8 +118,8 @@ ORDER BY bucket_index, `status`
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
-        start: DateTime<Utc>,
-        end: DateTime<Utc>,
+        start: OffsetDateTime,
+        end: OffsetDateTime,
         bucket_seconds: u32,
     ) -> AppResult<Vec<OverviewTrendCount>> {
         self.query_trends(
@@ -148,7 +148,7 @@ ORDER BY bucket_index, `status`
         &self,
         db: &DatabaseConnection,
         tenant_id: &str,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<ScheduleOverviewStats> {
         let row = db
             .query_one_raw(Statement::from_sql_and_values(
@@ -218,8 +218,8 @@ WHERE `tenant_id` = ?
 }
 
 fn trend_values<const N: usize>(
-    start: DateTime<Utc>,
-    end: DateTime<Utc>,
+    start: OffsetDateTime,
+    end: OffsetDateTime,
     bucket_seconds: u32,
     filters: [Value; N],
 ) -> Vec<Value> {
