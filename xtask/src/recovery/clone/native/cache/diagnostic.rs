@@ -226,6 +226,12 @@ fn timeout_fields(category: Category) -> (&'static str, &'static str, &'static s
 impl std::fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (phase, field, advice) = self.fields();
+        #[cfg(windows)]
+        let advice = if matches!(self.category, Category::PrelaunchPortReleaseTimeout) {
+            "启动前端口释放等待已达到固定 60 秒期限。请核对 Windows 上已登记的 127.0.0.1 监听端口与原受管进程，确认端口已释放。保留现场，不自动重启或重放"
+        } else {
+            advice
+        };
         write!(
             f,
             "缓存阶段={phase} 类别={:?} 字段={field} 写入结果={:?} 系统码={:?}；{advice}",
@@ -528,4 +534,32 @@ pub(super) fn prelaunch(
         cause,
         sha256: hex::encode(Sha256::digest(text.as_bytes())),
     })
+}
+
+#[cfg(all(test, windows))]
+#[test]
+fn windows_port_release_timeout_display_preserves_frozen_diagnostic() {
+    let frozen = json!({
+        "category": "prelaunch_port_release_timeout",
+        "write_outcome": "not_started",
+        "os_code": 10048,
+        "phase": "prelaunch-port-release",
+        "field": "port",
+        "advice": "启动前端口释放等待已达到固定60秒期限；核对Windows独占端口与WSL mirrored映射释放，保留现场并显式核对，不自动重启或重放",
+        "cause": "address_in_use",
+        "cause_sha256": "a".repeat(64),
+    });
+    let error = primitive_error(&frozen, &Value::Null).unwrap();
+    let message = primitive_message(error.as_ref()).unwrap();
+    assert!(message.contains("Windows 上已登记的 127.0.0.1 监听端口与原受管进程，确认端口已释放"));
+    assert!(message.contains("保留现场，不自动重启或重放"));
+    assert!(!message.contains("WSL"));
+    assert_eq!(
+        primitive_detail(error.as_ref()),
+        (frozen.clone(), Value::Null)
+    );
+
+    let mut changed = frozen;
+    changed["advice"] = json!(message);
+    assert!(primitive_error(&changed, &Value::Null).is_err());
 }
