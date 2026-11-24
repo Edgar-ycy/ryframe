@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::DateTime;
 use ryframe_kernel::{
     AppResult, DataScopeContextRef, ExportCursorWindow, PageResult, ValidatedPageQuery,
 };
 use sea_orm::{DatabaseTransaction, TransactionTrait};
-use time::OffsetDateTime;
+use time::{PrimitiveDateTime, UtcOffset};
 
 use ryframe_application::{
     PersistenceTransaction, TransactionAuditMode,
@@ -73,11 +72,7 @@ impl OperLogPersistencePort for DatabaseOperLogPersistence {
                 data_scope,
             )
             .await?;
-        let records = result
-            .records
-            .into_iter()
-            .map(to_record)
-            .collect::<AppResult<Vec<_>>>()?;
+        let records = result.records.into_iter().map(to_record).collect();
         Ok(PageResult::new(records, result.total, &page))
     }
 
@@ -92,7 +87,7 @@ impl OperLogPersistencePort for DatabaseOperLogPersistence {
             .database
             .select_read(ReadConsistency::Strong)
             .connection;
-        OperLogRepository
+        Ok(OperLogRepository
             .find_for_export_after_id(
                 &database,
                 tenant_id,
@@ -103,7 +98,7 @@ impl OperLogPersistencePort for DatabaseOperLogPersistence {
             .await?
             .into_iter()
             .map(to_record)
-            .collect()
+            .collect())
     }
 
     async fn begin(&self) -> AppResult<Box<dyn OperLogTransaction>> {
@@ -146,11 +141,8 @@ fn to_database_filter(filter: OperLogFilter<'_>) -> DatabaseOperLogFilter<'_> {
     }
 }
 
-fn to_record(model: oper_log::Model) -> AppResult<OperLogRecord> {
-    let oper_time = OffsetDateTime::from_unix_timestamp(model.oper_time.timestamp())
-        .and_then(|time| time.replace_nanosecond(model.oper_time.timestamp_subsec_nanos()))
-        .db_context("读取操作日志 UTC 时间")?;
-    Ok(OperLogRecord {
+fn to_record(model: oper_log::Model) -> OperLogRecord {
+    OperLogRecord {
         id: model.id,
         event_id: model.event_id,
         request_id: model.request_id,
@@ -166,18 +158,17 @@ fn to_record(model: oper_log::Model) -> AppResult<OperLogRecord> {
         json_result: model.json_result,
         status: model.status,
         error_message: model.error_msg,
-        oper_time,
+        oper_time: model.oper_time.assume_utc(),
         cost_time: model.cost_time,
-    })
+    }
 }
 
 fn to_entity(tenant_id: &str, record: OperLogRecord) -> AppResult<oper_log::Model> {
-    let oper_time = DateTime::from_timestamp(
-        record.oper_time.unix_timestamp(),
-        record.oper_time.nanosecond(),
-    )
-    .ok_or("时间超出 UTC 表示范围")
-    .db_context("写入操作日志 UTC 时间")?;
+    let oper_time = record
+        .oper_time
+        .checked_to_offset(UtcOffset::UTC)
+        .ok_or("时间超出 UTC 表示范围")
+        .db_context("写入操作日志 UTC 时间")?;
     Ok(oper_log::Model {
         id: record.id,
         tenant_id: tenant_id.to_owned(),
@@ -195,7 +186,7 @@ fn to_entity(tenant_id: &str, record: OperLogRecord) -> AppResult<oper_log::Mode
         json_result: record.json_result,
         status: record.status,
         error_msg: record.error_message,
-        oper_time,
+        oper_time: PrimitiveDateTime::new(oper_time.date(), oper_time.time()),
         cost_time: record.cost_time,
     })
 }
@@ -203,10 +194,9 @@ fn to_entity(tenant_id: &str, record: OperLogRecord) -> AppResult<oper_log::Mode
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{TimeZone, Utc};
     use ryframe_application::system::operations::OperLogVo;
     use ryframe_kernel::AppError;
-    use time::UtcOffset;
+    use time::macros::datetime;
 
     #[test]
     fn operation_time_preserves_sql_precision_and_utc_view() {
@@ -227,10 +217,10 @@ mod tests {
             json_result: None,
             status: "1".into(),
             error_msg: None,
-            oper_time: DateTime::from_timestamp(-1, 123_456_000).unwrap(),
+            oper_time: datetime!(1969-12-31 23:59:59.123456),
             cost_time: 10,
         };
-        let mut record = to_record(entity.clone()).unwrap();
+        let mut record = to_record(entity.clone());
         assert_eq!(record.oper_time.unix_timestamp(), -1);
         assert_eq!(record.oper_time.nanosecond(), 123_456_000);
         assert_eq!(record.oper_time.offset(), UtcOffset::UTC);
@@ -240,17 +230,26 @@ mod tests {
             .to_offset(UtcOffset::from_hms(8, 0, 0).unwrap());
         let view = OperLogVo::try_from(record.clone()).unwrap();
         assert_eq!(view.oper_time, "1969-12-31 23:59:59");
-        assert_eq!(to_entity("tenant-a", record).unwrap(), entity);
+        assert_eq!(to_entity("tenant-a", record.clone()).unwrap(), entity);
 
-        for oper_time in [
-            Utc.with_ymd_and_hms(10_000, 1, 1, 0, 0, 0).unwrap(),
-            DateTime::from_timestamp(-1, 1_123_456_000).unwrap(),
-        ] {
-            let invalid = oper_log::Model {
-                oper_time,
-                ..entity.clone()
-            };
-            assert!(matches!(to_record(invalid), Err(AppError::Database(_))));
+        let encoded = serde_json::to_value(&entity).unwrap();
+        assert_eq!(encoded["oper_time"], "1969-12-31T23:59:59.123456Z");
+        assert_eq!(
+            serde_json::from_value::<oper_log::Model>(encoded.clone()).unwrap(),
+            entity
+        );
+
+        for unrepresentable in ["+10000-01-01T00:00:00Z", "1969-12-31T23:59:60.123456Z"] {
+            let mut invalid = encoded.clone();
+            invalid["oper_time"] = serde_json::json!(unrepresentable);
+            assert!(serde_json::from_value::<oper_log::Model>(invalid).is_err());
         }
+
+        record.oper_time =
+            PrimitiveDateTime::MAX.assume_offset(UtcOffset::from_hms(-1, 0, 0).unwrap());
+        assert!(matches!(
+            to_entity("tenant-a", record),
+            Err(AppError::Database(_))
+        ));
     }
 }

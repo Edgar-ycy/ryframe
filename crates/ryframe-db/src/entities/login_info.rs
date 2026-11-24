@@ -1,7 +1,7 @@
-use chrono::{DateTime, Utc};
 use ryframe_macro::AutoFill;
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
+use time::PrimitiveDateTime;
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize, AutoFill)]
 #[sea_orm(table_name = "sys_login_info")]
@@ -26,7 +26,8 @@ pub struct Model {
     /// 提示信息
     pub msg: Option<String>,
     /// 登录时间
-    pub login_time: DateTime<Utc>,
+    #[serde(with = "super::oper_log::utc_time_serde")]
+    pub login_time: PrimitiveDateTime,
 }
 
 impl Model {

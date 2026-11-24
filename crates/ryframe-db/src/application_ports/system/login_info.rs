@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::DateTime;
 use ryframe_kernel::{
     AppResult, DataScopeContextRef, ExportCursorWindow, PageResult, ValidatedPageQuery,
 };
 use sea_orm::TransactionTrait;
-use time::OffsetDateTime;
+use time::{PrimitiveDateTime, UtcOffset};
 
 use ryframe_application::{
     PersistenceTransaction, TransactionAuditMode,
@@ -65,11 +64,7 @@ impl LoginInfoPersistencePort for DatabaseLoginInfoPersistence {
                 data_scope,
             )
             .await?;
-        let records = result
-            .records
-            .into_iter()
-            .map(to_record)
-            .collect::<AppResult<Vec<_>>>()?;
+        let records = result.records.into_iter().map(to_record).collect();
         Ok(PageResult::new(records, result.total, &page))
     }
 
@@ -84,7 +79,7 @@ impl LoginInfoPersistencePort for DatabaseLoginInfoPersistence {
             .database
             .select_read(ReadConsistency::Strong)
             .connection;
-        LoginInfoRepository
+        Ok(LoginInfoRepository
             .find_for_export_after_id(
                 &database,
                 tenant_id,
@@ -95,7 +90,7 @@ impl LoginInfoPersistencePort for DatabaseLoginInfoPersistence {
             .await?
             .into_iter()
             .map(to_record)
-            .collect()
+            .collect())
     }
 
     async fn begin(&self) -> AppResult<Box<dyn LoginInfoTransaction>> {
@@ -138,11 +133,8 @@ fn to_database_filter(filter: LoginInfoFilter<'_>) -> DatabaseLoginInfoFilter<'_
     }
 }
 
-fn to_record(model: login_info::Model) -> AppResult<LoginInfoRecord> {
-    let login_time = OffsetDateTime::from_unix_timestamp(model.login_time.timestamp())
-        .and_then(|time| time.replace_nanosecond(model.login_time.timestamp_subsec_nanos()))
-        .db_context("读取登录日志 UTC 时间")?;
-    Ok(LoginInfoRecord {
+fn to_record(model: login_info::Model) -> LoginInfoRecord {
+    LoginInfoRecord {
         id: model.id,
         user_name: model.user_name,
         ipaddr: model.ipaddr,
@@ -151,17 +143,16 @@ fn to_record(model: login_info::Model) -> AppResult<LoginInfoRecord> {
         os: model.os,
         status: model.status,
         message: model.msg,
-        login_time,
-    })
+        login_time: model.login_time.assume_utc(),
+    }
 }
 
 fn to_entity(tenant_id: &str, record: LoginInfoRecord) -> AppResult<login_info::Model> {
-    let login_time = DateTime::from_timestamp(
-        record.login_time.unix_timestamp(),
-        record.login_time.nanosecond(),
-    )
-    .ok_or("时间超出 UTC 表示范围")
-    .db_context("写入登录日志 UTC 时间")?;
+    let login_time = record
+        .login_time
+        .checked_to_offset(UtcOffset::UTC)
+        .ok_or("时间超出 UTC 表示范围")
+        .db_context("写入登录日志 UTC 时间")?;
     Ok(login_info::Model {
         id: record.id,
         tenant_id: tenant_id.to_owned(),
@@ -172,19 +163,18 @@ fn to_entity(tenant_id: &str, record: LoginInfoRecord) -> AppResult<login_info::
         os: record.os,
         status: record.status,
         msg: record.message,
-        login_time,
+        login_time: PrimitiveDateTime::new(login_time.date(), login_time.time()),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{TimeZone, Utc};
-    use ryframe_kernel::AppError;
+    use time::macros::datetime;
 
     #[test]
     fn login_time_round_trips_between_sql_and_the_application_in_utc() {
-        let login_time = DateTime::from_timestamp(-1, 123_456_000).unwrap();
+        let login_time = datetime!(1969-12-31 23:59:59.123456);
         let entity = login_info::Model {
             id: 1,
             tenant_id: "tenant-a".into(),
@@ -197,7 +187,7 @@ mod tests {
             msg: None,
             login_time,
         };
-        let mut record = to_record(entity.clone()).unwrap();
+        let mut record = to_record(entity.clone());
         assert_eq!(record.login_time.unix_timestamp(), -1);
         assert_eq!(record.login_time.nanosecond(), 123_456_000);
         assert_eq!(record.login_time.offset(), time::UtcOffset::UTC);
@@ -207,19 +197,16 @@ mod tests {
             .to_offset(time::UtcOffset::from_hms(8, 0, 0).unwrap());
         assert_eq!(to_entity("tenant-a", record.clone()).unwrap(), entity);
 
-        let earlier = Utc.with_ymd_and_hms(999, 12, 31, 23, 59, 59).unwrap();
-        record.login_time = OffsetDateTime::from_unix_timestamp(earlier.timestamp()).unwrap();
+        let earlier = datetime!(0999-12-31 23:59:59);
+        record.login_time = earlier.assume_utc();
         assert_eq!(to_entity("tenant-a", record).unwrap().login_time, earlier);
 
-        for login_time in [
-            Utc.with_ymd_and_hms(10000, 1, 1, 0, 0, 0).unwrap(),
-            DateTime::from_timestamp(-1, 1_123_456_000).unwrap(),
-        ] {
-            let invalid = login_info::Model {
-                login_time,
-                ..entity.clone()
-            };
-            assert!(matches!(to_record(invalid), Err(AppError::Database(_))));
-        }
+        let mut encoded = serde_json::to_value(&entity).unwrap();
+        assert_eq!(encoded["login_time"], "1969-12-31T23:59:59.123456Z");
+        encoded["login_time"] = serde_json::json!("1970-01-01 07:59:59.123456 +0800");
+        assert_eq!(
+            serde_json::from_value::<login_info::Model>(encoded).unwrap(),
+            entity
+        );
     }
 }

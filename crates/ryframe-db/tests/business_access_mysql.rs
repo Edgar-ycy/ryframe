@@ -1,6 +1,13 @@
 //! 独立测试进程安装业务目录，避免影响框架固定快照与其他真实协议测试。
-use ryframe_db::migration;
+use chrono::{TimeZone, Utc};
+use ryframe_application::ports::system::{
+    LoginInfoFilter, LoginInfoPersistencePort, LoginInfoRecord, OperLogFilter,
+    OperLogPersistencePort, OperLogRecord,
+};
+use ryframe_db::{ControlDatabaseCluster, application_ports::system, migration};
+use ryframe_kernel::{DataScopeContext, ExportCursorWindow, PaginationPolicy, ValidatedPageQuery};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use time::{UtcOffset, macros::datetime};
 
 #[path = "support/mysql.rs"]
 mod mysql;
@@ -45,6 +52,194 @@ async fn business_access_initialization_is_equivalent_lossless_and_verified_with
         require_count(&migrated, "SELECT COUNT(*) AS value FROM sys_menu WHERE route_key='order.order' AND name='自定义名称' AND visible=0", 1).await?;
         verify_missing_is_read_only(&migrated).await
     }).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn log_timestamps_round_trip_in_mysql_and_keep_inclusive_bounds() {
+    let source = ORDER.replace("订单", "O'Reilly\\\\路径");
+    migration::register_business_access_catalog([("order", source.as_str())]).unwrap();
+
+    run_mysql_test("log-utc", |database| async move {
+        migration::up(&database, Some(&hashes()))
+            .await
+            .map_err(db_error)?;
+        require_count(
+            &database,
+            "SELECT COUNT(*) AS value FROM information_schema.COLUMNS \
+             WHERE TABLE_SCHEMA=DATABASE() AND DATA_TYPE='datetime' AND DATETIME_PRECISION=0 \
+             AND ((TABLE_NAME='sys_oper_log' AND COLUMN_NAME='oper_time') \
+             OR (TABLE_NAME='sys_login_info' AND COLUMN_NAME='login_time'))",
+            2,
+        )
+        .await?;
+        insert_legacy_log_rows(&database).await?;
+        verify_log_time_round_trip(&database).await
+    })
+    .await;
+}
+
+async fn insert_legacy_log_rows(database: &DatabaseConnection) -> Result<(), String> {
+    execute(
+        database,
+        "INSERT INTO sys_oper_log \
+         (id,tenant_id,title,business_type,method,request_method,oper_name,oper_url,oper_ip,oper_time) VALUES \
+         (40,'system','fixture','UPDATE','fixture','PUT','tester','/fixture','127.0.0.1','2026-08-20 23:59:57'), \
+         (41,'system','fixture','UPDATE','fixture','PUT','tester','/fixture','127.0.0.1','2026-08-20 23:59:58'), \
+         (43,'system','fixture','UPDATE','fixture','PUT','tester','/fixture','127.0.0.1','2026-08-21 00:00:01')",
+    )
+    .await?;
+    execute(
+        database,
+        "INSERT INTO sys_login_info (id,tenant_id,user_name,ipaddr,login_time) VALUES \
+         (40,'system','tester','127.0.0.1','2026-08-20 23:59:57'), \
+         (41,'system','tester','127.0.0.1','2026-08-20 23:59:58'), \
+         (43,'system','tester','127.0.0.1','2026-08-21 00:00:01')",
+    )
+    .await?;
+    Ok(())
+}
+
+async fn verify_log_time_round_trip(database: &DatabaseConnection) -> Result<(), String> {
+    let cluster = ControlDatabaseCluster::single(database.clone());
+    let operations = system::oper_log(cluster.clone());
+    let logins = system::login_info(cluster);
+    // 小数低于半秒，保留 DATETIME(0) 在舍入和截断模式下的共同预期。
+    let recorded_at = datetime!(2026-08-21 08:00:00.123456 +08:00);
+    operations
+        .insert(
+            "system",
+            OperLogRecord {
+                id: 42,
+                event_id: None,
+                request_id: None,
+                title: "fixture".into(),
+                business_type: "UPDATE".into(),
+                method: "fixture".into(),
+                request_method: "PUT".into(),
+                oper_name: "tester".into(),
+                oper_url: "/fixture".into(),
+                oper_ip: "127.0.0.1".into(),
+                oper_location: None,
+                oper_param: None,
+                json_result: None,
+                status: "1".into(),
+                error_message: None,
+                oper_time: recorded_at,
+                cost_time: 1,
+            },
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    logins
+        .insert(
+            "system",
+            LoginInfoRecord {
+                id: 42,
+                user_name: "tester".into(),
+                ipaddr: "127.0.0.1".into(),
+                login_location: None,
+                browser: None,
+                os: None,
+                status: "1".into(),
+                message: None,
+                login_time: recorded_at,
+            },
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    require_count(
+        database,
+        "SELECT COUNT(*) AS value FROM sys_oper_log \
+         WHERE id=42 AND tenant_id='system' AND oper_time='2026-08-21 00:00:00'",
+        1,
+    )
+    .await?;
+    require_count(
+        database,
+        "SELECT COUNT(*) AS value FROM sys_login_info \
+         WHERE id=42 AND tenant_id='system' AND login_time='2026-08-21 00:00:00'",
+        1,
+    )
+    .await?;
+    verify_log_time_ranges(operations.as_ref(), logins.as_ref()).await
+}
+
+async fn verify_log_time_ranges(
+    operations: &dyn OperLogPersistencePort,
+    logins: &dyn LoginInfoPersistencePort,
+) -> Result<(), String> {
+    let page = ValidatedPageQuery::new(1, 10, PaginationPolicy::new(10, 100))
+        .map_err(|error| error.to_string())?;
+    let actor = DataScopeContext::super_admin(1);
+    let scope = actor.as_ref();
+    let begin_time = Some(Utc.with_ymd_and_hms(2026, 8, 20, 23, 59, 58).unwrap());
+    let end_time = Some(Utc.with_ymd_and_hms(2026, 8, 21, 0, 0, 0).unwrap());
+    let operation_filter = OperLogFilter {
+        oper_name: None,
+        status: None,
+        begin_time,
+        end_time,
+    };
+    let login_filter = LoginInfoFilter {
+        user_name: None,
+        status: None,
+        begin_time,
+        end_time,
+    };
+    let operations_page = operations
+        .find_by_page("system", page, operation_filter, &scope)
+        .await
+        .map_err(|error| error.to_string())?;
+    let logins_page = logins
+        .find_by_page("system", page, login_filter, &scope)
+        .await
+        .map_err(|error| error.to_string())?;
+    assert_eq!((operations_page.total, logins_page.total), (2, 2));
+
+    let operation_time =
+        |record: &OperLogRecord| (record.id, record.oper_time, record.oper_time.offset());
+    let login_time =
+        |record: &LoginInfoRecord| (record.id, record.login_time, record.login_time.offset());
+    let first = (41, datetime!(2026-08-20 23:59:58 UTC), UtcOffset::UTC);
+    let last = (42, datetime!(2026-08-21 00:00:00 UTC), UtcOffset::UTC);
+    assert_eq!(
+        operations_page
+            .records
+            .iter()
+            .map(operation_time)
+            .collect::<Vec<_>>(),
+        [last, first],
+    );
+    assert_eq!(
+        logins_page
+            .records
+            .iter()
+            .map(login_time)
+            .collect::<Vec<_>>(),
+        [last, first],
+    );
+
+    let window = ExportCursorWindow::new(None, 43, 10);
+    let operation_batch = operations
+        .find_export_batch("system", operation_filter, &scope, window)
+        .await
+        .map_err(|error| error.to_string())?;
+    let login_batch = logins
+        .find_export_batch("system", login_filter, &scope, window)
+        .await
+        .map_err(|error| error.to_string())?;
+    assert_eq!(
+        operation_batch
+            .iter()
+            .map(operation_time)
+            .collect::<Vec<_>>(),
+        [first, last]
+    );
+    assert_eq!(
+        login_batch.iter().map(login_time).collect::<Vec<_>>(),
+        [first, last]
+    );
+    Ok(())
 }
 
 async fn assert_lossless(database: &DatabaseConnection) -> Result<(), String> {

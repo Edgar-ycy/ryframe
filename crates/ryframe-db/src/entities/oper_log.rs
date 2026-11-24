@@ -1,7 +1,7 @@
-use chrono::{DateTime, Utc};
 use ryframe_macro::AutoFill;
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
+use time::PrimitiveDateTime;
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize, AutoFill)]
 #[sea_orm(table_name = "sys_oper_log")]
@@ -40,7 +40,8 @@ pub struct Model {
     /// 错误信息
     pub error_msg: Option<String>,
     /// 操作时间
-    pub oper_time: DateTime<Utc>,
+    #[serde(with = "utc_time_serde")]
+    pub oper_time: PrimitiveDateTime,
     /// 耗时（毫秒）
     pub cost_time: i64,
 }
@@ -54,3 +55,30 @@ impl Model {
 pub enum Relation {}
 
 impl ActiveModelBehavior for ActiveModel {}
+
+/// SQL 字段使用无偏移时间，实体的 JSON 时间沿用原 UTC 字符串。
+pub(super) mod utc_time_serde {
+    use chrono::{DateTime, Utc};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer, de, ser::Error as _};
+    use time::{OffsetDateTime, PrimitiveDateTime};
+
+    pub fn serialize<S: Serializer>(
+        value: &PrimitiveDateTime,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let value = value.assume_utc();
+        DateTime::<Utc>::from_timestamp(value.unix_timestamp(), value.nanosecond())
+            .ok_or_else(|| S::Error::custom("日志时间超出 UTC 表示范围"))?
+            .serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<PrimitiveDateTime, D::Error> {
+        let value = DateTime::<Utc>::deserialize(deserializer)?;
+        let utc = OffsetDateTime::from_unix_timestamp(value.timestamp())
+            .and_then(|utc| utc.replace_nanosecond(value.timestamp_subsec_nanos()))
+            .map_err(de::Error::custom)?;
+        Ok(PrimitiveDateTime::new(utc.date(), utc.time()))
+    }
+}
