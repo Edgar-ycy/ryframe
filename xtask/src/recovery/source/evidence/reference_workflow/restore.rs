@@ -28,6 +28,8 @@ mod begin;
 mod begin_copy;
 #[path = "restore/begin_proof.rs"]
 mod begin_proof;
+#[path = "restore/completed.rs"]
+mod completed;
 #[path = "restore/database_images.rs"]
 mod database_images;
 #[path = "restore/expected_images.rs"]
@@ -46,6 +48,7 @@ mod object_write;
 mod writes;
 
 pub(super) use begin::run as run_begin;
+pub(in crate::recovery) use completed::CompletedIndependentRestore;
 use inputs::Snapshot;
 
 #[derive(Clone, Copy, PartialEq, Eq)]

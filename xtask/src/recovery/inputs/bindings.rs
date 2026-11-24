@@ -10,8 +10,14 @@ use super::{
 };
 use crate::{Result, cli::BindingsInputOptions};
 
+#[path = "bindings/independent.rs"]
+mod independent;
+
 pub(crate) fn build(backend: &Path, options: &BindingsInputOptions) -> Result<Value> {
     let reference = super::document::read(&options.reference_plan, backend, "参考计划")?;
+    if super::reference::is_independent_b1(&reference.value) {
+        return independent::build(backend, options, reference);
+    }
     let (chain, target, _product) = target_plan::verify(backend, reference, &options.target_plan)?;
     let backup = super::document::read(&options.backup_receipt, backend, "指定备份收据")?;
     if super::document::binding(&backup) != super::document::binding(&chain.backup_document) {

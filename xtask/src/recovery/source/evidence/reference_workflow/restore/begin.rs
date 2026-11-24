@@ -45,17 +45,18 @@ mod independent;
 #[path = "begin/receipt.rs"]
 mod receipt;
 pub(super) use apply_inputs::{ApplySnapshot, PendingApply};
+pub(super) use apply_inputs::{HeldBeginImages, SealedBegin, independent_plan};
 pub(super) use receipt::verify_record;
 
-struct BeginInputs<'a> {
-    root: &'a Path,
-    reference: &'a Document,
-    plan: &'a Value,
-    backup_receipt: &'a Document,
-    target: &'a Document,
-    manifest: &'a Document,
-    registration: &'a Document,
-    product_plan: &'a Document,
+pub(super) struct BeginInputs<'a> {
+    pub(super) root: &'a Path,
+    pub(super) reference: &'a Document,
+    pub(super) plan: &'a Value,
+    pub(super) backup_receipt: &'a Document,
+    pub(super) target: &'a Document,
+    pub(super) manifest: &'a Document,
+    pub(super) registration: &'a Document,
+    pub(super) product_plan: &'a Document,
 }
 
 impl<'a> From<&'a TargetSnapshot> for BeginInputs<'a> {

@@ -1,5 +1,6 @@
 use std::{
     fs,
+    io::ErrorKind,
     path::{Path, PathBuf},
 };
 
@@ -23,9 +24,11 @@ pub(super) struct Lock {
     release_on_drop: bool,
 }
 
+const REFERENCE_LOCK: &str = ".reference-lock";
+
 impl Lock {
     pub(super) fn claim(work: &Path) -> Result<Self> {
-        let path = work.join(".reference-lock");
+        let path = work.join(REFERENCE_LOCK);
         fs::create_dir(&path)?;
         let identity = Self::identity(&path)?;
         Ok(Self {
@@ -147,60 +150,24 @@ impl OwnedWork {
         if reads::is_active() {
             return Err("重入独立 B1 工作目录前必须结束静态读取窗口".into());
         }
-        if reference["target_side"] != "candidate" {
-            return Err("独立 B1 工作目录只允许 candidate 侧恢复".into());
-        }
-        inputs::domain::identifier(inputs::document::text(
-            &reference["id"],
-            "独立 B1 参考计划 ID",
-        )?)?;
-        let expected_fields = inputs::document::exact(
-            expected,
-            &["work_dir", "directory_identity", "owner", "owner_identity"],
-            "开始登记原工作目录归属",
-        )?;
-        let declared = path(&reference["work_dir"])?;
-        validate_local_test_path(declared, backend, LocalTestPathKind::ExistingDirectory)?;
-        let directory = portable_path(&declared.canonicalize()?);
-        let canonical = json!(directory);
-        if reference["work_dir"] != canonical || expected_fields["work_dir"] != canonical {
-            return Err("独立 B1 恢复必须重入开始登记的原规范工作目录".into());
-        }
-        let parent = directory.parent().ok_or("独立 B1 工作目录缺少父目录")?;
-        let parent_guard = Inputs::directory(parent)?;
-        let directory_guard = Inputs::directory(&directory)?;
-        let identity = bound_identity(&expected_fields["directory_identity"], "原工作目录身份")?;
-        let owner_identity = bound_identity(&expected_fields["owner_identity"], "原归属文件身份")?;
-        let owner_descriptor =
-            inputs::document::binding_shape(&expected_fields["owner"], "原工作目录归属文件")?;
-        let owner_path = directory.join("reference-owner.json");
-        if owner_descriptor.path != owner_path || Lock::identity(&directory)? != identity {
-            return Err("独立 B1 恢复的原工作目录身份或归属文件路径不同".into());
-        }
-        let owner_guard = ProtectedInputs::open([owner_path.clone()])?;
-        check_reentry_owner(&owner_path, owner_identity)?;
-        let owner = inputs::document::read(&owner_path, backend, "原参考目录归属")?;
-        let owner_bytes = inputs::document::canonical_bytes(&files::work_owner(reference)?)?;
-        if inputs::document::binding(&owner) != expected_fields["owner"] || owner.raw != owner_bytes
-        {
-            return Err("独立 B1 恢复的原归属文件字节或计划摘要不同".into());
-        }
-        parent_guard.check()?;
-        directory_guard.check()?;
-        owner_guard.assert_unchanged()?;
+        let OriginalWork {
+            directory,
+            identity,
+            directory_guard,
+            owner,
+            owner_guard,
+            reentry,
+        } = OriginalWork::read(backend, reference, expected)?;
         let lock = Lock::claim(&directory)?;
         let claimed = Self {
             directory,
             identity,
             directory_guard,
-            owner_path,
-            owner_bytes,
+            owner_path: owner.path,
+            owner_bytes: owner.raw,
             owner_guard,
             lock,
-            reentry: Some(Reentry {
-                parent: parent_guard,
-                owner_identity,
-            }),
+            reentry: Some(reentry),
         };
         if claimed.binding(backend, reference)? != *expected {
             return Err("独立 B1 恢复取得新锁后原工作目录归属变化".into());
@@ -260,6 +227,115 @@ impl OwnedWork {
             check_reentry_owner(&self.owner_path, reentry.owner_identity)?;
         }
         Ok(())
+    }
+}
+
+/// 读取开始登记保存的原工作目录归属，可供写阶段重入或已完成阶段只读消费。
+pub(super) struct OriginalWork {
+    directory: PathBuf,
+    identity: (u64, u64),
+    directory_guard: Inputs,
+    owner: inputs::document::Document,
+    owner_guard: ProtectedInputs,
+    reentry: Reentry,
+}
+
+impl OriginalWork {
+    fn read(backend: &Path, reference: &Value, expected: &Value) -> Result<Self> {
+        if reference["target_side"] != "candidate" {
+            return Err("独立 B1 工作目录只允许 candidate 侧恢复".into());
+        }
+        inputs::domain::identifier(inputs::document::text(
+            &reference["id"],
+            "独立 B1 参考计划 ID",
+        )?)?;
+        let expected_fields = inputs::document::exact(
+            expected,
+            &["work_dir", "directory_identity", "owner", "owner_identity"],
+            "开始登记原工作目录归属",
+        )?;
+        let declared = path(&reference["work_dir"])?;
+        validate_local_test_path(declared, backend, LocalTestPathKind::ExistingDirectory)?;
+        let directory = portable_path(&declared.canonicalize()?);
+        let canonical = json!(directory);
+        if reference["work_dir"] != canonical || expected_fields["work_dir"] != canonical {
+            return Err("独立 B1 恢复必须使用开始登记的原规范工作目录".into());
+        }
+        let parent = directory.parent().ok_or("独立 B1 工作目录缺少父目录")?;
+        let parent_guard = Inputs::directory(parent)?;
+        let directory_guard = Inputs::directory(&directory)?;
+        let identity = bound_identity(&expected_fields["directory_identity"], "原工作目录身份")?;
+        let owner_identity = bound_identity(&expected_fields["owner_identity"], "原归属文件身份")?;
+        let owner_descriptor =
+            inputs::document::binding_shape(&expected_fields["owner"], "原工作目录归属文件")?;
+        let owner_path = directory.join("reference-owner.json");
+        if owner_descriptor.path != owner_path || Lock::identity(&directory)? != identity {
+            return Err("独立 B1 恢复的原工作目录身份或归属文件路径不同".into());
+        }
+        let owner_guard = ProtectedInputs::open([owner_path.clone()])?;
+        check_reentry_owner(&owner_path, owner_identity)?;
+        let owner = inputs::document::read(&owner_path, backend, "原参考目录归属")?;
+        let work = Self {
+            directory,
+            identity,
+            directory_guard,
+            owner,
+            owner_guard,
+            reentry: Reentry {
+                parent: parent_guard,
+                owner_identity,
+            },
+        };
+        if inputs::document::binding(&work.owner) != expected_fields["owner"] {
+            return Err("独立 B1 恢复的原归属文件字节或计划摘要不同".into());
+        }
+        work.check(declared, reference)?;
+        Ok(work)
+    }
+
+    pub(super) fn read_completed(
+        backend: &Path,
+        reference: &Value,
+        expected: &Value,
+    ) -> Result<Self> {
+        lock_absent(path(&reference["work_dir"])?)?;
+        let work = Self::read(backend, reference, expected)?;
+        work.check_completed(&work.directory, reference)?;
+        Ok(work)
+    }
+
+    pub(super) fn check_completed(&self, selected: &Path, reference: &Value) -> Result<()> {
+        lock_absent(&self.directory)?;
+        self.check(selected, reference)?;
+        lock_absent(&self.directory)
+    }
+
+    fn check(&self, selected: &Path, reference: &Value) -> Result<()> {
+        self.reentry.parent.check()?;
+        self.directory_guard.check()?;
+        if selected != self.directory
+            || path(&reference["work_dir"])? != self.directory
+            || portable_path(&selected.canonicalize()?) != self.directory
+            || Lock::identity(selected)? != self.identity
+            || inputs::document::canonical_bytes(&files::work_owner(reference)?)? != self.owner.raw
+        {
+            return Err("独立 B1 恢复的原工作目录或计划归属不同".into());
+        }
+        self.owner_guard.assert_unchanged()?;
+        self.owner.assert_unchanged()?;
+        check_reentry_owner(&self.owner.path, self.reentry.owner_identity)?;
+        self.directory_guard.check()?;
+        self.reentry.parent.check()
+    }
+}
+
+fn lock_absent(work: &Path) -> Result<()> {
+    let lock = work.join(REFERENCE_LOCK);
+    reads::optional(&lock)?;
+    match fs::symlink_metadata(lock) {
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+        Ok(_) => Err("独立 B1 恢复仍持有工作目录写入锁".into()),
     }
 }
 
@@ -405,9 +481,16 @@ mod tests {
         let expected = begin.binding(&backend, &reference)?;
         let owner_bytes = fs::read(&owner_path)?;
         assert!(OwnedWork::reenter(&backend, &reference, &expected).is_err());
+        assert!(OriginalWork::read_completed(&backend, &reference, &expected).is_err());
         begin.lock.check()?;
         drop(begin);
         assert!(!lock_path.try_exists()?);
+
+        let proof = OriginalWork::read_completed(&backend, &reference, &expected)?;
+        proof.check_completed(work, &reference)?;
+        assert!(!lock_path.try_exists()?);
+        assert_eq!(fs::read(&owner_path)?, owner_bytes);
+        drop(proof);
 
         fs::create_dir(&lock_path)?;
         assert!(OwnedWork::reenter(&backend, &reference, &expected).is_err());
@@ -471,11 +554,13 @@ mod tests {
         let linked = work.with_file_name("owner-hard-link.json");
         fs::hard_link(&owner, &linked)?;
         assert!(OwnedWork::reenter(&backend, &reference, &expected).is_err());
+        assert!(OriginalWork::read_completed(&backend, &reference, &expected).is_err());
         fs::remove_file(&linked)?;
 
         fs::rename(&owner, work.join("old-reference-owner.json"))?;
         fs::write(&owner, &bytes)?;
         assert!(OwnedWork::reenter(&backend, &reference, &expected).is_err());
+        assert!(OriginalWork::read_completed(&backend, &reference, &expected).is_err());
         assert!(!work.join(".reference-lock").try_exists()?);
 
         fs::rename(work, work.with_file_name("previous-work"))?;

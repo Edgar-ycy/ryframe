@@ -19,6 +19,7 @@ mod protocol;
 pub(crate) mod readonly;
 mod receipts;
 mod restore;
+pub(in crate::recovery) use restore::CompletedIndependentRestore;
 #[cfg(test)]
 #[path = "../../../../../tests/unit/recovery/source/evidence/reference_workflow/tests.rs"]
 mod tests;

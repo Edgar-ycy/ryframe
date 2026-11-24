@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use super::super::super::local::OwnedWork;
 use super::super::inputs::{self, RegisteredSelection};
-use super::{Document, Inputs, Result, document, independent, path, proof, receipt};
+use super::{BeginInputs, Document, Inputs, Result, document, independent, path, proof, receipt};
 use crate::{
     local_test_path::{LocalTestPathKind, validate_local_test_path},
     recovery::{
@@ -36,13 +36,11 @@ impl PendingApply {
         let plan = registered_plan(&selection)?;
         let work = path(&plan["work_dir"])?;
         validate_local_test_path(work, backend, LocalTestPathKind::ExistingDirectory)?;
-        let directory = receipt::directory_for(plan, &selection.selected.target.value)?;
         let (record, record_guard) = inputs::running_record(backend, request)?;
         if record.value["status"] != "running" {
             return Err("独立 B1 恢复须消费原 Running 记录".into());
         }
-        independent::verify_output_name(work, &directory, &record.path)?;
-        let begin = SealedBegin::read(backend, directory, &record)?;
+        let begin = SealedBegin::open(backend, plan, &selection.selected.target.value, &record)?;
         check_reference_work(work, begin.work())?;
         let bindings = &begin.intent.value["bindings"];
         for (field, file) in [
@@ -106,23 +104,13 @@ impl PendingApply {
             "plan":inputs.plan, "manifest":inputs.manifest.value, "record":self.record.value,
             "product_plan":inputs.product_plan.value,
         }))?;
-        let images = receipt::verify_intent(
-            backend,
-            &self.begin.directory,
-            &inputs,
-            &self.record,
-            &self.begin.intent,
-            Some(self.begin.work()),
-        )?;
-        let held_images =
-            Inputs::open([images.preimage.path.clone(), images.resource.path.clone()])?;
+        let images = self.begin.verify_images(backend, &inputs, &self.record)?;
         let verified = ApplySnapshot {
             snapshot,
             record: self.record,
             record_guard: self.record_guard,
             begin: self.begin,
             images,
-            held_images,
         };
         verified.assert_unchanged()?;
         owner(path(&verified.plan()["work_dir"])?, verified.plan())?;
@@ -146,8 +134,7 @@ pub(in super::super) struct ApplySnapshot {
     record: Document,
     record_guard: ProtectedInputs,
     begin: SealedBegin,
-    images: receipt::Images,
-    held_images: Inputs,
+    images: HeldBeginImages,
 }
 
 impl ApplySnapshot {
@@ -192,9 +179,7 @@ impl ApplySnapshot {
         self.record_guard.assert_unchanged()?;
         self.record.assert_unchanged()?;
         self.begin.check()?;
-        self.held_images.check()?;
-        self.images.preimage.assert_unchanged()?;
-        self.images.resource.assert_unchanged()
+        self.images.check()
     }
 
     pub(in super::super) fn bindings(&self) -> Value {
@@ -231,7 +216,7 @@ impl ApplySnapshot {
     }
 }
 
-struct SealedBegin {
+pub(in super::super) struct SealedBegin {
     directory: PathBuf,
     result: Document,
     intent: Document,
@@ -241,6 +226,17 @@ struct SealedBegin {
 }
 
 impl SealedBegin {
+    pub(in super::super) fn open(
+        backend: &Path,
+        plan: &Value,
+        target: &Value,
+        record: &Document,
+    ) -> Result<Self> {
+        let directory = receipt::directory_for(plan, target)?;
+        independent::verify_output_name(path(&plan["work_dir"])?, &directory, &record.path)?;
+        Self::read(backend, directory, record)
+    }
+
     fn read(backend: &Path, directory: PathBuf, record: &Document) -> Result<Self> {
         validate_local_test_path(&directory, backend, LocalTestPathKind::ExistingDirectory)?;
         let directory_guard = Inputs::directory(&directory)?;
@@ -280,11 +276,47 @@ impl SealedBegin {
         Ok(begin)
     }
 
-    fn work(&self) -> &Value {
+    pub(in super::super) fn receipt(&self) -> &Document {
+        &self.result
+    }
+
+    pub(in super::super) fn work(&self) -> &Value {
         &self.result.value["reference_work"]
     }
 
-    fn check(&self) -> Result<()> {
+    pub(in super::super) fn verify_images(
+        &self,
+        backend: &Path,
+        inputs: &BeginInputs<'_>,
+        record: &Document,
+    ) -> Result<HeldBeginImages> {
+        let images = receipt::verify_intent(
+            backend,
+            &self.directory,
+            inputs,
+            record,
+            &self.intent,
+            Some(self.work()),
+        )?;
+        HeldBeginImages::open(images)
+    }
+
+    pub(in super::super) fn hold_images(&self, backend: &Path) -> Result<HeldBeginImages> {
+        HeldBeginImages::open(receipt::Images {
+            preimage: receipt::bound(
+                backend,
+                &self.directory.join("preimage.json"),
+                &self.intent.value["preimage"],
+            )?,
+            resource: receipt::bound(
+                backend,
+                &self.directory.join("resource-image.json"),
+                &self.intent.value["resource_image"],
+            )?,
+        })
+    }
+
+    pub(in super::super) fn check(&self) -> Result<()> {
         self.directory_guard.check()?;
         require_no_failures(&self.directory)?;
         self.files_guard.check()?;
@@ -295,8 +327,39 @@ impl SealedBegin {
     }
 }
 
+pub(in super::super) struct HeldBeginImages {
+    images: receipt::Images,
+    held: Inputs,
+}
+
+impl HeldBeginImages {
+    fn open(images: receipt::Images) -> Result<Self> {
+        let held = Inputs::open([images.preimage.path.clone(), images.resource.path.clone()])?;
+        let result = Self { images, held };
+        result.check()?;
+        Ok(result)
+    }
+
+    pub(in super::super) fn check(&self) -> Result<()> {
+        self.held.check()?;
+        self.images.preimage.assert_unchanged()?;
+        self.images.resource.assert_unchanged()
+    }
+
+    pub(in super::super) fn plan_hash(&self) -> &Value {
+        &self.images.preimage.value["plan_hash"]
+    }
+}
+
 fn registered_plan(selection: &RegisteredSelection) -> Result<&Value> {
-    let envelope = &selection.selected.reference.value;
+    independent_plan(&selection.selected.reference, &selection.selected.target)
+}
+
+pub(in super::super) fn independent_plan<'a>(
+    reference: &'a Document,
+    target: &Document,
+) -> Result<&'a Value> {
+    let envelope = &reference.value;
     document::exact(
         envelope,
         &[
@@ -309,7 +372,7 @@ fn registered_plan(selection: &RegisteredSelection) -> Result<&Value> {
         "原独立 B1 参考计划封装",
     )?;
     let plan = &envelope["reference_plan"];
-    let target = &selection.selected.target.value;
+    let target = &target.value;
     if !reference::is_independent_b1(envelope)
         || envelope["format_version"] != 1
         || plan["target_side"] != "candidate"
