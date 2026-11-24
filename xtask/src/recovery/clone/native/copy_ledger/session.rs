@@ -1,8 +1,8 @@
 //! 复制账本的受管会话。资源写入与完整前后像由正式复制调用方提供。
 use std::{collections::BTreeMap, fs, io::Write, path::Path};
 
-use chrono::{SecondsFormat, Utc};
 use serde_json::{Value, json};
+use time::OffsetDateTime;
 
 use super::{
     common, encoded, inspect, require_complete,
@@ -357,13 +357,7 @@ fn publish_and_inspect(window: &Window<'_>, seal: &Seal, receipt: Option<&Value>
 }
 
 fn completed_at() -> String {
-    let now = Utc::now();
-    let format = if now.timestamp_subsec_micros() == 0 {
-        SecondsFormat::Secs
-    } else {
-        SecondsFormat::Micros
-    };
-    now.to_rfc3339_opts(format, false)
+    crate::utc_timestamp::rfc3339_seconds_or_micros(OffsetDateTime::now_utc())
 }
 
 fn combine<T>(primary: Result<T>, cleanup: Result<()>) -> Result<T> {

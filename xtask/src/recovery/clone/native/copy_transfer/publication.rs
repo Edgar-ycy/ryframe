@@ -1,8 +1,8 @@
 //! 完整复制的结果在目标和账本目录锁释放后发布。
 use std::path::{Path, PathBuf};
 
-use chrono::{SecondsFormat, Utc};
 use serde_json::{Value, json};
+use time::OffsetDateTime;
 
 use super::super::{
     copy_ledger::session::Mode, json as document, resources::common, target_verify::publication,
@@ -159,13 +159,7 @@ fn value(prepared: &Prepared, outcome: &Outcome, ledger: &Value) -> Result<Value
 }
 
 fn completed_at() -> String {
-    let now = Utc::now();
-    let precision = if now.timestamp_subsec_micros() == 0 {
-        SecondsFormat::Secs
-    } else {
-        SecondsFormat::Micros
-    };
-    now.to_rfc3339_opts(precision, false)
+    crate::utc_timestamp::rfc3339_seconds_or_micros(OffsetDateTime::now_utc())
 }
 
 #[cfg(test)]

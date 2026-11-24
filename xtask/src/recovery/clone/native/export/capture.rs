@@ -4,8 +4,8 @@ use std::{
     path::Path,
 };
 
-use chrono::{SecondsFormat, Utc};
 use serde_json::{Value, json};
+use time::OffsetDateTime;
 
 use super::super::{digest, json as json_io, resources::storage::registered};
 use super::{
@@ -142,7 +142,7 @@ fn capture_before(
         &json!({"databases": schema_before}),
     )?;
     ensure_generation(generation, &before)?;
-    let quiesced = Utc::now().to_rfc3339_opts(SecondsFormat::Micros, false);
+    let quiesced = crate::utc_timestamp::rfc3339_micros(OffsetDateTime::now_utc());
     let inventory_before =
         inventory::capture(context, transport, &models, "before", &quiesced, false)?;
     let before_index = inventory::object_index(&inventory_before)?;
@@ -291,7 +291,7 @@ fn build_export(
             "tenant": frame.models.tenant,
         }))?,
         "quiesced_at": frame.quiesced,
-        "completed_at": Utc::now().to_rfc3339_opts(SecondsFormat::Micros, false),
+        "completed_at": crate::utc_timestamp::rfc3339_micros(OffsetDateTime::now_utc()),
         "requires_offline_plan": true,
         "operator_declared_producers_only": true,
         "remote_writes": 0,

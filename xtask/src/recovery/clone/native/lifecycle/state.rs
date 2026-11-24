@@ -3,9 +3,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use chrono::{SecondsFormat, Utc};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use time::OffsetDateTime;
 
 use super::super::{
     digest,
@@ -444,7 +444,7 @@ fn write(directory: &Path, value: &Value) -> Result<()> {
 }
 
 fn now() -> String {
-    Utc::now().to_rfc3339_opts(SecondsFormat::Micros, false)
+    crate::utc_timestamp::rfc3339_micros(OffsetDateTime::now_utc())
 }
 
 fn is_sha256(value: &str) -> bool {
