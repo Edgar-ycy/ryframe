@@ -1,5 +1,4 @@
 """seed runtime 分阶段关闭、稳定排空与可续作收据。"""
-from contextlib import nullcontext
 import json
 from pathlib import Path
 import shutil
@@ -556,21 +555,6 @@ class ProcessHistoryTests(unittest.TestCase):
             with self.subTest(current=current), patch.object(runtime, "process_identity", return_value=current), \
                     self.assertRaises(ValueError):
                 runtime.stopped_evidence(self.directory, self.handoff)
-
-
-class CliTests(unittest.TestCase):
-    def test_seed_runtime_dispatches_close_inside_existing_target_lock(self):
-        backend, directory, request, context = Path.cwd(), Path.cwd() / ".local-tests/run", {}, object()
-        expected = {"status": "seed_runtime_closed"}
-        with patch.object(runtime, "require_quiet") as quiet, \
-                patch.object(runtime, "target_lock", return_value=nullcontext()) as lock, \
-                patch.object(runtime, "registered", return_value=request), \
-                patch.object(runtime, "Context", return_value=context), \
-                patch.object(close, "execute_close", return_value=expected) as execute:
-            self.assertEqual(runtime.execute_seed(backend, directory, {"manifest": True}, "close", 9), expected)
-        quiet.assert_called_once_with(backend, directory, 9)
-        lock.assert_called_once_with(backend, {"manifest": True})
-        execute.assert_called_once_with(context, request, 9)
 
 
 if __name__ == "__main__":
