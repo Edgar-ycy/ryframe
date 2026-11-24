@@ -3,9 +3,11 @@ use std::{fs, io::ErrorKind, path::Path};
 
 use serde_json::{Value, json};
 
+#[cfg(windows)]
+use super::resume_baseline::HeldPrepareHistory;
 use super::{
     super::digest, binding_request, evidence_model::*, evidence_protocol::inventory_history, guard,
-    proof,
+    proof, resume_baseline::HistorySource,
 };
 use crate::{
     Result,
@@ -42,9 +44,34 @@ pub(crate) fn owned_history(
         backend,
         filename,
         Some(owner),
-        None,
+        HistorySource::Original(None),
         |initialized, request| Ok((initialized, request)),
     )
+}
+
+#[cfg(windows)]
+pub(in crate::recovery::clone::native) fn open_prepare_history(
+    backend: &Path,
+    filename: &Path,
+    owner: &guard::Generation,
+    storage: &Path,
+) -> Result<((Value, Value), Option<HeldPrepareHistory>)> {
+    let target = filename.parent().ok_or("初始化历史缺少目标目录")?;
+    check(
+        filename == target.join("initialized.json"),
+        "初始化历史必须读取固定 initialized.json",
+    )?;
+    owner.protects(target)?;
+    let request = read(backend, &target.join("request.json"))?;
+    let held = HeldPrepareHistory::open(backend, target, &request, storage)?;
+    owner.protects(target)?;
+    let validated = match &held {
+        Some(history) => {
+            owned_prepare_with_held_originals(backend, filename, owner, storage, Some(history))?
+        }
+        None => owned_history(backend, filename, owner)?,
+    };
+    Ok((validated, held))
 }
 
 #[cfg(windows)]
@@ -53,12 +80,16 @@ pub(in crate::recovery::clone::native) fn owned_prepare_with_held_originals(
     filename: &Path,
     owner: &guard::Generation,
     storage: &Path,
+    held: Option<&HeldPrepareHistory>,
 ) -> Result<(Value, Value)> {
+    let source = held.map_or(HistorySource::Original(Some(storage)), |history| {
+        HistorySource::Held { storage, history }
+    });
     history(
         backend,
         filename,
         Some(owner),
-        Some(storage),
+        source,
         |initialized, request| Ok((initialized, request)),
     )
 }
@@ -119,14 +150,20 @@ pub(in crate::recovery) fn observe_unlocked_history<T>(
     filename: &Path,
     observe: impl FnOnce(Value, Value) -> Result<T>,
 ) -> Result<T> {
-    history(backend, filename, None, None, observe)
+    history(
+        backend,
+        filename,
+        None,
+        HistorySource::Original(None),
+        observe,
+    )
 }
 
 fn history<T>(
     backend: &Path,
     filename: &Path,
     owner: Option<&guard::Generation>,
-    storage: Option<&Path>,
+    source: HistorySource<'_>,
     observe: impl FnOnce(Value, Value) -> Result<T>,
 ) -> Result<T> {
     let target = filename.parent().ok_or("初始化历史缺少目标目录")?;
@@ -139,7 +176,7 @@ fn history<T>(
     let (filename, registration) = tree::registered(backend, filename)?;
     let target = filename.parent().ok_or("登记初始化历史缺少目标目录")?;
     protection(target, owner)?;
-    let before = tree::initialized_snapshot(backend, target, owner, storage)?;
+    let before = tree::initialized_snapshot(backend, target, owner, source)?;
     let inputs = guard::Inputs::open(super::tree::files(target, &before.files)?)?;
     let resumed = failure::resolved(backend, target, owner)?;
     let initialized = read(backend, &filename)?;
@@ -161,7 +198,7 @@ fn history<T>(
         registration.check()?;
         protection(target, owner)?;
         check(
-            tree::initialized_snapshot(backend, target, owner, storage)? == before,
+            tree::initialized_snapshot(backend, target, owner, source)? == before,
             "初始化历史读取期间文件树或绑定变化",
         )?;
         protection(target, owner)?;

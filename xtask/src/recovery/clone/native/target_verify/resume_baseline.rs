@@ -7,7 +7,79 @@ use super::{
 };
 use crate::Result;
 use serde_json::{Value, json};
+#[cfg(windows)]
+use std::path::PathBuf;
 use std::{collections::BTreeSet, path::Path};
+
+#[derive(Clone, Copy)]
+pub(super) enum HistorySource<'a> {
+    Original(Option<&'a Path>),
+    #[cfg(windows)]
+    Held {
+        storage: &'a Path,
+        history: &'a HeldPrepareHistory,
+    },
+}
+
+#[cfg(windows)]
+pub(in crate::recovery::clone::native) struct HeldPrepareHistory {
+    backend: PathBuf,
+    target: PathBuf,
+    storage: PathBuf,
+    request: Value,
+    candidates: Vec<selection::Selected>,
+    fence: crate::recovery::runtime::dataset_authority::reads::history::Fence,
+}
+
+#[cfg(windows)]
+impl HeldPrepareHistory {
+    pub(super) fn open(
+        backend: &Path,
+        target: &Path,
+        request: &Value,
+        storage: &Path,
+    ) -> Result<Option<Self>> {
+        use crate::recovery::runtime::dataset_authority::reads;
+
+        if reads::is_active()
+            || !selection::supports_held_history(backend, target, request, storage)?
+        {
+            return Ok(None);
+        }
+        let (candidates, fence) =
+            reads::history::Fence::capture(|| selection::history(backend, target, request))?;
+        fence.check()?;
+        Ok(Some(Self {
+            backend: backend.to_path_buf(),
+            target: target.to_path_buf(),
+            storage: storage.to_path_buf(),
+            request: request.clone(),
+            candidates,
+            fence,
+        }))
+    }
+
+    fn checkpoint(
+        &self,
+        backend: &Path,
+        target: &Path,
+        request: &Value,
+        storage: &Path,
+    ) -> Result<()> {
+        check(
+            self.backend == backend
+                && self.target == target
+                && self.request == *request
+                && self.storage == storage,
+            "prepare 持有的存储历史不属于当前后端、目标、固定请求或存储目录",
+        )?;
+        self.fence.checkpoint()
+    }
+
+    pub(in crate::recovery::clone::native) fn check_end(&self) -> Result<()> {
+        self.fence.check()
+    }
+}
 
 pub(super) fn prepared(
     backend: &Path,
@@ -15,7 +87,13 @@ pub(super) fn prepared(
     evidence: &Value,
     descriptor: &Value,
 ) -> Result<Value> {
-    prepared_with_history(backend, target, evidence, descriptor, None)
+    prepared_with_history(
+        backend,
+        target,
+        evidence,
+        descriptor,
+        HistorySource::Original(None),
+    )
 }
 
 pub(super) fn prepared_with_history(
@@ -23,7 +101,7 @@ pub(super) fn prepared_with_history(
     target: &Path,
     evidence: &Value,
     descriptor: &Value,
-    held_storage: Option<&Path>,
+    source: HistorySource<'_>,
 ) -> Result<Value> {
     json_io::exact(
         evidence,
@@ -83,7 +161,7 @@ pub(super) fn prepared_with_history(
         &snapshot["files"],
         descriptor,
         &request,
-        held_storage,
+        source,
     )?;
     check(
         binding(backend, &path)? == evidence["descriptor"]
@@ -191,7 +269,14 @@ pub(crate) fn validate(
     descriptor: &Value,
     request: &Value,
 ) -> Result<()> {
-    validate_with_history(backend, target, files, descriptor, request, None)
+    validate_with_history(
+        backend,
+        target,
+        files,
+        descriptor,
+        request,
+        HistorySource::Original(None),
+    )
 }
 
 fn validate_with_history(
@@ -200,7 +285,7 @@ fn validate_with_history(
     files: &Value,
     descriptor: &Value,
     request: &Value,
-    held_storage: Option<&Path>,
+    source: HistorySource<'_>,
 ) -> Result<()> {
     let values = bound_files(backend, target, files)?;
     let names = values.keys().cloned().collect::<BTreeSet<_>>();
@@ -210,7 +295,7 @@ fn validate_with_history(
         "fresh prepare 快照缺少固定请求或结果",
     )?;
     let prepared = read(backend, &target.join("prepare.json"))?;
-    let mut history = History::new(backend, target, request, held_storage);
+    let mut history = History::new(backend, target, request, source);
     let candidates =
         document_with_history(backend, &prepared, descriptor, request, || history.first())?;
     if names.contains("failure.json") {
@@ -288,7 +373,7 @@ struct History<'a> {
     target: &'a Path,
     request: &'a Value,
     #[cfg(windows)]
-    held_storage: Option<&'a Path>,
+    source: HistorySource<'a>,
     #[cfg(windows)]
     fence: Option<crate::recovery::runtime::dataset_authority::reads::history::Fence>,
 }
@@ -298,16 +383,16 @@ impl<'a> History<'a> {
         backend: &'a Path,
         target: &'a Path,
         request: &'a Value,
-        held_storage: Option<&'a Path>,
+        source: HistorySource<'a>,
     ) -> Self {
         #[cfg(not(windows))]
-        let _ = held_storage;
+        let HistorySource::Original(_storage) = source;
         Self {
             backend,
             target,
             request,
             #[cfg(windows)]
-            held_storage,
+            source,
             #[cfg(windows)]
             fence: None,
         }
@@ -317,20 +402,27 @@ impl<'a> History<'a> {
         #[cfg(windows)]
         {
             use crate::recovery::runtime::dataset_authority::reads;
-            if let Some(storage) = self.held_storage
-                && !reads::is_active()
-                && selection::supports_held_history(
-                    self.backend,
-                    self.target,
-                    self.request,
-                    storage,
-                )?
-            {
-                let (selected, fence) = reads::history::Fence::capture(|| {
-                    selection::history(self.backend, self.target, self.request)
-                })?;
-                self.fence = Some(fence);
-                return Ok(selected);
+            match self.source {
+                HistorySource::Held { storage, history } => {
+                    history.checkpoint(self.backend, self.target, self.request, storage)?;
+                    return Ok(history.candidates.clone());
+                }
+                HistorySource::Original(Some(storage))
+                    if !reads::is_active()
+                        && selection::supports_held_history(
+                            self.backend,
+                            self.target,
+                            self.request,
+                            storage,
+                        )? =>
+                {
+                    let (selected, fence) = reads::history::Fence::capture(|| {
+                        selection::history(self.backend, self.target, self.request)
+                    })?;
+                    self.fence = Some(fence);
+                    return Ok(selected);
+                }
+                HistorySource::Original(_) => {}
             }
         }
         selection::history(self.backend, self.target, self.request)
@@ -338,9 +430,15 @@ impl<'a> History<'a> {
 
     fn second(self, first: Vec<selection::Selected>) -> Result<Vec<selection::Selected>> {
         #[cfg(windows)]
-        if let Some(fence) = self.fence {
-            fence.check()?;
-            return Ok(first);
+        {
+            if let HistorySource::Held { storage, history } = self.source {
+                history.checkpoint(self.backend, self.target, self.request, storage)?;
+                return Ok(first);
+            }
+            if let Some(fence) = self.fence {
+                fence.check()?;
+                return Ok(first);
+            }
         }
         let _ = first;
         selection::history(self.backend, self.target, self.request)

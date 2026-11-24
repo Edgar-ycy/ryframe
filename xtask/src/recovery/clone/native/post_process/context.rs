@@ -1,4 +1,6 @@
 //! 复制后与 seed 共享同一持锁事实窗口，沿用原复制和来源证据。
+#[cfg(windows)]
+use crate::recovery::clone::native::target_verify::resume_baseline::HeldPrepareHistory;
 use crate::recovery::fixture_control::source_pair::execution::HeldTargetSource;
 use crate::{
     Result,
@@ -53,6 +55,8 @@ pub(super) struct Context<'a> {
     held_target: Option<&'a HeldTargetSource>,
     #[cfg(windows)]
     held_source_proofs: Option<super::source_proofs::HeldSourceProofs>,
+    #[cfg(windows)]
+    held_prepare_history: Option<HeldPrepareHistory>,
 }
 
 impl<'a> Context<'a> {
@@ -76,14 +80,13 @@ impl<'a> Context<'a> {
         hold_originals: bool,
     ) -> Result<Self> {
         #[cfg(not(windows))]
-        let _ = (held_target, hold_originals);
+        let _ = held_target;
         let backend = request.backend;
         let run = request.run_dir;
         let number = request.attempt.ok_or("复制后阶段序号缺失")?;
-        let manifest = document::read(&run.join("manifest.json"))?;
-        let saved = state::load(run, true)?;
-        controller(backend, run, number, &saved, request.stage, request.mode)?;
-        let registered = registered(request, owner, &manifest, input)?;
+        let (manifest, saved) = stage_state(request, number)?;
+        let held_storage = hold_originals.then_some(storage);
+        let registered = registered(request, owner, &manifest, input, held_storage)?;
         quiet(backend, run, number, request.mode, &saved)?;
         let (copy, session, ledger) = completed_copy(backend, &manifest)?;
         let output = super::files::stage_output(request, number)?;
@@ -141,6 +144,8 @@ impl<'a> Context<'a> {
             held_target,
             #[cfg(windows)]
             held_source_proofs,
+            #[cfg(windows)]
+            held_prepare_history: registered.held_prepare_history,
         };
         result.check()?;
         Ok(result)
@@ -227,6 +232,7 @@ impl<'a> Context<'a> {
                 initialized,
                 self.owner,
                 self.storage,
+                self.held_prepare_history.as_ref(),
             );
         }
         target_verify::published::owned_history(self.backend, initialized, self.owner)
@@ -260,7 +266,15 @@ impl<'a> Context<'a> {
     }
 
     pub(super) fn check_end(&self) -> Result<()> {
-        self.check()?;
+        let checked = self.check();
+        #[cfg(windows)]
+        let checked = super::files::combine(
+            checked,
+            self.held_prepare_history
+                .as_ref()
+                .map_or(Ok(()), HeldPrepareHistory::check_end),
+        );
+        checked?;
         #[cfg(windows)]
         if let Some(held) = &self.held_plan {
             self.scope.assert_unchanged_full()?;
@@ -385,6 +399,20 @@ fn source_proof(
     Ok((observed, proof["proof_files"].clone()))
 }
 
+fn stage_state(request: &StageRequest<'_>, number: u64) -> Result<(Value, Value)> {
+    let manifest = document::read(&request.run_dir.join("manifest.json"))?;
+    let saved = state::load(request.run_dir, true)?;
+    controller(
+        request.backend,
+        request.run_dir,
+        number,
+        &saved,
+        request.stage,
+        request.mode,
+    )?;
+    Ok((manifest, saved))
+}
+
 fn controller(
     backend: &Path,
     run: &Path,
@@ -450,6 +478,8 @@ struct Registered {
     target_descriptor: Value,
     selected: Value,
     plan: Value,
+    #[cfg(windows)]
+    held_prepare_history: Option<HeldPrepareHistory>,
 }
 
 fn registered(
@@ -457,6 +487,7 @@ fn registered(
     owner: &Generation,
     manifest: &Value,
     input: Option<&Value>,
+    held_storage: Option<&Path>,
 ) -> Result<Registered> {
     let backend = request.backend;
     let run = request.run_dir;
@@ -491,7 +522,25 @@ fn registered(
         }
     };
     let initialized = common::bound_file(backend, &manifest["initialized"], "复制后初始化")?;
-    let (initial, target) = target_verify::published::owned_history(backend, &initialized, owner)?;
+    #[cfg(windows)]
+    let ((initial, target), held_prepare_history) = match held_storage {
+        Some(storage)
+            if request.stage == "post-copy"
+                && request.mode == "prepare"
+                && manifest["copy_stage"] == "source_to_seed" =>
+        {
+            target_verify::published::open_prepare_history(backend, &initialized, owner, storage)?
+        }
+        _ => (
+            target_verify::published::owned_history(backend, &initialized, owner)?,
+            None,
+        ),
+    };
+    #[cfg(not(windows))]
+    let (initial, target) = {
+        let _ = held_storage;
+        target_verify::published::owned_history(backend, &initialized, owner)?
+    };
     let target_descriptor = document::read(
         &initialized
             .parent()
@@ -510,5 +559,7 @@ fn registered(
         target_descriptor,
         selected,
         plan,
+        #[cfg(windows)]
+        held_prepare_history,
     })
 }

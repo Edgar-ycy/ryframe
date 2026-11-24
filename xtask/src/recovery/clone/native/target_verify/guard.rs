@@ -190,6 +190,14 @@ impl Inputs {
         Ok(())
     }
 
+    #[cfg(windows)]
+    pub(in crate::recovery) fn check_identities(&self) -> Result<()> {
+        for entry in &self.entries {
+            entry.check_identity()?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn checkpoint(&self) -> Result<()> {
         // Windows 保护句柄不共享写入和删除权限，持有期间路径无法被改写或替换；
         // 阶段边界仍执行完整身份与摘要复核。Unix 没有同等共享模式，逐项核对身份。

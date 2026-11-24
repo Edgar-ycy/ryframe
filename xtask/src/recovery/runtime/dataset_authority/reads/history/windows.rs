@@ -71,6 +71,14 @@ impl Fence {
     }
 
     pub(in crate::recovery) fn check(&self) -> Result<()> {
+        self.check_with(Inputs::check)
+    }
+
+    pub(in crate::recovery) fn checkpoint(&self) -> Result<()> {
+        self.check_with(Inputs::check_identities)
+    }
+
+    fn check_with(&self, check_input: fn(&Inputs) -> Result<()>) -> Result<()> {
         if super::super::is_active()
             || is_active()
             || std::env::current_dir()? != self.current_dir
@@ -84,7 +92,7 @@ impl Fence {
             .values()
             .chain(self.inputs.files.values())
         {
-            guard.check()?;
+            check_input(guard)?;
         }
         for (path, expected) in &self.inputs.members {
             if &members(&fs::read_dir(path)?.collect::<std::io::Result<Vec<_>>>()?)? != expected {
@@ -289,12 +297,20 @@ mod tests {
             Ok(())
         })?;
         fence.check()?;
+        fence.checkpoint()?;
         assert!(fs::write(&receipt, b"changed").is_err());
         fs::write(&log, b"second")?;
-        fence.check()?;
+        fence.checkpoint()?;
         fs::write(temporary.path().join("added"), b"new")?;
-        assert!(fence.check().unwrap_err().to_string().contains("目录成员"));
+        assert!(
+            fence
+                .checkpoint()
+                .unwrap_err()
+                .to_string()
+                .contains("目录成员")
+        );
         fs::remove_file(temporary.path().join("added"))?;
+        fence.checkpoint()?;
         fs::remove_file(&log)?;
         fs::create_dir(&log)?;
         assert!(fence.check().unwrap_err().to_string().contains("目录成员"));
@@ -323,8 +339,15 @@ mod tests {
         })?;
         fence.check()?;
         assert!(fs::write(&present, b"changed").is_err());
+        fence.checkpoint()?;
         fs::write(&optional, b"{}")?;
-        assert!(fence.check().unwrap_err().to_string().contains("可选路径"));
+        assert!(
+            fence
+                .checkpoint()
+                .unwrap_err()
+                .to_string()
+                .contains("可选路径")
+        );
         Ok(())
     }
 }
