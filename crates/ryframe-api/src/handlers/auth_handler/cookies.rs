@@ -27,7 +27,7 @@ fn auth_cookie(
 }
 
 pub(super) fn refresh_cookie(token: &str, absolute_exp: usize, secure: bool) -> Cookie<'static> {
-    let now = chrono::Utc::now().timestamp().max(0) as usize;
+    let now = time::OffsetDateTime::now_utc().unix_timestamp().max(0) as usize;
     let max_age = absolute_exp.saturating_sub(now).min(7 * 24 * 60 * 60) as i64;
     let mut cookie = auth_cookie(REFRESH_COOKIE, token.to_owned(), max_age, secure);
     if let Ok(timestamp) = i64::try_from(absolute_exp)

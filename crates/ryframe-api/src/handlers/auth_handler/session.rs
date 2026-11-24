@@ -111,7 +111,7 @@ pub async fn logout(
         && let Ok(claims) = ryframe_auth::jwt::decode_token(value, &state.auth.token_settings)
         && claims.token_type == "access"
     {
-        let now = chrono::Utc::now().timestamp().max(0) as usize;
+        let now = time::OffsetDateTime::now_utc().unix_timestamp().max(0) as usize;
         let remaining = claims.exp.saturating_sub(now) as u64;
         if remaining > 0 {
             state
