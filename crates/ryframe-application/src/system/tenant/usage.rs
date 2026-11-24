@@ -4,10 +4,12 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use serde::Serialize;
+use time::OffsetDateTime;
 
 use crate::ports::tenants::{
     TenantCapacityRecord, TenantUsageAggregateRecord, TenantUsageFilter, TenantUsagePersistencePort,
 };
+use crate::ports::utc_timestamp;
 
 use super::TenantVo;
 
@@ -69,7 +71,8 @@ pub struct TenantAuxiliaryUsage {
 #[derive(Clone, Debug, Serialize)]
 pub struct TenantUsageVo {
     pub tenant_id: String,
-    pub calculated_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    pub calculated_at: OffsetDateTime,
     pub users: QuotaUsage,
     pub roles: QuotaUsage,
     pub storage: QuotaUsage,
@@ -205,7 +208,7 @@ impl TenantUsageService {
             .collect::<Vec<_>>();
         let aggregates = self.persistence.aggregate(&tenant_ids).await?;
         let request_windows = self.request_window_map(tenants).await;
-        let calculated_at = Utc::now();
+        let calculated_at = OffsetDateTime::now_utc();
         Ok(tenants
             .iter()
             .map(|tenant| {
@@ -334,7 +337,7 @@ fn tenant_usage_vo(
     aggregate: TenantUsageAggregateRecord,
     request_window: RequestWindowUsage,
     scheduler_enabled: bool,
-    calculated_at: DateTime<Utc>,
+    calculated_at: OffsetDateTime,
 ) -> TenantUsageVo {
     let user_limit = u64::try_from(tenant.max_users).unwrap_or_default();
     let role_limit = u64::try_from(tenant.max_roles).unwrap_or_default();

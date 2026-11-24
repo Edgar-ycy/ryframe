@@ -1,10 +1,12 @@
 use chrono::{DateTime, Utc};
+use ryframe_application::ports::utc_timestamp;
 use ryframe_application::system::platform::{
     QuotaUsage as ServiceQuotaUsage, RequestWindowUsage as ServiceRequestWindowUsage,
     TenantAuxiliaryUsage as ServiceTenantAuxiliaryUsage,
     TenantCapacityVo as ServiceTenantCapacityVo, TenantUsageVo as ServiceTenantUsageVo,
 };
 use serde::Serialize;
+use time::OffsetDateTime;
 use utoipa::ToSchema;
 
 /// 单项租户配额用量。
@@ -82,7 +84,9 @@ impl From<ServiceTenantAuxiliaryUsage> for TenantAuxiliaryUsageVo {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct TenantUsageVo {
     pub tenant_id: String,
-    pub calculated_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub calculated_at: OffsetDateTime,
     pub users: TenantQuotaUsageVo,
     pub roles: TenantQuotaUsageVo,
     pub storage: TenantQuotaUsageVo,
