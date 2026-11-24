@@ -4,9 +4,7 @@
 
 ## 部署与发布
 
-生产镜像使用固定摘要的 Distroless Debian 13 运行层，只包含 API、迁移、Worker 及其运行依赖，不带 shell、包管理器、`curl`、生成器、文件维护或 reset。API 与 Worker 由自身的 `--healthcheck` 命令探测本机 `/readyz`。运行镜像仅设置应用环境变量 `APP_ENV=prod`，在工作目录 `/opt/ryframe` 下默认读取必须存在的明文 `config/app.prod.toml`，可用 `config/app.toml` 提供公共默认值；数据库、JWT、Redis、对象存储和监控凭据直接填写字段。真实文件保存在 Git 工作树之外的受控私有目录，并只读挂载到各实例容器的独立配置目录，CLI 用 `--config-dir <directory>` 选择；`scope_id` 保持稳定，各实例根字段 `snowflake_worker_id` 必须不同。镜像在部署配置中使用完整 `image@sha256:<digest>`，维护命令如提供镜像摘要选项则按其 CLI help 指定，不再使用项目环境变量传递。API、Worker、控制库迁移、租户数据迁移四角色模板及各自私有配置目录已集成，资产结构与 CI 工具测试通过；真实容器、镜像和部署整链仍未验收。若使用本地存储后端，在所选角色配置文件的 `object_storage.local_base_dir` 字段设置存储目录，不使用环境变量覆盖。下列命令是后续核对挂载、固定镜像和实际启动的示例，不代表运行验收已通过：
-
-镜像构建使用 Docker 的 `SOURCE_COMMIT` 构建参数绑定 40 位小写提交 SHA。Dockerfile 校验后将它写入构建容器内的受管 `.local-tests/build/source-commit`，Rust 构建脚本只读取该文件；它不属于应用环境变量，也不会进入运行镜像。仓库内正式维护构建和恢复构建由 Rust/Python 协调器独占创建同一受管文件，完成后核对内容再清理；并发、漂移或未知清理结果会失败并保留现场。直接运行普通开发构建且没有该文件时，版本信息明确为 `development`，不能用于正式恢复证明。
+生产镜像使用固定摘要的 Distroless Debian 13 运行层，只包含 API、迁移、Worker 及其运行依赖，不带 shell、包管理器、`curl`、生成器、文件维护或 reset。API 与 Worker 由自身的 `--healthcheck` 命令探测本机 `/readyz`。运行镜像仅设置应用环境变量 `APP_ENV=prod`，在工作目录 `/opt/ryframe` 下默认读取必须存在的明文 `config/app.prod.toml`，可用 `config/app.toml` 提供公共默认值；数据库、JWT、Redis、对象存储和监控凭据直接填写字段。真实文件保存在 Git 工作树之外的受控私有目录，并只读挂载到各实例容器的独立配置目录，CLI 用 `--config-dir <directory>` 选择；`scope_id` 保持稳定，各实例根字段 `snowflake_worker_id` 必须不同。镜像在部署配置中使用完整 `image@sha256:<digest>`，维护命令如提供镜像摘要选项则按其 CLI help 指定，不再使用项目环境变量传递。API、Worker、控制库迁移、租户数据迁移四角色模板及各自私有配置目录已集成，资产结构与 CI 工具测试通过；真实容器、镜像和部署整链仍未验收。若使用本地存储后端，在所选角色配置文件的 `object_storage.local_base_dir` 字段设置存储目录，不使用环境变量覆盖。下列命令是后续核对挂载、固定镜像和实际启动的示例，不代表运行验收已通过： 镜像构建使用 Docker 的 `SOURCE_COMMIT` 构建参数绑定 40 位小写提交 SHA。Dockerfile 校验后将它写入构建容器内的受管 `.local-tests/build/source-commit`，Rust 构建脚本只读取该文件；它不属于应用环境变量，也不会进入运行镜像。仓库内正式维护构建和恢复构建由 Rust/Python 协调器独占创建同一受管文件，完成后核对内容再清理；并发、漂移或未知清理结果会失败并保留现场。直接运行普通开发构建且没有该文件时，版本信息明确为 `development`，不能用于正式恢复证明。
 ```powershell
 $sourceCommit = git rev-parse HEAD
 docker build --build-arg "SOURCE_COMMIT=$sourceCommit" -f deploy/Dockerfile .
@@ -84,9 +82,7 @@ post-copy 注册请求的 `source_admin` 仅包含 `subject_id`、`tenant_id`、
 ```powershell
 cargo xtask data backup inventory --output <absolute-new-file-in-backend-workspace/.local-tests> --source-sha <exact-backend-sha> --quiesced-at <writes-quiesced-at-rfc3339>
 ```
-`backup inventory` 与 `target inventory` 都是显式选择的只读库存操作，只在当前后端 `.local-tests` 内以 create-new 语义原子创建新证据文件，不修改数据库、对象或登记状态，因此不使用 `--write`；输出文件必须事先不存在。随后由外部工具按清单中的精确数据库、表和对象前缀完成复制与校验，再补齐 `id`、`completed_at`、`retention_until` 和 `artifacts`，形成 `BackupManifest`。每个 `db:<logical-target-key>` 与 `objects:<bucket>` 至少对应一个文件产物，登记其 `relative_path`、`bytes`、`sha256`；相对路径不得越出备份根目录。结构定义见 `crates/ryframe-application/src/ports/backup/manifest.rs`。
-
-需要检查尚未分配租户的目标或初始化前后状态时，使用 `cargo xtask data target inventory --target <configured-target-key> --output <absolute-new-file-in-backend-workspace/.local-tests>`。该命令只连接明确配置的数据库，校验 schema 和精确全表目录，并在只读事务中计算完整行摘要；`target.database` 保存业务表与 placement，`target.preserved_tables` 单独保存 ownership、迁移账本和备份恢复登记表。它不访问对象存储、不修改目标，也不把未使用的目标遗漏为“空清单”。控制库与独立目标之间的一致性仍要求外部停止所有生产者；单份目标清单不表示备份或恢复成功。
+`backup inventory` 与 `target inventory` 都是显式选择的只读库存操作，只在当前后端 `.local-tests` 内以 create-new 语义原子创建新证据文件，不修改数据库、对象或登记状态，因此不使用 `--write`；输出文件必须事先不存在。随后由外部工具按清单中的精确数据库、表和对象前缀完成复制与校验，再补齐 `id`、`completed_at`、`retention_until` 和 `artifacts`，形成 `BackupManifest`。每个 `db:<logical-target-key>` 与 `objects:<bucket>` 至少对应一个文件产物，登记其 `relative_path`、`bytes`、`sha256`；相对路径不得越出备份根目录。结构定义见 `crates/ryframe-application/src/ports/backup/manifest.rs`。 需要检查尚未分配租户的目标或初始化前后状态时，使用 `cargo xtask data target inventory --target <configured-target-key> --output <absolute-new-file-in-backend-workspace/.local-tests>`。该命令只连接明确配置的数据库，校验 schema 和精确全表目录，并在只读事务中计算完整行摘要；`target.database` 保存业务表与 placement，`target.preserved_tables` 单独保存 ownership、迁移账本和备份恢复登记表。它不访问对象存储、不修改目标，也不把未使用的目标遗漏为“空清单”。控制库与独立目标之间的一致性仍要求外部停止所有生产者；单份目标清单不表示备份或恢复成功。
 
 ```powershell
 cargo xtask data backup register --manifest <absolute-manifest-in-backend-workspace/.local-tests> --backup-root <registered-external-absolute-backup-directory> --write
@@ -112,9 +108,7 @@ cargo xtask data backup status
 
 完整验收保留成功恢复及损坏或缺失备份失败演练的原始日志、校验结果、trace、截图和视频。失败不会被登记覆盖为成功，也不会自动操作原业务资源；`running`、`data_verified`、`succeeded`、`failed` 分别表示已开始、数据通过、全部通过与失败，超时未完成仍会触发告警。 参考演练的计划、数据核验与准备、备份、恢复、副本和故障注入均由 Rust 执行。它在原运行登记和存储锁下读取已登记的隔离目标，在外部复制阶段前后保留四库、五桶和 Redis 的完整资源像及原始证明。外部复制完成后继续执行 `restore-verify-data` 和浏览器业务核验。发生部分写入或结果不明时，保留原收据和资源像供对账。
 
-使用原备份发布者的参考计划运行 `cargo xtask check recovery copy --plan <source-reference-plan> --backup-root <original-backup-root> --copy-id <copy-id> --write`，保留绑定原清单的复制收据。对隔离目标执行开始登记时，在原命令追加 `--copy-source-plan <source-reference-plan> --copy-id <copy-id>`，并让 `--backup-root` 继续指向原备份。控制器核验完好副本，按该 ID 登记备份和运行记录。登记成功后在副本上运行 `cargo xtask check recovery damage --plan <source-reference-plan> --backup-root <copy-root> --artifact <relative-artifact> [--missing] --write`，再运行 `cargo xtask data restore verify-data --id <copy-id> --backup-root <copy-root> --output <new-data-verified.json> --config-dir <source-registry-configuration> --restore-config-dir <target-configuration> --write`，核对预期失败和告警。损坏与缺失演练各使用独立副本 ID 和各自的收据。
-
-恢复运行接线、浏览器业务测试与产品验收见[生成恢复业务证明](architecture.md#生成恢复业务证明)。
+使用原备份发布者的参考计划运行 `cargo xtask check recovery copy --plan <source-reference-plan> --backup-root <original-backup-root> --copy-id <copy-id> --write`，保留绑定原清单的复制收据。对隔离目标执行开始登记时，在原命令追加 `--copy-source-plan <source-reference-plan> --copy-id <copy-id>`，并让 `--backup-root` 继续指向原备份。控制器核验完好副本，按该 ID 登记备份和运行记录。登记成功后在副本上运行 `cargo xtask check recovery damage --plan <source-reference-plan> --backup-root <copy-root> --artifact <relative-artifact> [--missing] --write`，再运行 `cargo xtask data restore verify-data --id <copy-id> --backup-root <copy-root> --output <new-data-verified.json> --config-dir <source-registry-configuration> --restore-config-dir <target-configuration> --write`，核对预期失败和告警。损坏与缺失演练各使用独立副本 ID 和各自的收据。 恢复运行接线、浏览器业务测试与产品验收见[生成恢复业务证明](architecture.md#生成恢复业务证明)。
 
 ### 参考环境的外部验收驱动
 
