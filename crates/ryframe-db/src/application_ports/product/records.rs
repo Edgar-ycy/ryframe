@@ -4,6 +4,7 @@ use ryframe_application::ports::product::{
     ProductVersionSnapshot, ProductVersionState, TenantCapabilityOverrideRecord,
     TenantProductSnapshot,
 };
+use time::{PrimitiveDateTime, UtcOffset};
 
 use crate::{
     ProductRepository,
@@ -35,7 +36,7 @@ pub(super) async fn plan_record(
             status: version.status,
             created_by: version.created_by,
             published_by: version.published_by,
-            published_at: version.published_at,
+            published_at: version.published_at.map(PrimitiveDateTime::assume_utc),
             capabilities,
         });
     }
@@ -97,7 +98,7 @@ pub(super) fn version_state(version: product_plan_version::Model) -> ProductVers
         status: version.status,
         created_by: version.created_by,
         published_by: version.published_by,
-        published_at: version.published_at,
+        published_at: version.published_at.map(PrimitiveDateTime::assume_utc),
         created_at: version.created_at,
         updated_at: version.updated_at,
     }
@@ -113,7 +114,10 @@ pub(super) fn version_model(version: ProductVersionState) -> product_plan_versio
         status: version.status,
         created_by: version.created_by,
         published_by: version.published_by,
-        published_at: version.published_at,
+        published_at: version.published_at.map(|published_at| {
+            let utc = published_at.to_offset(UtcOffset::UTC);
+            PrimitiveDateTime::new(utc.date(), utc.time())
+        }),
         created_at: version.created_at,
         updated_at: version.updated_at,
     }

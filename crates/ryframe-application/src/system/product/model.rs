@@ -1,6 +1,6 @@
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use time::OffsetDateTime;
 
 /// 配置包声明的能力运行时兼容要求。它只描述包内资源所依赖的能力，
 /// 不代表、也不能修改目标租户的套餐或覆盖配置。
@@ -54,7 +54,8 @@ pub struct ProductPlanVersionVo {
     pub status: String,
     pub created_by: String,
     pub published_by: Option<String>,
-    pub published_at: Option<DateTime<Utc>>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize_optional")]
+    pub published_at: Option<OffsetDateTime>,
     pub capabilities: Vec<ProductCapabilityVo>,
 }
 

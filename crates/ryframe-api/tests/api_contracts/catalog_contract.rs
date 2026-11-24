@@ -83,6 +83,60 @@ fn message_response_preserves_utc_precision_null_and_schema() {
     assert!(from_chrono(out_of_range).is_err());
 }
 
+#[test]
+fn product_plan_version_response_preserves_published_at_utc_and_schema() {
+    use ryframe_api::dto::product_dto::ProductPlanVersionVo;
+    use ryframe_application::system::platform::ProductPlanVersionVo as ServiceVersion;
+    use serde_json::json;
+    use time::{OffsetDateTime, UtcOffset};
+    use utoipa::PartialSchema;
+
+    let response = |published_at: Option<OffsetDateTime>| {
+        let service_version = ServiceVersion {
+            id: "42".into(),
+            version: 1,
+            name: "标准版".into(),
+            description: None,
+            status: if published_at.is_some() {
+                "published"
+            } else {
+                "draft"
+            }
+            .into(),
+            created_by: "1".into(),
+            published_by: published_at.map(|_| "1".into()),
+            published_at,
+            capabilities: Vec::new(),
+        };
+        let service_json = serde_json::to_value(&service_version).unwrap();
+        let version = ProductPlanVersionVo::try_from(service_version).unwrap();
+        let response_json = serde_json::to_value(version).unwrap();
+        assert_eq!(response_json["published_at"], service_json["published_at"]);
+        response_json
+    };
+    assert!(response(None)["published_at"].is_null());
+    let non_utc = UtcOffset::from_hms(8, 0, 0).unwrap();
+    for (nanos, fraction) in [
+        (0, ""),
+        (120_000_000, ".120"),
+        (123_400_000, ".123400"),
+        (123_456_700, ".123456700"),
+    ] {
+        let instant = OffsetDateTime::UNIX_EPOCH
+            .replace_nanosecond(nanos)
+            .unwrap()
+            .to_offset(non_utc);
+        assert_eq!(
+            response(Some(instant))["published_at"],
+            format!("1970-01-01T00:00:00{fraction}Z")
+        );
+    }
+    let schema = serde_json::to_value(ProductPlanVersionVo::schema()).unwrap();
+    let property = &schema["properties"]["published_at"];
+    assert_eq!(property["format"], "date-time");
+    assert_eq!(property["type"], json!(["string", "null"]));
+}
+
 mod permission_catalog {
     use std::collections::BTreeSet;
 

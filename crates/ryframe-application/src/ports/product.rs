@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use time::OffsetDateTime;
 
 use crate::ports::authorization::AuthorizationMirrorTransaction;
 
@@ -19,7 +20,7 @@ pub struct ProductVersionRecord {
     pub status: String,
     pub created_by: i64,
     pub published_by: Option<i64>,
-    pub published_at: Option<DateTime<Utc>>,
+    pub published_at: Option<OffsetDateTime>,
     pub capabilities: Vec<ProductCapabilityRecord>,
 }
 
@@ -56,7 +57,7 @@ pub struct ProductVersionState {
     pub status: String,
     pub created_by: i64,
     pub published_by: Option<i64>,
-    pub published_at: Option<DateTime<Utc>>,
+    pub published_at: Option<OffsetDateTime>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

@@ -4,7 +4,7 @@ use ryframe_application::{
     AUDIT_OPERATION_OUTBOX_EVENT_TYPE, AUTHORIZATION_CHANGED_REDIS_CHANNEL,
     AUTHORIZATION_MIRROR_OUTBOX_EVENT_TYPE, AuditOperationEvent, AuditRequestContext,
     AuthorizationCache, AuthorizationChangePublisher, AuthorizationChangedEvent,
-    CacheAvailabilityPolicy, scope_audit_request,
+    CacheAvailabilityPolicy, TransactionAuditMode, scope_audit_request,
     system::{
         operations::{OperLogStatus, RecordOperLogCommand},
         platform::{
@@ -17,13 +17,14 @@ use ryframe_db::{
     ControlDatabaseCluster,
     application_ports::product,
     entities::{
-        outbox_event,
+        outbox_event, product_plan_version,
         tenant::{capability_override, operation_lease, product_plan},
     },
     repositories::{ProductRepository, TenantOperationLeaseRepository},
 };
 use ryframe_kernel::{ActorContext, AppError, AppResult, DataScope};
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, TransactionTrait};
+use time::{Date, Month, UtcOffset};
 
 use super::super::{
     bootstrap_hashes, db_error, execute, install_test_database_id_generator, run_mysql_test,
@@ -87,9 +88,74 @@ async fn same_product_assignment_is_audited_without_advancing_runtime() {
 
         apply_same_configuration(&fixture, &unchanged_command, original).await?;
         reject_invalid_submissions(&fixture, &unchanged_command).await?;
-        switch_version_and_reject_old_preview(&fixture).await
+        switch_version_and_reject_old_preview(&fixture).await?;
+        verify_version_publication_timestamps(&fixture).await
     })
     .await;
+}
+
+async fn verify_version_publication_timestamps(fixture: &Fixture) -> Result<(), String> {
+    execute(
+        &fixture.database,
+        "UPDATE sys_product_plan_version SET published_at='2026-01-01 00:00:00.123456' WHERE id=72",
+    )
+    .await?;
+    execute(
+        &fixture.database,
+        "INSERT INTO sys_product_plan_version \
+         (id,plan_id,version,name,status,created_by,created_at,updated_at) \
+         SELECT 73,plan_id,3,'标准版 v3','draft',created_by,created_at,updated_at \
+         FROM sys_product_plan_version WHERE id=72",
+    )
+    .await?;
+    let historical = Date::from_calendar_date(2026, Month::January, 1)
+        .unwrap()
+        .with_hms_micro(0, 0, 0, 123_456)
+        .unwrap();
+    let historical_utc = historical.assume_utc();
+    let versions = fixture
+        .service
+        .versions(&fixture.actor, 1)
+        .await
+        .map_err(|error| error.to_string())?;
+    let original = versions
+        .iter()
+        .find(|version| version.version == 2)
+        .unwrap();
+    assert_eq!(original.published_at, Some(historical_utc));
+    assert_eq!(original.published_at.unwrap().offset(), UtcOffset::UTC);
+    let draft = versions
+        .iter()
+        .find(|version| version.version == 3)
+        .unwrap();
+    assert_eq!(draft.published_at, None);
+
+    let write = product::write(ControlDatabaseCluster::single(fixture.database.clone()));
+    let transaction = write.begin().await.map_err(|error| error.to_string())?;
+    let mut draft = transaction
+        .lock_version(1, 3)
+        .await
+        .map_err(|error| error.to_string())?;
+    assert_eq!(draft.published_at, None);
+    draft.status = "published".into();
+    draft.published_by = Some(fixture.actor.user_id);
+    draft.published_at = Some(historical_utc.to_offset(UtcOffset::from_hms(8, 0, 0).unwrap()));
+    let saved = transaction
+        .transition_version(draft, "draft", "published")
+        .await
+        .map_err(|error| error.to_string())?;
+    assert_eq!(saved.published_at, Some(historical_utc));
+    transaction
+        .commit(TransactionAuditMode::Skip)
+        .await
+        .map_err(|error| error.to_string())?;
+    let stored = product_plan_version::Entity::find_by_id(73)
+        .one(&fixture.database)
+        .await
+        .map_err(db_error)?
+        .ok_or("缺少已发布的测试版本")?;
+    assert_eq!(stored.published_at, Some(historical));
+    Ok(())
 }
 
 async fn apply_same_configuration(

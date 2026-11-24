@@ -3,6 +3,7 @@ use std::{collections::BTreeMap, sync::Arc};
 use chrono::{Duration, Utc};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sha2::{Digest, Sha256};
+use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::{
@@ -279,7 +280,7 @@ impl ProductService {
         self.validate_publishable_capability_records(&capabilities)?;
         version.status = VERSION_PUBLISHED.into();
         version.published_by = Some(actor.user_id);
-        version.published_at = Some(Utc::now());
+        version.published_at = Some(OffsetDateTime::now_utc());
         version.updated_at = Utc::now();
         let saved = transaction
             .transition_version(version, VERSION_DRAFT, VERSION_PUBLISHED)

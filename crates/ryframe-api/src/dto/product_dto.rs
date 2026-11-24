@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use ryframe_application::ports::utc_timestamp;
 use ryframe_application::system::platform::{
     CapabilityCatalogVo as ServiceCapabilityCatalogVo,
     CapabilityOverrideVo as ServiceCapabilityOverrideVo,
@@ -15,6 +16,7 @@ use ryframe_application::system::platform::{
 use ryframe_kernel::{AppError, ValidatedPageQuery};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use time::OffsetDateTime;
 use utoipa::ToSchema;
 use validator::Validate;
 
@@ -239,7 +241,9 @@ pub struct ProductPlanVersionVo {
     pub status: ProductPlanVersionStatus,
     pub created_by: String,
     pub published_by: Option<String>,
-    pub published_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub published_at: Option<OffsetDateTime>,
     pub capabilities: Vec<ProductCapabilityVo>,
 }
 
