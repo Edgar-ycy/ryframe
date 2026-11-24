@@ -21,7 +21,8 @@ pub struct DataTargetSummary {
 pub struct DataTargetDetail {
     #[serde(flatten)]
     pub target: DataTargetSummary,
-    pub last_verified_at: Option<DateTime<Utc>>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize_optional")]
+    pub last_verified_at: Option<time::OffsetDateTime>,
     pub reserved_connections: u32,
     pub max_total_connections: u32,
     pub open_targets: usize,

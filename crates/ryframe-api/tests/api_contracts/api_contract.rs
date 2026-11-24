@@ -71,6 +71,73 @@ fn schedule_preview_preserves_utc_precision_local_text_and_required_schema() {
     }
 }
 
+#[test]
+fn data_target_verification_preserves_nullable_utc_precision_and_schema() {
+    use ryframe_api::dto::tenant_data_dto::DataTargetDetail;
+    use ryframe_application::system::platform::{
+        DataTargetDetail as ServiceDetail, DataTargetSummary as ServiceSummary,
+    };
+    use serde_json::json;
+    use time::{OffsetDateTime, UtcOffset};
+    use utoipa::PartialSchema;
+
+    let response = |last_verified_at| {
+        let detail = ServiceDetail {
+            target: ServiceSummary {
+                key: "shared".into(),
+                display_name: None,
+                mode: "shared".into(),
+                kind: "mysql".into(),
+                region: None,
+                health: "verified".into(),
+                schema_fingerprint: None,
+                connected: true,
+                pool_max_connections: Some(10),
+                active_leases: 0,
+                eligible: true,
+                reasons: Vec::new(),
+            },
+            last_verified_at,
+            reserved_connections: 0,
+            max_total_connections: 10,
+            open_targets: 1,
+            opening_targets: 0,
+        };
+        let service_json = serde_json::to_value(&detail).unwrap();
+        let body = serde_json::to_value(DataTargetDetail::try_from(detail).unwrap()).unwrap();
+        assert_eq!(body, service_json);
+        body
+    };
+    assert!(response(None)["last_verified_at"].is_null());
+    for (nanos, fraction) in [
+        (0, ""),
+        (120_000_000, ".120"),
+        (123_400_000, ".123400"),
+        (123_456_700, ".123456700"),
+    ] {
+        let value = OffsetDateTime::from_unix_timestamp(-1)
+            .unwrap()
+            .replace_nanosecond(nanos)
+            .unwrap()
+            .to_offset(UtcOffset::from_hms(8, 0, 0).unwrap());
+        assert_eq!(
+            response(Some(value))["last_verified_at"],
+            format!("1969-12-31T23:59:59{fraction}Z")
+        );
+    }
+    let schema = serde_json::to_value(DataTargetDetail::schema()).unwrap();
+    let fields = &schema["allOf"][1];
+    let property = &fields["properties"]["last_verified_at"];
+    assert_eq!(property["type"], json!(["string", "null"]));
+    assert_eq!(property["format"], "date-time");
+    assert!(
+        !fields["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("last_verified_at"))
+    );
+}
+
 mod http {
     use super::*;
 

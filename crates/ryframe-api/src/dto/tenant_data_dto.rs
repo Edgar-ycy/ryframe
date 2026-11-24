@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use ryframe_application::ports::utc_timestamp;
 use ryframe_application::system::platform as service;
 use ryframe_kernel::{AppError, ValidatedPageQuery};
 use serde::{Deserialize, Serialize};
@@ -107,7 +108,9 @@ pub struct DataTargetSummary {
 pub struct DataTargetDetail {
     #[serde(flatten)]
     pub target: DataTargetSummary,
-    pub last_verified_at: Option<DateTime<Utc>>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub last_verified_at: Option<time::OffsetDateTime>,
     pub reserved_connections: u32,
     pub max_total_connections: u32,
     pub open_targets: usize,

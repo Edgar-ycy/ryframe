@@ -1,6 +1,6 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use ryframe_kernel::AppResult;
+use time::OffsetDateTime;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TenantDataTargetHealth {
@@ -21,7 +21,7 @@ pub struct TenantDataTargetMetadata {
     pub active_leases: usize,
     pub schema_fingerprint: Option<String>,
     pub health: TenantDataTargetHealth,
-    pub last_verified_at: Option<DateTime<Utc>>,
+    pub last_verified_at: Option<OffsetDateTime>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -3,7 +3,9 @@ use ryframe_application::ports::tenant_data::{
     TenantDataPoolStats, TenantDataTargetAccess, TenantDataTargetHealth, TenantDataTargetMetadata,
     TenantDataTargetPort,
 };
-use ryframe_kernel::AppResult;
+use ryframe_kernel::{AppError, AppResult};
+use std::time::{SystemTime, UNIX_EPOCH};
+use time::OffsetDateTime;
 
 use crate::{
     TenantDatabaseRouter, TenantDatabaseTargetHealthStatus, migration::tenant_data_catalog,
@@ -38,15 +40,15 @@ impl TenantDataTargetPort for TenantDatabaseRouter {
     }
 
     async fn metadata(&self) -> AppResult<Vec<TenantDataTargetMetadata>> {
-        Ok(self
-            .targets()
+        self.targets()
             .metadata()
             .await
             .into_iter()
             .map(|metadata| {
                 let mode = metadata.mode_code().into();
                 let kind = metadata.kind_code().into();
-                TenantDataTargetMetadata {
+                let last_verified_at = metadata.last_verified_at.map(utc_time).transpose()?;
+                Ok(TenantDataTargetMetadata {
                     key: metadata.key,
                     display_name: metadata.display_name,
                     region: metadata.region,
@@ -57,10 +59,10 @@ impl TenantDataTargetPort for TenantDatabaseRouter {
                     active_leases: metadata.active_leases,
                     schema_fingerprint: metadata.schema_fingerprint,
                     health: map_health(metadata.health),
-                    last_verified_at: metadata.last_verified_at.map(Into::into),
-                }
+                    last_verified_at,
+                })
             })
-            .collect())
+            .collect()
     }
 
     async fn pool_stats(&self) -> AppResult<TenantDataPoolStats> {
@@ -107,5 +109,55 @@ pub const fn map_health(health: TenantDatabaseTargetHealthStatus) -> TenantDataT
         TenantDatabaseTargetHealthStatus::Unknown => TenantDataTargetHealth::Unknown,
         TenantDatabaseTargetHealthStatus::Verified => TenantDataTargetHealth::Verified,
         TenantDatabaseTargetHealthStatus::Unavailable => TenantDataTargetHealth::Unavailable,
+    }
+}
+
+fn utc_time(value: SystemTime) -> AppResult<OffsetDateTime> {
+    let (duration, sign) = match value.duration_since(UNIX_EPOCH) {
+        Ok(duration) => (duration, 1_i128),
+        Err(error) => (error.duration(), -1_i128),
+    };
+    // u64 秒乘十亿仍在 i128 范围内；整体取负保留纪元之前的子秒。
+    let nanos = sign
+        * (i128::from(duration.as_secs()) * 1_000_000_000 + i128::from(duration.subsec_nanos()));
+    OffsetDateTime::from_unix_timestamp_nanos(nanos)
+        .map_err(|_| AppError::Internal("数据目标核验时间超出 UTC 表示范围".into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn verified_at_preserves_signed_nanoseconds_and_rejects_out_of_range() {
+        for nanos in [
+            0,
+            100,
+            1_000,
+            120_000_000,
+            123_400_000,
+            123_456_700,
+            999_999_900,
+            1_123_456_700,
+            12_123_456_700,
+        ] {
+            let duration = Duration::from_nanos(nanos);
+            for (value, expected) in [
+                (UNIX_EPOCH.checked_add(duration).unwrap(), i128::from(nanos)),
+                (
+                    UNIX_EPOCH.checked_sub(duration).unwrap(),
+                    -i128::from(nanos),
+                ),
+            ] {
+                let utc = utc_time(value).unwrap();
+                assert_eq!(utc.offset(), time::UtcOffset::UTC);
+                assert_eq!(utc.unix_timestamp_nanos(), expected);
+            }
+        }
+        let out_of_range = UNIX_EPOCH
+            .checked_add(Duration::from_secs(253_402_300_800))
+            .unwrap();
+        assert!(matches!(utc_time(out_of_range), Err(AppError::Internal(_))));
     }
 }
