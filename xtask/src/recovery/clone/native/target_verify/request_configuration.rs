@@ -117,9 +117,13 @@ pub(crate) fn configuration_file_digests(
     directory: &Path,
     is_toml: impl Fn(&Path) -> bool,
 ) -> Result<BTreeMap<String, Value>> {
+    use crate::recovery::runtime::dataset_authority::reads;
+
     let mut files = BTreeMap::new();
-    crate::recovery::runtime::dataset_authority::reads::directory(directory)?;
-    for entry in fs::read_dir(directory).map_err(|_| "目标配置目录无法读取")? {
+    let entries = reads::entries_with(directory, |path| {
+        fs::read_dir(path).map_err(|_| "目标配置目录无法读取".into())
+    })?;
+    for entry in entries {
         let entry = entry.map_err(|_| "目标配置目录项无法读取")?;
         let path = entry.path();
         if !is_toml(&path) {

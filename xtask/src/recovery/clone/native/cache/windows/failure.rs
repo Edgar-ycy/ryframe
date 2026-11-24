@@ -1,6 +1,9 @@
 //! 复核 Windows Redis 失败收据与原 Job 清空事实。
 use super::*;
-use crate::recovery::clone::native::{cache::host_control, target_verify::authority};
+use crate::recovery::{
+    clone::native::{cache::host_control, target_verify::authority},
+    runtime::dataset_authority::reads::history as history_reads,
+};
 
 const REQUIRED: &[&str] = &["request.json", LAUNCH, "intent.json", "failed.json"];
 const OPTIONAL: &[&str] = &[
@@ -55,6 +58,7 @@ fn read_failure(
                 "原启动摘要",
             )?,
         )?;
+        history_reads::directory(&launch.backend)?;
         if published.is_some()
             && std::fs::canonicalize(backend)? != std::fs::canonicalize(&launch.backend)?
         {
@@ -304,7 +308,7 @@ type Bindings = serde_json::Map<String, Value>;
 
 fn files(output: &Path) -> Result<Bindings> {
     let mut result = Bindings::new();
-    for entry in std::fs::read_dir(output)? {
+    for entry in history_reads::entries(output)? {
         let entry = entry?;
         let name = entry.file_name();
         let name = name

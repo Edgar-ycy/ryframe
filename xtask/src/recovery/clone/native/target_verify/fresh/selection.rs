@@ -3,7 +3,11 @@ use super::super::super::{
     cache, json as document,
     resources::{common, storage},
 };
-use crate::{Result, cli::CloneSide, recovery::fixture_control::services::lifecycle::query};
+use crate::{
+    Result,
+    cli::CloneSide,
+    recovery::{fixture_control::services::lifecycle::query, runtime::dataset_authority::reads},
+};
 use serde_json::{Value, json};
 use std::path::Path;
 
@@ -165,7 +169,10 @@ pub(crate) fn history(backend: &Path, target: &Path, request: &Value) -> Result<
         .parent()
         .ok_or("fresh 目标没有工作区")?
         .join("registration.json");
-    if !registration_path.try_exists()? {
+    if !reads::history::try_exists(&registration_path)? {
+        if reads::history::is_active() {
+            return Err("待复用的 prepare 存储历史缺少原目标登记".into());
+        }
         return Ok(result);
     }
     let workspace = target.parent().ok_or("fresh 工作区缺失")?;
@@ -206,6 +213,9 @@ pub(crate) fn history(backend: &Path, target: &Path, request: &Value) -> Result<
             );
         }
     } else {
+        if reads::history::is_active() {
+            return Err("待复用的 prepare 存储历史与原夹具登记不同".into());
+        }
         ordinary_history(backend, &run, request, &mut result)?;
     }
     if common::binding(&run.join("state.json"))? != state_before
@@ -214,6 +224,33 @@ pub(crate) fn history(backend: &Path, target: &Path, request: &Value) -> Result<
         return Err("prepare 完整存储历史在核验期间变化".into());
     }
     Ok(result)
+}
+
+#[cfg(windows)]
+pub(in crate::recovery::clone::native::target_verify) fn supports_held_history(
+    backend: &Path,
+    target: &Path,
+    request: &Value,
+    storage: &Path,
+) -> Result<bool> {
+    if request["storage"]["redis"]["platform"] != "windows" {
+        return Ok(false);
+    }
+    let workspace = target.parent().ok_or("fresh 工作区缺失")?;
+    if !workspace.join("registration.json").try_exists()? {
+        return Ok(false);
+    }
+    let observed = super::super::cli::execute(backend, workspace, "cli-registration", &json!({}))?;
+    let registered = &observed["value"]["storage_run"];
+    let manifest = common::read_bound(backend, &registered["manifest"], "fresh 存储清单")?;
+    if manifest["kind"] != "reference-fixture-service-run" {
+        return Ok(false);
+    }
+    let directory = Path::new(document::text(&registered["path"], "prepare 持锁存储运行")?);
+    if directory != storage {
+        return Err("prepare 原证据窗口未绑定当前持锁存储运行".into());
+    }
+    Ok(true)
 }
 
 fn ordinary_history(

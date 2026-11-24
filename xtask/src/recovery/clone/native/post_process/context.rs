@@ -171,8 +171,7 @@ impl<'a> Context<'a> {
         )?;
         let initialized =
             common::bound_file(self.backend, &self.manifest["initialized"], "初始化后像")?;
-        if target_verify::published::owned_history(self.backend, &initialized, self.owner)?
-            != (self.initial.clone(), self.target.clone())
+        if self.target_history(&initialized)? != (self.initial.clone(), self.target.clone())
             || seed::source_registration::copied::require_with_held_objects(
                 self.backend,
                 self.run,
@@ -218,6 +217,19 @@ impl<'a> Context<'a> {
         quiet(self.backend, self.run, self.number, self.mode, &self.state)?;
         self.check_protected()?;
         self.owner.check()
+    }
+
+    fn target_history(&self, initialized: &Path) -> Result<(Value, Value)> {
+        #[cfg(windows)]
+        if self.held_source_proofs.is_some() {
+            return target_verify::published::owned_prepare_with_held_originals(
+                self.backend,
+                initialized,
+                self.owner,
+                self.storage,
+            );
+        }
+        target_verify::published::owned_history(self.backend, initialized, self.owner)
     }
 
     fn check_protected(&self) -> Result<()> {

@@ -39,13 +39,14 @@ pub(in super::super) fn initialized(
     target: &Path,
     owner: Option<&super::guard::Generation>,
 ) -> Result<Value> {
-    Ok(initialized_snapshot(backend, target, owner)?.binding)
+    Ok(initialized_snapshot(backend, target, owner, None)?.binding)
 }
 
 pub(super) fn initialized_snapshot(
     backend: &Path,
     target: &Path,
     owner: Option<&super::guard::Generation>,
+    held_storage: Option<&Path>,
 ) -> Result<InitializedSnapshot> {
     let workspace = target.parent().ok_or("初始化目标缺少登记目录")?;
     let initialized_path = workspace.join("initialized-files.json");
@@ -75,7 +76,7 @@ pub(super) fn initialized_snapshot(
     )?;
     let prepared_value = read(backend, &bound(backend, &prepared)?)?;
     let registration_value = read(backend, &bound(backend, &registration)?)?;
-    resume_baseline::prepared(
+    resume_baseline::prepared_with_history(
         backend,
         target,
         &json!({
@@ -83,6 +84,7 @@ pub(super) fn initialized_snapshot(
             "predecessor":prepared_value["predecessor"]
         }),
         &registration_value["request"],
+        held_storage,
     )?;
     super::super::resume_observations::file_map(&value["files"])?;
     let files = super::super::tree::protected_snapshot(backend, target, owner)?;

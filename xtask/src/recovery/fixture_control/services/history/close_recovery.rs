@@ -1,6 +1,9 @@
 //! 失败 close 的新阶段恢复证据；原失败目录及停止收据缺失事实不可改写。
 use super::*;
-use crate::recovery::{clone::native::resources::common, monitoring::execution::ProtectedInputs};
+use crate::recovery::{
+    clone::native::resources::common, monitoring::execution::ProtectedInputs,
+    runtime::dataset_authority::reads::history as history_reads,
+};
 use std::time::UNIX_EPOCH;
 
 const WINDOWS_REDIS_FILES: &[&str] = &[
@@ -40,7 +43,8 @@ pub(crate) fn candidate(
     let number = failed["number"].as_u64().ok_or("原关闭编号无效")?;
     let root = run.join(format!("lifecycle-{number:04}"));
     check(
-        !digest::linked_path(&root)?.contains(&true) && std::fs::read_dir(&root)?.next().is_none(),
+        !digest::linked_path(&root)?.contains(&true)
+            && history_reads::entries(&root)?.next().is_none(),
         "关闭恢复只接受原失败目录完整保留且无停止收据或未知写入",
     )?;
     let (rustfs, redis) = generation::paths(run, generation)?;
@@ -96,7 +100,7 @@ fn records(
     };
     let before = chrono::DateTime::parse_from_rfc3339(text(failed, "started_at")?)?;
     let after = chrono::DateTime::parse_from_rfc3339(text(failed, "finished_at")?)?;
-    let modified = std::fs::metadata(&exit_path)?.modified()?;
+    let modified = history_reads::modified(&exit_path)?;
     let modified_utc: chrono::DateTime<chrono::Utc> = modified.into();
     let prior_exit = returncode != 0;
     if prior_exit {
@@ -128,7 +132,7 @@ fn records(
     }
     if windows {
         check(
-            std::fs::metadata(&exit_path)?.modified()? == modified,
+            history_reads::modified(&exit_path)? == modified,
             "Windows Redis 原退出收据时间在关闭恢复核验期间变化",
         )?;
     }
@@ -148,12 +152,12 @@ fn prior_windows_redis_exit(
         "和解前原 RustFS 成员收据不能经过链接",
     )?;
     let receipt = binding(&path)?;
-    let modified = std::fs::metadata(&path)?.modified()?;
+    let modified = history_reads::modified(&path)?;
     let modified_utc: chrono::DateTime<chrono::Utc> = modified.into();
     check(
         modified_utc < close_started
             && binding(&path)? == receipt
-            && std::fs::metadata(&path)?.modified()? == modified,
+            && history_reads::modified(&path)? == modified,
         "Windows Redis 非零退出只允许使用早于原失败 close 的同一 RustFS 成员收据",
     )?;
     Ok(json!({"returncode":returncode,"rustfs_members":receipt,
@@ -198,10 +202,10 @@ fn completed_records(run: &Path, directory: &Path, tree: &Value) -> Result<()> {
     let operation = text(tree, "operation_id")?;
     let control = directory.join(format!("rustfs-tree-{operation}-control.json"));
     let result = directory.join(format!("rustfs-tree-{operation}-result.json"));
-    if !control.try_exists()? && !result.try_exists()? {
+    if !history_reads::try_exists(&control)? && !history_reads::try_exists(&result)? {
         return Ok(());
     }
-    if result.try_exists()? {
+    if history_reads::try_exists(&result)? {
         let value = read(&result)?;
         exact(
             &value,
@@ -226,7 +230,7 @@ fn completed_records(run: &Path, directory: &Path, tree: &Value) -> Result<()> {
             "原RustFS完成结果不属于登记树",
         )?;
     }
-    if control.try_exists()? {
+    if history_reads::try_exists(&control)? {
         let request = read(&control)?;
         exact(
             &request,
@@ -286,7 +290,7 @@ fn redis_files(directory: &Path, windows: bool) -> Result<Value> {
     for &name in required {
         result[name] = binding(&directory.join(name))?;
     }
-    for entry in std::fs::read_dir(directory)? {
+    for entry in history_reads::entries(directory)? {
         let entry = entry?;
         let name = entry.file_name();
         let name = name.to_str().ok_or("原Redis文件名不是UTF-8")?;

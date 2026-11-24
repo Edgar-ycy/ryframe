@@ -7,7 +7,10 @@ use super::{generation, prefix};
 mod close_recovery;
 use crate::{
     Result,
-    recovery::clone::native::{digest, json as json_io, lifecycle::state},
+    recovery::{
+        clone::native::{digest, json as json_io, lifecycle::state},
+        runtime::dataset_authority::reads::history as history_reads,
+    },
 };
 pub(crate) use close_recovery::{candidate as close_candidate, recovery_evidence};
 
@@ -150,7 +153,7 @@ pub(crate) fn close_evidence(
     )?;
     let number = failed["number"].as_u64().ok_or("失败阶段编号无效")?;
     let root = run.join(format!("lifecycle-{number:04}"));
-    let children = std::fs::read_dir(&root)?
+    let children = history_reads::entries(&root)?
         .map(|entry| entry.map(|entry| entry.path()))
         .collect::<std::io::Result<Vec<_>>>()?;
     let names = children
@@ -199,7 +202,7 @@ pub(crate) fn close_evidence(
     )?;
     let mut evidence = json!({"redis":binding(&redis_path)?,"rustfs_tree":binding(&tree_path)?,"rustfs_members":completion});
     let wrapped = root.join("rustfs-stopped.json");
-    if wrapped.exists() {
+    if history_reads::exists(&wrapped)? {
         let proof = read(&wrapped)?;
         exact(&proof, &["tree", "terminated", "state", "completion"])?;
         check(
