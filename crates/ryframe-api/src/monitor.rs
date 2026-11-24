@@ -2,11 +2,11 @@
 
 use std::{collections::BTreeMap, sync::Arc};
 
-use ryframe_application::ports::backup::BackupHealthCache;
 pub use ryframe_application::ports::health::{
     DatabaseMonitor, DatabaseNodeHealth, DatabaseTopologyHealth, DependencyHealthCache,
     DependencyHealthSnapshot, DependencyStatus,
 };
+use ryframe_application::ports::{backup::BackupHealthCache, utc_timestamp};
 
 use crate::http::{ApiResponse, HttpResult};
 use axum::{
@@ -16,8 +16,10 @@ use axum::{
     response::IntoResponse,
     routing::get as axum_get,
 };
+use ryframe_kernel::AppError;
 use ryframe_macro::{get, route};
 use serde::Serialize;
+use time::OffsetDateTime;
 use utoipa::ToSchema;
 
 /// HTTP 缓存监控所需的只读端口。
@@ -231,11 +233,13 @@ pub(crate) async fn db_pool_handler(
 ) -> HttpResult<Json<ApiResponse<DbPoolInfo>>> {
     let ping_ok = state.database.ping().await;
     let active_connections = state.database.active_connections().await;
+    let timestamp = utc_timestamp::format_with_offset(&OffsetDateTime::now_utc())
+        .map_err(|_| AppError::Internal("无法格式化数据库连接池状态时间".into()))?;
 
     Ok(Json(ApiResponse::success(DbPoolInfo {
         status: if ping_ok { "connected" } else { "disconnected" }.into(),
         active_connections,
-        timestamp: chrono::Utc::now().to_rfc3339(),
+        timestamp,
     })))
 }
 
