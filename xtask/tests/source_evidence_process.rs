@@ -28,6 +28,15 @@ fn invoke(raw: &[u8], arguments: &[&str]) -> std::process::Output {
     child.wait_with_output().unwrap()
 }
 
+fn source_evidence_directory() -> tempfile::TempDir {
+    let base = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join(".local-tests/source-evidence-process");
+    fs::create_dir_all(&base).unwrap();
+    tempfile::tempdir_in(base).unwrap()
+}
+
 #[test]
 fn malformed_secret_bearing_requests_have_sanitized_failure_and_no_retry_permission() {
     for raw in [
@@ -49,12 +58,7 @@ fn malformed_secret_bearing_requests_have_sanitized_failure_and_no_retry_permiss
 
 #[test]
 fn retired_recovery_operations_cannot_publish_intent_or_probe_a_listener() {
-    let base = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join(".local-tests/source-evidence-process");
-    fs::create_dir_all(&base).unwrap();
-    let coordinator = tempfile::tempdir_in(base).unwrap();
+    let coordinator = source_evidence_directory();
     let local = coordinator.path().join(".local-tests");
     fs::create_dir(&local).unwrap();
     let root = local.join("runtime");
@@ -105,6 +109,131 @@ fn assert_rejected_operation(request: &Value, diagnostic: &str) {
     assert_eq!(value["error"]["automatic_retry_permitted"], false);
     let message = value["error"]["message"].as_str().unwrap();
     assert!(message.contains(diagnostic), "{message}");
+}
+
+fn inventory_configuration_request(root: &Path, directory: Option<&Path>) -> Value {
+    json!({"operation":"copy-inventory-configuration","write":false,"arguments":{
+        "backend":root.join("execution"),"evidence_root":root.join("coordinator"),
+        "config_dir":directory,"app_env":"test"
+    }})
+}
+
+#[cfg(any(unix, windows))]
+#[test]
+fn inventory_configuration_rejects_links_in_directories_and_toml_files() {
+    let temporary = source_evidence_directory();
+    let root = temporary.path();
+    let backend = root.join("execution");
+    let directory = backend.join("config");
+    let nested = backend.join("real-parent/nested");
+    let selected_directory = backend.join("linked-selected");
+    for path in [
+        &directory,
+        &nested,
+        &selected_directory,
+        &root.join("coordinator"),
+    ] {
+        fs::create_dir_all(path).unwrap();
+    }
+    for path in [&directory, &nested] {
+        fs::write(path.join("app.test.toml"), b"# fixture-private-value\n").unwrap();
+    }
+    let real_file = directory.join("app.test.toml");
+    let direct_link = backend.join("linked-config");
+    let ancestor_link = backend.join("linked-parent");
+    let cases = [
+        (direct_link.clone(), directory.clone(), direct_link),
+        (
+            ancestor_link.clone(),
+            nested.parent().unwrap().to_path_buf(),
+            ancestor_link.join("nested"),
+        ),
+        (
+            selected_directory.join("app.test.toml"),
+            real_file.clone(),
+            selected_directory,
+        ),
+        (directory.join("extra.toml"), real_file, directory),
+    ];
+    for (link, target, config_dir) in cases {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        #[cfg(windows)]
+        if target.is_dir() {
+            std::os::windows::fs::symlink_dir(&target, &link).unwrap();
+        } else {
+            std::os::windows::fs::symlink_file(&target, &link).unwrap();
+        }
+        assert!(link.is_symlink(), "{}", link.display());
+        assert_rejected_operation(
+            &inventory_configuration_request(root, Some(&config_dir)),
+            "链接",
+        );
+    }
+}
+
+#[test]
+fn inventory_configuration_includes_original_toml_digests_and_hides_values() {
+    let temporary = source_evidence_directory();
+    let root = temporary.path();
+    let directory = root.join("execution/config");
+    fs::create_dir_all(&directory).unwrap();
+    fs::create_dir(root.join("coordinator")).unwrap();
+    let selected = [
+        ("app.test.toml", "# 选定环境\n"),
+        ("app.toml", "# fixture-private-public\r\n"),
+        (".toml", "# fixture-private-dot\n"),
+        (".hidden.toml", "# fixture-private-hidden\n"),
+    ];
+    let mut expected = serde_json::Map::new();
+    let descriptor = |contents: &str| json!({"bytes":contents.len(),"sha256":hex::encode(Sha256::digest(contents.as_bytes()))});
+    for (name, contents) in selected {
+        fs::write(directory.join(name), contents).unwrap();
+        expected.insert(name.to_owned(), descriptor(contents));
+    }
+    let uppercase = "# fixture-private-uppercase\n";
+    fs::write(directory.join("extra.TOML"), uppercase).unwrap();
+    fs::write(
+        directory.join("ignored.toml.txt"),
+        "fixture-private-ignored",
+    )
+    .unwrap();
+    if cfg!(windows) {
+        expected.insert("extra.TOML".to_owned(), descriptor(uppercase));
+    }
+    let request = serde_json::to_vec(&inventory_configuration_request(root, None)).unwrap();
+    let read = || {
+        let output = invoke(&request, &[]);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert!(output.stderr.is_empty());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(!stdout.contains("fixture-private"));
+        assert!(!stdout.contains("poisoned-secret"));
+        let reply: Value = serde_json::from_str(&stdout).unwrap();
+        assert_eq!(reply["ok"], true);
+        let result = &reply["result"]["value"];
+        assert_eq!(
+            fs::canonicalize(result["directory"].as_str().unwrap()).unwrap(),
+            fs::canonicalize(&directory).unwrap()
+        );
+        result["files"].clone()
+    };
+    assert_eq!(read().as_object(), Some(&expected));
+
+    let changed = "# fixture-private-changed\n";
+    let file = directory.join("app.toml");
+    fs::write(&file, changed).unwrap();
+    let previous = expected
+        .insert("app.toml".to_owned(), descriptor(changed))
+        .unwrap();
+    let files = read();
+    assert_eq!(files.as_object(), Some(&expected));
+    assert_ne!(files["app.toml"], previous);
+    assert_eq!(fs::read_to_string(file).unwrap(), changed);
 }
 
 #[test]
@@ -207,12 +336,7 @@ fn git(root: &Path, args: &[&str]) -> String {
 
 #[test]
 fn staging_git_reads_ignore_inherited_repository_object_and_replacement_overrides() {
-    let base = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join(".local-tests/source-evidence-process");
-    fs::create_dir_all(&base).unwrap();
-    let temporary = tempfile::tempdir_in(base).unwrap();
+    let temporary = source_evidence_directory();
     let root = temporary.path();
     fs::create_dir_all(root.join("openapi")).unwrap();
     fs::create_dir_all(root.join(".local-tests/run/verification")).unwrap();

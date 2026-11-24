@@ -1,7 +1,6 @@
 """通过原生只读协议核对库存配置目录和非敏感环境摘要。"""
 
 from collections.abc import Mapping
-import os
 from pathlib import Path
 import sys
 import unittest
@@ -139,48 +138,6 @@ class ConfigurationTests(unittest.TestCase):
         similar_prefix = self.make_config(self.root / "execution-other")
         with self.assertRaisesRegex(ValueError, "明确后端内"):
             self.call(config_dir=similar_prefix)
-
-    def test_linked_directory_ancestor_selected_and_additional_toml_are_rejected(self):
-        nested = self.make_config(self.backend / "real-parent" / "nested")
-        selected_directory = self.make_config(self.backend / "linked-selected")
-        selected = selected_directory / "app.test.toml"
-        selected.unlink()
-        real_file = self.directory / "app.test.toml"
-        directory_link = self.backend / "linked-config"
-        ancestor_link = self.backend / "linked-parent"
-        extra = self.directory / "extra.toml"
-        for link, target, config_dir in (
-            (directory_link, self.directory, directory_link),
-            (ancestor_link, nested.parent, ancestor_link / nested.name),
-            (selected, real_file, selected_directory),
-            (extra, real_file, self.directory),
-        ):
-            is_directory = target.is_dir()
-            try:
-                os.symlink(target, link, target_is_directory=is_directory)
-            except OSError as error:
-                if isinstance(error, PermissionError) or getattr(error, "winerror", None) == 1314:
-                    self.skipTest("当前权限不允许创建符号链接")
-                raise
-            self.addCleanup(link.rmdir if is_directory and os.name == "nt" else link.unlink)
-            with self.subTest(link=link.name), self.assertRaisesRegex(ValueError, "链接"):
-                self.call(config_dir=config_dir)
-
-    def test_all_toml_digests_are_preserved_without_publishing_file_contents(self):
-        for name in ("app.toml", ".toml", ".hidden.toml", "extra.TOML"):
-            (self.directory / name).write_text("# fixture-private-value\n", encoding="utf-8")
-        result = self.call()
-        expected = {"app.test.toml", "app.toml", ".toml", ".hidden.toml"}
-        if os.name == "nt":
-            expected.add("extra.TOML")
-        self.assertEqual(set(result["files"]), expected)
-        for name, descriptor in result["files"].items():
-            self.assertEqual(descriptor, inventory.file_digest(self.directory / name))
-            self.assertEqual(set(descriptor), {"bytes", "sha256"})
-        self.assertNotIn("fixture-private", str(result))
-        before = result["files"]["app.toml"]
-        (self.directory / "app.toml").write_text("# changed-private-value\n", encoding="utf-8")
-        self.assertNotEqual(self.call()["files"]["app.toml"], before)
 
     def test_invalid_explicit_path_has_fixed_diagnostics(self):
         class InvalidPath:
