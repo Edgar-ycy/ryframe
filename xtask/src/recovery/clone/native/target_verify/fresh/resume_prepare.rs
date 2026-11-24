@@ -2,6 +2,7 @@
 use super::super::super::{json as document, resources::common};
 use super::registration::{Registration, combine};
 use crate::Result;
+use crate::utc_timestamp::now_rfc3339;
 use serde_json::{Value, json};
 
 pub(super) fn execute(
@@ -28,7 +29,7 @@ pub(super) fn execute(
     document::write_new(
         &intent_path,
         &json!({"format_version":1,"kind":"devex-clone-prepare-resume-intent",
-        "attempt":attempt,"at":chrono::Utc::now().to_rfc3339(),"request":registration.value["request"],"files_before":before}),
+        "attempt":attempt,"at":now_rfc3339(),"request":registration.value["request"],"files_before":before}),
     )?;
     let intent = common::binding(&intent_path)?;
     let result = observe(state["prepared"] == true);
@@ -48,7 +49,7 @@ pub(super) fn execute(
     value.extend(
         document::object(
             &json!({"format_version":1,"kind":format!("devex-clone-prepare-resume-{kind}"),
-        "attempt":attempt,"at":chrono::Utc::now().to_rfc3339(),"intent":intent,"remote_writes":0}),
+        "attempt":attempt,"at":now_rfc3339(),"intent":intent,"remote_writes":0}),
             "prepare 续作终态",
         )?
         .clone(),

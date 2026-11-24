@@ -4,6 +4,7 @@ use super::super::super::super::resume::transition;
 use super::super::super::{failure, receipts, registration::Registration};
 use super::super::window::Window;
 use crate::Result;
+use crate::utc_timestamp::now_rfc3339;
 use serde_json::{Value, json};
 use std::path::PathBuf;
 
@@ -42,7 +43,7 @@ impl Attempt {
         })
     }
     pub(in super::super) fn now(&self) -> String {
-        chrono::Utc::now().to_rfc3339()
+        now_rfc3339()
     }
     pub(in super::super) fn transition<T: Transport>(
         &self,

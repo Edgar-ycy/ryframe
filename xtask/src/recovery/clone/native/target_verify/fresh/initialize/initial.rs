@@ -9,6 +9,7 @@ use super::super::super::{
 use super::super::{failure, receipts};
 use super::{operations, reset_configuration::Snapshot, window::Window};
 use crate::Result;
+use crate::utc_timestamp::now_rfc3339;
 use serde_json::{Value, json};
 
 pub(crate) fn execute<T: Transport>(
@@ -20,7 +21,7 @@ pub(crate) fn execute<T: Transport>(
     let target = w.inputs.observation_dir;
     receipts::write(
         &target.join("initialize.started.json"),
-        &json!({"at":chrono::Utc::now().to_rfc3339(),"generation_sha256":digest::plan_hash(&original)?}),
+        &json!({"at":now_rfc3339(),"generation_sha256":digest::plan_hash(&original)?}),
     )?;
     *stage = "create_and_reset";
     let reset = operations::initialize(w, &original, &snapshot)?;
@@ -113,7 +114,7 @@ fn publish<T: Transport>(
         target,
         "initialized",
         &json!({
-        "request":w.inputs.request,"generation":original,"reset":reset,"inventory":initial,"objects":objects,"redis":redis,"at":chrono::Utc::now().to_rfc3339()}),
+        "request":w.inputs.request,"generation":original,"reset":reset,"inventory":initial,"objects":objects,"redis":redis,"at":now_rfc3339()}),
     )?;
     receipts::write(&target.join("initialized-candidate.json"), &value)?;
     receipts::write(&target.join("initialized.json"), &value)?;

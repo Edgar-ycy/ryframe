@@ -6,6 +6,7 @@ use super::super::super::resume::transition;
 use super::super::{failure, receipts};
 use super::{claims, window::Window};
 use crate::Result;
+use crate::utc_timestamp::now_rfc3339;
 use serde_json::{Value, json};
 use std::path::Path;
 const SCRIPT: &str = r###"local cursor = '0'
@@ -79,7 +80,7 @@ pub(super) fn execute<T: Transport>(
         w.inputs.backend,
         target,
         "marker-intent",
-        &json!({"attempt":attempt,"at":chrono::Utc::now().to_rfc3339(),
+        &json!({"attempt":attempt,"at":now_rfc3339(),
         "resume":common::binding(resume)?,"started":common::binding(started)?,"restart_generation":generation,"request":w.inputs.request,"before":before}),
     )?;
     let intent_path = target.join(format!("resume-redis-markers-{attempt}.intent.json"));
@@ -104,7 +105,7 @@ pub(super) fn execute<T: Transport>(
                 w.inputs.backend,
                 target,
                 "marker-confirmed",
-                &json!({"attempt":attempt,"at":chrono::Utc::now().to_rfc3339(),
+                &json!({"attempt":attempt,"at":now_rfc3339(),
                 "intent":common::binding(&intent_path)?,"restart_generation":generation,"after":after,"atomic_result":result}),
             )?;
             let path = target.join(format!("resume-redis-markers-{attempt}.confirmed.json"));
@@ -131,7 +132,7 @@ fn record_failure<T: Transport>(
         w.inputs.backend,
         w.inputs.observation_dir,
         "marker-failure",
-        &json!({"attempt":input.attempt,"at":chrono::Utc::now().to_rfc3339(),
+        &json!({"attempt":input.attempt,"at":now_rfc3339(),
             "intent":common::binding(intent)?,"restart_generation":input.generation,
             "error_type":failure::category(error)}),
     )?;

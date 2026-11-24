@@ -8,6 +8,7 @@ use super::{
     registration::{Registration, Workspace, combine},
     resources::Resources,
 };
+use crate::utc_timestamp::now_rfc3339;
 use crate::{
     Result,
     local_test_path::{LocalTestPathKind, validate_local_test_path},
@@ -264,7 +265,7 @@ fn prepare_document(
     let at = if prepared {
         observed["prepared_at"].clone()
     } else {
-        json!(chrono::Utc::now().to_rfc3339())
+        json!(now_rfc3339())
     };
     let mut args = json!({"at":at,"request_descriptor":registration.value["request"],"generation":generation,"absence":absence});
     if prepared {

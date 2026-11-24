@@ -5,6 +5,7 @@ use super::super::super::{
 };
 use super::super::storage::StorageInputs;
 use crate::Result;
+use crate::utc_timestamp::now_rfc3339;
 use serde_json::{Value, json};
 use std::{path::PathBuf, time::Duration};
 
@@ -158,7 +159,7 @@ fn command_secrets(inputs: &StorageInputs<'_>) -> Result<Vec<String>> {
 }
 
 pub(super) fn failure(stage: &str) -> Value {
-    json!({"status":"needs_reconciliation","stage":stage,"at":chrono::Utc::now().to_rfc3339(),
+    json!({"status":"needs_reconciliation","stage":stage,"at":now_rfc3339(),
         "error_type":"FreshPrepareError","reason":"只读 prepare 未完成；核对固定输入与完整现场后显式续作",
         "automatic_retry":false,"automatic_resource_cleanup":false,"fresh_target_initialized":false,
         "clone_verified":false,"restore_qualified":false})

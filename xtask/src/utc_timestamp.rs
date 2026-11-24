@@ -12,6 +12,10 @@ pub(crate) fn rfc3339(value: OffsetDateTime) -> String {
     encode(value, Precision::AutoSi)
 }
 
+pub(crate) fn now_rfc3339() -> String {
+    rfc3339(time::OffsetDateTime::now_utc())
+}
+
 pub(crate) fn rfc3339_micros(value: OffsetDateTime) -> String {
     encode(value, Precision::Micros)
 }

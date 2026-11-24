@@ -6,6 +6,7 @@ use super::super::{
 };
 use super::{reset_configuration::Snapshot, window::Window};
 use crate::Result;
+use crate::utc_timestamp::now_rfc3339;
 use serde_json::{Value, json};
 use std::{fs, path::PathBuf};
 
@@ -82,7 +83,7 @@ fn intent<T: Transport>(w: &Window<'_, T>, stage: &str, resource: &Value) -> Res
         w,
         stage,
         "intent",
-        &json!({"at":chrono::Utc::now().to_rfc3339(),"stage":stage,"resource":resource}),
+        &json!({"at":now_rfc3339(),"stage":stage,"resource":resource}),
     )
 }
 fn confirmed<T: Transport>(w: &Window<'_, T>, stage: &str, observed: &Value) -> Result<()> {
@@ -90,7 +91,7 @@ fn confirmed<T: Transport>(w: &Window<'_, T>, stage: &str, observed: &Value) -> 
         w,
         stage,
         "confirmed",
-        &json!({"at":chrono::Utc::now().to_rfc3339(),"stage":stage,"observed":observed}),
+        &json!({"at":now_rfc3339(),"stage":stage,"observed":observed}),
     )
 }
 pub(super) fn initialize<T: Transport>(

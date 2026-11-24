@@ -7,6 +7,7 @@ use super::{
     cache::handoff::locks::Storage, digest, export::transport::SystemTransport, json as json_io,
 };
 use crate::Result;
+use crate::utc_timestamp::now_rfc3339;
 
 pub(crate) mod authority;
 mod binding;
@@ -131,7 +132,7 @@ fn fail(context: &input::TargetContext, error: Box<dyn std::error::Error>) -> Re
     }
     json_io::write_new(&path, &json!({
         "status": "needs_reconciliation", "stage": "verify_existing",
-        "at": chrono::Utc::now().to_rfc3339(), "error_type": "TargetVerifyError", "reason": reason,
+        "at": now_rfc3339(), "error_type": "TargetVerifyError", "reason": reason,
         "automatic_retry": false, "automatic_resource_cleanup": false,
         "fresh_target_initialized": false, "clone_verified": false, "restore_qualified": false,
     })).map_err(|_| format!("目标复核未完成：{reason}；失败收据保存同时失败；保留现场并核对运行 attempt 证据，不自动重放或清理"))?;
