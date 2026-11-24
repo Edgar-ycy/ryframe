@@ -128,7 +128,7 @@ impl ParsedSchedule {
             };
             previous = utc.unix_timestamp();
             occurrences.push(JobScheduleOccurrence {
-                utc: app_utc(utc)?,
+                utc,
                 schedule_time: self.calendar.format_local(utc)?,
             });
         }

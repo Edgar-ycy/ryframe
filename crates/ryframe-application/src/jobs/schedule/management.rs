@@ -65,8 +65,10 @@ impl JobScheduleService {
         let parsed = ParsedSchedule::parse(cron_expression, timezone)?;
         let now = self.persistence.database_now().await?;
         let occurrences = parsed.future_occurrences(now, 5)?;
+        let calculated_at = crate::ports::utc_timestamp::from_chrono(now)
+            .map_err(|_| AppError::Database("调度预览数据库时间无法精确表示为 UTC".into()))?;
         Ok(JobSchedulePreview {
-            calculated_at: now,
+            calculated_at,
             timezone: parsed.timezone_name().to_owned(),
             occurrences,
         })

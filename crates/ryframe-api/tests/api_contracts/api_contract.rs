@@ -14,6 +14,63 @@ use ryframe_api::{
 use ryframe_kernel::AppResult as KernelAppResult;
 use ryframe_kernel::*;
 
+#[test]
+fn schedule_preview_preserves_utc_precision_local_text_and_required_schema() {
+    use ryframe_api::dto::public_dto::{JobScheduleOccurrence, JobSchedulePreview};
+    use ryframe_application::{
+        JobScheduleOccurrence as ServiceOccurrence, JobSchedulePreview as ServicePreview,
+    };
+    use serde_json::json;
+    use time::{OffsetDateTime, UtcOffset};
+    use utoipa::PartialSchema;
+
+    let local_text = "1970-01-02T05:00:00-00:45";
+    let non_utc = UtcOffset::from_hms(8, 0, 0).unwrap();
+    for (nanos, fraction) in [
+        (0, ""),
+        (120_000_000, ".120"),
+        (123_400_000, ".123400"),
+        (123_456_700, ".123456700"),
+    ] {
+        let instant = OffsetDateTime::from_unix_timestamp(107_070)
+            .unwrap()
+            .replace_nanosecond(nanos)
+            .unwrap()
+            .to_offset(non_utc);
+        let service_preview = ServicePreview {
+            calculated_at: instant,
+            timezone: "Africa/Monrovia".into(),
+            occurrences: vec![ServiceOccurrence {
+                utc: instant,
+                schedule_time: local_text.into(),
+            }],
+        };
+        let service_json = serde_json::to_value(&service_preview).unwrap();
+        let body = serde_json::to_value(JobSchedulePreview::from(service_preview)).unwrap();
+        assert_eq!(body, service_json);
+        let expected = format!("1970-01-02T05:44:30{fraction}Z");
+        assert_eq!(body["calculated_at"], expected);
+        assert_eq!(body["occurrences"][0]["utc"], expected);
+        assert_eq!(body["occurrences"][0]["schedule_time"], local_text);
+        assert_eq!(body["timezone"], "Africa/Monrovia");
+    }
+    for (schema, field) in [
+        (JobScheduleOccurrence::schema(), "utc"),
+        (JobSchedulePreview::schema(), "calculated_at"),
+    ] {
+        let schema = serde_json::to_value(schema).unwrap();
+        let property = &schema["properties"][field];
+        assert_eq!(property["type"], json!("string"));
+        assert_eq!(property["format"], "date-time");
+        assert!(
+            schema["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(field))
+        );
+    }
+}
+
 mod http {
     use super::*;
 

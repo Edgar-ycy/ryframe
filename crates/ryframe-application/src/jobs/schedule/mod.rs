@@ -148,13 +148,15 @@ impl From<JobScheduleExecutionRecord> for JobScheduleExecutionVo {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct JobScheduleOccurrence {
-    pub utc: DateTime<Utc>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize")]
+    pub utc: ::time::OffsetDateTime,
     pub schedule_time: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct JobSchedulePreview {
-    pub calculated_at: DateTime<Utc>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize")]
+    pub calculated_at: ::time::OffsetDateTime,
     pub timezone: String,
     pub occurrences: Vec<JobScheduleOccurrence>,
 }

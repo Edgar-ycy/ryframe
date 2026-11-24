@@ -1,10 +1,12 @@
 use chrono::{DateTime, Utc};
+use ryframe_application::ports::utc_timestamp;
 use ryframe_application::{
     JobScheduleExecutionVo as ServiceExecutionVo, JobScheduleOccurrence as ServiceOccurrence,
     JobSchedulePreview as ServicePreview, JobScheduleVo as ServiceScheduleVo,
     ScheduledJobTargetDescriptor as ServiceTargetDescriptor, ScheduledJobTargetScope,
 };
 use serde::Serialize;
+use time::OffsetDateTime;
 use utoipa::ToSchema;
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -106,7 +108,9 @@ impl From<ServiceExecutionVo> for JobScheduleExecutionVo {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct JobScheduleOccurrence {
-    pub utc: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub utc: OffsetDateTime,
     pub schedule_time: String,
 }
 
@@ -121,7 +125,9 @@ impl From<ServiceOccurrence> for JobScheduleOccurrence {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct JobSchedulePreview {
-    pub calculated_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub calculated_at: OffsetDateTime,
     pub timezone: String,
     pub occurrences: Vec<JobScheduleOccurrence>,
 }

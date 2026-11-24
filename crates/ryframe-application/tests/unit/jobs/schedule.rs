@@ -6,6 +6,10 @@ fn utc(value: &str) -> DateTime<Utc> {
     value.parse().unwrap()
 }
 
+fn preview_utc(value: &str) -> ::time::OffsetDateTime {
+    ::time::OffsetDateTime::parse(value, &::time::format_description::well_known::Rfc3339).unwrap()
+}
+
 #[test]
 fn schedule_preserves_calendar_fields_at_whole_and_fractional_boundaries() {
     let tuesday = ParsedSchedule::parse("0 0 0 * * Tue *", "UTC").unwrap();
@@ -55,7 +59,7 @@ fn schedule_preserves_calendar_fields_at_whole_and_fractional_boundaries() {
             "2026-01-05T08:40:00Z",
             "2026-01-05T12:10:00Z"
         ]
-        .map(utc)
+        .map(preview_utc)
     );
 }
 
@@ -72,10 +76,22 @@ fn preview_preserves_fold_order_and_execution_rejects_old_utc_occurrences() {
     assert_eq!(
         actual,
         [
-            (utc("2022-11-06T06:00:00Z"), "2022-11-06T01:00:00-05:00"),
-            (utc("2022-11-06T07:00:00Z"), "2022-11-06T01:00:00-06:00"),
-            (utc("2022-11-06T06:30:00Z"), "2022-11-06T01:30:00-05:00"),
-            (utc("2022-11-06T07:30:00Z"), "2022-11-06T01:30:00-06:00"),
+            (
+                preview_utc("2022-11-06T06:00:00Z"),
+                "2022-11-06T01:00:00-05:00"
+            ),
+            (
+                preview_utc("2022-11-06T07:00:00Z"),
+                "2022-11-06T01:00:00-06:00"
+            ),
+            (
+                preview_utc("2022-11-06T06:30:00Z"),
+                "2022-11-06T01:30:00-05:00"
+            ),
+            (
+                preview_utc("2022-11-06T07:30:00Z"),
+                "2022-11-06T01:30:00-06:00"
+            ),
         ]
     );
     for (start, expected) in [
@@ -95,7 +111,10 @@ fn scheduling_skips_gaps_and_keeps_legacy_timezone_names_and_historical_offsets(
     let start = utc("2024-03-09T08:30:00Z");
     let expected = utc("2024-03-11T07:30:00Z");
     assert_eq!(gap.next_after(start).unwrap(), expected);
-    assert_eq!(gap.future_occurrences(start, 1).unwrap()[0].utc, expected);
+    assert_eq!(
+        gap.future_occurrences(start, 1).unwrap()[0].utc,
+        preview_utc("2024-03-11T07:30:00Z")
+    );
 
     for invalid_name in ["us/central", "Factory", "+05:00"] {
         assert!(ParsedSchedule::parse("0 30 2 * * * *", invalid_name).is_err());
@@ -106,6 +125,6 @@ fn scheduling_skips_gaps_and_keeps_legacy_timezone_names_and_historical_offsets(
     let result = historic
         .future_occurrences(utc("1970-01-02T00:00:00Z"), 1)
         .unwrap();
-    assert_eq!(result[0].utc, utc("1970-01-02T05:44:30Z"));
+    assert_eq!(result[0].utc, preview_utc("1970-01-02T05:44:30Z"));
     assert_eq!(result[0].schedule_time, "1970-01-02T05:00:00-00:45");
 }
