@@ -18,6 +18,8 @@ use ryframe_application::ports::auth::{
     PasswordResetRequestRecord, PasswordResetTransaction, PasswordResetUserState,
 };
 
+use time::{OffsetDateTime, PrimitiveDateTime};
+
 use super::super::transaction::DatabasePortTransaction;
 
 pub fn port(
@@ -37,8 +39,8 @@ struct DatabasePasswordResetPersistence {
 
 #[async_trait::async_trait]
 impl PasswordResetPersistencePort for DatabasePasswordResetPersistence {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
-        crate::repositories::database_utc_now(self.database.write()).await
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime> {
+        crate::repositories::database_utc_now_time(self.database.write()).await
     }
 
     async fn find_request<'a>(
@@ -87,8 +89,8 @@ struct DatabasePasswordResetTransaction {
 
 #[async_trait::async_trait]
 impl PasswordResetTransaction for DatabasePasswordResetTransaction {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
-        crate::repositories::database_utc_now(&self.transaction).await
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime> {
+        crate::repositories::database_utc_now_time(&self.transaction).await
     }
 
     async fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()> {
@@ -120,6 +122,7 @@ impl PasswordResetTransaction for DatabasePasswordResetTransaction {
         &self,
         request: NewPasswordResetRequest,
     ) -> ryframe_kernel::AppResult<PasswordResetRequestRecord> {
+        let epoch = password_reset_request::utc_datetime(OffsetDateTime::UNIX_EPOCH);
         let mut model = password_reset_request::Model {
             id: request.id,
             tenant_id: request.tenant_id,
@@ -127,12 +130,12 @@ impl PasswordResetTransaction for DatabasePasswordResetTransaction {
             requested_by: request.requested_by,
             reason: request.reason,
             token_hash: request.token_hash,
-            expires_at: request.expires_at,
+            expires_at: password_reset_request::utc_datetime(request.expires_at),
             completed_at: None,
             request_ip: request.request_ip,
             status: PASSWORD_RESET_STATUS_PENDING.to_owned(),
-            created_at: Default::default(),
-            updated_at: Default::default(),
+            created_at: epoch,
+            updated_at: epoch,
         };
         model.fill_on_insert(&FillContext::new())?;
         let saved = password_reset_request::ActiveModel::from(model)
@@ -208,8 +211,9 @@ impl PasswordResetTransaction for DatabasePasswordResetTransaction {
         &'a self,
         tenant_id: &'a str,
         request_id: i64,
-        evaluated_at: chrono::DateTime<chrono::Utc>,
+        evaluated_at: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
+        let evaluated_at = password_reset_request::utc_datetime(evaluated_at);
         let result = password_reset_request::Entity::update_many()
             .col_expr(
                 password_reset_request::Column::Status,
@@ -234,7 +238,7 @@ impl PasswordResetTransaction for DatabasePasswordResetTransaction {
         &'a self,
         tenant_id: &'a str,
         request_id: i64,
-        completed_at: chrono::DateTime<chrono::Utc>,
+        completed_at: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         PasswordResetRequestRepository
             .complete_pending_in_txn(&self.transaction, tenant_id, request_id, completed_at)
@@ -247,7 +251,7 @@ impl PasswordResetTransaction for DatabasePasswordResetTransaction {
         expected: &'a PasswordResetUserState,
         password_hash: String,
         next_status: String,
-        updated_at: chrono::DateTime<chrono::Utc>,
+        updated_at: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         let result = user::Entity::update_many()
             .col_expr(user::Column::PasswordHash, Expr::value(password_hash))
@@ -257,7 +261,10 @@ impl PasswordResetTransaction for DatabasePasswordResetTransaction {
                 Expr::col(user::Column::AuthorizationVersion).add(1),
             )
             .col_expr(user::Column::Status, Expr::value(next_status))
-            .col_expr(user::Column::UpdatedAt, Expr::value(updated_at))
+            .col_expr(
+                user::Column::UpdatedAt,
+                Expr::value(password_reset_request::utc_datetime(updated_at)),
+            )
             .filter(user::Column::Id.eq(expected.id))
             .filter(user::Column::TenantId.eq(tenant_id))
             .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
@@ -273,7 +280,7 @@ impl PasswordResetTransaction for DatabasePasswordResetTransaction {
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<()> {
         PasswordResetRequestRepository
             .expire_pending_for_user_in_txn(&self.transaction, tenant_id, user_id, now)
@@ -322,8 +329,8 @@ fn to_request_record(model: password_reset_request::Model) -> PasswordResetReque
         tenant_id: model.tenant_id,
         target_user_id: model.target_user_id,
         token_hash: model.token_hash,
-        expires_at: model.expires_at,
-        completed_at: model.completed_at,
+        expires_at: model.expires_at.assume_utc(),
+        completed_at: model.completed_at.map(PrimitiveDateTime::assume_utc),
         status: model.status,
     }
 }

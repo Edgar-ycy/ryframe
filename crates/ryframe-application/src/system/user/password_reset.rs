@@ -1,5 +1,6 @@
 use ryframe_auth::password;
 use ryframe_kernel::{ActorContext, AppError, AppResult};
+use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
 use super::{
@@ -46,7 +47,7 @@ impl UserService {
                     requested_by: actor.user_id,
                     reason: reason.to_owned(),
                     token_hash: password::hash(&token)?,
-                    expires_at: database_now + chrono::Duration::hours(24),
+                    expires_at: database_now + Duration::hours(24),
                     request_ip,
                 })
                 .await
@@ -225,10 +226,7 @@ enum PasswordResetCompletion {
     },
 }
 
-pub fn ensure_pending(
-    status: &str,
-    completed_at: Option<chrono::DateTime<chrono::Utc>>,
-) -> AppResult<()> {
+pub fn ensure_pending(status: &str, completed_at: Option<OffsetDateTime>) -> AppResult<()> {
     if status != PASSWORD_RESET_STATUS_PENDING || completed_at.is_some() {
         Err(AppError::Validation("密码重置请求已处理".into()))
     } else {

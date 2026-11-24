@@ -6,6 +6,8 @@ use sea_orm::{
     QueryFilter, QueryOrder,
 };
 
+use time::OffsetDateTime;
+
 use crate::{Repository, entities::password_reset_request};
 
 pub struct PasswordResetRequestRepository;
@@ -77,9 +79,10 @@ impl PasswordResetRequestRepository {
         txn: &DatabaseTransaction,
         tenant_id: &str,
         user_id: i64,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<()> {
         use sea_orm::sea_query::Expr;
+        let now = password_reset_request::utc_datetime(now);
         password_reset_request::Entity::update_many()
             .col_expr(
                 password_reset_request::Column::Status,
@@ -107,7 +110,7 @@ impl PasswordResetRequestRepository {
         db: &DatabaseConnection,
         tenant_id: &str,
         id: i64,
-        evaluated_at: chrono::DateTime<chrono::Utc>,
+        evaluated_at: OffsetDateTime,
     ) -> AppResult<bool> {
         let result = Self::expire_pending_query(tenant_id, id, evaluated_at)
             .exec(db)
@@ -119,8 +122,9 @@ impl PasswordResetRequestRepository {
     fn expire_pending_query(
         tenant_id: &str,
         id: i64,
-        evaluated_at: chrono::DateTime<chrono::Utc>,
+        evaluated_at: OffsetDateTime,
     ) -> sea_orm::UpdateMany<password_reset_request::Entity> {
+        let evaluated_at = password_reset_request::utc_datetime(evaluated_at);
         password_reset_request::Entity::update_many()
             .col_expr(
                 password_reset_request::Column::Status,
@@ -149,7 +153,7 @@ impl PasswordResetRequestRepository {
         txn: &DatabaseTransaction,
         tenant_id: &str,
         id: i64,
-        completed_at: chrono::DateTime<chrono::Utc>,
+        completed_at: OffsetDateTime,
     ) -> AppResult<bool> {
         let result = Self::complete_pending_query(tenant_id, id, completed_at)
             .exec(txn)
@@ -161,8 +165,9 @@ impl PasswordResetRequestRepository {
     fn complete_pending_query(
         tenant_id: &str,
         id: i64,
-        completed_at: chrono::DateTime<chrono::Utc>,
+        completed_at: OffsetDateTime,
     ) -> sea_orm::UpdateMany<password_reset_request::Entity> {
+        let completed_at = password_reset_request::utc_datetime(completed_at);
         password_reset_request::Entity::update_many()
             .col_expr(
                 password_reset_request::Column::Status,

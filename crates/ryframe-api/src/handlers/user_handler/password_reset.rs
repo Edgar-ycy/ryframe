@@ -7,6 +7,8 @@ use axum::{
     Json,
     extract::{ConnectInfo, Path, State},
 };
+use ryframe_application::ports::utc_timestamp;
+use ryframe_kernel::AppError;
 use ryframe_macro::post;
 use validator::Validate;
 
@@ -49,7 +51,8 @@ pub(crate) async fn request_password_reset(
             "/reset-password#tenant_id={}&request_id={}&token={}",
             outcome.request.tenant_id, outcome.request.id, outcome.token
         ),
-        expires_at: outcome.request.expires_at.to_rfc3339(),
+        expires_at: utc_timestamp::format_with_offset(&outcome.request.expires_at)
+            .map_err(|_| AppError::Internal("无法格式化密码重置过期时间".into()))?,
     };
     Ok(Json(ApiResponse::success(response)))
 }

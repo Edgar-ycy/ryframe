@@ -482,7 +482,7 @@ fn password_reset_state_is_strict() {
     assert!(
         ensure_pending(
             PASSWORD_RESET_STATUS_PENDING,
-            Some(chrono::DateTime::<Utc>::UNIX_EPOCH)
+            Some(OffsetDateTime::UNIX_EPOCH)
         )
         .is_err()
     );

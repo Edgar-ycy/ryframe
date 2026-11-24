@@ -180,6 +180,11 @@ impl ProfileTransaction for DatabaseProfileTransaction {
         user_id: i64,
         now: chrono::DateTime<chrono::Utc>,
     ) -> ryframe_kernel::AppResult<()> {
+        let now = time::OffsetDateTime::from_unix_timestamp(now.timestamp())
+            .and_then(|utc| utc.replace_nanosecond(now.timestamp_subsec_nanos()))
+            .map_err(|_| {
+                ryframe_kernel::AppError::Database("密码重置撤销时间无法精确表示为 UTC".into())
+            })?;
         PasswordResetRequestRepository
             .expire_pending_for_user_in_txn(&self.transaction, tenant_id, user_id, now)
             .await

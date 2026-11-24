@@ -1,5 +1,5 @@
-use chrono::{DateTime, Utc};
 use ryframe_kernel::DataScopeContextRef;
+use time::OffsetDateTime;
 
 pub const PASSWORD_RESET_STATUS_PENDING: &str = "pending";
 
@@ -9,8 +9,8 @@ pub struct PasswordResetRequestRecord {
     pub tenant_id: String,
     pub target_user_id: i64,
     pub token_hash: String,
-    pub expires_at: DateTime<Utc>,
-    pub completed_at: Option<DateTime<Utc>>,
+    pub expires_at: OffsetDateTime,
+    pub completed_at: Option<OffsetDateTime>,
     pub status: String,
 }
 
@@ -22,7 +22,7 @@ pub struct NewPasswordResetRequest {
     pub requested_by: i64,
     pub reason: String,
     pub token_hash: String,
-    pub expires_at: DateTime<Utc>,
+    pub expires_at: OffsetDateTime,
     pub request_ip: Option<String>,
 }
 
@@ -36,7 +36,7 @@ pub struct PasswordResetUserState {
 
 #[async_trait::async_trait]
 pub trait PasswordResetTransaction: crate::PersistenceTransaction + Send + Sync {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime>;
 
     async fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()>;
 
@@ -68,14 +68,14 @@ pub trait PasswordResetTransaction: crate::PersistenceTransaction + Send + Sync 
         &'a self,
         tenant_id: &'a str,
         request_id: i64,
-        evaluated_at: DateTime<Utc>,
+        evaluated_at: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool>;
 
     async fn complete_pending<'a>(
         &'a self,
         tenant_id: &'a str,
         request_id: i64,
-        completed_at: DateTime<Utc>,
+        completed_at: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool>;
 
     async fn update_password<'a>(
@@ -84,7 +84,7 @@ pub trait PasswordResetTransaction: crate::PersistenceTransaction + Send + Sync 
         expected: &'a PasswordResetUserState,
         password_hash: String,
         next_status: String,
-        updated_at: DateTime<Utc>,
+        updated_at: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool>;
 
     /// 在当前改密事务内使该用户其余待处理重置请求过期。
@@ -92,7 +92,7 @@ pub trait PasswordResetTransaction: crate::PersistenceTransaction + Send + Sync 
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<()>;
 
     async fn record_user_mirror_update<'a>(
@@ -105,7 +105,7 @@ pub trait PasswordResetTransaction: crate::PersistenceTransaction + Send + Sync 
 
 #[async_trait::async_trait]
 pub trait PasswordResetPersistencePort: Send + Sync {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime>;
 
     async fn find_request<'a>(
         &'a self,
