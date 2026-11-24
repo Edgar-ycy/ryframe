@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-#[cfg(feature = "test-support")]
-use chrono::Utc;
 use ryframe_application::{
     AuthorizationCache, MessagingPolicy,
     ports::system::*,

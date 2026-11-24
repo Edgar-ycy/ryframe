@@ -5,19 +5,25 @@ use serde_json::{Value, json};
 
 use super::{Inputs, Receipts, Stage, common, digest, document, empty_image, protected_file};
 use crate::{Result, recovery::clone::native::lifecycle::state};
+#[path = "confirmed/chain.rs"]
+mod chain;
 
 pub(super) struct Prior {
     intent: PathBuf,
     directory: Inputs,
     files: Inputs,
+    ancestors: Vec<Prior>,
 }
 
 impl Prior {
     pub(super) fn load(
         receipts: &Receipts,
         expected_digest: &Value,
-        verify_prefix: impl FnOnce(&Value) -> Result<()>,
+        verify_prefix: impl Fn(&Value) -> Result<()>,
     ) -> Result<(Self, Value)> {
+        if receipts.binding.get("completed_copy").is_some() {
+            return chain::load(receipts, expected_digest, &verify_prefix);
+        }
         let name = document::text(expected_digest, "第三次重启原标记代次摘要")?;
         if name.len() != 64
             || !name
@@ -66,6 +72,7 @@ impl Prior {
             intent,
             directory,
             files,
+            ancestors: Vec::new(),
         };
         prior.check()?;
         Ok((
@@ -84,7 +91,14 @@ impl Prior {
 
     pub(super) fn check(&self) -> Result<()> {
         self.directory.check()?;
+        for ancestor in &self.ancestors {
+            ancestor.check()?;
+        }
         self.files.check()
+    }
+
+    pub(super) fn allows(&self, path: &Path) -> bool {
+        self.intent == path || self.ancestors.iter().any(|p| p.allows(path))
     }
 }
 
@@ -113,7 +127,16 @@ fn compare_images(
     [observation, record]: [&Value; 2],
 ) -> Result<()> {
     let mut stable = receipts.binding.clone();
-    stable["fixture"] = record["binding"]["fixture"].clone();
+    if receipts.binding.get("completed_copy").is_some() {
+        stable = record["binding"].clone();
+        for key in ["run", "initialized", "plan_sha256", "generation_sha256"] {
+            if stable[key] != receipts.binding[key] {
+                return Err("原标记祖先不同于本次完整复制".into());
+            }
+        }
+    } else {
+        stable["fixture"] = record["binding"]["fixture"].clone();
+    }
     if record["binding"] != stable
         || json!(digest::plan_hash(&record["binding"]["fixture"])?) != *expected_digest
     {

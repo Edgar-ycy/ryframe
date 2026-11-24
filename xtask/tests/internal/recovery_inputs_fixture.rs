@@ -525,6 +525,62 @@ impl Fixture {
             tool: base.tool,
         }
     }
+
+    pub fn candidate_plans(&self) -> (PathBuf, PathBuf) {
+        let base = Base {
+            backend: self.backend.clone(),
+            root: self.root.join("candidate-target"),
+            tool: self.tool.clone(),
+            defaults: self.defaults.clone(),
+            work_dir: self.work_dir.with_file_name("candidate-reference"),
+        };
+        let receipt = read_value(&self.backup_receipt);
+        let export = receipt["result"]["source_export"].clone();
+        let source = SourceState {
+            request: export["source_request"].clone(),
+            generation: export["source_generation"].clone(),
+            export,
+        };
+        let side = RestoreInputSide::Candidate;
+        let target = prepare_target(&base, side);
+        let arm = prepare_arm(&base, &target, &source, side);
+        let options = reference_options(
+            &arm.arm_input,
+            &target.fresh_verify,
+            &base.work_dir,
+            side,
+            None,
+        );
+        let reference_value = reference::build(&base.backend, &options).unwrap();
+        let reference_plan = write_value(&base.root, "reference.json", &reference_value);
+        let mut options = product_options(
+            &reference_plan,
+            &self.backup_receipt,
+            &self.comparison_sources,
+            &arm.arm_input,
+            &target.fresh_verify,
+            side,
+            None,
+        );
+        options.id = "restore-candidate".into();
+        options.fault_at = self.product_value["fault_at"].as_str().unwrap().into();
+        let product_value = product::build(&base.backend, &options).unwrap();
+        let product_plan = write_value(&base.root, "product.json", &product_value);
+        let target_value = capture_target_plan(
+            &base.backend,
+            &reference_plan,
+            &self.backup_receipt,
+            &self.comparison_sources,
+            &arm.arm_input,
+            &target.fresh_verify,
+            &product_plan,
+        )
+        .unwrap();
+        (
+            reference_plan,
+            write_value(&base.root, "target-plan.json", &target_value),
+        )
+    }
 }
 
 impl Drop for Fixture {
@@ -929,5 +985,5 @@ pub(crate) fn product_options(
 
 use super::recovery_inputs_support::{
     binding, capture_target_plan, file_sha, hash, now, now_seconds, object_ownership, observations,
-    review_binding, write_backup_artifacts, write_value,
+    read_value, review_binding, write_backup_artifacts, write_value,
 };

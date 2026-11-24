@@ -93,6 +93,39 @@ pub(crate) fn inspect(
     Ok(inspect_state(backend, directory, plan, generation)?.0)
 }
 
+/// 仅供持有完成复制及标记祖先证明的接续窗口核对旧前缀；不许可续写复制。
+pub(super) fn completed_marker_prefix(
+    backend: &Path,
+    root: &Path,
+    plan: &str,
+    generation: &str,
+    prefix: &Value,
+) -> Result<()> {
+    let completed = inspect(backend, root, plan, generation)?;
+    if completed["status"] != "ledger_evidence_complete" {
+        return Err("标记祖先核对要求完整复制收据".into());
+    }
+    read_marker_journal(backend, root, plan, generation, |current, verified| {
+        require_complete(&verified.projection)?;
+        let sequence = marker_sequence(&verified.frames, plan, generation, prefix)?;
+        if *prefix != current {
+            let previous = model::project(&verified.events[..=sequence])?;
+            let confirmed = previous
+                .steps
+                .into_iter()
+                .filter(|(_, step)| step["phase"] == "confirmed")
+                .collect();
+            if !same_confirmed_steps(&confirmed, &verified.projection.steps) {
+                return Err("完成复制改变了标记祖先已确认的原步骤".into());
+            }
+        }
+        if inspect(backend, root, plan, generation)? != completed {
+            return Err("标记祖先核对期间完整复制账本变化".into());
+        }
+        Ok(())
+    })
+}
+
 pub(super) fn check_continuation(
     backend: &Path,
     directory: &Path,

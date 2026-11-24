@@ -1,6 +1,9 @@
 //! 保留原 RustFS 运行代次，仅从已确认关闭的 Windows Redis Job 接续。
 use super::*;
-use crate::recovery::clone::native::{digest, resources::common};
+use crate::recovery::{
+    clone::native::{digest, resources::common},
+    fixture_control::services::history::evidence::INCOMPLETE_REDIS_CLEANUP,
+};
 
 const OPERATION: &str = "restart-redis";
 
@@ -19,8 +22,7 @@ pub(super) fn run(
     let previous = registered(runtime, context, true)?;
     let incident = observe_incident(runtime, context, &history, &previous)?;
     let result_file = &history["active_generation"];
-    let previous_result = history::evidence::bound(&context.run, result_file)?;
-    let generation = history::evidence::bound(&context.run, &previous_result["generation"])?;
+    let generation = history::evidence::restart_generation(&context.run, result_file)?;
     let mut sources = context.sources();
     sources["previous_generation"] = result_file.clone();
     let expected = state::attempts(&context.value["state"])?.len() as u64 + 1;
@@ -66,17 +68,14 @@ pub(super) fn observe_incident(
             && history["unsettled"].as_array().is_some_and(Vec::is_empty)
             && history["active_generation"].is_object()
             && history["active_generation"].get("kind").is_none(),
-        "Redis 单独重启必须接续开放的已验证普通重启代次",
+        "Redis 单独重启必须接续开放的已验证重启代次",
     )?;
     context.no_unknown()?;
-    let prior = history::evidence::bound(&context.run, &history["active_generation"])?;
-    let generation = history::evidence::bound(&context.run, &prior["generation"])?;
+    let generation =
+        history::evidence::restart_generation(&context.run, &history["active_generation"])?;
     let request = &services["requests"]["redis"];
     check(
-        prior["operation"] == "restart"
-            && prior["status"] == "services_restarted"
-            && generation["kind"] == "reference-fixture-service-generation"
-            && services["cache_effective"].is_null()
+        services["cache_effective"].is_null()
             && request["format_version"] == 3
             && services["runtime"]["format_version"] == 3
             && services["runtime"]["redis"]["platform"] == "windows"
@@ -109,11 +108,59 @@ pub(super) fn observe_incident(
         "cache-accepted-failure",
         json!({"request":request,"runtime":services["runtime"],"live":true}),
     )?;
-    check(
-        incident.is_object(),
-        "原 Windows Redis 缺少已接受 Job 退出证据",
+    require_incident(
+        &context.run,
+        request,
+        &services["runtime"],
+        &incident,
+        generation["kind"] == "reference-fixture-redis-generation",
     )?;
     Ok(incident)
+}
+
+pub(super) fn require_incident(
+    run: &Path,
+    request: &Value,
+    runtime: &Value,
+    incident: &Value,
+    redis_only_predecessor: bool,
+) -> Result<()> {
+    match incident["kind"].as_str() {
+        Some("windows-redis-accepted-failure") if !redis_only_predecessor => return Ok(()),
+        Some(INCOMPLETE_REDIS_CLEANUP) => {}
+        _ => return Err("原 Windows Redis 缺少当前前驱可采用的已确认事故证据".into()),
+    }
+    history::evidence::exact(
+        incident,
+        &[
+            "kind",
+            "failure",
+            "runtime",
+            "supervisor",
+            "process",
+            "port",
+            "normal_job_exit_proof",
+        ],
+    )?;
+    let output = Path::new(text(runtime, "output")?);
+    check(
+        incident["supervisor"] == runtime["supervisor"]
+            && incident["process"] == runtime["process"]
+            && incident["port"] == request["port"]
+            && incident["port"] == runtime["redis"]["port"]
+            && incident["normal_job_exit_proof"].is_null()
+            && history::evidence::path_is(
+                &incident["runtime"]["path"],
+                &output.join("runtime.json"),
+            )
+            && history::evidence::path_is(
+                &incident["failure"]["path"],
+                &output.join("failed.json"),
+            )
+            && history::evidence::bound(run, &incident["runtime"])? == *runtime
+            && history::evidence::bound(run, &incident["failure"])?["cleanup_completed"] == false,
+        "Windows Redis 事故未绑定原运行、失败、进程身份与端口",
+    )
 }
 
 struct Attempt<'a> {

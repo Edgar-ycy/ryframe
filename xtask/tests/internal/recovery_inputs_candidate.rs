@@ -11,69 +11,11 @@ use crate::{
     cli::{RecoveryInputsCommand, ReferenceInputMode, RestoreInputSide},
     recovery::inputs::{product, reference, run},
     recovery_inputs_fixture::{
-        Base, Fixture, SourceState, prepare_arm, prepare_source, prepare_target, product_options,
-        reference_options, setup,
+        Fixture, prepare_arm, prepare_source, prepare_target, product_options, reference_options,
+        setup,
     },
-    recovery_inputs_support::{capture_target_plan, review_binding, write_value},
+    recovery_inputs_support::{review_binding, write_value},
 };
-
-impl Fixture {
-    pub(crate) fn candidate_plans(&self) -> (PathBuf, PathBuf) {
-        let base = Base {
-            backend: self.backend.clone(),
-            root: self.root.join("candidate-target"),
-            tool: self.tool.clone(),
-            defaults: self.defaults.clone(),
-            work_dir: self.work_dir.with_file_name("candidate-reference"),
-        };
-        let receipt = read_value(&self.backup_receipt);
-        let export = receipt["result"]["source_export"].clone();
-        let source = SourceState {
-            request: export["source_request"].clone(),
-            generation: export["source_generation"].clone(),
-            export,
-        };
-        let side = RestoreInputSide::Candidate;
-        let target = prepare_target(&base, side);
-        let arm = prepare_arm(&base, &target, &source, side);
-        let options = reference_options(
-            &arm.arm_input,
-            &target.fresh_verify,
-            &base.work_dir,
-            side,
-            None,
-        );
-        let reference_value = reference::build(&base.backend, &options).unwrap();
-        let reference_plan = write_value(&base.root, "reference.json", &reference_value);
-        let mut options = product_options(
-            &reference_plan,
-            &self.backup_receipt,
-            &self.comparison_sources,
-            &arm.arm_input,
-            &target.fresh_verify,
-            side,
-            None,
-        );
-        options.id = "restore-candidate".into();
-        options.fault_at = self.product_value["fault_at"].as_str().unwrap().into();
-        let product_value = product::build(&base.backend, &options).unwrap();
-        let product_plan = write_value(&base.root, "product.json", &product_value);
-        let target_value = capture_target_plan(
-            &base.backend,
-            &reference_plan,
-            &self.backup_receipt,
-            &self.comparison_sources,
-            &arm.arm_input,
-            &target.fresh_verify,
-            &product_plan,
-        )
-        .unwrap();
-        (
-            reference_plan,
-            write_value(&base.root, "target-plan.json", &target_value),
-        )
-    }
-}
 
 #[test]
 fn both_sides_read_back_distinct_targets_from_the_same_backup() {

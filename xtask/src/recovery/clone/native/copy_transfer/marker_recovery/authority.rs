@@ -22,6 +22,7 @@ use crate::Result;
 
 #[path = "authority/failed_copy.rs"]
 mod failed_copy;
+mod post_copy;
 mod successor;
 use failed_copy::{FailedCopy, is_failed_reconcile};
 
@@ -47,6 +48,7 @@ pub(super) struct Stage<'a> {
     saved: Value,
     protected: Inputs,
     failed_reconcile: Option<Value>,
+    completed: Option<post_copy::Completed>,
 }
 
 impl<'a> Stage<'a> {
@@ -68,8 +70,14 @@ impl<'a> Stage<'a> {
         let (controller, _) =
             current_controller(run, &saved, attempt, request.stage, request.mode)?;
         // 失败核对的候选只读预检到此，真实 Redis 单独后继须由 Recovery::load 证明。
-        let (prior, target_verified) = eligible_attempts(state::attempts(&saved)?, true)?;
-        if prior["mode"] == "reconcile" && prior["status"] == "passed" {
+        let completed = post_copy::load(request, manifest, &saved)?;
+        let attempts = state::attempts(&saved)?;
+        let (prior, target_verified) = if completed.is_some() {
+            post_copy::completed_attempts(attempts)?
+        } else {
+            eligible_attempts(attempts, true)?
+        };
+        if completed.is_none() && prior["mode"] == "reconcile" && prior["status"] == "passed" {
             let result = common::read_bound(backend, &prior["result"], "原复制只读核对")?;
             if result["status"] != "copy_reconciled" || result["target_ready"] != false {
                 return Err("原复制核对未确认可继续的未完复制".into());
@@ -81,8 +89,10 @@ impl<'a> Stage<'a> {
         {
             return Err("目标复验与初始化证明不同".into());
         }
-        for path in ["post-copy.json", "seed-runtime.json"] {
-            absent(&run.join(path))?;
+        if completed.is_none() {
+            for path in ["post-copy.json", "seed-runtime.json"] {
+                absent(&run.join(path))?;
+            }
         }
         let initialized = common::bound_file(backend, &manifest["initialized"], "原 Redis 初始化")?;
         let target = initialized
@@ -91,7 +101,9 @@ impl<'a> Stage<'a> {
             .to_owned();
         let copy = document::text(&manifest["copy_directory"], "原复制目录")?;
         let copy = common::local_directory(backend, Path::new(copy), "原复制目录")?;
-        absent(&copy.join("result.json"))?;
+        if completed.is_none() {
+            absent(&copy.join("result.json"))?;
+        }
         let ledger = common::local_directory(backend, &copy.join("ledger"), "原复制账本")?;
         protected.check()?;
         let manifest_binding = common::binding(&paths[0])?;
@@ -107,6 +119,7 @@ impl<'a> Stage<'a> {
             saved,
             protected,
             failed_reconcile,
+            completed,
         })
     }
 
@@ -153,11 +166,15 @@ impl<'a> Stage<'a> {
         if controller != self.controller {
             return Err("Redis 标记恢复期间运行控制器变化".into());
         }
-        for name in ["post-copy.json", "seed-runtime.json"] {
-            absent(&request.run_dir.join(name))?;
-        }
         let copy = self.ledger.parent().ok_or("原复制账本缺少目录")?;
-        absent(&copy.join("result.json"))?;
+        if let Some(completed) = &self.completed {
+            completed.check()?;
+        } else {
+            for name in ["post-copy.json", "seed-runtime.json"] {
+                absent(&request.run_dir.join(name))?;
+            }
+            absent(&copy.join("result.json"))?;
+        }
         absent(&self.ledger.join("clone.lock"))
     }
 }
@@ -236,6 +253,7 @@ impl<'a> Recovery<'a> {
             backend,
             &storage.directory,
             target,
+            stage.completed.is_some(),
         ))?;
         let redis_only = fixture.value["lineage"]
             .get("accepted_redis_failure")
@@ -258,6 +276,7 @@ impl<'a> Recovery<'a> {
             backend,
             &storage.directory,
             target,
+            stage.completed.is_some(),
         ))?;
         if current_fixture != fixture {
             return Checkpoint::FixtureSuccessor
@@ -271,11 +290,14 @@ impl<'a> Recovery<'a> {
             source,
         } = Checkpoint::CopyProof.check(journal(stage, target))?;
         Checkpoint::FinalGuards.check(plan.check())?;
-        let binding = json!({
+        let mut binding = json!({
             "run":stage.manifest_binding, "initialized":stage.manifest["initialized"],
             "fixture":fixture.value, "plan_sha256":head["plan_sha256"],
             "generation_sha256":head["generation_sha256"],
         });
+        if let Some(completed) = &stage.completed {
+            binding["completed_copy"] = completed.binding.clone();
+        }
         let recovered = Self {
             stage,
             binding,
@@ -311,6 +333,13 @@ impl<'a> Recovery<'a> {
     }
 
     pub(super) fn check_prefix(&self, head: &Value) -> Result<()> {
+        if let Some(completed) = &self.stage.completed {
+            completed.check()?;
+            if *head != self.head {
+                return Err("完整复制标记意图的账本前缀不同".into());
+            }
+            return Ok(());
+        }
         if self.failed_copy.is_some() {
             if *head != self.head {
                 return Err("本代标记意图未绑定同一失败核对账本 head".into());
@@ -329,7 +358,16 @@ impl<'a> Recovery<'a> {
     }
 
     pub(super) fn check_previous_prefix(&self, head: &Value) -> Result<()> {
-        if let Some(failed) = &self.failed_copy {
+        if let Some(completed) = &self.stage.completed {
+            completed.check()?;
+            copy_ledger::completed_marker_prefix(
+                self.stage.request.backend,
+                &self.stage.ledger,
+                document::text(&self.binding["plan_sha256"], "原复制计划")?,
+                document::text(&self.binding["generation_sha256"], "原复制代次")?,
+                head,
+            )
+        } else if let Some(failed) = &self.failed_copy {
             failed.journal.verify_previous(head)
         } else {
             self.check_prefix(head)
@@ -478,6 +516,16 @@ fn journal(stage: &Stage<'_>, target: &Target) -> Result<CopyJournal> {
                 Ok((head, Some(FailedCopy::bind(stage, row, &files, journal)?)))
             },
         )
+    } else if stage.completed.is_some() {
+        let image = copy_ledger::inspect(backend, &stage.ledger, plan_hash, generation)?;
+        if image["status"] != "ledger_evidence_complete" {
+            return Err("原复制账本未完整关闭".into());
+        }
+        plan.validate_states(
+            document::object(&image["steps"], "完整复制步骤")?,
+            Mode::Reconcile,
+        )?;
+        Ok((document::read(&stage.ledger.join("head.json"))?, None))
     } else {
         copy_ledger::marker_prefix(backend, &stage.ledger, plan_hash, generation, None).and_then(
             |(head, steps)| {

@@ -35,7 +35,7 @@ pub(super) fn load(
         let path = common::bound_file(backend, &tree_binding, "重启进程树")?;
         let output = path.parent().ok_or("进程树缺少父目录")?;
         tree = self::tree(runtime, output, &requests["rustfs"])?;
-        let inherited = inherited_rustfs(backend, &generation)?;
+        let inherited = inherited_rustfs(&context.run, &context.value["state"], &generation)?;
         let rustfs_origin = inherited.as_ref().unwrap_or(&generation);
         observed = inspect(
             backend,
@@ -63,22 +63,44 @@ pub(super) fn load(
     )
 }
 
-fn inherited_rustfs(backend: &Path, generation: &Value) -> Result<Option<Value>> {
+pub(super) fn inherited_rustfs(
+    run: &Path,
+    state: &Value,
+    generation: &Value,
+) -> Result<Option<Value>> {
     if generation["kind"] != "reference-fixture-redis-generation" {
         return Ok(None);
     }
-    let outer = common::read_bound(
-        backend,
-        &generation["previous_generation"],
-        "原 RustFS 代次结果",
-    )?;
-    let original = common::read_bound(backend, &outer["generation"], "原 RustFS 代次")?;
-    check(
-        original["kind"] == "reference-fixture-service-generation"
-            && original["rustfs"] == generation["rustfs"],
-        "Redis 单独接续未继承原 RustFS 进程树",
-    )?;
-    Ok(Some(original))
+    let mut previous = generation["previous_generation"].clone();
+    let mut before = generation["attempt"].as_u64().ok_or("Redis 代次缺少编号")?;
+    // 只从已验证的账本向前走；任何回边或漏掉的前驱都无法再次命中。
+    for item in state::attempts(state)?.iter().rev() {
+        if item["result"] != previous {
+            continue;
+        }
+        let number = item["number"].as_u64().ok_or("服务前代缺少编号")?;
+        check(
+            number < before && history::is_published_generation(item) && item["status"] == "passed",
+            "Redis 单独接续前驱不是更早的已发布账本代次",
+        )?;
+        let prior = history::evidence::restart_generation(run, &previous)?;
+        check(
+            prior["attempt"] == number && prior["rustfs"] == generation["rustfs"],
+            "Redis 单独接续未继承原 RustFS 请求与完整进程树",
+        )?;
+        if prior["kind"] == "reference-fixture-service-generation" {
+            check(item["mode"] == "restart", "RustFS 锚点不是普通重启")?;
+            return Ok(Some(prior));
+        }
+        check(
+            item["mode"] == "restart-redis"
+                && item["sources"]["previous_generation"] == prior["previous_generation"],
+            "Redis 单独接续前驱未绑定原账本",
+        )?;
+        previous = prior["previous_generation"].clone();
+        before = number;
+    }
+    Err("Redis 单独接续前驱缺失、成环或没有已登记的普通 RustFS 锚点".into())
 }
 
 fn context(backend: &Path, value: &Value) -> Result<Context> {

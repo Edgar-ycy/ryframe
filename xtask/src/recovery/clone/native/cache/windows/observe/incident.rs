@@ -1,12 +1,119 @@
 //! 接受已登记的事故失败证据，区分重启证明和原 Job 退出收据。
 use super::{
     Generation, LAUNCH, RECEIPTS, Registered, Result, Value, common, directory_files, document,
-    entry_exists, json, present, prove_external,
+    entry_exists, json, present, prove_external, same_path,
 };
-use crate::recovery::source::evidence::reboot_process_exited;
+use crate::recovery::{
+    clone::native::lifecycle::identity,
+    source::evidence::{host_boot_proof, reboot_process_exited, verify_host_boot_proof},
+};
 use std::path::Path;
 
 const FAILURE: &str = "failed.json";
+const BOOT_DRIFT_TICKS: u64 = 60 * 10_000_000;
+
+pub(in crate::recovery::clone::native::cache::windows) fn incomplete_cleanup(
+    backend: &Path,
+    request: &Value,
+    runtime: &Value,
+    live: bool,
+) -> Result<Value> {
+    let registered = Registered::open_registered(
+        backend,
+        Some(request),
+        runtime,
+        Generation::Incident { frozen: !live },
+    )?;
+    let observed = (|| {
+        if !same_path(
+            document::text(&registered.launch.owner["executable"], "原控制器映像")?,
+            document::text(&registered.launch.coordinator["path"], "原协调工具")?,
+        ) {
+            return Err("Windows Redis 事故原控制器与原协调工具不同".into());
+        }
+        if live {
+            let identities = [&runtime["supervisor"], &runtime["process"]];
+            let before = same_boot(&registered.launch.owner, identities)?;
+            if !prove_external(registered.exited, identities, strict_present, || {
+                registered.check_closed_port()
+            })? {
+                return Err("Windows Redis 事故缺少原身份退出和原端口释放观察".into());
+            }
+            let after = same_boot(&registered.launch.owner, identities)?;
+            if before.abs_diff(after) > BOOT_DRIFT_TICKS {
+                return Err("Windows Redis 事故核验期间当前主机启动刻度变化".into());
+            }
+        }
+        incident_receipt(&registered, "windows-redis-incomplete-cleanup-incident")
+    })();
+    registered.finish(observed)
+}
+
+fn same_boot(owner: &Value, [supervisor, process]: [&Value; 2]) -> Result<u64> {
+    let proof = host_boot_proof()?;
+    let boot = verify_host_boot_proof(&proof)?;
+    // 创建刻度紧贴启动边界时无法排除时钟漂移，按事故既有启动观察余量判定。
+    let lower = boot
+        .checked_add(BOOT_DRIFT_TICKS)
+        .ok_or("Windows Redis 事故启动刻度溢出")?;
+    let upper = proof["observed_ticks"]
+        .as_u64()
+        .ok_or("Windows Redis 事故缺少主机采集刻度")?;
+    for value in [owner, supervisor, process] {
+        require_started_in_window(value, lower, upper)?;
+    }
+    Ok(boot)
+}
+
+fn require_started_in_window(value: &Value, lower: u64, upper: u64) -> Result<()> {
+    let time =
+        document::text(&value["started"], "Windows Redis 事故进程创建刻度")?.parse::<u64>()?;
+    if time <= lower || time > upper {
+        return Err("Windows Redis 原身份没有处于本次主机启动之后".into());
+    }
+    Ok(())
+}
+
+fn strict_present(expected: &Value) -> Result<bool> {
+    use winsafe::{HPROCESS, co, prelude::kernel_Hprocess};
+
+    let pid = expected["pid"]
+        .as_u64()
+        .and_then(|pid| u32::try_from(pid).ok())
+        .ok_or("Windows Redis 事故进程 PID 无效")?;
+    let handle = match HPROCESS::OpenProcess(
+        co::PROCESS::QUERY_LIMITED_INFORMATION | co::PROCESS::SYNCHRONIZE,
+        false,
+        pid,
+    ) {
+        Ok(handle) => handle,
+        Err(co::ERROR::INVALID_PARAMETER) => return Ok(false),
+        Err(error) => {
+            return Err(format!("无法核对 Windows Redis 事故进程 {pid}：{error}").into());
+        }
+    };
+    // 即使句柄已经发出退出信号，可打开的 PID 也不能作为事故不存在证明。
+    if identity::windows_snapshot(&handle, pid)? != *expected {
+        return Err("Windows Redis 事故 PID 已复用，保留现场".into());
+    }
+    Ok(true)
+}
+
+fn incident_receipt(registered: &Registered<'_>, kind: &str) -> Result<Value> {
+    let failure = registered
+        .incident_failure
+        .as_ref()
+        .ok_or("Windows Redis 缺少原事故失败绑定")?;
+    Ok(json!({
+        "kind": kind,
+        "failure": failure,
+        "runtime": common::binding(&registered.launch.output.join("runtime.json"))?,
+        "supervisor": registered.runtime["supervisor"],
+        "process": registered.runtime["process"],
+        "port": registered.launch.request["port"],
+        "normal_job_exit_proof": null
+    }))
+}
 
 /// 复核原 Redis 的事故和当前物理状态，不能作为正常停止或启动收据。
 pub(in crate::recovery) fn redis_reboot_incident(
@@ -35,8 +142,12 @@ fn observe(
     boot: u64,
     live: bool,
 ) -> Result<Value> {
-    let registered =
-        Registered::open_registered(backend, Some(request), runtime, Generation::IncidentReboot)?;
+    let registered = Registered::open_registered(
+        backend,
+        Some(request),
+        runtime,
+        Generation::Incident { frozen: true },
+    )?;
     let observed = (|| {
         let supervisor = &runtime["supervisor"];
         let process = &runtime["process"];
@@ -55,13 +166,7 @@ fn observe(
         {
             return Err("Windows Redis 事故缺少原身份退出和原端口释放观察".into());
         }
-        Ok(json!({
-            "kind":"windows-redis-reboot-incident",
-            "failure":registered.incident_failure,
-            "runtime":common::binding(&registered.launch.output.join("runtime.json"))?,
-            "supervisor":supervisor, "process":process, "port":request["port"],
-            "normal_job_exit_proof":null
-        }))
+        incident_receipt(&registered, "windows-redis-reboot-incident")
     })();
     registered.finish(observed)
 }
@@ -131,6 +236,24 @@ fn check_failure(failure: &Value, launch: &Value, supervisor: &Value) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn incomplete_cleanup_requires_a_process_filetime_in_the_current_boot() {
+        let identity = |started: &str| json!({"started":started});
+        assert!(require_started_in_window(&identity("11"), 10, 20).is_ok());
+        assert!(require_started_in_window(&identity("20"), 10, 20).is_ok());
+        for started in ["0", "9", "10", "21", "invalid"] {
+            assert!(require_started_in_window(&identity(started), 10, 20).is_err());
+        }
+    }
+
+    #[test]
+    fn incomplete_cleanup_never_classifies_an_openable_pid_as_missing() {
+        let mut current = identity::current().unwrap();
+        assert!(strict_present(&current).unwrap());
+        current["started"] = json!("1");
+        assert!(strict_present(&current).is_err());
+    }
 
     #[test]
     fn accepts_only_the_exact_unclean_failure_of_the_registered_supervisor() {

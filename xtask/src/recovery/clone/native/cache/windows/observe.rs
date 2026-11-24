@@ -224,7 +224,7 @@ struct Registered<'a> {
 enum Generation {
     Current,
     SourceReboot,
-    IncidentReboot,
+    Incident { frozen: bool },
 }
 
 impl<'a> Registered<'a> {
@@ -247,8 +247,10 @@ impl<'a> Registered<'a> {
         let sha = document::text(&runtime["launch"]["sha256"], "Windows Redis 启动摘要")?;
         let path = output.join(LAUNCH);
         let launch = match generation {
-            Generation::Current => BoundLaunch::load(&path, sha)?,
-            Generation::SourceReboot | Generation::IncidentReboot => {
+            Generation::Current | Generation::Incident { frozen: false } => {
+                BoundLaunch::load(&path, sha)?
+            }
+            Generation::SourceReboot | Generation::Incident { frozen: true } => {
                 BoundLaunch::load_reboot(&path, sha)?
             }
         };
@@ -269,7 +271,7 @@ impl<'a> Registered<'a> {
         if exited {
             paths.push(output.join("exited.json"));
         }
-        let incident_failure = if matches!(generation, Generation::IncidentReboot) {
+        let incident_failure = if matches!(generation, Generation::Incident { .. }) {
             let failure = output.join("failed.json");
             common::common_file(backend, &failure, "Windows Redis 原事故失败收据")?;
             let binding = common::binding(&failure)?;

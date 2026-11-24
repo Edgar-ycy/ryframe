@@ -14,6 +14,9 @@ use crate::{
 };
 pub(crate) use close_recovery::{candidate as close_candidate, recovery_evidence};
 
+pub(in crate::recovery::fixture_control::services) const INCOMPLETE_REDIS_CLEANUP: &str =
+    "windows-redis-incomplete-cleanup-incident";
+
 #[derive(Debug)]
 pub(super) struct HistoryError(pub(super) &'static str);
 impl std::fmt::Display for HistoryError {
@@ -92,6 +95,39 @@ pub(in crate::recovery::fixture_control::services) fn bound(
     let value = read(path)?;
     check(binding(path)? == before, "夹具历史证据读取期间变化")?;
     Ok(value)
+}
+
+pub(in crate::recovery::fixture_control::services) fn restart_generation(
+    run: &Path,
+    descriptor: &Value,
+) -> Result<Value> {
+    let result = bound(run, descriptor)?;
+    let (kind, file) = match (result["operation"].as_str(), result["status"].as_str()) {
+        (Some("restart"), Some("services_restarted")) => {
+            ("reference-fixture-service-generation", "restart.json")
+        }
+        (Some("restart-redis"), Some("redis_restarted")) => {
+            ("reference-fixture-redis-generation", "restart-redis.json")
+        }
+        _ => return Err("服务后继没有已登记的重启结果".into()),
+    };
+    let generation = bound(run, &result["generation"])?;
+    let number = generation["attempt"].as_u64().ok_or("服务代次缺少编号")?;
+    check(
+        number > 0
+            && result["kind"] == "reference-fixture-service-lifecycle"
+            && path_is(&result["run"], run)
+            && path_is(&descriptor["path"], &state::result_path(run, number))
+            && generation["kind"] == kind
+            && path_is(&generation["run"], run)
+            && path_is(
+                &result["generation"]["path"],
+                &run.join(format!("lifecycle-{number:04}")).join(file),
+            )
+            && generation["previous_generation"] == result["previous_generation"],
+        "服务后继的结果、代次、运行目录或前驱绑定不一致",
+    )?;
+    Ok(generation)
 }
 
 pub(crate) fn controller(run: &Path, attempt: &Value) -> Result<Value> {
