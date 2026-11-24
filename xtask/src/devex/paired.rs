@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use chrono::Utc;
+use time::OffsetDateTime;
 
 use crate::{Result, dev::SaveMeasurementContract};
 
@@ -542,11 +542,9 @@ fn create_run_directories(
     devex_root: &Path,
     options: &DevexRunOptions,
 ) -> Result<PairedRunDirectories> {
-    let now = Utc::now();
-    let date = now.format("%Y-%m-%d").to_string();
+    let (date, stamp) = crate::utc_timestamp::run_directory_parts(OffsetDateTime::now_utc());
     let comparison_id = format!(
-        "{}-{}-{}-{}-paired-{}",
-        now.format("%Y%m%dT%H%M%S%9fZ"),
+        "{stamp}-{}-{}-{}-paired-{}",
         options.suite.as_str(),
         options.variant,
         options.cache_state.as_str(),

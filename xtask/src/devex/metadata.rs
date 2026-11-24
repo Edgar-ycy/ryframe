@@ -7,9 +7,9 @@ use std::{
     process::Command,
 };
 
-use chrono::Utc;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use time::OffsetDateTime;
 
 use crate::{Result, process::child_command};
 
@@ -124,7 +124,7 @@ pub(super) fn collect(context: MetadataContext<'_>) -> Result<RunMetadata> {
     Ok(RunMetadata {
         schema_version: 1,
         run_id: context.run_id.to_owned(),
-        started_at: Utc::now().to_rfc3339(),
+        started_at: crate::utc_timestamp::rfc3339(OffsetDateTime::now_utc()),
         suite: context.options.suite,
         variant: context.options.variant.clone(),
         cache_state: context.options.cache_state,

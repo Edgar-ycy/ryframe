@@ -65,6 +65,22 @@ pub(crate) fn migration_name(value: OffsetDateTime) -> String {
     )
 }
 
+pub(crate) fn run_directory_parts(value: OffsetDateTime) -> (String, String) {
+    let utc = value.to_offset(UtcOffset::UTC);
+    let year = year(utc.year());
+    let date = format!("{year}-{:02}-{:02}", utc.month() as u8, utc.day());
+    let stamp = format!(
+        "{year}{:02}{:02}T{:02}{:02}{:02}{:09}Z",
+        utc.month() as u8,
+        utc.day(),
+        utc.hour(),
+        utc.minute(),
+        utc.second(),
+        utc.nanosecond(),
+    );
+    (date, stamp)
+}
+
 fn year(value: i32) -> String {
     if (0..=9999).contains(&value) {
         format!("{value:04}")
@@ -131,6 +147,62 @@ mod tests {
     }
 
     #[test]
+    fn run_directory_stamp_always_has_nine_fraction_digits() {
+        for (nanos, expected) in [
+            (0, "000000000"),
+            (1, "000000001"),
+            (999, "000000999"),
+            (1_000, "000001000"),
+            (1_000_000, "001000000"),
+            (120_000_000, "120000000"),
+            (123_456_789, "123456789"),
+            (999_999_999, "999999999"),
+        ] {
+            let value = OffsetDateTime::UNIX_EPOCH
+                .replace_nanosecond(nanos)
+                .unwrap();
+            assert_eq!(
+                run_directory_parts(value),
+                ("1970-01-01".into(), format!("19700101T000000{expected}Z"))
+            );
+        }
+    }
+
+    #[test]
+    fn run_directory_date_and_stamp_share_utc_at_year_and_epoch_boundaries() {
+        let last = Date::from_calendar_date(2026, Month::December, 31)
+            .unwrap()
+            .with_hms_nano(23, 59, 59, 999_999_999)
+            .unwrap()
+            .assume_utc();
+        let leap = Date::from_calendar_date(2000, Month::February, 29)
+            .unwrap()
+            .with_hms_nano(12, 0, 0, 1)
+            .unwrap()
+            .assume_utc();
+        for (value, date, stamp) in [
+            (
+                OffsetDateTime::from_unix_timestamp_nanos(-1).unwrap(),
+                "1969-12-31",
+                "19691231T235959999999999Z",
+            ),
+            (
+                last.to_offset(UtcOffset::from_hms(9, 30, 0).unwrap()),
+                "2026-12-31",
+                "20261231T235959999999999Z",
+            ),
+            (
+                last + time::Duration::nanoseconds(1),
+                "2027-01-01",
+                "20270101T000000000000000Z",
+            ),
+            (leap, "2000-02-29", "20000229T120000000000001Z"),
+        ] {
+            assert_eq!(run_directory_parts(value), (date.into(), stamp.into()));
+        }
+    }
+
+    #[test]
     fn utc_text_keeps_signed_and_zero_padded_calendar_years() {
         for (value, expected) in [
             (-9999, "-9999"),
@@ -162,6 +234,13 @@ mod tests {
                 format!("{expected}-12-31T23:59:59+00:00")
             );
             assert_eq!(migration_name(value), format!("{expected}1231_235959"));
+            assert_eq!(
+                run_directory_parts(value),
+                (
+                    format!("{expected}-12-31"),
+                    format!("{expected}1231T235959000000000Z")
+                )
+            );
         }
         let leap_day = Date::from_calendar_date(0, Month::February, 29)
             .unwrap()
@@ -169,6 +248,10 @@ mod tests {
             .assume_utc();
         assert_eq!(rfc3339(leap_day), "0000-02-29T00:00:00+00:00");
         assert_eq!(migration_name(leap_day), "00000229_000000");
+        assert_eq!(
+            run_directory_parts(leap_day),
+            ("0000-02-29".into(), "00000229T000000000000000Z".into())
+        );
     }
 
     #[test]

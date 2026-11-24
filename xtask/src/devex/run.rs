@@ -6,7 +6,7 @@ use std::{
     process::Command,
 };
 
-use chrono::Utc;
+use time::OffsetDateTime;
 
 use crate::{
     Result,
@@ -429,11 +429,9 @@ fn execute_measurements(
 }
 
 fn create_run_directory(devex_root: &Path, options: &DevexRunOptions) -> Result<(String, PathBuf)> {
-    let now = Utc::now();
-    let date = now.format("%Y-%m-%d").to_string();
+    let (date, stamp) = crate::utc_timestamp::run_directory_parts(OffsetDateTime::now_utc());
     let run_id = format!(
-        "{}-{}-{}-{}-{}",
-        now.format("%Y%m%dT%H%M%S%9fZ"),
+        "{stamp}-{}-{}-{}-{}",
         options.suite.as_str(),
         options.variant,
         options.cache_state.as_str(),
