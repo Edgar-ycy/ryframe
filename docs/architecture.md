@@ -137,7 +137,7 @@ seed 的 source-register 由统一 Rust 阶段控制器直接执行。它实际�
 
 本侧开始登记使用运维文档中的 `cargo xtask data restore begin`，提供同一正式备份、独立参考计划、原目标计划和运行登记。输出使用参考工作目录下的新文件，例如 `running.json`。控制器独占创建参考工作目录，持有本次目录归属、原运行控制锁和真实目标存储锁，再核对实际目标代次和四库、对象、Redis 前像。开始登记发布产品运行记录并保存原工作目录和归属文件身份。
 
-用 `cargo xtask check recovery reference restore --plan <b1-reference-plan.json> --target-plan <b1-target-plan.json> --runtime-registration <b1-runtime-registration.json> --backup-root <same-backup-directory> --record <b1-reference-work-dir/running.json> --write` 继续还原。控制器在原工作目录取得新阶段锁，核对开始登记的原文件和运行记录，在同一运行控制锁与目标存储锁内采集完整前后像并按原备份写入四库和对象。失败时保留阶段收据、已采集的资源像和写入证据。成功后进入产品数据核验，继续完成独立侧的运行与业务验收。
+用 `cargo xtask check recovery restore --plan <b1-reference-plan.json> --target-plan <b1-target-plan.json> --runtime-registration <b1-runtime-registration.json> --backup-root <same-backup-directory> --record <b1-reference-work-dir/running.json> --write` 继续还原。控制器在原工作目录取得新阶段锁，核对开始登记的原文件和运行记录，在同一运行控制锁与目标存储锁内采集完整前后像并按原备份写入四库和对象。失败时保留阶段收据、已采集的资源像和写入证据。成功后进入产品数据核验，继续完成独立侧的运行与业务验收。
 
 产品数据验证完成后，用前述 `check recovery inputs bindings` 命令读取同一侧的 DataVerified 记录。工具核对原外部还原完成收据、完整资源前后像、同一正式备份及原 Running 记录，确认数据验证在原演练计时内完成。预览只读取现有证据，追加显式输出与 `--write` 后发布同样格式的数据绑定。
 
