@@ -19,6 +19,9 @@ fn complete_microseconds_and_both_offsets_preserve_utc_across_days() {
         ("19700101003000.123456+060", 116444718001234560),
         ("19691231233000.123456-060", 116444754001234560),
         ("16010101000000.000001+000", 10),
+        ("16001231235900.000001-001", 10),
+        ("16010101000100.000001+001", 10),
+        ("47691116094639.999999+000", 999_999_999_999_999_990),
     ];
     for (text, started) in cases {
         assert_eq!(
@@ -29,6 +32,35 @@ fn complete_microseconds_and_both_offsets_preserve_utc_across_days() {
                 precision_ticks: 10
             }
         );
+    }
+}
+
+#[test]
+fn cim_keeps_filetime_range_and_error_order() {
+    for text in [
+        "16010101000100.000000+001",
+        "00010101000000.000001+999",
+        "47691116094640.000000+000",
+        "99991231235959.999999-999",
+    ] {
+        let error = cim(42, &[row(text)]).unwrap_err();
+        assert_eq!(error.to_string(), "CIM 创建时间不能转换为正 FILETIME");
+    }
+    for (text, reason) in [
+        ("000013**000000.123456+000", "CIM 创建日期无效"),
+        (
+            "197013**000000.123456+000",
+            "CIM 创建时间含未知或无效数字字段",
+        ),
+        (
+            "1970010124**00.123456+000",
+            "CIM 创建时间含未知或无效数字字段",
+        ),
+        ("19700230000000.123456+***", "CIM 创建日期无效"),
+        ("19700101240000.123456+***", "CIM 创建时间无效"),
+    ] {
+        let error = cim(42, &[row(text)]).unwrap_err();
+        assert_eq!(error.to_string(), reason, "{text}");
     }
 }
 

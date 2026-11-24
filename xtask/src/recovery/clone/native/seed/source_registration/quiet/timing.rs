@@ -2,6 +2,7 @@
 use crate::{Result, recovery::clone::native::json as document};
 use serde_json::Value;
 use std::path::Path;
+use time::{Date, Month, PrimitiveDateTime};
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Creation {
@@ -30,32 +31,35 @@ pub(crate) fn cim(pid: u32, rows: &[Value]) -> Result<Creation> {
     if year == 0 {
         return Err("CIM 创建日期无效".into());
     }
-    let date =
-        chrono::NaiveDate::from_ymd_opt(year as i32, number(text, 4, 6)?, number(text, 6, 8)?)
-            .ok_or("CIM 创建日期无效")?;
-    let local = date
-        .and_hms_micro_opt(
-            number(text, 8, 10)?,
-            number(text, 10, 12)?,
-            number(text, 12, 14)?,
+    let month = number(text, 4, 6)? as u8;
+    let day = number(text, 6, 8)? as u8;
+    let month = Month::try_from(month).map_err(|_| "CIM 创建日期无效")?;
+    let date = Date::from_calendar_date(year as i32, month, day).map_err(|_| "CIM 创建日期无效")?;
+    let local: PrimitiveDateTime = date
+        .with_hms_micro(
+            number(text, 8, 10)? as u8,
+            number(text, 10, 12)? as u8,
+            number(text, 12, 14)? as u8,
             number(text, 15, 21)?,
         )
-        .ok_or("CIM 创建时间无效")?;
+        .map_err(|_| "CIM 创建时间无效")?;
     let offset = i64::from(number(text, 22, 25)?);
     let offset = if text.as_bytes()[21] == b'-' {
         -offset
     } else {
         offset
     };
-    let utc = local
-        .checked_sub_signed(chrono::TimeDelta::minutes(offset))
+    let offset_micros = offset.checked_mul(60_000_000).ok_or("CIM 时区转换溢出")?;
+    let epoch = Date::from_calendar_date(1601, Month::January, 1)
+        .map(Date::midnight)
+        .map_err(|_| "FILETIME 起点无效")?;
+    // 直接校正微秒差值，保留时区校正跨出四位年份时的 FILETIME 范围校验。
+    let elapsed_micros = (local - epoch)
+        .whole_microseconds()
+        .checked_sub(i128::from(offset_micros))
         .ok_or("CIM 时区转换溢出")?;
-    let epoch = chrono::NaiveDate::from_ymd_opt(1601, 1, 1)
-        .and_then(|date| date.and_hms_opt(0, 0, 0))
-        .ok_or("FILETIME 起点无效")?;
-    let ticks = utc
-        .signed_duration_since(epoch)
-        .num_microseconds()
+    let ticks = i64::try_from(elapsed_micros)
+        .ok()
         .and_then(|n| n.checked_mul(10))
         .and_then(|n| u64::try_from(n).ok())
         .filter(|n| *n > 0 && n.to_string().len() <= 18)
