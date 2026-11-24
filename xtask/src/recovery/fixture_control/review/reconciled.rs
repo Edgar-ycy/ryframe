@@ -15,7 +15,6 @@ use crate::{
         fixture_control::{services::lifecycle::query, source_pair::execution},
     },
 };
-use chrono::{SecondsFormat, Utc};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
@@ -179,7 +178,7 @@ pub(super) fn publish(backend: &Path, options: &FixtureReconciledReview) -> Resu
     let execution = execution_root(&publication)?;
     validate_future_root(&options.future_root, &execution)?;
     let proposed = json!({"execution_source":binding,"future_root":path_text_lexical(&options.future_root)?,
-        "created_at":Utc::now().to_rfc3339_opts(SecondsFormat::Micros, false)});
+        "created_at":crate::utc_timestamp::rfc3339_micros(time::OffsetDateTime::now_utc())});
     let review = derive(backend, &origin, &proposed, &publication)?;
     validate_review(&review)?;
     verify(backend, &review)?;

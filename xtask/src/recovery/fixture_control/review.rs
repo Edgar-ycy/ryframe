@@ -4,7 +4,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use chrono::{SecondsFormat, Utc};
 use serde_json::{Map, Value, json};
 
 use crate::{
@@ -390,7 +389,9 @@ fn derive(
     root.insert("id".into(), Value::String(format!("fixture-{plan_id}")));
     root.insert(
         "created_at".into(),
-        Value::String(Utc::now().to_rfc3339_opts(SecondsFormat::Micros, false)),
+        Value::String(crate::utc_timestamp::rfc3339_micros(
+            time::OffsetDateTime::now_utc(),
+        )),
     );
     root.insert(
         "future_root".into(),
