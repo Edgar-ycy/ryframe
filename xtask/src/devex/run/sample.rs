@@ -1,6 +1,6 @@
 use std::{fs, path::Path, process::ExitStatus, time::Instant};
 
-use chrono::Utc;
+use time::OffsetDateTime;
 
 use crate::{
     Result,
@@ -23,7 +23,7 @@ use crate::devex::{
 
 #[derive(Debug, Clone)]
 pub(in crate::devex) struct SampleOutcome {
-    pub(super) started_at: chrono::DateTime<Utc>,
+    pub(super) started_at: String,
     pub(super) duration_ms: f64,
     pub(super) memory: MemoryEvidence,
     pub(super) cargo_invocations: Option<usize>,
@@ -64,7 +64,7 @@ pub(in crate::devex) fn execute_sample(
     if strict_gate.is_some() {
         resource_gate::check_new_decision(target, label)?;
     }
-    let started_at = Utc::now();
+    let started_at = OffsetDateTime::now_utc();
     let started = Instant::now();
     let (status, memory) = run_sample_commands(
         backend_root,
@@ -85,9 +85,10 @@ pub(in crate::devex) fn execute_sample(
     } else {
         (None, true)
     };
+    let duration_ms = started.elapsed().as_secs_f64() * 1_000.0;
     let outcome = SampleOutcome {
-        started_at,
-        duration_ms: started.elapsed().as_secs_f64() * 1_000.0,
+        started_at: crate::utc_timestamp::rfc3339(started_at),
+        duration_ms,
         memory,
         cargo_invocations: None,
         ready_kind: None,
@@ -174,7 +175,7 @@ pub(in crate::devex) fn sample_record(
         sequence,
         kind,
         cache_state,
-        started_at: outcome.started_at.to_rfc3339(),
+        started_at: outcome.started_at.clone(),
         duration_ms: outcome.duration_ms,
         memory: outcome.memory.clone(),
         cargo_invocations: outcome.cargo_invocations,

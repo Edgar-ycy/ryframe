@@ -98,7 +98,8 @@ pub(super) fn measurement_outcome(
     }
     let started_at = chrono::DateTime::parse_from_rfc3339(&measurement.started_at)
         .map_err(|error| format!("cargo-dev-save startedAt 无效：{error}"))?
-        .with_timezone(&Utc);
+        .with_timezone(&Utc)
+        .to_rfc3339();
     Ok(SampleOutcome {
         started_at,
         duration_ms: measurement.save_to_ready_ms,
