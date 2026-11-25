@@ -3,6 +3,7 @@ use ryframe_application::ports::utc_timestamp;
 use ryframe_application::system::platform as service;
 use ryframe_kernel::{AppError, ValidatedPageQuery};
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 use utoipa::{IntoParams, ToSchema};
 use validator::Validate;
 
@@ -147,7 +148,9 @@ pub struct DataPlacementView {
     pub current_target_key: String,
     pub placement_generation: String,
     pub state: TenantBusinessDataState,
-    pub updated_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub updated_at: OffsetDateTime,
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -203,22 +206,54 @@ pub struct MigrationView {
     pub operator_id: String,
     pub retention_hours: i32,
     pub error_code: Option<String>,
-    pub prechecked_at: Option<DateTime<Utc>>,
-    pub queued_at: Option<DateTime<Utc>>,
-    pub quiesced_at: Option<DateTime<Utc>>,
-    pub frozen_at: Option<DateTime<Utc>>,
-    pub copy_started_at: Option<DateTime<Utc>>,
-    pub copy_completed_at: Option<DateTime<Utc>>,
-    pub verified_at: Option<DateTime<Utc>>,
-    pub cut_over_at: Option<DateTime<Utc>>,
-    pub activated_at: Option<DateTime<Utc>>,
-    pub succeeded_at: Option<DateTime<Utc>>,
-    pub retention_until: Option<DateTime<Utc>>,
-    pub finalized_at: Option<DateTime<Utc>>,
-    pub failed_at: Option<DateTime<Utc>>,
-    pub cancelled_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub prechecked_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub queued_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub quiesced_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub frozen_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub copy_started_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub copy_completed_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub verified_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub cut_over_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub activated_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub succeeded_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub retention_until: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub finalized_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub failed_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub cancelled_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub created_at: OffsetDateTime,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub updated_at: OffsetDateTime,
     pub can_cancel: bool,
     pub can_finalize: bool,
     pub cancel_requested: bool,
@@ -300,7 +335,7 @@ impl TryFrom<service::DataPlacementView> for DataPlacementView {
             current_target_key: value.current_target_key,
             placement_generation: value.placement_generation,
             state,
-            updated_at: value.updated_at,
+            updated_at: response_timestamp(value.updated_at, "updated_at")?,
         })
     }
 }
@@ -351,22 +386,25 @@ impl TryFrom<service::MigrationView> for MigrationView {
             operator_id: value.operator_id,
             retention_hours: value.retention_hours,
             error_code: value.error_code,
-            prechecked_at: value.prechecked_at,
-            queued_at: value.queued_at,
-            quiesced_at: value.quiesced_at,
-            frozen_at: value.frozen_at,
-            copy_started_at: value.copy_started_at,
-            copy_completed_at: value.copy_completed_at,
-            verified_at: value.verified_at,
-            cut_over_at: value.cut_over_at,
-            activated_at: value.activated_at,
-            succeeded_at: value.succeeded_at,
-            retention_until: value.retention_until,
-            finalized_at: value.finalized_at,
-            failed_at: value.failed_at,
-            cancelled_at: value.cancelled_at,
-            created_at: value.created_at,
-            updated_at: value.updated_at,
+            prechecked_at: optional_response_timestamp(value.prechecked_at, "prechecked_at")?,
+            queued_at: optional_response_timestamp(value.queued_at, "queued_at")?,
+            quiesced_at: optional_response_timestamp(value.quiesced_at, "quiesced_at")?,
+            frozen_at: optional_response_timestamp(value.frozen_at, "frozen_at")?,
+            copy_started_at: optional_response_timestamp(value.copy_started_at, "copy_started_at")?,
+            copy_completed_at: optional_response_timestamp(
+                value.copy_completed_at,
+                "copy_completed_at",
+            )?,
+            verified_at: optional_response_timestamp(value.verified_at, "verified_at")?,
+            cut_over_at: optional_response_timestamp(value.cut_over_at, "cut_over_at")?,
+            activated_at: optional_response_timestamp(value.activated_at, "activated_at")?,
+            succeeded_at: optional_response_timestamp(value.succeeded_at, "succeeded_at")?,
+            retention_until: optional_response_timestamp(value.retention_until, "retention_until")?,
+            finalized_at: optional_response_timestamp(value.finalized_at, "finalized_at")?,
+            failed_at: optional_response_timestamp(value.failed_at, "failed_at")?,
+            cancelled_at: optional_response_timestamp(value.cancelled_at, "cancelled_at")?,
+            created_at: response_timestamp(value.created_at, "created_at")?,
+            updated_at: response_timestamp(value.updated_at, "updated_at")?,
             can_cancel: value.can_cancel,
             can_finalize: value.can_finalize,
             cancel_requested: value.cancel_requested,
@@ -398,5 +436,141 @@ impl TryFrom<service::MigrationItemView> for MigrationItemView {
             cleanup_state,
             cleanup_row_count: value.cleanup_row_count,
         })
+    }
+}
+
+fn response_timestamp(value: DateTime<Utc>, field: &str) -> Result<OffsetDateTime, AppError> {
+    utc_timestamp::from_chrono(value)
+        .map_err(|_| AppError::Internal(format!("租户数据响应的 {field} 无法精确表示为 UTC")))
+}
+
+fn optional_response_timestamp(
+    value: Option<DateTime<Utc>>,
+    field: &str,
+) -> Result<Option<OffsetDateTime>, AppError> {
+    value
+        .map(|instant| response_timestamp(instant, field))
+        .transpose()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Value;
+    use utoipa::OpenApi;
+
+    #[test]
+    fn tenant_data_responses_preserve_utc_precision_and_snapshot_schemas() {
+        let mut placement = service::DataPlacementView {
+            tenant_id: "tenant-a".into(),
+            current_target_key: "target".into(),
+            placement_generation: "2".into(),
+            state: "active".into(),
+            updated_at: DateTime::from_timestamp(19, 123_456_700).unwrap(),
+        };
+        let response =
+            serde_json::to_value(DataPlacementView::try_from(placement.clone()).unwrap()).unwrap();
+        assert_eq!(response, serde_json::to_value(&placement).unwrap());
+        assert_eq!(response["updated_at"], "1970-01-01T00:00:19.123456700Z");
+
+        let migration = migration_fixture(true);
+        let response =
+            serde_json::to_value(MigrationView::try_from(migration.clone()).unwrap()).unwrap();
+        assert_eq!(response, serde_json::to_value(&migration).unwrap());
+        assert_eq!(response["created_at"], "1969-12-31T23:59:59Z");
+        assert_eq!(response["queued_at"], "1970-01-01T00:00:02.120Z");
+        assert_eq!(response["copy_completed_at"], "1970-01-01T00:00:06.123400Z");
+        assert_eq!(response["updated_at"], "1970-01-01T00:00:15.123456700Z");
+
+        let mut missing = migration_fixture(false);
+        let response =
+            serde_json::to_value(MigrationView::try_from(missing.clone()).unwrap()).unwrap();
+        assert_eq!(response, serde_json::to_value(&missing).unwrap());
+        for field in [
+            "prechecked_at",
+            "queued_at",
+            "quiesced_at",
+            "frozen_at",
+            "copy_started_at",
+            "copy_completed_at",
+            "verified_at",
+            "cut_over_at",
+            "activated_at",
+            "succeeded_at",
+            "retention_until",
+            "finalized_at",
+            "failed_at",
+            "cancelled_at",
+        ] {
+            assert_eq!(response.get(field), Some(&Value::Null), "{field}");
+        }
+
+        let leap_second = DateTime::from_timestamp(1_483_228_799, 1_123_456_000).unwrap();
+        placement.updated_at = leap_second;
+        assert_timestamp_error(DataPlacementView::try_from(placement), "updated_at");
+        let mut invalid_required = missing.clone();
+        invalid_required.created_at = leap_second;
+        assert_timestamp_error(MigrationView::try_from(invalid_required), "created_at");
+        missing.retention_until = Some(leap_second);
+        assert_timestamp_error(MigrationView::try_from(missing), "retention_until");
+
+        let snapshot: Value =
+            serde_json::from_str(include_str!("../../../../openapi/openapi.json")).unwrap();
+        let generated = serde_json::to_value(crate::openapi::ApiDoc::openapi()).unwrap();
+        for schema in ["DataPlacementView", "MigrationView"] {
+            let path = format!("/components/schemas/{schema}");
+            assert_eq!(
+                generated.pointer(&path),
+                Some(snapshot.pointer(&path).expect("快照包含租户数据响应契约"))
+            );
+        }
+    }
+
+    fn assert_timestamp_error<T: std::fmt::Debug>(result: Result<T, AppError>, field: &str) {
+        let expected = format!("租户数据响应的 {field} 无法精确表示为 UTC");
+        assert!(matches!(result.unwrap_err(), AppError::Internal(message) if message == expected));
+    }
+
+    fn migration_fixture(with_phase_times: bool) -> service::MigrationView {
+        let phase = |seconds, nanos| {
+            with_phase_times.then(|| DateTime::from_timestamp(seconds, nanos).unwrap())
+        };
+        service::MigrationView {
+            id: "7".into(),
+            tenant_id: "tenant-a".into(),
+            source_target_key: "source".into(),
+            target_target_key: "target".into(),
+            source_generation: "1".into(),
+            target_generation: "2".into(),
+            source_schema_fingerprint: "source-fingerprint".into(),
+            target_schema_fingerprint: "target-fingerprint".into(),
+            plan_hash: "plan-hash".into(),
+            state: "succeeded".into(),
+            operator_id: "42".into(),
+            retention_hours: 168,
+            error_code: None,
+            prechecked_at: phase(1, 0),
+            queued_at: phase(2, 120_000_000),
+            quiesced_at: phase(3, 123_400_000),
+            frozen_at: phase(4, 123_456_700),
+            copy_started_at: phase(5, 0),
+            copy_completed_at: phase(6, 123_400_000),
+            verified_at: phase(7, 0),
+            cut_over_at: phase(8, 0),
+            activated_at: phase(9, 0),
+            succeeded_at: phase(10, 0),
+            retention_until: phase(11, 0),
+            finalized_at: phase(12, 0),
+            failed_at: phase(13, 0),
+            cancelled_at: phase(14, 0),
+            created_at: DateTime::from_timestamp(-1, 0).unwrap(),
+            updated_at: DateTime::from_timestamp(15, 123_456_700).unwrap(),
+            can_cancel: false,
+            can_finalize: false,
+            cancel_requested: false,
+            finalize_requested: false,
+            action_reasons: Vec::new(),
+            items: Vec::new(),
+        }
     }
 }
