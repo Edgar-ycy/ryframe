@@ -3,9 +3,17 @@ use std::{fs, path::PathBuf};
 use serde_json::{Value, json};
 
 use super::{
-    recovery::monitoring::{config, execution::ProtectedInputs, permissions, staging},
+    recovery::monitoring::{config, execution::ProtectedInputs, staging},
     workspace::root_dir,
 };
+
+#[cfg(windows)]
+use super::recovery::monitoring::permissions::validate_windows_acl;
+#[cfg(not(windows))]
+#[path = "../../src/recovery/monitoring/permissions/windows_policy.rs"]
+mod windows_policy;
+#[cfg(not(windows))]
+use windows_policy::validate_windows_acl;
 
 pub(crate) const RETIRED_MONITORING_KEYS: [&str; 2] =
     ["APP_MONITOR_METRICS_BEARER_TOKEN", "APP_SCOPE_ID"];
@@ -43,24 +51,21 @@ fn valid_acl() -> Value {
 #[test]
 fn windows_acl_accepts_only_explicit_read_for_the_private_owner_and_system() {
     let value = valid_acl();
-    let normalized = permissions::validate_windows_acl(&value).unwrap();
+    let normalized = validate_windows_acl(&value).unwrap();
     assert_eq!(normalized["owner_sid"], value["owner_sid"]);
     let mut reordered = value.clone();
     reordered["entries"].as_array_mut().unwrap().reverse();
-    assert_eq!(
-        permissions::validate_windows_acl(&reordered).unwrap(),
-        normalized
-    );
+    assert_eq!(validate_windows_acl(&reordered).unwrap(), normalized);
     let mut split = value.clone();
     let mut synchronize = split["entries"][0].clone();
     synchronize["rights"] = json!(0x0010_0000);
     split["entries"][0]["rights"] = json!(0x0002_0001);
     split["entries"].as_array_mut().unwrap().push(synchronize);
-    permissions::validate_windows_acl(&split).unwrap();
+    validate_windows_acl(&split).unwrap();
     for owner in ["S-1-5-18", "S-1-5-32-544"] {
         let mut value = value.clone();
         value["owner_sid"] = json!(owner);
-        assert!(permissions::validate_windows_acl(&value).is_ok());
+        assert!(validate_windows_acl(&value).is_ok());
     }
 }
 
@@ -85,14 +90,11 @@ fn windows_acl_rejects_unknown_owner_broad_subject_deny_inheritance_and_missing_
     ] {
         let mut value = original.clone();
         *value.pointer_mut(pointer).unwrap() = bad;
-        assert!(
-            permissions::validate_windows_acl(&value).is_err(),
-            "{pointer}: {value}"
-        );
+        assert!(validate_windows_acl(&value).is_err(), "{pointer}: {value}");
     }
     let mut unknown = original;
     unknown["entries"][0]["other"] = json!(true);
-    assert!(permissions::validate_windows_acl(&unknown).is_err());
+    assert!(validate_windows_acl(&unknown).is_err());
 }
 
 #[test]
