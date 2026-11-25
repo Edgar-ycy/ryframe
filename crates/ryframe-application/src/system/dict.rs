@@ -1,12 +1,14 @@
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use ryframe_kernel::{
     ActorContext, AppError, AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery,
 };
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 use crate::ports::system::{DictDataRecord, DictPersistencePort, DictTypeFilter, DictTypeRecord};
+use crate::ports::utc_timestamp;
 use crate::{TransactionAuditMode, complete_transaction};
 
 const DICT_CACHE_KEY_PREFIX: &str = "sys_dict:data:";
@@ -33,7 +35,8 @@ pub struct DictTypeVo {
     pub code: String,
     pub status: String,
     pub remark: Option<String>,
-    pub created_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    pub created_at: OffsetDateTime,
 }
 
 impl From<DictTypeRecord> for DictTypeVo {
@@ -154,7 +157,8 @@ impl DictService {
             code: code.to_owned(),
             status: "1".into(),
             remark: None,
-            created_at: now,
+            created_at: utc_timestamp::from_chrono(now)
+                .map_err(|_| AppError::Internal("字典类型创建时间无法精确表示为 UTC".into()))?,
             updated_at: now,
         };
         let transaction = self.persistence.begin().await?;

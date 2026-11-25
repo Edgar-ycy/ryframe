@@ -187,6 +187,62 @@ fn department_created_at_preserves_utc_json_and_schema() {
 }
 
 #[test]
+fn dict_type_created_at_preserves_utc_json_export_and_schema() {
+    use ryframe_api::dto::public_dto::DictTypeVo;
+    use ryframe_application::{
+        ports::{system::DictTypeRecord, utc_timestamp},
+        system::content::DictTypeVo as DictType,
+    };
+    use serde_json::json;
+    use time::{OffsetDateTime, UtcOffset};
+    use utoipa::PartialSchema;
+
+    let offset = UtcOffset::from_hms(8, 0, 0).unwrap();
+    for (nanos, expected) in [
+        (0, "1969-12-31T23:59:59Z"),
+        (120_000_000, "1969-12-31T23:59:59.120Z"),
+        (123_400_000, "1969-12-31T23:59:59.123400Z"),
+        (123_456_700, "1969-12-31T23:59:59.123456700Z"),
+    ] {
+        let dict_type = DictType::from(DictTypeRecord {
+            id: 1,
+            name: "工单状态".into(),
+            code: "ticket_status".into(),
+            status: "1".into(),
+            remark: None,
+            created_at: OffsetDateTime::from_unix_timestamp(-1)
+                .unwrap()
+                .replace_nanosecond(nanos)
+                .unwrap()
+                .to_offset(offset),
+            updated_at: Default::default(),
+        });
+        assert_eq!(
+            serde_json::to_value(&dict_type).unwrap()["created_at"],
+            expected
+        );
+        assert_eq!(
+            utc_timestamp::format_with_offset(&dict_type.created_at).unwrap(),
+            format!("{}+00:00", expected.strip_suffix('Z').unwrap())
+        );
+        let response = serde_json::to_value(DictTypeVo::from(dict_type)).unwrap();
+        assert_eq!(response["created_at"], expected);
+    }
+
+    let schema = serde_json::to_value(DictTypeVo::schema()).unwrap();
+    assert_eq!(
+        schema["properties"]["created_at"],
+        json!({"type":"string","format":"date-time"})
+    );
+    assert!(
+        schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("created_at"))
+    );
+}
+
+#[test]
 fn schedule_preview_preserves_utc_precision_local_text_and_required_schema() {
     use ryframe_api::dto::public_dto::{JobScheduleOccurrence, JobSchedulePreview};
     use ryframe_application::{

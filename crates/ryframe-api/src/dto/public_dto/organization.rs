@@ -61,7 +61,9 @@ pub struct DictTypeVo {
     pub code: String,
     pub status: String,
     pub remark: Option<String>,
-    pub created_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub created_at: OffsetDateTime,
 }
 
 impl From<ServiceDictTypeVo> for DictTypeVo {
