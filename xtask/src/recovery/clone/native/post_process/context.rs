@@ -1,4 +1,6 @@
 //! 复制后与 seed 共享同一持锁事实窗口，沿用原复制和来源证据。
+#[cfg(windows)]
+use crate::recovery::clone::native::target_verify::resume_baseline::HeldPrepareHistory;
 use crate::recovery::fixture_control::source_pair::execution::HeldTargetSource;
 use crate::{
     Result,
@@ -15,11 +17,6 @@ use crate::{
             guard::{Generation, Inputs},
         },
     },
-};
-#[cfg(windows)]
-use crate::{
-    cli::PostCopyOperation,
-    recovery::clone::native::target_verify::resume_baseline::HeldPrepareHistory,
 };
 use serde_json::{Value, json};
 use std::{
@@ -256,12 +253,10 @@ impl<'a> Context<'a> {
 
     #[cfg(windows)]
     pub(super) fn hold_plan(&mut self) -> Result<()> {
-        if self.stage != "post-copy"
-            || !PostCopyOperation::supports_held_originals(self.mode)
-            || self.manifest["copy_stage"] != "source_to_seed"
+        if !super::source_proofs::supports(self.stage, self.mode, &self.manifest["copy_stage"])
             || self.held_plan.is_some()
         {
-            return Err("对象原件持有须在同一受支持的 source_to_seed 复制后阶段建立一次".into());
+            return Err("对象原件持有须在同一受支持的 source_to_seed 阶段建立一次".into());
         }
         let path = self.copy.join("plan.json");
         let wrapper = document::read(&path)?;
@@ -538,9 +533,11 @@ fn registered(
     #[cfg(windows)]
     let ((initial, target), held_prepare_history) = match held_storage {
         Some(storage)
-            if request.stage == "post-copy"
-                && PostCopyOperation::supports_held_originals(request.mode)
-                && manifest["copy_stage"] == "source_to_seed" =>
+            if super::source_proofs::supports(
+                request.stage,
+                request.mode,
+                &manifest["copy_stage"],
+            ) =>
         {
             target_verify::published::open_prepare_history(backend, &initialized, owner, storage)?
         }

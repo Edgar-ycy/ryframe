@@ -62,9 +62,16 @@ pub(in crate::recovery::clone::native) fn run(
     {
         return Err("seed 业务及运行准备沿用本 run 已发布登记和原身份计划".into());
     }
+    if options.hold_originals
+        && !SeedRuntimeOperation::supports_held_originals(options.operation.as_str())
+    {
+        return Err("当前 seed 操作不支持持有原件".into());
+    }
     let runner = Runner {
         mode: options.operation.as_str(),
         scope: RefCell::new(None),
+        #[cfg(windows)]
+        hold_originals: options.hold_originals,
     };
     let result = stage::run_named(
         backend,
@@ -79,6 +86,8 @@ pub(in crate::recovery::clone::native) fn run(
 struct Runner {
     mode: &'static str,
     scope: RefCell<Option<Scope>>,
+    #[cfg(windows)]
+    hold_originals: bool,
 }
 
 impl StageRunner for Runner {
@@ -115,8 +124,8 @@ impl StageRunner for Runner {
 
     fn execute(&self, request: &StageRequest<'_>) -> Result<Value> {
         self.preflight(request)?;
-        let scope = self.scope.borrow();
-        let scope = scope.as_ref().ok_or("seed 缺少固定来源窗口")?;
+        let mut scope = self.scope.borrow_mut();
+        let scope = scope.as_mut().ok_or("seed 缺少固定来源窗口")?;
         let manifest = manifest::load(request.backend, &request.run_dir.join("manifest.json"))?;
         let storage = cache::handoff::locks::Storage::acquire(
             request.backend,
@@ -124,6 +133,23 @@ impl StageRunner for Runner {
             &manifest.value,
         )?;
         ownership::with_target(request, &manifest.value, storage, |owner, storage| {
+            #[cfg(windows)]
+            if self.hold_originals {
+                let target =
+                    super::source_proofs::hold_scope(request, &manifest.value, owner, scope)?;
+                return super::runtime::with_held_published_target(
+                    request.backend,
+                    &target,
+                    |held| {
+                        let mut context = Context::load_with_held_target(
+                            request, owner, scope, storage, None, held, true,
+                        )?;
+                        context.hold_plan()?;
+                        let result = execute(&context);
+                        files::combine(result, context.check_end())
+                    },
+                );
+            }
             let context = Context::load(request, owner, scope, storage, None)?;
             let result = execute(&context);
             files::combine(result, context.check())

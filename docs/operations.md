@@ -164,6 +164,8 @@ fresh 参考夹具环境准备会在源 bootstrap 输出目录独占创建私有
 
 在 Windows 的 source-to-seed 复制后准备阶段，可以运行 `cargo xtask check recovery clone post-copy --run-dir <registered-run> --operation prepare --originals held --write`。在同一运行锁内持有已登记的原对象、SQL 原件、静态源码、来源导出证明和存储服务历史证明，开始和结束时进行完整核验。每次检查仍核对持有身份、文件成员、运行配置和实际资源。在同一 source-to-seed 流程中，可将示例中的 `prepare` 替换为 `schedules` 或 `verify`。这两个阶段在每个检查点仍核对已登记的受保护输入字节。调度继续按已登记的完整前后像执行，既有业务核验仍读回完整样本和对象。
 
+在 Windows 上，同一 source-to-seed 运行可使用 `cargo xtask check recovery clone seed-runtime --run-dir <registered-run> --operation quotas-plan --originals held --write` 规划配额。规划通过后，应用配额时可将操作改为 `quotas-apply`。两个阶段仍绑定已登记的身份计划，应用阶段还核对已发布的配额计划。持有原件期间继续核对实际 API 和 Redis，执行 SQL 检查并验证五桶归属。规划记录原值与用量，应用核对完整前后像。各阶段开始和结束时仍完整核验已登记原件的字节。省略该参数时，继续按原方式核验原件字节。
+
 原准备阶段仍存活且目标配置、运行目录和生产者均未创建时，可用 `cargo xtask check recovery clone prepare-lock-observe --run-dir <registered-run> --owner-binding <controller.json> --output <observation.json> --write` 登记原空目标锁。
 
 Windows 上原控制器已经退出且此前未登记观察时，须在原账本仍登记该次准备为运行中时执行 `cargo xtask check recovery clone prepare-lock-observe-interrupted --run-dir <registered-run> --owner-binding <controller.json> --output <observation.json> --write`。工具确认原 PID 已不存在、遗留运行锁归属一致，并在独占原外层与目标互斥文件期间核对目标配置、运行目录、结果和生产者仍缺席，登记同一空锁目录的身份。收据记录此次观察发生在控制器退出后。

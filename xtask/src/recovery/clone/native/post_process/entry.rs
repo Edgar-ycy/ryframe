@@ -141,7 +141,8 @@ impl Runner<'_> {
                 let input = input.as_ref().filter(|v| !v.is_null());
                 #[cfg(windows)]
                 if self.options.hold_originals {
-                    let target = hold_post_copy_scope(request, &manifest.value, owner, scope)?;
+                    let target =
+                        super::source_proofs::hold_scope(request, &manifest.value, owner, scope)?;
                     return super::runtime::with_held_published_target(
                         request.backend,
                         &target,
@@ -216,34 +217,4 @@ impl Runner<'_> {
         };
         diagnostic::context(request, phase, result)
     }
-}
-
-#[cfg(windows)]
-fn hold_post_copy_scope(
-    request: &StageRequest<'_>,
-    manifest: &Value,
-    owner: &Generation,
-    scope: &mut Scope,
-) -> Result<Value> {
-    use crate::recovery::clone::native::{export, target_verify};
-    use target_verify::input::request::{SystemSourceObserver, execution_backend};
-
-    if request.stage != "post-copy"
-        || !PostCopyOperation::supports_held_originals(request.mode)
-        || manifest["copy_stage"] != "source_to_seed"
-    {
-        return Err("持有原件必须属于受支持的 source_to_seed 复制后阶段".into());
-    }
-    let source =
-        export::input::Context::for_copy(request.backend, request.run_dir, request.run_dir)?;
-    let initialized = common::bound_file(request.backend, &manifest["initialized"], "初始化后像")?;
-    let (_, target) =
-        target_verify::published::owned_history(request.backend, &initialized, owner)?;
-    let (execution, _) = execution_backend(
-        request.backend,
-        target.get("execution_backend"),
-        &SystemSourceObserver,
-    )?;
-    scope.hold_windows_sources(&[&source.execution_backend, &execution])?;
-    Ok(target)
 }

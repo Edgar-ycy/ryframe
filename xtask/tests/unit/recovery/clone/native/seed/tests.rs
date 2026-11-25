@@ -93,6 +93,7 @@ fn seed_register_rejects_missing_input_without_stage_writes() {
     let options = SeedRuntimeOptions {
         run_dir: fixture.run.clone(),
         operation: SeedRuntimeOperation::Register,
+        hold_originals: false,
         request: None,
         producer_binding: None,
     };
@@ -128,6 +129,7 @@ fn seed_mutations_and_recovery_reject_invalid_inputs_without_writes() {
         let command = CloneCommand::SeedRuntime(SeedRuntimeOptions {
             run_dir: fixture.run.clone(),
             operation,
+            hold_originals: false,
             request: Some(fixture.run.join("manifest.json")),
             producer_binding: None,
         });

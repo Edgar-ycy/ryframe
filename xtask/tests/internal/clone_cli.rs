@@ -539,9 +539,51 @@ fn assert_native_seed_runtime_modes(fixture: &Fixture) {
             args.push("--write");
         }
         let parsed = fixture.parse(&args).unwrap();
-        assert!(
-            matches!(&parsed, CloneCommand::SeedRuntime(value) if value.operation == operation)
-        );
+        assert!(matches!(
+            &parsed,
+            CloneCommand::SeedRuntime(value)
+                if value.operation == operation && !value.hold_originals
+        ));
+    }
+}
+
+#[test]
+fn seed_runtime_held_originals_are_limited_to_windows_quota_plan_and_apply() {
+    let fixture = Fixture::new();
+    let run = Fixture::value(&fixture.run);
+    for (mode, originals, supported) in [
+        ("quotas-plan", "held", true),
+        ("quotas-apply", "held", true),
+        ("quotas-plan", "full", false),
+        ("quotas-apply", "full", false),
+        ("quotas-reconcile", "held", false),
+        ("departments-plan", "held", false),
+        ("identities-apply", "held", false),
+        ("recover", "held", false),
+    ] {
+        let parsed = fixture.parse(&[
+            "seed-runtime",
+            "--run-dir",
+            run,
+            "--operation",
+            mode,
+            "--originals",
+            originals,
+            "--write",
+        ]);
+        if cfg!(windows) && supported {
+            assert!(
+                matches!(
+                    parsed,
+                    Ok(CloneCommand::SeedRuntime(options))
+                        if options.operation.as_str() == mode && options.hold_originals
+                ),
+                "{mode} {originals}"
+            );
+        } else {
+            let error = parsed.expect_err("当前 seed 阶段或参数不允许持有原件");
+            assert!(error.contains("seed-runtime --originals"), "{error}");
+        }
     }
 }
 
@@ -564,6 +606,7 @@ fn seed_close_requires_explicit_write_and_keeps_the_selected_run() {
     };
     assert_eq!(options.operation, SeedRuntimeOperation::Close);
     assert_eq!(options.run_dir, fixture.run);
+    assert!(!options.hold_originals);
     assert!(options.request.is_none());
     assert!(options.producer_binding.is_none());
 }

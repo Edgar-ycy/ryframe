@@ -69,6 +69,7 @@ pub(super) fn parse_seed_runtime(args: &[String]) -> Result<CloneCommand, CliErr
         &[
             "--run-dir",
             "--operation",
+            "--originals",
             "--request",
             "--producer-binding",
         ],
@@ -80,6 +81,15 @@ pub(super) fn parse_seed_runtime(args: &[String]) -> Result<CloneCommand, CliErr
         &options,
         operation.effect().requires_write(),
     )?;
+    let hold_originals = match options.values.get("--originals").map(String::as_str) {
+        None => false,
+        Some("held") if SeedRuntimeOperation::supports_held_originals(operation.as_str()) => true,
+        Some(_) => {
+            return Err(CliError::new(
+                "seed-runtime --originals 只接受 held，且仅适用于 Windows quotas-plan 和 quotas-apply",
+            ));
+        }
+    };
     let request = optional_path(&options, "--request")?;
     let producer_binding = optional_path(&options, "--producer-binding")?;
     if request.is_some()
@@ -96,6 +106,7 @@ pub(super) fn parse_seed_runtime(args: &[String]) -> Result<CloneCommand, CliErr
     Ok(CloneCommand::SeedRuntime(SeedRuntimeOptions {
         run_dir: run_dir(&options)?,
         operation,
+        hold_originals,
         request,
         producer_binding,
     }))

@@ -1,4 +1,4 @@
-//! 同一复制后阶段内持有导出根及已核验的静态证明文件。
+//! 同一正式阶段内持有复制来源及已核验的静态证明文件。
 use std::{
     collections::BTreeSet,
     path::{Path, PathBuf},
@@ -9,12 +9,51 @@ use serde_json::{Map, Value};
 use super::files;
 use crate::{
     Result,
-    cli::PostCopyOperation,
+    cli::{PostCopyOperation, SeedRuntimeOperation},
     recovery::clone::native::{
-        json as document, lifecycle::stage::StageRequest, resources::common,
-        target_verify::guard::BackupInputs,
+        bridge::scope::Scope,
+        export, json as document,
+        lifecycle::stage::StageRequest,
+        resources::common,
+        target_verify::{
+            self,
+            guard::{BackupInputs, Generation},
+            input::request::{SystemSourceObserver, execution_backend},
+        },
     },
 };
+
+pub(super) fn supports(stage: &str, mode: &str, copy_stage: &Value) -> bool {
+    copy_stage == "source_to_seed"
+        && match stage {
+            "post-copy" => PostCopyOperation::supports_held_originals(mode),
+            "seed-runtime" => SeedRuntimeOperation::supports_held_originals(mode),
+            _ => false,
+        }
+}
+
+pub(super) fn hold_scope(
+    request: &StageRequest<'_>,
+    manifest: &Value,
+    owner: &Generation,
+    scope: &mut Scope,
+) -> Result<Value> {
+    if !supports(request.stage, request.mode, &manifest["copy_stage"]) {
+        return Err("持有原件必须属于受支持的 source_to_seed 阶段".into());
+    }
+    let source =
+        export::input::Context::for_copy(request.backend, request.run_dir, request.run_dir)?;
+    let initialized = common::bound_file(request.backend, &manifest["initialized"], "初始化后像")?;
+    let (_, target) =
+        target_verify::published::owned_history(request.backend, &initialized, owner)?;
+    let (execution, _) = execution_backend(
+        request.backend,
+        target.get("execution_backend"),
+        &SystemSourceObserver,
+    )?;
+    scope.hold_windows_sources(&[&source.execution_backend, &execution])?;
+    Ok(target)
+}
 
 pub(super) fn for_stage(
     request: &StageRequest<'_>,
@@ -26,11 +65,8 @@ pub(super) fn for_stage(
     if !enabled {
         return Ok((proof_files, None));
     }
-    if request.stage != "post-copy"
-        || !PostCopyOperation::supports_held_originals(request.mode)
-        || copy_stage != "source_to_seed"
-    {
-        return Err("持有导出证明必须属于受支持的 source_to_seed 复制后阶段".into());
+    if !supports(request.stage, request.mode, copy_stage) {
+        return Err("持有导出证明必须属于受支持的 source_to_seed 阶段".into());
     }
     let (held, outside) = HeldSourceProofs::open(request.backend, export, proof_files)?;
     Ok((outside, Some(held)))
