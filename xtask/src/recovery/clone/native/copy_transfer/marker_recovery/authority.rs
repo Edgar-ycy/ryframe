@@ -254,6 +254,10 @@ impl<'a> Recovery<'a> {
             &storage.directory,
             target,
             stage.completed.is_some(),
+            stage
+                .completed
+                .as_ref()
+                .is_some_and(post_copy::Completed::prepared_before_api),
         ))?;
         let redis_only = fixture.value["lineage"]
             .get("accepted_redis_failure")
@@ -277,6 +281,10 @@ impl<'a> Recovery<'a> {
             &storage.directory,
             target,
             stage.completed.is_some(),
+            stage
+                .completed
+                .as_ref()
+                .is_some_and(post_copy::Completed::prepared_before_api),
         ))?;
         if current_fixture != fixture {
             return Checkpoint::FixtureSuccessor

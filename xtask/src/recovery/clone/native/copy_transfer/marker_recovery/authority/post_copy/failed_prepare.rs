@@ -69,10 +69,9 @@ impl Evidence {
             guard: None,
         };
         let mut proofs = Vec::new();
-        for row in state::attempts(saved)?
-            .iter()
-            .filter(|r| r["stage"] == "post-copy" && r["mode"] == "prepare")
-        {
+        for row in state::attempts(saved)?.iter().filter(|r| {
+            r["stage"] == "post-copy" && r["mode"] == "prepare" && r["status"] == "failed"
+        }) {
             let number = row["number"].as_u64().ok_or("原准备阶段号无效")?;
             read.absences.push(state::result_path(run, number));
             let running = running(row);
@@ -155,7 +154,7 @@ impl Evidence {
     }
 }
 
-fn running(row: &Value) -> Value {
+pub(super) fn running(row: &Value) -> Value {
     let mut result = row.clone();
     result["status"] = json!("running");
     for key in ["finished_at", "result", "error_type"] {

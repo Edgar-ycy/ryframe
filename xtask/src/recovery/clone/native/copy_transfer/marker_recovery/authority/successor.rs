@@ -64,18 +64,19 @@ pub(super) fn load(
     run: &Path,
     target: &Target,
     completed: bool,
+    prepared_before_api: bool,
 ) -> Result<Fixture> {
     let manifest = common::binding(&run.join("manifest.json"))?;
     history::validate_manifest(&common::read_bound(backend, &manifest, "原夹具服务清单")?)?;
     let saved = state::load(run, true)?;
     let ledger = history::validate(run, &saved, true, true)?;
     let all_attempts = state::attempts(&saved)?;
-    let (ledger, attempts, fifth) = continued::split(&ledger, all_attempts, completed)?;
-    if completed && fifth.is_none() {
+    let continuation = continued::split(&ledger, all_attempts, completed, prepared_before_api)?;
+    if completed && continuation.fifth.is_none() {
         return Err("完整复制后的标记恢复只接受原第四代的第五代后继".into());
     }
-    let attempts = attempts.as_slice();
-    let (first, second, third, redis) = restarts(&ledger, attempts)?;
+    let attempts = continuation.attempts.as_slice();
+    let (first, second, third, redis) = restarts(&continuation.ledger, attempts)?;
     let mut evidence = Evidence {
         backend,
         files: Vec::new(),
@@ -111,16 +112,22 @@ pub(super) fn load(
     accepted["previous_fixture_sha256"] = json!(digest::plan_hash(&prior)?);
     let mut lineage = prior["lineage"].clone();
     lineage["accepted_redis_failure"] = accepted;
-    let current = fixture_binding(&manifest, &redis, &external, Some(lineage));
-    let Some(fifth) = &fifth else {
-        return finish_fixture(evidence, target, &redis, current);
-    };
-    let active = Restart::read(&mut evidence, fifth)?;
-    let mut accepted = continued::link(&mut evidence, run, initial, &redis, fifth, &active)?;
-    accepted["previous_fixture_sha256"] = json!(digest::plan_hash(&current)?);
-    let mut lineage = current["lineage"].clone();
-    lineage["post_copy_redis_failure"] = accepted;
-    let current = fixture_binding(&manifest, &active, &external, Some(lineage));
+    let mut current = fixture_binding(&manifest, &redis, &external, Some(lineage));
+    let mut active = redis;
+    for (key, row) in [
+        ("post_copy_redis_failure", continuation.fifth),
+        ("prepared_redis_failure", continuation.sixth),
+    ] {
+        if let Some(row) = row {
+            let next = Restart::read(&mut evidence, row)?;
+            let mut accepted = continued::link(&mut evidence, run, initial, &active, row, &next)?;
+            accepted["previous_fixture_sha256"] = json!(digest::plan_hash(&current)?);
+            let mut lineage = current["lineage"].clone();
+            lineage[key] = accepted;
+            current = fixture_binding(&manifest, &next, &external, Some(lineage));
+            active = next;
+        }
+    }
     finish_fixture(evidence, target, &active, current)
 }
 

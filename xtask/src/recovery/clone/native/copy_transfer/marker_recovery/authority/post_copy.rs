@@ -1,7 +1,8 @@
-//! 已完成复制但从未准备或启动产品的窄范围标记接续。
+//! 已完成复制且没有启动产品的窄范围标记接续。
 use super::*;
 use crate::recovery::clone::native::seed;
 mod failed_prepare;
+mod prepared_before_api;
 
 pub(super) struct Completed {
     backend: PathBuf,
@@ -10,7 +11,13 @@ pub(super) struct Completed {
     plan: Value,
     files: Inputs,
     failures: failed_prepare::Evidence,
+    prepared: Option<prepared_before_api::Evidence>,
     pub(super) binding: Value,
+}
+
+struct PreparedRows<'a> {
+    prepare: &'a Value,
+    failure: &'a Value,
 }
 
 pub(super) fn completed_attempts(attempts: &[Value]) -> Result<(&Value, &Value)> {
@@ -34,7 +41,7 @@ pub(super) fn load(
     if !path.try_exists()? {
         return Ok(None);
     }
-    eligibility(
+    let prepared_rows = eligibility(
         state::attempts(saved)?,
         request.attempt.ok_or("缺少标记阶段")?,
     )?;
@@ -49,7 +56,15 @@ pub(super) fn load(
     if post.request["format_version"] != 1 || post.request["kind"] != "devex-clone-post-copy" {
         return Err("完整复制标记接续只接受原 v1 post-copy 登记".into());
     }
-    no_runtime(request.run_dir)?;
+    let prepared = match prepared_rows {
+        Some(rows) => Some(prepared_before_api::Evidence::load(
+            request, manifest, &post, rows,
+        )?),
+        None => {
+            no_runtime(request.run_dir)?;
+            None
+        }
+    };
     let failures = failed_prepare::Evidence::load(
         request.backend,
         request.run_dir,
@@ -80,8 +95,11 @@ pub(super) fn load(
         request.run_dir,
         manifest,
     ))?;
-    let binding = json!({"registration":descriptor,"failed_preparations":failures.binding,
+    let mut binding = json!({"registration":descriptor,"failed_preparations":failures.binding,
         "files":paths.iter().map(|p| common::binding(p)).collect::<Result<Vec<_>>>()?});
+    if let Some(prepared) = &prepared {
+        binding["prepared_before_api"] = prepared.binding.clone();
+    }
     let complete = Completed {
         backend: request.backend.to_owned(),
         run: request.run_dir.to_owned(),
@@ -89,6 +107,7 @@ pub(super) fn load(
         plan,
         files,
         failures,
+        prepared,
         binding,
     };
     complete.check()?;
@@ -96,10 +115,18 @@ pub(super) fn load(
 }
 
 impl Completed {
+    pub(super) fn prepared_before_api(&self) -> bool {
+        self.prepared.is_some()
+    }
+
     pub(super) fn check(&self) -> Result<()> {
         self.files.check()?;
         self.failures.check()?;
-        no_runtime(&self.run)?;
+        if let Some(prepared) = &self.prepared {
+            prepared.check()?;
+        } else {
+            no_runtime(&self.run)?;
+        }
         if Checkpoint::CopyProof.check(seed::source_registration::copied::require(
             &self.backend,
             &self.run,
@@ -124,7 +151,7 @@ fn no_runtime(run: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn eligibility(attempts: &[Value], current: u64) -> Result<()> {
+fn eligibility(attempts: &[Value], current: u64) -> Result<Option<PreparedRows<'_>>> {
     let registrations: Vec<_> = attempts
         .iter()
         .filter(|r| r["stage"] == "post-copy" && r["mode"] == "register")
@@ -137,12 +164,15 @@ pub(super) fn eligibility(attempts: &[Value], current: u64) -> Result<()> {
         return Err("原 post-copy 登记未正式通过".into());
     }
     let mut failed_prepares = Vec::new();
+    let mut prepared = None;
+    let mut rejected = None;
     for row in attempts
         .iter()
         .filter(|r| r["number"].as_u64().is_some_and(|n| n > number))
     {
         if row["stage"] == "post-copy"
             && row["mode"] == "prepare"
+            && prepared.is_none()
             && row["status"] == "failed"
             && matches!(
                 row["error_type"].as_str(),
@@ -152,8 +182,23 @@ pub(super) fn eligibility(attempts: &[Value], current: u64) -> Result<()> {
             && row["finished_at"].is_string()
         {
             failed_prepares.push(row);
+        } else if row["stage"] == "post-copy"
+            && row["mode"] == "prepare"
+            && prepared.is_none()
+            && row["status"] == "passed"
+            && row["error_type"].is_null()
+            && row["finished_at"].is_string()
+            && row["result"].is_object()
+        {
+            prepared = Some(row);
+        } else if prepared.is_some()
+            && rejected.is_none()
+            && prepared_before_api::rejected_start(row)
+        {
+            rejected = Some(row);
         } else if row["stage"] != "target-cache-markers"
             || !matches!(row["mode"].as_str(), Some("run" | "reconcile"))
+            || prepared.is_some() && rejected.is_none()
             || !(row["number"] == current && row["status"] == "running"
                 || row["number"].as_u64().is_some_and(|n| n < current)
                     && matches!(row["status"].as_str(), Some("failed" | "passed")))
@@ -161,6 +206,21 @@ pub(super) fn eligibility(attempts: &[Value], current: u64) -> Result<()> {
             return Err("登记后已有产品、seed、成功准备或未知阶段，禁止标记接续".into());
         }
     }
+    if let Some(prepare) = prepared {
+        let failure = rejected.ok_or("已成功准备须由明确的 API 启动前拒绝收口")?;
+        let mut explicit_rejections = failed_prepares
+            .iter()
+            .filter(|row| row["error_type"] == "PostCopyPreparationRejected");
+        if explicit_rejections.next().is_none() || explicit_rejections.next().is_some() {
+            return Err("已准备窗口缺少唯一的原明确准备拒绝".into());
+        }
+        return Ok(Some(PreparedRows { prepare, failure }));
+    }
+    verify_failed_prepares(&failed_prepares)?;
+    Ok(None)
+}
+
+fn verify_failed_prepares(failed_prepares: &[&Value]) -> Result<()> {
     let Some((last, preceding)) = failed_prepares.split_last() else {
         return Err("原登记后缺少未启动产品的失败准备".into());
     };
@@ -191,7 +251,7 @@ mod tests {
             "status":"failed","error_type":"ControllerInterrupted","finished_at":"closed","result":null}));
         }
         original.extend([failed, current]);
-        assert!(eligibility(&original, 30).is_ok());
+        assert!(matches!(eligibility(&original, 30), Ok(None)));
         assert!(eligibility(&[original[0].clone(), original[8].clone()], 30).is_err());
         let mut unclosed = original.clone();
         unclosed[7]["error_type"] = json!("ControllerInterrupted");
@@ -214,5 +274,50 @@ mod tests {
             rows[1]["status"] = json!(status);
             assert!(eligibility(&rows, 30).is_err(), "{stage}/{mode}/{status}");
         }
+    }
+
+    #[test]
+    fn completed_copy_marker_window_preserves_preparation_and_requires_a_closed_before_start_failure()
+     {
+        let mut rows = vec![
+            json!({"number":22,"stage":"post-copy","mode":"register","status":"passed"}),
+            json!({"number":29,"stage":"post-copy","mode":"prepare","status":"failed",
+                "error_type":"PostCopyPreparationRejected","finished_at":"closed","result":null}),
+            json!({"number":31,"stage":"target-cache-markers","mode":"run","status":"passed"}),
+            json!({"number":32,"stage":"post-copy","mode":"prepare","status":"failed",
+                "error_type":"ControllerInterrupted","finished_at":"closed","result":null}),
+            json!({"number":33,"stage":"post-copy","mode":"prepare","status":"passed",
+                "error_type":null,"finished_at":"closed","result":{"path":"prepare-result"}}),
+            json!({"number":34,"stage":"runtime-target","mode":"start","status":"failed",
+                "error_type":"ApiHandoffPreStartRejected","finished_at":"closed","result":null}),
+            json!({"number":35,"stage":"target-cache-markers","mode":"run","status":"running"}),
+        ];
+        let prepared = eligibility(&rows, 35).unwrap().unwrap();
+        assert_eq!(prepared.prepare, &rows[4]);
+        assert_eq!(prepared.failure, &rows[5]);
+
+        rows[6]["mode"] = json!("reconcile");
+        assert!(matches!(eligibility(&rows, 35), Ok(Some(_))));
+        for (field, value) in [
+            ("error_type", json!("ApiHandoffStartRejected")),
+            ("status", json!("running")),
+            ("finished_at", Value::Null),
+            ("result", json!({"path":"unknown-result"})),
+        ] {
+            let mut rejected = rows.clone();
+            rejected[5][field] = value;
+            assert!(eligibility(&rejected, 35).is_err(), "{field}");
+        }
+        let no_shutdown = [&rows[..5], &rows[6..]].concat();
+        assert!(eligibility(&no_shutdown, 35).is_err());
+        let mut unknown_failure = rows.clone();
+        unknown_failure[3]["error_type"] = json!("StageError");
+        assert!(eligibility(&unknown_failure, 35).is_err());
+        let mut second_start = rows.clone();
+        let mut second = rows[5].clone();
+        second["number"] = json!(35);
+        second_start.insert(6, second);
+        second_start[7]["number"] = json!(36);
+        assert!(eligibility(&second_start, 36).is_err());
     }
 }

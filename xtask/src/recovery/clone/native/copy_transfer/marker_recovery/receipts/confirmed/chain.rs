@@ -1,4 +1,4 @@
-//! 第五代逐件保护第三、第四代的两份原确认意图；不允许任意历史回退。
+//! 完整复制后逐件保护已确认的原标记意图，拒绝任意历史回退。
 use super::*;
 
 pub(super) fn load(
@@ -6,15 +6,39 @@ pub(super) fn load(
     expected: &Value,
     verify_prefix: &dyn Fn(&Value) -> Result<()>,
 ) -> Result<(Prior, Value)> {
+    let depth = ancestor_count(&receipts.binding)?;
     let saved = state::load(&receipts.run, true)?;
     let passed: Vec<_> = state::attempts(&saved)?
         .iter()
         .filter(|r| r["stage"] == "target-cache-markers" && r["status"] == "passed")
         .collect();
-    if passed.len() != 2 {
-        return Err("第五代只接受第三及第四代两份正式标记确认".into());
+    if passed.len() != depth
+        || passed.windows(2).any(|pair| {
+            !matches!(
+                (pair[0]["number"].as_u64(), pair[1]["number"].as_u64()),
+                (Some(previous), Some(current)) if previous < current
+            )
+        })
+    {
+        return Err("完整复制后的 Redis 代次必须按顺序绑定所需全部原标记确认".into());
     }
-    load_one(receipts, expected, verify_prefix, 2, &passed)
+    load_one(receipts, expected, verify_prefix, depth, &passed)
+}
+
+fn ancestor_count(binding: &Value) -> Result<usize> {
+    match (
+        binding["completed_copy"].get("prepared_before_api"),
+        binding["fixture"]["lineage"].get("prepared_redis_failure"),
+    ) {
+        (None, None) => Ok(2),
+        (Some(prepared), Some(incident))
+            if prepared.as_object().is_some_and(|proof| !proof.is_empty())
+                && incident.is_object() =>
+        {
+            Ok(3)
+        }
+        _ => Err("第六代原标记确认要求同时绑定 API 准备证明及后继 Redis 事故".into()),
+    }
 }
 
 fn load_one(
@@ -46,7 +70,7 @@ fn load_one(
         .ok_or("标记祖先阶段无效")?;
     let row = passed[remaining - 1];
     if row["mode"] != "run" || row["number"] != number {
-        return Err("标记祖先没有按第三、第四代的真实顺序登记".into());
+        return Err("标记祖先没有按原 Redis 代次真实顺序登记".into());
     }
     let observation_path = path.join(format!("observation-{number:04}.json"));
     let controller_path = state::controller_path(&receipts.run, number);
@@ -80,24 +104,19 @@ fn load_one(
     )?;
     verify_prefix(&record["copy_prefix"])?;
     let mut ancestors = Vec::new();
-    if remaining == 2 {
-        let incident = &record["binding"]["fixture"]["lineage"]["accepted_redis_failure"];
+    if let Some(key) = ancestor_link(&record["binding"], remaining)? {
+        let incident = &record["binding"]["fixture"]["lineage"][key];
         let (prior, proof) = load_one(
             receipts,
             &incident["previous_fixture_sha256"],
             verify_prefix,
-            1,
+            remaining - 1,
             passed,
         )?;
         if record["binding"]["previous_confirmed_markers"] != proof {
-            return Err("第四代原确认意图没有保留同一第三代祖先".into());
+            return Err("原确认意图未绑定同一直接前驱的已确认标记".into());
         }
         ancestors.push(prior);
-    } else if record["binding"]
-        .get("previous_confirmed_markers")
-        .is_some()
-    {
-        return Err("第三代原标记意图含未登记的更早写入链".into());
     }
     let prior = Prior {
         intent,
@@ -110,4 +129,52 @@ fn load_one(
         prior,
         json!({"result":row["result"],"observation":observation_binding,"intent":intent_binding}),
     ))
+}
+
+fn ancestor_link(binding: &Value, remaining: usize) -> Result<Option<&'static str>> {
+    match remaining {
+        3 if binding["completed_copy"].is_object()
+            && binding["completed_copy"]
+                .get("prepared_before_api")
+                .is_none()
+            && binding["fixture"]["lineage"]
+                .get("prepared_redis_failure")
+                .is_none() =>
+        {
+            Ok(Some("post_copy_redis_failure"))
+        }
+        3 => Err("第六代的直接标记前驱必须是原未准备 API 的第五代".into()),
+        2 => Ok(Some("accepted_redis_failure")),
+        1 if binding.get("previous_confirmed_markers").is_none() => Ok(None),
+        _ => Err("第三代原标记意图含未登记的更早写入链".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn third_marker_ancestor_requires_the_prepared_window_and_an_original_fifth_marker() {
+        let mut binding = json!({"completed_copy":{"result":{}},"fixture":{"lineage":{}}});
+        assert_eq!(ancestor_count(&binding).unwrap(), 2);
+        assert_eq!(
+            ancestor_link(&binding, 3).unwrap(),
+            Some("post_copy_redis_failure")
+        );
+        assert_eq!(
+            ancestor_link(&binding, 2).unwrap(),
+            Some("accepted_redis_failure")
+        );
+        assert_eq!(ancestor_link(&binding, 1).unwrap(), None);
+
+        binding["completed_copy"]["prepared_before_api"] = json!({"request":{}});
+        assert!(ancestor_count(&binding).is_err());
+        binding["fixture"]["lineage"]["prepared_redis_failure"] =
+            json!({"previous_fixture_sha256":"original"});
+        assert_eq!(ancestor_count(&binding).unwrap(), 3);
+        assert!(ancestor_link(&binding, 3).is_err());
+        binding["completed_copy"]["prepared_before_api"] = json!({});
+        assert!(ancestor_count(&binding).is_err());
+    }
 }

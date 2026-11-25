@@ -40,6 +40,7 @@ impl Receipts {
         let prior_marker_root = if lineage.get("reboot_incident").is_some()
             || lineage.get("accepted_redis_failure").is_some()
             || lineage.get("post_copy_redis_failure").is_some()
+            || lineage.get("prepared_redis_failure").is_some()
         {
             Some(Inputs::directory(&root)?)
         } else {
@@ -60,7 +61,8 @@ impl Receipts {
             prior: None,
         };
         if let Some(incident) = lineage
-            .get("post_copy_redis_failure")
+            .get("prepared_redis_failure")
+            .or_else(|| lineage.get("post_copy_redis_failure"))
             .or_else(|| lineage.get("accepted_redis_failure"))
         {
             let (prior, proof) = confirmed::Prior::load(
