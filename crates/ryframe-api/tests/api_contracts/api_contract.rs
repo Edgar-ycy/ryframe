@@ -856,3 +856,75 @@ mod rate_limit {
         );
     }
 }
+
+#[test]
+fn config_created_at_preserves_cache_json_and_required_api_schema() {
+    use ryframe_api::dto::public_dto::ConfigVo;
+    use ryframe_application::{
+        ports::{system::ConfigRecord, utc_timestamp},
+        system::content::ConfigVo as Config,
+    };
+    use serde_json::json;
+    use time::{OffsetDateTime, UtcOffset};
+    use utoipa::PartialSchema;
+
+    let offset = UtcOffset::from_hms(8, 0, 0).unwrap();
+    for (nanos, timestamp) in [
+        (0, "1969-12-31T23:59:59Z"),
+        (120_000_000, "1969-12-31T23:59:59.120Z"),
+        (123_400_000, "1969-12-31T23:59:59.123400Z"),
+        (123_456_700, "1969-12-31T23:59:59.123456700Z"),
+    ] {
+        let created_at = OffsetDateTime::from_unix_timestamp(-1)
+            .unwrap()
+            .replace_nanosecond(nanos)
+            .unwrap()
+            .to_offset(offset);
+        let config = Config::from(ConfigRecord {
+            id: 1,
+            name: "界面配置".into(),
+            key: "ui.theme".into(),
+            value: "dark".into(),
+            portable: true,
+            remark: Some("默认主题".into()),
+            created_at,
+            updated_at: Default::default(),
+        });
+        let cached_json = json!({
+            "id": "1",
+            "name": "界面配置",
+            "key": "ui.theme",
+            "value": "dark",
+            "portable": true,
+            "remark": "默认主题",
+            "created_at": timestamp,
+        });
+        assert_eq!(serde_json::to_value(&config).unwrap(), cached_json);
+        assert_eq!(
+            serde_json::to_value(ConfigVo::from(config)).unwrap(),
+            cached_json
+        );
+
+        let restored = serde_json::from_value::<Config>(cached_json).unwrap();
+        assert_eq!(restored.created_at, created_at.to_offset(UtcOffset::UTC));
+        assert_eq!(restored.created_at.offset(), UtcOffset::UTC);
+        let previous_export = chrono::DateTime::from_timestamp(-1, nanos)
+            .unwrap()
+            .to_rfc3339();
+        assert_eq!(
+            utc_timestamp::format_with_offset(&restored.created_at).unwrap(),
+            previous_export
+        );
+    }
+
+    let schema = serde_json::to_value(ConfigVo::schema()).unwrap();
+    assert_eq!(schema["properties"]["created_at"]["type"], "string");
+    assert_eq!(schema["properties"]["created_at"]["format"], "date-time");
+    assert!(
+        schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|name| name == "created_at")
+    );
+}

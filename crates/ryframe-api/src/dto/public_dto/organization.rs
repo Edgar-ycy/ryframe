@@ -25,7 +25,9 @@ pub struct ConfigVo {
     pub value: String,
     pub portable: bool,
     pub remark: Option<String>,
-    pub created_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub created_at: OffsetDateTime,
 }
 
 impl From<ServiceConfigVo> for ConfigVo {

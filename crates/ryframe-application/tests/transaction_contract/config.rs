@@ -59,7 +59,7 @@ impl ConfigPersistencePort for FakePersistence {
             value: format!("{tenant_id}:{key}"),
             portable: true,
             remark: None,
-            created_at: chrono::Utc::now(),
+            created_at: time::OffsetDateTime::now_utc(),
             updated_at: chrono::Utc::now(),
         }))
     }

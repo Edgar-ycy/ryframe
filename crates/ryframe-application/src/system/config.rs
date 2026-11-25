@@ -1,14 +1,18 @@
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use ryframe_kernel::{
     ActorContext, AppError, AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery,
 };
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 use crate::{
     AuthorizationCache, NamespaceCacheLookup, TransactionAuditMode, complete_transaction,
-    ports::system::{ConfigFilter, ConfigPersistencePort, ConfigRecord},
+    ports::{
+        system::{ConfigFilter, ConfigPersistencePort, ConfigRecord},
+        utc_timestamp,
+    },
 };
 
 const CACHE_TTL_SECS: u64 = 3600;
@@ -30,7 +34,8 @@ pub struct ConfigVo {
     pub value: String,
     pub portable: bool,
     pub remark: Option<String>,
-    pub created_at: DateTime<Utc>,
+    #[serde(with = "utc_timestamp")]
+    pub created_at: OffsetDateTime,
 }
 
 impl From<ConfigRecord> for ConfigVo {
@@ -239,6 +244,8 @@ impl ConfigService {
         let tenant_id = crate::validated_tenant_id(actor)?;
         validate_portable_key(key, portable)?;
         let now = Utc::now();
+        let created_at = utc_timestamp::from_chrono(now)
+            .map_err(|_| AppError::Internal("参数配置创建时间超出 UTC 表示范围".into()))?;
         let record = ConfigRecord {
             id: crate::next_id()?,
             name: name.to_owned(),
@@ -246,7 +253,7 @@ impl ConfigService {
             value: value.to_owned(),
             portable,
             remark: remark.map(str::to_owned),
-            created_at: now,
+            created_at,
             updated_at: now,
         };
         let transaction = self.persistence.begin().await?;

@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery};
+use time::OffsetDateTime;
 
 use crate::PersistenceTransaction;
 
@@ -12,7 +13,7 @@ pub struct ConfigRecord {
     pub value: String,
     pub portable: bool,
     pub remark: Option<String>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: OffsetDateTime,
     pub updated_at: DateTime<Utc>,
 }
 
