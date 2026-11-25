@@ -294,43 +294,59 @@ fn parses_service_controls_without_ambiguous_roles_or_requests() {
 }
 
 #[test]
-fn held_prepare_and_lock_recovery_require_explicit_bound_operations() {
+fn post_copy_held_originals_require_supported_windows_operations() {
+    let fixture = Fixture::new();
+    let run = Fixture::value(&fixture.run);
+    let descriptor = Fixture::value(&fixture.first);
+    for (mode, option, supported) in [
+        ("prepare", None, true),
+        ("schedules", None, true),
+        ("verify", None, true),
+        ("reconcile", None, false),
+        ("register", Some("--request"), false),
+        ("amend", Some("--request"), false),
+        ("recover-session", Some("--producer-binding"), false),
+    ] {
+        let mut args = vec![
+            "post-copy",
+            "--run-dir",
+            run,
+            "--operation",
+            mode,
+            "--write",
+        ];
+        if let Some(option) = option {
+            args.extend([option, descriptor]);
+        }
+        assert!(
+            matches!(
+                fixture.parse(&args),
+                Ok(CloneCommand::PostCopy(options)) if !options.hold_originals
+            ),
+            "{mode}"
+        );
+        args.extend(["--originals", "held"]);
+        let held = fixture.parse(&args);
+        if cfg!(windows) && supported {
+            assert!(
+                matches!(
+                    held,
+                    Ok(CloneCommand::PostCopy(options)) if options.hold_originals
+                ),
+                "{mode}"
+            );
+        } else {
+            assert!(held.is_err(), "{mode}");
+        }
+    }
+}
+
+#[test]
+fn prepare_lock_recovery_requires_explicit_bound_operations() {
     let fixture = Fixture::new();
     let run = Fixture::value(&fixture.run);
     let owner = Fixture::value(&fixture.first);
     let output = fixture.directory.join("prepare-lock.json");
-    let prepare = fixture.parse(&[
-        "post-copy",
-        "--run-dir",
-        run,
-        "--operation",
-        "prepare",
-        "--originals",
-        "held",
-        "--write",
-    ]);
-    if cfg!(windows) {
-        assert!(matches!(
-            prepare,
-            Ok(CloneCommand::PostCopy(options)) if options.hold_originals
-        ));
-    } else {
-        assert!(prepare.is_err());
-    }
-    assert!(
-        fixture
-            .parse(&[
-                "post-copy",
-                "--run-dir",
-                run,
-                "--operation",
-                "schedules",
-                "--originals",
-                "held",
-                "--write"
-            ])
-            .is_err()
-    );
     for (operation, expected) in [
         ("prepare-lock-observe", false),
         ("prepare-lock-observe-interrupted", true),

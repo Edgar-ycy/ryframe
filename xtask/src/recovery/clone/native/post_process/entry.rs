@@ -23,6 +23,11 @@ use serde_json::{Value, json};
 use std::{cell::RefCell, path::Path};
 
 pub(crate) fn run(backend: &Path, options: &PostCopyOptions) -> Result<Value> {
+    if options.hold_originals
+        && !PostCopyOperation::supports_held_originals(options.operation.as_str())
+    {
+        return Err("当前复制后操作不支持持有原件".into());
+    }
     if options.operation == PostCopyOperation::RecoverSession {
         let path = options
             .producer_binding
@@ -61,8 +66,6 @@ impl StageRunner for Runner<'_> {
             || request.mode != self.options.operation.as_str()
             || request.run_dir != self.options.run_dir
             || self.options.producer_binding.is_some()
-            || self.options.hold_originals
-                && (!cfg!(windows) || self.options.operation != PostCopyOperation::Prepare)
         {
             return Err("固定请求阶段参数或生产者绑定不符合正式入口".into());
         }
@@ -138,7 +141,7 @@ impl Runner<'_> {
                 let input = input.as_ref().filter(|v| !v.is_null());
                 #[cfg(windows)]
                 if self.options.hold_originals {
-                    let target = hold_prepare_scope(request, &manifest.value, owner, scope)?;
+                    let target = hold_post_copy_scope(request, &manifest.value, owner, scope)?;
                     return super::runtime::with_held_published_target(
                         request.backend,
                         &target,
@@ -216,7 +219,7 @@ impl Runner<'_> {
 }
 
 #[cfg(windows)]
-fn hold_prepare_scope(
+fn hold_post_copy_scope(
     request: &StageRequest<'_>,
     manifest: &Value,
     owner: &Generation,
@@ -225,8 +228,11 @@ fn hold_prepare_scope(
     use crate::recovery::clone::native::{export, target_verify};
     use target_verify::input::request::{SystemSourceObserver, execution_backend};
 
-    if request.mode != "prepare" || manifest["copy_stage"] != "source_to_seed" {
-        return Err("持有原件只用于 source_to_seed 的复制后准备".into());
+    if request.stage != "post-copy"
+        || !PostCopyOperation::supports_held_originals(request.mode)
+        || manifest["copy_stage"] != "source_to_seed"
+    {
+        return Err("持有原件必须属于受支持的 source_to_seed 复制后阶段".into());
     }
     let source =
         export::input::Context::for_copy(request.backend, request.run_dir, request.run_dir)?;

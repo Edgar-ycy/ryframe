@@ -1,6 +1,4 @@
 //! 复制后与 seed 共享同一持锁事实窗口，沿用原复制和来源证据。
-#[cfg(windows)]
-use crate::recovery::clone::native::target_verify::resume_baseline::HeldPrepareHistory;
 use crate::recovery::fixture_control::source_pair::execution::HeldTargetSource;
 use crate::{
     Result,
@@ -17,6 +15,11 @@ use crate::{
             guard::{Generation, Inputs},
         },
     },
+};
+#[cfg(windows)]
+use crate::{
+    cli::PostCopyOperation,
+    recovery::clone::native::target_verify::resume_baseline::HeldPrepareHistory,
 };
 use serde_json::{Value, json};
 use std::{
@@ -94,7 +97,7 @@ impl<'a> Context<'a> {
         let (source_generation, proof_files) =
             source_proof(request.stage, &source, scope, &session["source_export"])?;
         #[cfg(windows)]
-        let (proof_files, held_source_proofs) = super::source_proofs::for_prepare(
+        let (proof_files, held_source_proofs) = super::source_proofs::for_stage(
             request,
             &manifest["copy_stage"],
             &session["source_export"],
@@ -241,7 +244,11 @@ impl<'a> Context<'a> {
     fn check_protected(&self) -> Result<()> {
         #[cfg(windows)]
         if let Some(held) = &self.held_source_proofs {
-            self.protected.check_identities()?;
+            if self.mode == "prepare" {
+                self.protected.check_identities()?;
+            } else {
+                self.protected.check()?;
+            }
             return held.checkpoint();
         }
         self.protected.check()
@@ -250,11 +257,11 @@ impl<'a> Context<'a> {
     #[cfg(windows)]
     pub(super) fn hold_plan(&mut self) -> Result<()> {
         if self.stage != "post-copy"
-            || self.mode != "prepare"
+            || !PostCopyOperation::supports_held_originals(self.mode)
             || self.manifest["copy_stage"] != "source_to_seed"
             || self.held_plan.is_some()
         {
-            return Err("对象原件持有须在同一 source_to_seed 准备阶段建立一次".into());
+            return Err("对象原件持有须在同一受支持的 source_to_seed 复制后阶段建立一次".into());
         }
         let path = self.copy.join("plan.json");
         let wrapper = document::read(&path)?;
@@ -268,7 +275,7 @@ impl<'a> Context<'a> {
     pub(super) fn check_end(&self) -> Result<()> {
         let checked = self.check();
         #[cfg(windows)]
-        let checked = if self.held_source_proofs.is_some() {
+        let checked = if self.mode == "prepare" && self.held_source_proofs.is_some() {
             super::files::combine(checked, self.protected.check())
         } else {
             checked
@@ -532,7 +539,7 @@ fn registered(
     let ((initial, target), held_prepare_history) = match held_storage {
         Some(storage)
             if request.stage == "post-copy"
-                && request.mode == "prepare"
+                && PostCopyOperation::supports_held_originals(request.mode)
                 && manifest["copy_stage"] == "source_to_seed" =>
         {
             target_verify::published::open_prepare_history(backend, &initialized, owner, storage)?

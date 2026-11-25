@@ -34,10 +34,10 @@ pub(super) fn parse_post_copy(args: &[String]) -> Result<CloneCommand, CliError>
     require_write("post-copy", &options, operation.effect().requires_write())?;
     let hold_originals = match options.values.get("--originals").map(String::as_str) {
         None => false,
-        Some("held") if cfg!(windows) && operation == PostCopyOperation::Prepare => true,
+        Some("held") if PostCopyOperation::supports_held_originals(operation.as_str()) => true,
         Some(_) => {
             return Err(CliError::new(
-                "--originals held 仅适用于 Windows post-copy prepare",
+                "--originals held 仅适用于 Windows post-copy prepare、schedules 和 verify",
             ));
         }
     };

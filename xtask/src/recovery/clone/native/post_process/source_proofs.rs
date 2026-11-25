@@ -1,4 +1,4 @@
-//! 同一 prepare 窗口内持有导出根及已核验的静态证明文件。
+//! 同一复制后阶段内持有导出根及已核验的静态证明文件。
 use std::{
     collections::BTreeSet,
     path::{Path, PathBuf},
@@ -9,13 +9,14 @@ use serde_json::{Map, Value};
 use super::files;
 use crate::{
     Result,
+    cli::PostCopyOperation,
     recovery::clone::native::{
         json as document, lifecycle::stage::StageRequest, resources::common,
         target_verify::guard::BackupInputs,
     },
 };
 
-pub(super) fn for_prepare(
+pub(super) fn for_stage(
     request: &StageRequest<'_>,
     copy_stage: &Value,
     export: &Value,
@@ -25,8 +26,11 @@ pub(super) fn for_prepare(
     if !enabled {
         return Ok((proof_files, None));
     }
-    if request.stage != "post-copy" || request.mode != "prepare" || copy_stage != "source_to_seed" {
-        return Err("持有导出证明只适用于 source_to_seed 复制后准备".into());
+    if request.stage != "post-copy"
+        || !PostCopyOperation::supports_held_originals(request.mode)
+        || copy_stage != "source_to_seed"
+    {
+        return Err("持有导出证明必须属于受支持的 source_to_seed 复制后阶段".into());
     }
     let (held, outside) = HeldSourceProofs::open(request.backend, export, proof_files)?;
     Ok((outside, Some(held)))
