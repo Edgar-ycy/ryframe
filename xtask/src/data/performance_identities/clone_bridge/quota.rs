@@ -1,3 +1,4 @@
+use super::super::state;
 use super::model;
 use crate::{
     Result,
@@ -238,7 +239,7 @@ fn validate_identity(plan: &Value, identity: &Value) -> Result<()> {
         &["subject_id", "tenant_id", "username", "client_address"],
         "配额身份",
     )?;
-    model::decimal(model::text(identity, "subject_id")?).ok_or("配额主体 ID 无效")?;
+    state::id(&identity["subject_id"]).map_err(|_| "配额主体 ID 无效")?;
     if identity["tenant_id"] != "system" {
         return Err("配额只能使用系统管理员".into());
     }

@@ -1,3 +1,4 @@
+use super::super::state;
 use super::model;
 use crate::{
     Result,
@@ -158,8 +159,7 @@ impl Controller {
             &["id", "operation", "tenant_id", "department_id"],
             "部门详情请求",
         )?;
-        let id = model::text(request, "department_id")?;
-        model::decimal(id).ok_or("部门详情 ID 无效")?;
+        let id = state::id(&request["department_id"]).map_err(|_| "部门详情 ID 无效")?;
         let entry = self.session(tenant, false).await?;
         let response = entry
             .session
@@ -196,11 +196,7 @@ impl Controller {
                 "operation":"post_system_depts", "body":request["body"], "idempotency_key":key
             }))
             .await?;
-        validate_detail(
-            &response,
-            &name,
-            response["data"]["id"].as_str().unwrap_or(""),
-        )?;
+        validate_created_department(&response, &name)?;
         Ok(json!({"response":response,"authorization":entry.authorization}))
     }
 
@@ -307,7 +303,7 @@ fn targets(plan: &Value, identities: &Value) -> Result<(BTreeMap<String, Target>
             ],
             "部门模板身份",
         )?;
-        let subject = model::text(identity, "subject_id")?;
+        let subject = state::id(&identity["subject_id"]).map_err(|_| "部门模板主体 ID 无效")?;
         if tenant["slot"] != slot
             || group["slot"] != slot
             || group["kind"] != "tenant"
@@ -321,7 +317,6 @@ fn targets(plan: &Value, identities: &Value) -> Result<(BTreeMap<String, Target>
             || identity["username"] != user["username"]
             || identity["credential_slot"] != user["credential_slot"]
             || identity["client_address"] != user["client_address"]
-            || model::decimal(subject).is_none()
             || !subjects.insert(subject.to_owned())
         {
             return Err("部门租户、身份组或模板主体不一致".into());
@@ -350,7 +345,7 @@ fn validate_system_identity(plan: &Value, identity: &Value) -> Result<()> {
         &["subject_id", "tenant_id", "username", "client_address"],
         "系统准备身份",
     )?;
-    model::decimal(model::text(identity, "subject_id")?).ok_or("系统准备主体 ID 无效")?;
+    state::id(&identity["subject_id"]).map_err(|_| "系统准备主体 ID 无效")?;
     for field in ["tenant_id", "username", "client_address"] {
         if identity[field] != plan["environment"]["system_admin"][field] {
             return Err("系统准备身份不同于计划".into());
@@ -437,12 +432,10 @@ fn validate_list(response: &Value, name: &str) -> Result<usize> {
 
 fn validate_record(value: &Value) -> Result<()> {
     model::exact(value, &RECORD_FIELDS, "部门响应")?;
-    model::decimal(model::text(value, "id")?).ok_or("部门 ID 无效")?;
+    state::id(&value["id"]).map_err(|_| "部门 ID 无效")?;
+    let parent = &value["parent_id"];
     if value["name"].as_str().is_none_or(str::is_empty)
-        || value["parent_id"]
-            .as_str()
-            .is_some_and(|id| model::decimal(id).is_none())
-        || !value["parent_id"].is_null() && !value["parent_id"].is_string()
+        || (!parent.is_null() && state::id(parent).is_err())
         || !value["ancestors"].is_string()
         || !value["sort"].is_i64()
         || !value["status"].is_string()
@@ -454,12 +447,10 @@ fn validate_record(value: &Value) -> Result<()> {
     Ok(())
 }
 
-fn validate_detail(response: &Value, name: &str, id: &str) -> Result<()> {
-    model::decimal(id).ok_or("部门详情 ID 无效")?;
+fn validate_created_department(response: &Value, name: &str) -> Result<()> {
     let item = &response["data"];
     validate_record(item)?;
     if response["code"] != 200
-        || item["id"] != id
         || item["name"] != name
         || !item["parent_id"].is_null()
         || item["ancestors"] != "0"

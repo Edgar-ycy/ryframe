@@ -1,4 +1,4 @@
-use super::super::{plan, producer_authorization};
+use super::super::{plan, producer_authorization, state};
 use crate::{
     Result,
     recovery::clone::native::{digest, json as document},
@@ -62,7 +62,7 @@ impl Registration {
         }
         let value = |key| values.get(key).copied().ok_or("身份桥接参数缺失");
         let attempt = value("--attempt")?;
-        let attempt = decimal(attempt).ok_or("身份桥接 attempt 无效")?;
+        let attempt = attempt_number(attempt).ok_or("身份桥接 attempt 无效")?;
         let mode = value(if family == "quota" {
             "--quota-mode"
         } else {
@@ -185,7 +185,7 @@ pub(super) fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
         .ok_or_else(|| format!("{key} 必须为字符串").into())
 }
 
-pub(super) fn decimal(value: &str) -> Option<u64> {
+fn attempt_number(value: &str) -> Option<u64> {
     if value.is_empty()
         || value.starts_with('0')
         || !value.bytes().all(|byte| byte.is_ascii_digit())
@@ -212,8 +212,7 @@ pub(super) fn authorization(
     wildcard: bool,
 ) -> Result<Value> {
     let auth = &response["data"];
-    let subject = text(&auth["user"], "id")?;
-    decimal(subject).ok_or("授权主体 ID 无效")?;
+    let subject = state::id(&auth["user"]["id"]).map_err(|_| "授权主体 ID 无效")?;
     for (source, target) in [("tenant_id", "tenant_id"), ("username", "username")] {
         if auth["user"][target] != identity[source] {
             return Err("授权主体不同".into());

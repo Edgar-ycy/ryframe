@@ -1,4 +1,4 @@
-use super::{department, quota};
+use super::{department, model, quota};
 use crate::Result;
 use crate::data::performance_identities::{
     evidence,
@@ -12,6 +12,8 @@ use std::{
     path::Path,
     rc::Rc,
 };
+
+const SYSTEM_SUBJECT: &str = "9007199254740992";
 
 #[derive(Default)]
 struct Observed {
@@ -163,7 +165,7 @@ fn quota_controller_keeps_full_before_image_rotates_token_and_blocks_replay() {
             quota::Controller::new("apply".into(), plan, Box::new(context), &request)
                 .await
                 .unwrap();
-        assert_eq!(receipt["subject_id"], "1");
+        assert_eq!(receipt["subject_id"], SYSTEM_SUBJECT);
         controller
             .execute(&json!({"id":2,"operation":"get","tenant_id":"system"}))
             .await
@@ -181,10 +183,16 @@ fn department_controller_uses_fixed_tenant_subject_and_validates_template_bytes(
     runtime().block_on(async {
         let plan = plan();
         let admin = plan["groups"][1]["admin"].clone();
-        let template = template_identities(&plan)[0].clone();
+        let identities = template_identities(&plan);
+        let template = identities[0].clone();
         let name = "dv-process-import";
-        let record = json!({"id":"20","name":name,"parent_id":null,"ancestors":"0",
+        let root_id = "9223372036854775807";
+        let child_id = "1000000000000000200";
+        let record = json!({"id":root_id,"name":name,"parent_id":null,"ancestors":"0",
             "sort":0,"status":"1","remark":null,"created_at":"2026-01-01T00:00:00Z"});
+        let mut child = record.clone();
+        child["id"] = json!(child_id);
+        child["parent_id"] = json!(root_id);
         let bytes = b"xlsx";
         let template_response = json!({
             "base64":base64::engine::general_purpose::STANDARD.encode(bytes),
@@ -203,6 +211,10 @@ fn department_controller_uses_fixed_tenant_subject_and_validates_template_bytes(
                         ("get_auth_context", vec![owner_auth]),
                         ("get_system_depts", vec![empty_departments()]),
                         ("post_system_depts", vec![json!({"code":200,"data":record})]),
+                        (
+                            "get_system_depts_by_id",
+                            vec![json!({"code":200,"data":child})],
+                        ),
                     ],
                     Value::Null,
                 ),
@@ -217,24 +229,74 @@ fn department_controller_uses_fixed_tenant_subject_and_validates_template_bytes(
         let request = initialization(&plan, system_identity(&plan), false);
         let (mut controller, receipt) =
             department::Controller::new("apply".into(), plan, Box::new(context), &request).unwrap();
-        assert_eq!(receipt["template_principals"].as_array().unwrap().len(), 10);
+        let principals = receipt["template_principals"].as_array().unwrap();
+        assert_eq!(principals.len(), 10);
+        for (principal, registered) in principals.iter().zip(&identities) {
+            assert_eq!(principal["subject_id"], registered["subject_id"]);
+        }
         controller
             .execute(&json!({"id":2,"operation":"list","tenant_id":"tenant-1","name":name}))
             .await
             .unwrap();
-        controller
+        let created = controller
             .execute(&json!({"id":3,"operation":"create","tenant_id":"tenant-1",
                 "body":{"name":name,"parent_id":null,"sort":0},
                 "idempotency_key":"12345678-1234-4abc-8def-1234567890ab"}))
             .await
             .unwrap();
-        controller
-            .execute(&json!({"id":4,"operation":"template","tenant_id":"tenant-1"}))
+        assert_eq!(created["response"]["data"]["id"], root_id);
+        assert!(created["response"]["data"]["parent_id"].is_null());
+        let detail = controller
+            .execute(&json!({"id":4,"operation":"detail","tenant_id":"tenant-1",
+                "department_id":child_id}))
             .await
             .unwrap();
+        assert_eq!(detail["response"]["data"]["id"], child_id);
+        assert_eq!(detail["response"]["data"]["parent_id"], root_id);
+        let template_response = controller
+            .execute(&json!({"id":5,"operation":"template","tenant_id":"tenant-1"}))
+            .await
+            .unwrap();
+        assert_eq!(
+            template_response["authorization"]["subject_id"],
+            identities[0]["subject_id"]
+        );
         controller.close().await.unwrap();
         assert_eq!(observed.borrow().closed, 2);
+        assert!(observed.borrow().requests.iter().any(|request| {
+            request["operation"] == "get_system_depts_by_id" && request["path"]["id"] == child_id
+        }));
     });
+}
+
+#[test]
+fn department_bridge_rejects_noncanonical_snowflakes_and_a_different_subject() {
+    let plan = plan();
+    let mut request = initialization(&plan, system_identity(&plan), false);
+    for invalid in [
+        json!(1_000_000_000_000_000_000_u64),
+        json!("0"),
+        json!("01"),
+        json!("１２"),
+        json!("9223372036854775808"),
+    ] {
+        request["template_identities"][0]["subject_id"] = invalid;
+        let context = Box::new(FakeContext {
+            scripts: VecDeque::new(),
+            observed: Rc::new(RefCell::new(Observed::default())),
+        });
+        assert!(
+            department::Controller::new("plan".into(), plan.clone(), context, &request).is_err()
+        );
+    }
+
+    let identity = &template_identities(&plan)[0];
+    let mut auth = authorization(identity, false, &["system:user-import:add"]);
+    auth["data"]["user"]["id"] = json!("1000000000000000001");
+    let error = model::authorization(&auth, identity, &["system:user-import:add"], false)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("授权主体 ID 不同"), "{error}");
 }
 
 fn script<const N: usize>(
@@ -303,7 +365,8 @@ fn template_identities(plan: &Value) -> Vec<Value> {
         .enumerate()
         .map(|(index, group)| {
             let user = &group["users"][0];
-            json!({"subject_id":(index + 10).to_string(),"tenant_id":group["tenant_id"],
+            json!({"subject_id":(1_000_000_000_000_000_000_u64 + index as u64).to_string(),
+                "tenant_id":group["tenant_id"],
                 "username":user["username"],"credential_slot":user["credential_slot"],
                 "client_address":user["client_address"]})
         })
@@ -311,7 +374,7 @@ fn template_identities(plan: &Value) -> Vec<Value> {
 }
 
 fn system_identity(plan: &Value) -> Value {
-    json!({"subject_id":"1","tenant_id":plan["environment"]["system_admin"]["tenant_id"],
+    json!({"subject_id":SYSTEM_SUBJECT,"tenant_id":plan["environment"]["system_admin"]["tenant_id"],
         "username":plan["environment"]["system_admin"]["username"],
         "client_address":plan["environment"]["system_admin"]["client_address"]})
 }
