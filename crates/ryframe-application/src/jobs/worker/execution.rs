@@ -60,7 +60,13 @@ impl JobWorker {
             return self.reject_unregistered_job(&job, worker_id).await;
         };
 
-        let span = tracing::info_span!("background_job", job_type = %job.job_type);
+        let span = tracing::info_span!(
+            "background_job",
+            job_type = %job.job_type,
+            job_id = %job.id,
+            claim_sequence = job.claim_sequence,
+            outcome = tracing::field::Empty,
+        );
         crate::trace_context::set_parent(
             &span,
             job.traceparent.as_deref(),
@@ -74,7 +80,7 @@ impl JobWorker {
             attempts: job.attempts,
             max_attempts: job.max_attempts,
         };
-        async {
+        let result = async {
             let heartbeat_queue = self.queue.clone();
             let heartbeat_worker_id = worker_id.to_owned();
             let heartbeat_job_id = job.id;
@@ -140,8 +146,10 @@ impl JobWorker {
                 }
             }
         }
-        .instrument(span)
-        .await
+        .instrument(span.clone())
+        .await;
+        span.record("outcome", job_run_result_label(&result));
+        result
     }
 }
 
