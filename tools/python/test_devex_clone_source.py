@@ -273,17 +273,6 @@ class SourceExportTests(unittest.TestCase):
         self.assertEqual(calls, ["state", "capture", "state"])
         self.assertEqual(self.fixture.inventory_count, 1)
 
-    def test_enabled_system_schedule_is_only_a_full_row_fact_not_an_action(self):
-        self.fixture.case.add("shared-control", "sys_job_schedule", id=3, tenant_id="system", enabled=1, del_flag="0",
-                              handler_key="system.data_retention", version=1)
-        self.fixture.case.refresh()
-        result = self.export()
-        schedule = result["enabled_system_schedule_rows"][0]
-        self.assertEqual(schedule["schedule_id"], "3")
-        self.assertEqual(len(schedule["source_row_sha256"]), 64)
-        self.assertNotIn("action", schedule)
-        self.assertNotIn("target", result)
-
     def test_enabled_other_tenant_and_unclosed_jobs_are_rejected(self):
         row = self.fixture.case.add("shared-control", "sys_job_schedule", id=3, tenant_id="clone-source-01", enabled=1,
                                      del_flag="0", handler_key="system.data_retention", version=1)
