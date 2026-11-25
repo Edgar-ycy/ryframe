@@ -1,5 +1,8 @@
 use chrono::{DateTime, Utc};
+use ryframe_application::ports::utc_timestamp;
+use ryframe_kernel::{AppError, AppResult};
 use serde::Serialize;
+use time::OffsetDateTime;
 use utoipa::ToSchema;
 
 use ryframe_application::system::operations::ExportJobVo as ServiceExportJobVo;
@@ -13,25 +16,39 @@ use ryframe_application::{
 pub struct BackgroundJobVo {
     pub id: String,
     pub schedule_id: Option<String>,
-    pub scheduled_for: Option<DateTime<Utc>>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub scheduled_for: Option<OffsetDateTime>,
     pub max_runtime_seconds: Option<i32>,
     pub job_type: String,
     pub status: String,
     pub priority: i32,
-    pub available_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub available_at: OffsetDateTime,
     pub attempts: i32,
     pub max_attempts: i32,
     pub lease_owner: Option<String>,
-    pub lease_until: Option<DateTime<Utc>>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub lease_until: Option<OffsetDateTime>,
     pub dedupe_key: Option<String>,
     pub last_error: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub completed_at: Option<DateTime<Utc>>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub created_at: OffsetDateTime,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub updated_at: OffsetDateTime,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub completed_at: Option<OffsetDateTime>,
 }
 
-impl From<ServiceBackgroundJobVo> for BackgroundJobVo {
-    fn from(value: ServiceBackgroundJobVo) -> Self {
+impl TryFrom<ServiceBackgroundJobVo> for BackgroundJobVo {
+    type Error = AppError;
+
+    fn try_from(value: ServiceBackgroundJobVo) -> AppResult<Self> {
         let ServiceBackgroundJobVo {
             id,
             schedule_id,
@@ -51,25 +68,36 @@ impl From<ServiceBackgroundJobVo> for BackgroundJobVo {
             updated_at,
             completed_at,
         } = value;
-        Self {
+        let to_utc = |timestamp, field| {
+            utc_timestamp::from_chrono(timestamp).map_err(|_| {
+                AppError::Internal(format!("后台任务响应的 {field} 无法精确表示为 UTC"))
+            })
+        };
+        Ok(Self {
             id,
             schedule_id,
-            scheduled_for,
+            scheduled_for: scheduled_for
+                .map(|timestamp| to_utc(timestamp, "scheduled_for"))
+                .transpose()?,
             max_runtime_seconds,
             job_type,
             status,
             priority,
-            available_at,
+            available_at: to_utc(available_at, "available_at")?,
             attempts,
             max_attempts,
             lease_owner,
-            lease_until,
+            lease_until: lease_until
+                .map(|timestamp| to_utc(timestamp, "lease_until"))
+                .transpose()?,
             dedupe_key,
             last_error,
-            created_at,
-            updated_at,
-            completed_at,
-        }
+            created_at: to_utc(created_at, "created_at")?,
+            updated_at: to_utc(updated_at, "updated_at")?,
+            completed_at: completed_at
+                .map(|timestamp| to_utc(timestamp, "completed_at"))
+                .transpose()?,
+        })
     }
 }
 

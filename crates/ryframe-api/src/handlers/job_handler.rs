@@ -47,17 +47,19 @@ async fn list(
         )
         .await
         .map_err(crate::http::HttpAppError::from)
-        .map(|page| {
-            Json(ApiPageResponse::page(
-                page.records
-                    .into_iter()
-                    .map(BackgroundJobVo::from)
-                    .collect(),
+        .and_then(|page| {
+            let records = page
+                .records
+                .into_iter()
+                .map(BackgroundJobVo::try_from)
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(Json(ApiPageResponse::page(
+                records,
                 page.total,
                 page.page,
                 page.page_size,
                 state.settings.pagination.max_page_size(),
-            ))
+            )))
         })
 }
 
@@ -105,7 +107,8 @@ async fn retry_dead(
         .job_queue
         .retry_dead_for_tenant(&current_user, parse_positive_id(&id, INVALID_JOB_ID)?)
         .await
+        .and_then(BackgroundJobVo::try_from)
         .map_err(crate::http::HttpAppError::from)
-        .map(|job| ApiResponse::success(job.into()))
+        .map(ApiResponse::success)
         .map(Json)
 }

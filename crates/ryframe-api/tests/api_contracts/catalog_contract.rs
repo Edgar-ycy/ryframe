@@ -313,6 +313,100 @@ fn tenant_backup_points_preserve_utc_precision_nullability_and_schema() {
 }
 
 #[test]
+fn background_job_response_preserves_utc_precision_nullability_and_schema() {
+    use chrono::{DateTime, Utc};
+    use ryframe_api::dto::public_dto::BackgroundJobVo;
+    use ryframe_application::BackgroundJobVo as ServiceJob;
+    use ryframe_kernel::AppError;
+    use serde_json::{Value, json};
+    use utoipa::PartialSchema;
+
+    let epoch = DateTime::from_timestamp(0, 0).unwrap();
+    let mut job = ServiceJob {
+        id: "42".into(),
+        schedule_id: Some("9".into()),
+        scheduled_for: None,
+        max_runtime_seconds: Some(60),
+        job_type: "fixture.job".into(),
+        status: "pending".into(),
+        priority: 10,
+        available_at: epoch,
+        attempts: 0,
+        max_attempts: 3,
+        lease_owner: Some("worker-fixture".into()),
+        lease_until: None,
+        dedupe_key: Some("dedupe-fixture".into()),
+        last_error: Some("已脱敏".into()),
+        created_at: epoch,
+        updated_at: epoch,
+        completed_at: None,
+    };
+
+    for (nanos, fraction) in [
+        (0, ""),
+        (120_000_000, ".120"),
+        (123_400_000, ".123400"),
+        (123_456_700, ".123456700"),
+    ] {
+        job.scheduled_for = DateTime::from_timestamp(-2, nanos);
+        job.available_at = DateTime::from_timestamp(-1, nanos).unwrap();
+        job.lease_until = DateTime::from_timestamp(4, nanos);
+        job.created_at = DateTime::from_timestamp(-3, nanos).unwrap();
+        job.updated_at = DateTime::from_timestamp(1, nanos).unwrap();
+        job.completed_at = DateTime::from_timestamp(2, nanos);
+        let expected = serde_json::to_value(&job).unwrap();
+        let encoded =
+            serde_json::to_string(&BackgroundJobVo::try_from(job.clone()).unwrap()).unwrap();
+        let response: Value = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(response, expected);
+        assert_eq!(
+            response["available_at"],
+            format!("1969-12-31T23:59:59{fraction}Z")
+        );
+        assert!(response.get("payload").is_none());
+    }
+
+    job.scheduled_for = None;
+    job.lease_until = None;
+    job.completed_at = None;
+    job.created_at = DateTime::parse_from_rfc3339("1000-01-01T00:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    job.updated_at = DateTime::parse_from_rfc3339("9999-12-31T23:59:59.499999Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let response = serde_json::to_value(BackgroundJobVo::try_from(job.clone()).unwrap()).unwrap();
+    assert_eq!(response, serde_json::to_value(&job).unwrap());
+    for field in ["scheduled_for", "lease_until", "completed_at"] {
+        assert_eq!(response.get(field), Some(&Value::Null));
+    }
+
+    let schema = serde_json::to_value(BackgroundJobVo::schema()).unwrap();
+    let required = schema["required"].as_array().unwrap();
+    for field in ["available_at", "created_at", "updated_at"] {
+        assert_eq!(
+            schema["properties"][field],
+            json!({"type":"string","format":"date-time"})
+        );
+        assert!(required.contains(&json!(field)));
+    }
+    for field in ["scheduled_for", "lease_until", "completed_at"] {
+        assert_eq!(
+            schema["properties"][field],
+            json!({"type":["string","null"],"format":"date-time"})
+        );
+        assert!(!required.contains(&json!(field)));
+    }
+    assert!(schema["properties"].get("payload").is_none());
+
+    job.lease_until = DateTime::from_timestamp(-1, 1_123_456_000);
+    assert!(matches!(
+        BackgroundJobVo::try_from(job),
+        Err(AppError::Internal(message)) if message.contains("lease_until")
+    ));
+}
+
+#[test]
 fn product_plan_version_response_preserves_published_at_utc_and_schema() {
     use ryframe_api::dto::product_dto::ProductPlanVersionVo;
     use ryframe_application::system::platform::ProductPlanVersionVo as ServiceVersion;
