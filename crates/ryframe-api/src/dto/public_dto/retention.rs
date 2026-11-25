@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Utc};
 use ryframe_application::ports::utc_timestamp;
 use ryframe_application::system::operations::{
-    DataRetentionOverview as ServiceOverview, DataRetentionPolicy as ServicePolicy,
-    DataRetentionPreview as ServicePreview, DataRetentionRunVo as ServiceRun,
+    DataRetentionCutoffVo as ServiceCutoff, DataRetentionOverview as ServiceOverview,
+    DataRetentionPolicy as ServicePolicy, DataRetentionPreview as ServicePreview,
+    DataRetentionRunVo as ServiceRun,
 };
+use ryframe_kernel::{AppError, AppResult};
 use serde::Serialize;
 use serde_json::Value;
 use time::OffsetDateTime;
@@ -55,57 +56,79 @@ impl From<ServicePolicy> for DataRetentionPolicy {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct DataRetentionCutoff {
     pub resource: String,
-    pub before: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub before: OffsetDateTime,
+}
+
+impl TryFrom<ServiceCutoff> for DataRetentionCutoff {
+    type Error = AppError;
+
+    fn try_from(value: ServiceCutoff) -> AppResult<Self> {
+        Ok(Self {
+            resource: value.resource,
+            before: utc_timestamp::from_chrono(value.before)
+                .map_err(|_| retention_utc_error("before"))?,
+        })
+    }
 }
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct DataRetentionOverview {
-    pub calculated_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub calculated_at: OffsetDateTime,
     pub policy: DataRetentionPolicy,
     pub cutoffs: Vec<DataRetentionCutoff>,
 }
 
-impl From<ServiceOverview> for DataRetentionOverview {
-    fn from(value: ServiceOverview) -> Self {
-        Self {
-            calculated_at: value.calculated_at,
+impl TryFrom<ServiceOverview> for DataRetentionOverview {
+    type Error = AppError;
+
+    fn try_from(value: ServiceOverview) -> AppResult<Self> {
+        Ok(Self {
+            calculated_at: utc_timestamp::from_chrono(value.calculated_at)
+                .map_err(|_| retention_utc_error("calculated_at"))?,
             policy: value.policy.into(),
             cutoffs: value
                 .cutoffs
                 .into_iter()
-                .map(|cutoff| DataRetentionCutoff {
-                    resource: cutoff.resource,
-                    before: cutoff.before,
-                })
-                .collect(),
-        }
+                .map(DataRetentionCutoff::try_from)
+                .collect::<AppResult<_>>()?,
+        })
     }
 }
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct DataRetentionPreview {
-    pub calculated_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub calculated_at: OffsetDateTime,
     pub policy: DataRetentionPolicy,
     pub cutoffs: Vec<DataRetentionCutoff>,
     pub eligible_counts: BTreeMap<String, u64>,
 }
 
-impl From<ServicePreview> for DataRetentionPreview {
-    fn from(value: ServicePreview) -> Self {
-        Self {
-            calculated_at: value.calculated_at,
+impl TryFrom<ServicePreview> for DataRetentionPreview {
+    type Error = AppError;
+
+    fn try_from(value: ServicePreview) -> AppResult<Self> {
+        Ok(Self {
+            calculated_at: utc_timestamp::from_chrono(value.calculated_at)
+                .map_err(|_| retention_utc_error("calculated_at"))?,
             policy: value.policy.into(),
             cutoffs: value
                 .cutoffs
                 .into_iter()
-                .map(|cutoff| DataRetentionCutoff {
-                    resource: cutoff.resource,
-                    before: cutoff.before,
-                })
-                .collect(),
+                .map(DataRetentionCutoff::try_from)
+                .collect::<AppResult<_>>()?,
             eligible_counts: value.eligible_counts,
-        }
+        })
     }
+}
+
+fn retention_utc_error(field: &str) -> AppError {
+    AppError::Internal(format!("数据保留响应的 {field} 无法精确表示为 UTC"))
 }
 
 #[derive(Debug, Serialize, ToSchema)]

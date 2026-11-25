@@ -41,8 +41,8 @@ async fn overview(
         .data_retention
         .overview(&current_user)
         .await
+        .and_then(DataRetentionOverview::try_from)
         .map_err(crate::http::HttpAppError::from)
-        .map(DataRetentionOverview::from)
         .map(ApiResponse::success)
         .map(Json)
 }
@@ -64,8 +64,8 @@ async fn preview(
         .data_retention
         .preview(&current_user)
         .await
+        .and_then(DataRetentionPreview::try_from)
         .map_err(crate::http::HttpAppError::from)
-        .map(DataRetentionPreview::from)
         .map(ApiResponse::success)
         .map(Json)
 }

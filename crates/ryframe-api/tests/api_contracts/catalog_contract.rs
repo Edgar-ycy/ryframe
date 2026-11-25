@@ -84,6 +84,125 @@ fn message_response_preserves_utc_precision_null_and_schema() {
 }
 
 #[test]
+fn data_retention_overview_and_preview_preserve_utc_json_and_schema() {
+    use std::collections::BTreeMap;
+
+    use chrono::DateTime;
+    use ryframe_api::dto::public_dto::{
+        DataRetentionCutoff, DataRetentionOverview, DataRetentionPreview,
+    };
+    use ryframe_application::system::operations::{
+        DataRetentionCutoffVo as ServiceCutoff, DataRetentionOverview as ServiceOverview,
+        DataRetentionPolicy, DataRetentionPreview as ServicePreview,
+    };
+    use ryframe_kernel::AppError;
+    use serde_json::{json, to_value};
+    use utoipa::PartialSchema;
+
+    let policy = DataRetentionPolicy {
+        cleanup_batch_size: 100,
+        max_rows_per_resource_per_run: 1_000,
+        background_job_succeeded_days: 30,
+        outbox_published_days: 30,
+        schedule_execution_days: 30,
+        export_job_history_days: 30,
+        operation_log_days: 90,
+        login_log_days: 90,
+        user_import_history_days: 30,
+        user_import_artifact_hours: 24,
+        tenant_config_artifact_hours: 24,
+        tenant_config_rollback_hours: 24,
+        retention_run_days: 90,
+        dead_background_jobs_permanent: true,
+        dead_outbox_events_permanent: true,
+    };
+    let cutoff = |before| ServiceCutoff {
+        resource: "background_jobs".into(),
+        before,
+    };
+    for (nanos, fraction) in [
+        (0, ""),
+        (120_000_000, ".120"),
+        (123_400_000, ".123400"),
+        (123_456_700, ".123456700"),
+    ] {
+        let calculated_at = DateTime::from_timestamp(-1, nanos).unwrap();
+        let before = DateTime::from_timestamp(-2, nanos).unwrap();
+        let overview = ServiceOverview {
+            calculated_at,
+            policy,
+            cutoffs: vec![cutoff(before)],
+        };
+        let preview = ServicePreview {
+            calculated_at,
+            policy,
+            cutoffs: vec![cutoff(before)],
+            eligible_counts: BTreeMap::from([("background_jobs".into(), 3)]),
+        };
+        let old_overview = to_value(&overview).unwrap();
+        let old_preview = to_value(&preview).unwrap();
+        let overview = to_value(DataRetentionOverview::try_from(overview).unwrap()).unwrap();
+        let preview = to_value(DataRetentionPreview::try_from(preview).unwrap()).unwrap();
+        assert_eq!(overview, old_overview);
+        assert_eq!(preview, old_preview);
+        for response in [overview, preview] {
+            assert_eq!(
+                response["calculated_at"],
+                format!("1969-12-31T23:59:59{fraction}Z")
+            );
+            assert_eq!(
+                response["cutoffs"][0]["before"],
+                format!("1969-12-31T23:59:58{fraction}Z")
+            );
+        }
+    }
+
+    for (schema, field) in [
+        (to_value(DataRetentionCutoff::schema()).unwrap(), "before"),
+        (
+            to_value(DataRetentionOverview::schema()).unwrap(),
+            "calculated_at",
+        ),
+        (
+            to_value(DataRetentionPreview::schema()).unwrap(),
+            "calculated_at",
+        ),
+    ] {
+        assert_eq!(
+            schema["properties"][field],
+            json!({"type":"string","format":"date-time"})
+        );
+        assert!(
+            schema["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(field))
+        );
+    }
+
+    let leap = DateTime::from_timestamp(-1, 1_123_456_000).unwrap();
+    let overview = ServiceOverview {
+        calculated_at: leap,
+        policy,
+        cutoffs: Vec::new(),
+    };
+    assert!(matches!(
+        DataRetentionOverview::try_from(overview),
+        Err(AppError::Internal(message)) if message.contains("calculated_at")
+    ));
+    let preview = ServicePreview {
+        calculated_at: DateTime::from_timestamp(0, 0).unwrap(),
+        policy,
+        cutoffs: vec![cutoff(leap)],
+        eligible_counts: BTreeMap::new(),
+    };
+    assert!(matches!(
+        DataRetentionPreview::try_from(preview),
+        Err(AppError::Internal(message)) if message.contains("before")
+    ));
+}
+
+#[test]
 fn product_plan_version_response_preserves_published_at_utc_and_schema() {
     use ryframe_api::dto::product_dto::ProductPlanVersionVo;
     use ryframe_application::system::platform::ProductPlanVersionVo as ServiceVersion;
