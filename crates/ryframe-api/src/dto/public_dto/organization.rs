@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use ryframe_kernel::AppError;
 use serde::Serialize;
 use time::OffsetDateTime;
 use utoipa::ToSchema;
@@ -293,15 +293,19 @@ pub struct TenantVo {
     pub name: String,
     pub domain: Option<String>,
     pub status: String,
-    pub expire_at: Option<DateTime<Utc>>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub expire_at: Option<OffsetDateTime>,
     pub max_users: i32,
     pub max_roles: i32,
     pub max_storage_mb: i64,
     pub max_requests_per_min: i32,
 }
 
-impl From<ServiceTenantVo> for TenantVo {
-    fn from(value: ServiceTenantVo) -> Self {
+impl TryFrom<ServiceTenantVo> for TenantVo {
+    type Error = AppError;
+
+    fn try_from(value: ServiceTenantVo) -> Result<Self, Self::Error> {
         let ServiceTenantVo {
             tenant_id,
             name,
@@ -313,7 +317,11 @@ impl From<ServiceTenantVo> for TenantVo {
             max_storage_mb,
             max_requests_per_min,
         } = value;
-        Self {
+        let expire_at = expire_at
+            .map(utc_timestamp::from_chrono)
+            .transpose()
+            .map_err(|_| AppError::Internal("租户响应的 expire_at 无法精确表示为 UTC".into()))?;
+        Ok(Self {
             tenant_id,
             name,
             domain,
@@ -323,6 +331,6 @@ impl From<ServiceTenantVo> for TenantVo {
             max_roles,
             max_storage_mb,
             max_requests_per_min,
-        }
+        })
     }
 }

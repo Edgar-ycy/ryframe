@@ -1,13 +1,15 @@
-use chrono::{DateTime, Utc};
 use ryframe_application::ports::utc_timestamp;
 use ryframe_application::system::platform::{
     QuotaUsage as ServiceQuotaUsage, RequestWindowUsage as ServiceRequestWindowUsage,
     TenantAuxiliaryUsage as ServiceTenantAuxiliaryUsage,
     TenantCapacityVo as ServiceTenantCapacityVo, TenantUsageVo as ServiceTenantUsageVo,
 };
+use ryframe_kernel::AppError;
 use serde::Serialize;
 use time::OffsetDateTime;
 use utoipa::ToSchema;
+
+use super::organization::TenantVo;
 
 /// 单项租户配额用量。
 #[derive(Debug, Serialize, ToSchema)]
@@ -116,7 +118,9 @@ pub struct TenantCapacityVo {
     pub domain: Option<String>,
     /// 对外统一使用 `enabled` 或 `disabled`。
     pub status: String,
-    pub expire_at: Option<DateTime<Utc>>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub expire_at: Option<OffsetDateTime>,
     pub max_users: i32,
     pub max_roles: i32,
     pub max_storage_mb: i64,
@@ -128,10 +132,12 @@ pub struct TenantCapacityVo {
     pub usage: Option<TenantUsageVo>,
 }
 
-impl From<ServiceTenantCapacityVo> for TenantCapacityVo {
-    fn from(value: ServiceTenantCapacityVo) -> Self {
-        let tenant = value.tenant;
-        Self {
+impl TryFrom<ServiceTenantCapacityVo> for TenantCapacityVo {
+    type Error = AppError;
+
+    fn try_from(value: ServiceTenantCapacityVo) -> Result<Self, Self::Error> {
+        let tenant = TenantVo::try_from(value.tenant)?;
+        Ok(Self {
             tenant_id: tenant.tenant_id,
             name: tenant.name,
             domain: tenant.domain,
@@ -144,6 +150,138 @@ impl From<ServiceTenantCapacityVo> for TenantCapacityVo {
             expiration_status: value.expiration_status,
             capacity_status: value.capacity_status,
             usage: value.usage.map(Into::into),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ryframe_application::system::platform::TenantVo as ServiceTenantVo;
+    use serde_json::Value;
+    use utoipa::OpenApi;
+
+    #[test]
+    fn tenant_responses_preserve_expiration_utc_precision_and_snapshot_schemas() {
+        for expiration in [
+            "1969-12-31T23:59:59Z",
+            "1970-01-01T00:00:01.120Z",
+            "1970-01-01T00:00:02.123400Z",
+            "1970-01-01T00:00:03.123456700Z",
+        ] {
+            let tenant = tenant_fixture(Some(expiration));
+            let encoded = serde_json::to_string(&tenant).unwrap();
+            let response = serde_json::to_string(&TenantVo::try_from(tenant).unwrap()).unwrap();
+            assert_eq!(response, encoded);
+            let response: Value = serde_json::from_str(&response).unwrap();
+            assert_eq!(response["expire_at"], expiration);
+
+            let response = capacity_json(capacity_fixture(Some(expiration), true));
+            assert_eq!(response["expire_at"], expiration);
+            assert_eq!(response["expiration_status"], "expired");
+            assert_eq!(response["capacity_status"], "normal");
+            assert_eq!(response["usage"]["tenant_id"], "tenant-a");
+        }
+
+        let tenant = tenant_fixture(None);
+        let expected = serde_json::to_value(&tenant).unwrap();
+        let response = serde_json::to_value(TenantVo::try_from(tenant).unwrap()).unwrap();
+        assert_eq!(response, expected);
+        assert_eq!(response.get("expire_at"), Some(&Value::Null));
+
+        let response = capacity_json(capacity_fixture(None, false));
+        assert_eq!(response["expiration_status"], "never");
+        for field in ["expire_at", "capacity_status", "usage"] {
+            assert_eq!(response.get(field), Some(&Value::Null), "{field}");
+        }
+
+        let leap_second = Some("2016-12-31T23:59:60.123456Z");
+        let message = "租户响应的 expire_at 无法精确表示为 UTC";
+        assert!(matches!(TenantVo::try_from(tenant_fixture(leap_second)),
+            Err(AppError::Internal(error)) if error == message));
+        assert!(
+            matches!(TenantCapacityVo::try_from(capacity_fixture(leap_second, false)),
+            Err(AppError::Internal(error)) if error == message)
+        );
+
+        let snapshot: Value =
+            serde_json::from_str(include_str!("../../../../../openapi/openapi.json")).unwrap();
+        let generated = serde_json::to_value(crate::openapi::ApiDoc::openapi()).unwrap();
+        for name in ["TenantVo", "TenantCapacityVo"] {
+            let path = format!("/components/schemas/{name}");
+            assert_eq!(
+                generated.pointer(&path),
+                Some(snapshot.pointer(&path).expect("快照包含租户响应契约"))
+            );
+        }
+    }
+
+    fn capacity_json(capacity: ServiceTenantCapacityVo) -> Value {
+        let mut expected = serde_json::to_value(&capacity).unwrap();
+        let fields = expected.as_object_mut().unwrap();
+        let Value::Object(tenant) = fields.remove("tenant").unwrap() else {
+            panic!("租户容量视图应包含租户对象");
+        };
+        fields.extend(tenant);
+        let response = serde_json::to_value(TenantCapacityVo::try_from(capacity).unwrap()).unwrap();
+        assert_eq!(response, expected);
+        response
+    }
+
+    fn tenant_fixture(expire_at: Option<&str>) -> ServiceTenantVo {
+        ServiceTenantVo {
+            tenant_id: "tenant-a".into(),
+            name: "测试租户".into(),
+            domain: Some("tenant.example.test".into()),
+            status: "enabled".into(),
+            expire_at: expire_at.map(|value| value.parse().unwrap()),
+            max_users: 100,
+            max_roles: 20,
+            max_storage_mb: 1024,
+            max_requests_per_min: 1000,
+        }
+    }
+
+    fn capacity_fixture(expire_at: Option<&str>, include_usage: bool) -> ServiceTenantCapacityVo {
+        let tenant = tenant_fixture(expire_at);
+        let quota = ServiceQuotaUsage {
+            used: 2,
+            limit: Some(100),
+            percentage_basis_points: Some(200),
+            status: "normal".into(),
+        };
+        let usage = include_usage.then(|| ServiceTenantUsageVo {
+            tenant_id: tenant.tenant_id.clone(),
+            calculated_at: OffsetDateTime::UNIX_EPOCH,
+            users: quota.clone(),
+            roles: quota.clone(),
+            storage: quota,
+            request_window: ServiceRequestWindowUsage {
+                current: Some(10),
+                limit: Some(1000),
+                percentage_basis_points: Some(100),
+                remaining_secs: Some(20),
+                status: "normal".into(),
+            },
+            auxiliary: ServiceTenantAuxiliaryUsage {
+                pending_jobs: 1,
+                running_jobs: 2,
+                dead_jobs: 0,
+                enabled_schedules: 1,
+                active_user_imports: 0,
+                cron_enabled: true,
+            },
+        });
+        ServiceTenantCapacityVo {
+            tenant,
+            expiration_status: if expire_at.is_some() {
+                "expired"
+            } else {
+                "never"
+            }
+            .into(),
+            capacity_status: include_usage.then(|| "normal".into()),
+            usage,
         }
     }
 }
