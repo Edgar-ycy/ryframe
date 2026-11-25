@@ -255,6 +255,79 @@ fn data_target_verification_preserves_nullable_utc_precision_and_schema() {
 }
 
 #[test]
+fn data_retention_run_preserves_utc_json_nullability_and_schema() {
+    use chrono::DateTime;
+    use ryframe_api::dto::public_dto::DataRetentionRunVo;
+    use ryframe_application::{
+        ports::retention::RetentionRunRecord, system::operations::DataRetentionRunVo as ServiceRun,
+    };
+    use serde_json::{Value, json};
+    use utoipa::PartialSchema;
+
+    let mut record = RetentionRunRecord {
+        id: 1,
+        background_job_id: 2,
+        trigger_kind: RetentionRunRecord::TRIGGER_MANUAL.into(),
+        status: RetentionRunRecord::STATUS_PENDING.into(),
+        policy_snapshot: json!({}),
+        eligible_counts: json!({}),
+        deleted_counts: json!({}),
+        remaining_counts: json!({}),
+        requested_by: None,
+        error_summary: None,
+        started_at: None,
+        completed_at: None,
+        created_at: DateTime::from_timestamp(-1, 123_400_000).unwrap(),
+        updated_at: DateTime::from_timestamp(0, 123_456_700).unwrap(),
+    };
+    let pending = ServiceRun::try_from(record.clone()).unwrap();
+    for response in [
+        serde_json::to_value(&pending).unwrap(),
+        serde_json::to_value(DataRetentionRunVo::from(pending)).unwrap(),
+    ] {
+        assert_eq!(response.get("started_at"), Some(&Value::Null));
+        assert_eq!(response.get("completed_at"), Some(&Value::Null));
+    }
+
+    record.status = RetentionRunRecord::STATUS_SUCCEEDED.into();
+    record.started_at = DateTime::from_timestamp(-1, 0);
+    record.completed_at = DateTime::from_timestamp(0, 120_000_000);
+    let completed = ServiceRun::try_from(record.clone()).unwrap();
+    for response in [
+        serde_json::to_value(&completed).unwrap(),
+        serde_json::to_value(DataRetentionRunVo::from(completed)).unwrap(),
+    ] {
+        assert_eq!(response["started_at"], "1969-12-31T23:59:59Z");
+        assert_eq!(response["completed_at"], "1970-01-01T00:00:00.120Z");
+        assert_eq!(response["created_at"], "1969-12-31T23:59:59.123400Z");
+        assert_eq!(response["updated_at"], "1970-01-01T00:00:00.123456700Z");
+    }
+
+    let schema = serde_json::to_value(DataRetentionRunVo::schema()).unwrap();
+    let required = schema["required"].as_array().unwrap();
+    for field in ["started_at", "completed_at"] {
+        assert_eq!(
+            schema["properties"][field],
+            json!({"type":["string","null"],"format":"date-time"})
+        );
+        assert!(!required.contains(&json!(field)));
+    }
+    for field in ["created_at", "updated_at"] {
+        assert_eq!(
+            schema["properties"][field],
+            json!({"type":"string","format":"date-time"})
+        );
+        assert!(required.contains(&json!(field)));
+    }
+
+    record.completed_at = Some(DateTime::from_timestamp(-1, 1_123_456_000).unwrap());
+    assert!(matches!(
+        ServiceRun::try_from(record),
+        Err(AppError::Internal(message)) if message.contains("completed_at")
+    ));
+}
+
+#[test]
 fn user_import_row_preserves_created_at_utc_precision_and_required_schema() {
     use ryframe_api::dto::public_dto::UserImportRowVo;
     use ryframe_application::{

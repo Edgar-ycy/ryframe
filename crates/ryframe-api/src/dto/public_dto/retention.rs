@@ -1,12 +1,14 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
+use ryframe_application::ports::utc_timestamp;
 use ryframe_application::system::operations::{
     DataRetentionOverview as ServiceOverview, DataRetentionPolicy as ServicePolicy,
     DataRetentionPreview as ServicePreview, DataRetentionRunVo as ServiceRun,
 };
 use serde::Serialize;
 use serde_json::Value;
+use time::OffsetDateTime;
 use utoipa::ToSchema;
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -118,10 +120,18 @@ pub struct DataRetentionRunVo {
     pub remaining_counts: Value,
     pub requested_by: Option<String>,
     pub error_summary: Option<String>,
-    pub started_at: Option<DateTime<Utc>>,
-    pub completed_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub started_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub completed_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub created_at: OffsetDateTime,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub updated_at: OffsetDateTime,
 }
 
 impl From<ServiceRun> for DataRetentionRunVo {

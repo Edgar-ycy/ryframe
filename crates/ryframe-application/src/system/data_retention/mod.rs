@@ -5,6 +5,7 @@ use chrono::{DateTime, Duration, Utc};
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use serde::Serialize;
 use serde_json::{Value, json};
+use time::OffsetDateTime;
 
 use crate::{
     ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue,
@@ -16,6 +17,7 @@ use crate::{
         TENANT_CONFIG_PACKAGE_RESOURCE, TENANT_CONFIG_SNAPSHOT_RESOURCE,
         TenantConfigArtifactCounts, TenantConfigRetentionPersistencePort,
     },
+    ports::utc_timestamp,
     system::file::FileService,
 };
 
@@ -84,15 +86,26 @@ pub struct DataRetentionRunVo {
     pub remaining_counts: Value,
     pub requested_by: Option<String>,
     pub error_summary: Option<String>,
-    pub started_at: Option<DateTime<Utc>>,
-    pub completed_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    pub started_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    pub completed_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    pub created_at: OffsetDateTime,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    pub updated_at: OffsetDateTime,
 }
 
-impl From<RetentionRunRecord> for DataRetentionRunVo {
-    fn from(model: RetentionRunRecord) -> Self {
-        Self {
+impl TryFrom<RetentionRunRecord> for DataRetentionRunVo {
+    type Error = AppError;
+
+    fn try_from(model: RetentionRunRecord) -> AppResult<Self> {
+        let to_utc = |timestamp, field| {
+            utc_timestamp::from_chrono(timestamp).map_err(|_| {
+                AppError::Internal(format!("数据保留运行记录的 {field} 无法精确表示为 UTC"))
+            })
+        };
+        Ok(Self {
             id: model.id.to_string(),
             background_job_id: model.background_job_id.to_string(),
             trigger_kind: model.trigger_kind,
@@ -103,11 +116,17 @@ impl From<RetentionRunRecord> for DataRetentionRunVo {
             remaining_counts: model.remaining_counts,
             requested_by: model.requested_by.map(|id| id.to_string()),
             error_summary: model.error_summary,
-            started_at: model.started_at,
-            completed_at: model.completed_at,
-            created_at: model.created_at,
-            updated_at: model.updated_at,
-        }
+            started_at: model
+                .started_at
+                .map(|value| to_utc(value, "started_at"))
+                .transpose()?,
+            completed_at: model
+                .completed_at
+                .map(|value| to_utc(value, "completed_at"))
+                .transpose()?,
+            created_at: to_utc(model.created_at, "created_at")?,
+            updated_at: to_utc(model.updated_at, "updated_at")?,
+        })
     }
 }
 
@@ -218,7 +237,7 @@ impl DataRetentionService {
                     ))
                     .await?
             };
-            Ok::<_, AppError>(run)
+            DataRetentionRunVo::try_from(run)
         }
         .await;
         match result {
@@ -227,7 +246,7 @@ impl DataRetentionService {
                     .commit(crate::TransactionAuditMode::Skip)
                     .await?;
                 self.queue.notify_background_jobs().await;
-                Ok(run.into())
+                Ok(run)
             }
             Err(error) => {
                 let _ = transaction.rollback().await;
@@ -247,8 +266,8 @@ impl DataRetentionService {
             records: result
                 .records
                 .into_iter()
-                .map(DataRetentionRunVo::from)
-                .collect(),
+                .map(DataRetentionRunVo::try_from)
+                .collect::<AppResult<_>>()?,
             total: result.total,
             page: result.page,
             page_size: result.page_size,
