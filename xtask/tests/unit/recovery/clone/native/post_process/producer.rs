@@ -447,3 +447,96 @@ fn identity_one_shot_rejects_duplicate_or_non_object_stdout() {
         assert!(identity_producer::checked_stdout(invalid).is_err());
     }
 }
+
+#[cfg(windows)]
+#[test]
+fn department_job_closes_after_logout_or_terminal_reply_without_replay() -> Result<()> {
+    use std::{fs, process::Command};
+
+    let local = crate::workspace::root_dir().join(".local-tests");
+    fs::create_dir_all(&local)?;
+    let fixture = tempfile::Builder::new()
+        .prefix("department-producer-job-")
+        .tempdir_in(local)?;
+    let executable = fixture.path().join("department-producer.exe");
+    let source =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/post_producer_child.rs");
+    let compile = Command::new("rustc")
+        .args([
+            "--edition=2024",
+            "-C",
+            "debuginfo=0",
+            "-C",
+            "linker=rust-lld.exe",
+        ])
+        .arg(source)
+        .arg("-o")
+        .arg(&executable)
+        .output()?;
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    for mode in ["logout", "terminal"] {
+        let trace = fixture.path().join(format!("{mode}-requests.ndjson"));
+        let argv = vec![
+            executable
+                .to_str()
+                .ok_or("生产者测试程序路径无效")?
+                .to_owned(),
+            mode.to_owned(),
+            trace.to_str().ok_or("生产者测试记录路径无效")?.to_owned(),
+        ];
+        let log = fs::File::create_new(fixture.path().join(format!("{mode}.stderr")))?;
+        let mut job = job::Job::spawn(fixture.path(), &argv, log)?;
+        let identity = job.identity()?;
+        let pipes = job.pipes(true)?;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let initialize = sequenced(1, "initialize", json!({}))?;
+        let raw = pipes.exchange(&initialize, false, deadline)?;
+        let reply = response(1, &parse(&raw, "部门初始化替身响应")?);
+        let mut expected = vec![initialize];
+
+        let exit = match reply {
+            Reply::Data(data) => {
+                assert_eq!(mode, "logout");
+                assert_eq!(data, json!({}));
+                assert_eq!(Channel::Open.logout_deadline(deadline)?, None);
+                let close = sequenced(2, "close", json!({}))?;
+                let raw = pipes.exchange(&close, false, deadline)?;
+                assert!(matches!(
+                    response(2, &parse(&raw, "部门注销替身响应")?),
+                    Reply::Data(data) if data == json!({"closed":true})
+                ));
+                expected.push(close);
+                0
+            }
+            Reply::Failure {
+                diagnostic,
+                channel,
+            } => {
+                assert_eq!(mode, "terminal");
+                assert_eq!(
+                    diagnostic,
+                    json!({"id":1,"ok":false,"error_type":"NativeBridgeFailure","status":null})
+                );
+                assert_eq!(channel.logout_deadline(deadline)?, Some(deadline));
+                17
+            }
+        };
+
+        assert_eq!(job.wait(deadline)?.code(), Some(exit));
+        files::combine(
+            job.finish_until(Some(identity), deadline),
+            pipes.finish_until(deadline),
+        )?;
+        let recorded = fs::read_to_string(trace)?
+            .lines()
+            .map(|line| parse(line.as_bytes(), "部门替身接收记录"))
+            .collect::<Result<Vec<_>>>()?;
+        assert_eq!(recorded, expected);
+    }
+    Ok(())
+}
