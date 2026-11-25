@@ -62,7 +62,10 @@ fn validates_exact_request_predecessor_and_direct_password() {
     let mut wrong = request.clone();
     wrong["port"] = json!(true);
     assert!(model::validate(&root, &wrong, false).is_err());
-    wrong = request.clone();
+    #[cfg(windows)]
+    let mut wrong = request.clone();
+    #[cfg(not(windows))]
+    let mut wrong = request;
     wrong["password_env"] = json!("APP_REDIS_PASSWORD");
     assert!(model::validate(&root, &wrong, false).is_err());
     #[cfg(windows)]

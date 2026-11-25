@@ -352,7 +352,7 @@ mod tests {
             wrong["requests"]["rustfs"][field] = value;
             assert!(verify_snapshot(&wrong, &observation, snapshot()).is_err());
         }
-        let mut rewritten = observation.clone();
+        let mut rewritten = observation;
         rewritten["evidence"]["redis_request"]["path"] =
             registered["requests"]["redis"]["path"].clone();
         assert!(verify_snapshot(&registered, &rewritten, snapshot()).is_err());

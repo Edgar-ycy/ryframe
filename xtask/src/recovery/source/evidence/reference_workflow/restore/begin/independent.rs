@@ -78,45 +78,6 @@ pub(super) fn run(
     finish_claimed(&active, result, &|| owner(work, inputs.plan))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn independent_begin_output_rejects_claim_paths_before_work_exists() {
-        let work = Path::new("new-work");
-        let evidence = work.join("restore-begin-candidate");
-        assert!(verify_output_name(work, &evidence, &work.join("running.json")).is_ok());
-        for name in [
-            "reference-owner.json",
-            ".reference-lock",
-            "restore-begin-candidate",
-            "restore-candidate.json",
-            "restore-candidate-before",
-            "restore-candidate-after",
-            "restore-candidate-failure-after",
-        ] {
-            assert!(verify_output_name(work, &evidence, &work.join(name)).is_err());
-        }
-        assert!(
-            verify_output_name(work, &evidence, &work.join(".reference-lock/running.json"))
-                .is_err()
-        );
-        #[cfg(windows)]
-        for name in [
-            "REFERENCE-OWNER.JSON. ",
-            ".REFERENCE-LOCK.",
-            "running.json:other",
-            "RESTORE-CANDIDATE.JSON.",
-            "RESTORE-CANDIDATE-BEFORE ",
-            "restore-candidate-after.",
-            "restore-candidate-failure-after:other",
-        ] {
-            assert!(verify_output_name(work, &evidence, &work.join(name)).is_err());
-        }
-    }
-}
-
 pub(super) fn verify_output_name(work: &Path, directory: &Path, output: &Path) -> Result<()> {
     let name = output
         .file_name()
@@ -346,5 +307,44 @@ impl Snapshot {
             checkpoint,
         )?;
         self.check()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn independent_begin_output_rejects_claim_paths_before_work_exists() {
+        let work = Path::new("new-work");
+        let evidence = work.join("restore-begin-candidate");
+        assert!(verify_output_name(work, &evidence, &work.join("running.json")).is_ok());
+        for name in [
+            "reference-owner.json",
+            ".reference-lock",
+            "restore-begin-candidate",
+            "restore-candidate.json",
+            "restore-candidate-before",
+            "restore-candidate-after",
+            "restore-candidate-failure-after",
+        ] {
+            assert!(verify_output_name(work, &evidence, &work.join(name)).is_err());
+        }
+        assert!(
+            verify_output_name(work, &evidence, &work.join(".reference-lock/running.json"))
+                .is_err()
+        );
+        #[cfg(windows)]
+        for name in [
+            "REFERENCE-OWNER.JSON. ",
+            ".REFERENCE-LOCK.",
+            "running.json:other",
+            "RESTORE-CANDIDATE.JSON.",
+            "RESTORE-CANDIDATE-BEFORE ",
+            "restore-candidate-after.",
+            "restore-candidate-failure-after:other",
+        ] {
+            assert!(verify_output_name(work, &evidence, &work.join(name)).is_err());
+        }
     }
 }

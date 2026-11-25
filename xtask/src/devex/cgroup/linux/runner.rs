@@ -84,7 +84,7 @@ fn run(plan: &CgroupPlan, output: &Path) -> GateResult<()> {
             root_identity: &created.identity,
         },
     )?;
-    let mut registry = ProcessRegistry::from([(launcher.pid, launcher.clone())]);
+    let mut registry = ProcessRegistry::from([(launcher.pid, launcher)]);
     run_cargo(plan, output, &command, &registry_path, &mut registry)
 }
 

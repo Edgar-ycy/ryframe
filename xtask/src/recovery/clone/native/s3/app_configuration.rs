@@ -14,18 +14,14 @@ use std::{
 
 fn linked(path: &Path) -> Result<bool> {
     let metadata = fs::symlink_metadata(path)?;
-    if metadata.file_type().is_symlink() {
-        return Ok(true);
-    }
+    let linked = metadata.file_type().is_symlink();
     #[cfg(windows)]
-    {
+    let linked = {
         use std::os::windows::fs::MetadataExt;
         const REPARSE_POINT: u32 = 0x400;
-        if metadata.file_attributes() & REPARSE_POINT != 0 {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+        linked || metadata.file_attributes() & REPARSE_POINT != 0
+    };
+    Ok(linked)
 }
 
 pub(crate) fn load(

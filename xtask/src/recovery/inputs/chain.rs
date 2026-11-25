@@ -22,28 +22,6 @@ pub(crate) struct Chain {
     pub(crate) fresh: Fresh,
 }
 
-#[cfg(test)]
-pub(crate) fn load(
-    backend: &Path,
-    reference_path: &Path,
-    backup_path: &Path,
-    comparison_path: &Path,
-    arm_path: &Path,
-    fresh_path: &Path,
-    side: &str,
-) -> Result<Chain> {
-    let reference = super::document::read(reference_path, backend, "参考计划")?;
-    load_with_reference(
-        backend,
-        reference,
-        backup_path,
-        comparison_path,
-        arm_path,
-        fresh_path,
-        side,
-    )
-}
-
 pub(crate) fn load_with_reference(
     backend: &Path,
     reference: Document,

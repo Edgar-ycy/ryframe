@@ -175,7 +175,7 @@ fn output_file(
     let output = validate_local_test_path(output, backend, LocalTestPathKind::OutputFile)?;
     let initialized = path(&inputs.target.value["fresh_target"]["initialized"]["path"])?;
     let initialized = initialized.parent().ok_or("原目标初始化证据缺少目录")?;
-    if !output.starts_with(&work)
+    if !output.starts_with(work)
         || output.starts_with(inputs.root)
         || output.starts_with(initialized)
         || output.starts_with(evidence)

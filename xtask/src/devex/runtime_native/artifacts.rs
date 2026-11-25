@@ -8,17 +8,16 @@ use std::{
 };
 
 pub(crate) fn linked(metadata: &fs::Metadata) -> bool {
-    if metadata.file_type().is_symlink() {
-        return true;
-    }
+    let symlink = metadata.file_type().is_symlink();
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
-        if metadata.file_attributes() & 0x400 != 0 {
-            return true;
-        }
+        symlink || metadata.file_attributes() & 0x400 != 0
     }
-    false
+    #[cfg(not(windows))]
+    {
+        symlink
+    }
 }
 
 pub(crate) fn parents(path: &Path) -> NativeResult<()> {

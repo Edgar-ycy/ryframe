@@ -312,41 +312,6 @@ fn side<'a>(
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        recovery::clone::native::s3::app_configuration::configuration_value,
-        recovery_inputs_fixture::Fixture, recovery_inputs_support::object_configuration,
-    };
-
-    #[test]
-    fn independent_b1_reference_target_configuration_requires_the_bound_execution_root()
-    -> Result<()> {
-        let fixture = Fixture::new();
-        let execution = fixture.root.join("independent-execution");
-        let other_execution = fixture.root.join("other-execution");
-        let directory = execution.join("config");
-        let foreign = other_execution.join("config");
-        object_configuration(&directory, "target");
-        object_configuration(&foreign, "target");
-
-        let mut plan = fixture.reference_value.clone();
-        plan["target_side"] = Value::String("candidate".into());
-        plan["target"]["s3"]["configuration"] =
-            configuration_value(&execution, &directory, "test")?;
-        validate_with_target_configuration(&plan, &fixture.backend, &execution)?;
-        assert!(
-            validate_with_target_configuration(&plan, &fixture.backend, &other_execution).is_err()
-        );
-        plan["target"]["s3"]["configuration"] =
-            configuration_value(&other_execution, &foreign, "test")?;
-        assert!(validate_with_target_configuration(&plan, &fixture.backend, &execution).is_err());
-        validate_plan(&fixture.reference_value, &fixture.backend)?;
-        Ok(())
-    }
-}
-
 struct Databases<'a> {
     keys: HashSet<&'a str>,
     physical: HashSet<(&'a str, String)>,
@@ -546,4 +511,39 @@ fn validate_dataset_credentials(dataset: &Value, backend: &Path) -> Result<()> {
         &mut Vec::new(),
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        recovery::clone::native::s3::app_configuration::configuration_value,
+        recovery_inputs_fixture::Fixture, recovery_inputs_support::object_configuration,
+    };
+
+    #[test]
+    fn independent_b1_reference_target_configuration_requires_the_bound_execution_root()
+    -> Result<()> {
+        let fixture = Fixture::new();
+        let execution = fixture.root.join("independent-execution");
+        let other_execution = fixture.root.join("other-execution");
+        let directory = execution.join("config");
+        let foreign = other_execution.join("config");
+        object_configuration(&directory, "target");
+        object_configuration(&foreign, "target");
+
+        let mut plan = fixture.reference_value.clone();
+        plan["target_side"] = Value::String("candidate".into());
+        plan["target"]["s3"]["configuration"] =
+            configuration_value(&execution, &directory, "test")?;
+        validate_with_target_configuration(&plan, &fixture.backend, &execution)?;
+        assert!(
+            validate_with_target_configuration(&plan, &fixture.backend, &other_execution).is_err()
+        );
+        plan["target"]["s3"]["configuration"] =
+            configuration_value(&other_execution, &foreign, "test")?;
+        assert!(validate_with_target_configuration(&plan, &fixture.backend, &execution).is_err());
+        validate_plan(&fixture.reference_value, &fixture.backend)?;
+        Ok(())
+    }
 }

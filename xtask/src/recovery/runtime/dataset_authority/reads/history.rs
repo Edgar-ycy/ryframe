@@ -33,9 +33,20 @@ pub(super) fn require_explicit_facts(kind: &str) -> Result<()> {
 }
 
 pub(in crate::recovery) enum Entries {
+    #[cfg(windows)]
+    Native(Box<ReadDir>),
+    #[cfg(not(windows))]
     Native(ReadDir),
     #[cfg(windows)]
     Held(std::vec::IntoIter<DirEntry>),
+}
+
+impl Entries {
+    pub(super) fn native(entries: ReadDir) -> Self {
+        #[cfg(windows)]
+        let entries = Box::new(entries);
+        Self::Native(entries)
+    }
 }
 
 impl Iterator for Entries {
@@ -56,7 +67,7 @@ pub(in crate::recovery) fn entries(path: &Path) -> Result<Entries> {
         let entries = windows::entries(path)?.ok_or("prepare 存储历史丢失同次目录枚举证据")?;
         return Ok(Entries::Held(entries.into_iter()));
     }
-    Ok(Entries::Native(fs::read_dir(path)?))
+    Ok(Entries::native(fs::read_dir(path)?))
 }
 
 pub(super) fn optional_file(path: &Path) -> Result<bool> {

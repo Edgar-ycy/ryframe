@@ -2,8 +2,10 @@
 use super::*;
 use crate::recovery::clone::native::resources::common;
 
+#[cfg(any(windows, test))]
 #[path = "observation/incident.rs"]
 mod incident;
+#[cfg(windows)]
 pub(super) use incident::{rustfs_reboot_evidence, rustfs_reboot_incident};
 
 pub(super) fn observe(

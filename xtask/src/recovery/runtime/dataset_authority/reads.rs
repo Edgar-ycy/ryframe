@@ -199,7 +199,7 @@ pub(in crate::recovery) fn entries_with(
         return history::entries(path);
     }
     directory(path)?;
-    Ok(history::Entries::Native(open(path)?))
+    Ok(history::Entries::native(open(path)?))
 }
 
 #[cfg_attr(all(test, windows), track_caller)]

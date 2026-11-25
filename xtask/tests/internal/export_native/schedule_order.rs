@@ -74,8 +74,8 @@ impl Script {
             rows.refresh();
             fs::read_to_string(&source_dump).unwrap()
         });
-        let mut columns = models.full_control.clone();
-        columns.extend(models.full_tenant.clone());
+        let mut columns = models.full_control;
+        columns.extend(models.full_tenant);
         for ledger in ["seaql_migrations", "seaql_tenant_data_migrations"] {
             columns
                 .entry(ledger.into())

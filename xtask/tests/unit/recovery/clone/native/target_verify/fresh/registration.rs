@@ -1,15 +1,15 @@
 use crate::recovery::clone::native::{
     json as document,
-    resources::common,
     target_verify::fresh::registration::{Registration, Workspace},
 };
 use crate::target_verify_fixture::Fixture;
 #[cfg(windows)]
 use crate::{
-    target_fixture_services::close, target_initialize_restart_fixture as services,
-    target_verify_fixture::snapshot,
+    recovery::clone::native::resources::common, target_fixture_services::close,
+    target_initialize_restart_fixture as services, target_verify_fixture::snapshot,
 };
 use serde_json::Value;
+#[cfg(windows)]
 use serde_json::json;
 use std::fs;
 use std::path::PathBuf;

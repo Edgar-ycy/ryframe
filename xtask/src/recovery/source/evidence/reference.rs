@@ -115,17 +115,13 @@ pub(super) fn safe_relative(relative: &str) -> Result<()> {
 
 fn linked(path: &Path) -> Result<bool> {
     let metadata = fs::symlink_metadata(path)?;
-    if metadata.file_type().is_symlink() {
-        return Ok(true);
-    }
+    let linked = metadata.file_type().is_symlink();
     #[cfg(windows)]
-    {
+    let linked = {
         use std::os::windows::fs::MetadataExt;
-        if metadata.file_attributes() & 0x400 != 0 {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+        linked || metadata.file_attributes() & 0x400 != 0
+    };
+    Ok(linked)
 }
 
 fn safe_file(root: &Path, relative: &str, exists: bool) -> Result<PathBuf> {

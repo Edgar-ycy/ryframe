@@ -864,9 +864,10 @@ fn source_reference_projection_rejects_binding_runtime_and_configuration_drift()
 #[test]
 fn target_projection_rejects_descriptor_credentials_and_physical_mapping_changes() {
     let fixture = Fixture::new();
-    let chain = chain::load(
+    let reference = document::read(&fixture.reference_plan, &fixture.backend, "参考计划").unwrap();
+    let chain = chain::load_with_reference(
         &fixture.backend,
-        &fixture.reference_plan,
+        reference,
         &fixture.backup_receipt,
         &fixture.comparison_sources,
         &fixture.arm_input,

@@ -350,16 +350,14 @@ fn reject_links(path: &Path) -> Result<(), String> {
 }
 
 fn is_link(metadata: &fs::Metadata) -> bool {
-    if metadata.file_type().is_symlink() {
-        return true;
-    }
+    let symlink = metadata.file_type().is_symlink();
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
-        metadata.file_attributes() & 0x400 != 0
+        symlink || metadata.file_attributes() & 0x400 != 0
     }
     #[cfg(not(windows))]
     {
-        false
+        symlink
     }
 }

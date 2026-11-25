@@ -239,7 +239,7 @@ fn independent_measurement_rejects_role_scope_database_marker_and_digest_drift()
     database["target"]["databases"][0]["database"] = json!("different_database");
     let mut sentinel = bound.clone();
     sentinel["reset"]["sentinel_value"] = json!("devex-fresh:another-request");
-    let mut digest = bound.clone();
+    let mut digest = bound;
     digest["review"]["canonical_sha256"] = json!("0".repeat(64));
     for invalid in [seed, base, scope, database, sentinel, digest] {
         let document = write_document(backend, "target.json", &invalid);
@@ -253,7 +253,7 @@ fn independent_measurement_rejects_role_scope_database_marker_and_digest_drift()
         .as_array_mut()
         .unwrap();
     databases.push(databases[0].clone());
-    let mut foreign = measurement.clone();
+    let mut foreign = measurement;
     foreign["scopes"]["candidate"]["backend_dir"] = json!(backend.join("other"));
     for invalid in [extra, duplicate, foreign] {
         let bound = bind_review(backend, &invalid, &request);

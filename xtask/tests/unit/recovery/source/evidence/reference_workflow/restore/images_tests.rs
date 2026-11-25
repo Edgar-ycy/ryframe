@@ -659,8 +659,9 @@ fn inventory_drift_after_object_observation_keeps_only_the_failure_binding() {
                             .join("object-heads/verified.json")
                             .is_file()
                     );
-                    let original = fs::read(receipt)?;
-                    let mut edited = original.clone();
+                    let mut edited = fs::read(receipt)?;
+                    #[cfg(windows)]
+                    let original = edited.clone();
                     let version = b"\"format_version\": 1";
                     let offset = edited
                         .windows(version.len())

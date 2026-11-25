@@ -138,7 +138,9 @@ fn fresh_verification_private_boundary_rejects_overlap_trailing_separator_and_ex
     let mut extra = args.clone();
     extra["config_dir"] = json!(f.local.join("config"));
     assert!(invoke(extra).is_err());
-    let mut invalid_temporary = args.clone();
+    #[cfg(windows)]
+    let mut folded = args.clone();
+    let mut invalid_temporary = args;
     invalid_temporary["storage_run"] = Value::Null;
     invalid_temporary["observation"] = json!(f.local.join("unused-temporary-observation"));
     for path in [
@@ -152,7 +154,6 @@ fn fresh_verification_private_boundary_rejects_overlap_trailing_separator_and_ex
     }
     #[cfg(windows)]
     {
-        let mut folded = args;
         folded["storage_run"] = json!(trailing.to_uppercase());
         assert!(invoke(folded).is_err());
         assert!(!f.run.join("nested-observation").exists());
