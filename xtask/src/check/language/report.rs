@@ -67,13 +67,24 @@ fn add(summary: &mut Summary, file: &FileRecord) -> Result<()> {
     if file.kind == Kind::Code {
         summary.code.add(file.bytes)?;
         let language = file.language.as_deref().ok_or("代码文件缺少语言分类")?;
+        let language_bytes = file
+            .bytes
+            .checked_sub(file.embedded_lua_bytes.unwrap_or(0))
+            .ok_or("内联 Lua 字节超过宿主文件长度")?;
         summary
             .languages
             .entry(language.into())
             .or_default()
-            .add(file.bytes)?;
+            .add(language_bytes)?;
+        if let Some(bytes) = file.embedded_lua_bytes {
+            summary
+                .languages
+                .entry("Lua".into())
+                .or_default()
+                .add(bytes)?;
+        }
         if language == "Rust" {
-            summary.rust.add(file.bytes)?;
+            summary.rust.add(language_bytes)?;
         }
         let group = match (file.test, file.generated, file.template) {
             (true, _, _) => "测试",
@@ -100,6 +111,7 @@ pub(crate) fn render(report: &Report) -> String {
         "完整分类规则：architecture/language-policy.toml；JSON 报告同时包含规则与逐文件字节及摘要。".into(),
         report.policy.inventory.clone(),
         report.policy.denominator.clone(),
+        report.policy.embedded_lua_rule.clone(),
         report.policy.legacy_reference.clone(),
         format!(
             "源码 HEAD={}；观测摘要={}",

@@ -82,6 +82,8 @@ pub(crate) struct FileRecord {
     pub(crate) sha256: String,
     pub(crate) kind: Kind,
     pub(crate) language: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) embedded_lua_bytes: Option<u64>,
     pub(crate) vendor: bool,
     pub(crate) generated: bool,
     pub(crate) test: bool,

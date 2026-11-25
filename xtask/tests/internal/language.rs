@@ -309,6 +309,92 @@ fn report_keeps_vendor_separate_and_all_own_code_in_the_denominator() {
 }
 
 #[test]
+fn report_splits_only_the_approved_literal_bytes_and_keeps_one_file_record() {
+    let rules = policy::load().unwrap();
+    let payload = "-- 中文\r\nreturn 2";
+    let host = format!(
+        "// 示例常量\r\nconst OTHER: &str = r#\"unrelated\"#;\r\nconst SCRIPT: &str = r###\"{payload}\"###;\r\n"
+    );
+    let other_lua = b"return 1\n";
+    let host_bytes = host.len() as u64;
+    let lua_bytes = payload.len() as u64;
+    let other_lua_bytes = other_lua.len() as u64;
+    let total_bytes = 2 * host_bytes + other_lua_bytes;
+    let minimum = Percent::parse(&ratio_text(2 * host_bytes, total_bytes).unwrap()).unwrap();
+    assert!(minimum.accepts(2 * host_bytes, total_bytes));
+    let files = [
+        (policy::EMBEDDED_LUA_PATH, host.as_bytes()),
+        ("src/marker.rs", host.as_bytes()),
+        ("src/ordinary.lua", other_lua.as_slice()),
+    ]
+    .into_iter()
+    .map(|(path, bytes)| policy::classify(&rules, path, bytes).unwrap())
+    .collect();
+    let empty = inventory::Inventory {
+        head: None,
+        eligible: BTreeSet::new(),
+        ignored: BTreeSet::new(),
+        deleted: BTreeSet::new(),
+    };
+    let report = report::build(rules, empty, files, Some(minimum)).unwrap();
+    assert_eq!((report.total.files, report.total.bytes), (3, total_bytes));
+    let own = &report.self_maintained;
+    assert_eq!((own.code.files, own.code.bytes), (3, total_bytes));
+    assert_eq!(own.categories["代码"].files, 3);
+    assert_eq!(own.code_groups["手写"].bytes, total_bytes);
+    assert_eq!(own.code_groups["手写"].files, 3);
+    assert_eq!(
+        (own.extensions["rs"].files, own.extensions["rs"].bytes),
+        (2, 2 * host_bytes)
+    );
+    assert_eq!(own.rust.bytes, 2 * host_bytes - lua_bytes);
+    assert_eq!(own.languages["Rust"].files, 2);
+    assert_eq!(own.languages["Rust"].bytes, own.rust.bytes);
+    assert_eq!(own.languages["Lua"].files, 2);
+    assert_eq!(own.languages["Lua"].bytes, lua_bytes + other_lua_bytes);
+    assert_eq!(report.rust_percent, ratio_text(own.rust.bytes, total_bytes));
+    assert_eq!(report.threshold_passed, Some(false));
+    assert!(report::render(&report).contains(&format!(
+        "代码语言 Lua：2 个文件，{} 字节",
+        lua_bytes + other_lua_bytes
+    )));
+    let json = serde_json::to_value(&report).unwrap();
+    assert_eq!(json["files"][0]["path"], policy::EMBEDDED_LUA_PATH);
+    assert_eq!(json["files"][0]["bytes"], host_bytes);
+    assert_eq!(json["files"][0]["sha256"], policy::digest(host.as_bytes()));
+    assert_eq!(json["files"][0]["language"], "Rust");
+    assert_eq!(json["files"][0]["embedded_lua_bytes"], lua_bytes);
+    assert!(json["files"][1].get("embedded_lua_bytes").is_none());
+    assert!(json["files"][2].get("embedded_lua_bytes").is_none());
+}
+
+#[test]
+fn approved_lua_host_rejects_missing_ambiguous_or_invalid_script() {
+    let rules = policy::load().unwrap();
+    for (source, reason) in [
+        (
+            r##"mod nested { const SCRIPT: &str = r#"return 1"#; }"##,
+            "缺少顶层",
+        ),
+        (
+            r##"const SCRIPT: &str = r#"one"#; const SCRIPT: &str = r#"two"#;"##,
+            "常量重复",
+        ),
+        (r#"const SCRIPT: &str = "return 2";"#, "必须是非空"),
+        (r##"const SCRIPT: &str = br#"return 2"#;"##, "必须是非空"),
+        (r##"const SCRIPT: &str = r#""#;"##, "必须是非空"),
+        (r##"const SCRIPT: String = r#"return 2"#;"##, "类型必须"),
+        (r##"const SCRIPT: &str = r#"unclosed;"##, "语法错误"),
+    ] {
+        let error = policy::classify(&rules, policy::EMBEDDED_LUA_PATH, source.as_bytes())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(policy::EMBEDDED_LUA_PATH), "{error}");
+        assert!(error.contains(reason), "{error}");
+    }
+}
+
+#[test]
 fn real_git_excludes_ignored_tracked_and_untracked_files_without_writing() {
     let fixture = Fixture::new();
     fixture.init_git();

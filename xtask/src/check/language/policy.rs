@@ -2,12 +2,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use tree_sitter::Parser;
 
 use crate::Result;
 
 use super::model::{FileRecord, Kind};
 
 pub(crate) const SOURCE: &str = include_str!("../../../../architecture/language-policy.toml");
+pub(crate) const EMBEDDED_LUA_PATH: &str =
+    "xtask/src/recovery/clone/native/target_verify/fresh/initialize/marker.rs";
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -17,6 +20,7 @@ pub(crate) struct Policy {
     pub(crate) measurement: String,
     pub(crate) inventory: String,
     pub(crate) denominator: String,
+    pub(crate) embedded_lua_rule: String,
     pub(crate) unknown_text: String,
     pub(crate) case_rule: String,
     pub(crate) legacy_reference: String,
@@ -115,6 +119,14 @@ pub(crate) fn classify(policy: &Policy, path: &str, content: &[u8]) -> Result<Fi
     if kind == Kind::Code && (content.contains(&0) || std::str::from_utf8(content).is_err()) {
         return Err(format!("代码文件不是无 NUL 的 UTF-8，不能改按资源缩小分母：{path}").into());
     }
+    let embedded_lua_bytes = if path == EMBEDDED_LUA_PATH {
+        if language.as_deref() != Some("Rust") {
+            return Err(format!("Lua 宿主源码必须归类为 Rust：{path}").into());
+        }
+        Some(embedded_lua_bytes(content)?)
+    } else {
+        None
+    };
     let header = String::from_utf8_lossy(&content[..content.len().min(2048)]);
     Ok(FileRecord {
         path: path.into(),
@@ -122,6 +134,7 @@ pub(crate) fn classify(policy: &Policy, path: &str, content: &[u8]) -> Result<Fi
         sha256: digest(content),
         kind,
         language,
+        embedded_lua_bytes,
         vendor: path.starts_with("vendor/"),
         template,
         fallback,
@@ -155,6 +168,45 @@ pub(crate) fn classify(policy: &Policy, path: &str, content: &[u8]) -> Result<Fi
                 .iter()
                 .any(|part| name.contains(part)),
     })
+}
+
+fn embedded_lua_bytes(content: &[u8]) -> Result<u64> {
+    let error = |reason| format!("内联 Lua 计量失败 {EMBEDDED_LUA_PATH}：{reason}");
+    let mut parser = Parser::new();
+    parser.set_language(&tree_sitter_rust::LANGUAGE.into())?;
+    let tree = parser
+        .parse(content, None)
+        .ok_or_else(|| error("无法解析宿主源码"))?;
+    let root = tree.root_node();
+    if root.has_error() {
+        return Err(error("宿主源码含语法错误").into());
+    }
+    let mut cursor = root.walk();
+    let mut scripts = root.named_children(&mut cursor).filter(|node| {
+        node.kind() == "const_item"
+            && node
+                .child_by_field_name("name")
+                .is_some_and(|name| &content[name.byte_range()] == b"SCRIPT")
+    });
+    let script = scripts
+        .next()
+        .ok_or_else(|| error("缺少顶层 SCRIPT 常量"))?;
+    if scripts.next().is_some() {
+        return Err(error("顶层 SCRIPT 常量重复").into());
+    }
+    if !script
+        .child_by_field_name("type")
+        .is_some_and(|kind| &content[kind.byte_range()] == b"&str")
+    {
+        return Err(error("SCRIPT 常量的类型必须为 &str").into());
+    }
+    let payload = script
+        .child_by_field_name("value")
+        .filter(|node| node.kind() == "raw_string_literal" && content[node.start_byte()] == b'r')
+        .and_then(|node| node.named_child(0))
+        .filter(|node| node.kind() == "string_content" && node.start_byte() < node.end_byte())
+        .ok_or_else(|| error("SCRIPT 必须是非空 Rust 原始字符串"))?;
+    Ok(u64::try_from(payload.end_byte() - payload.start_byte())?)
 }
 
 fn source_language(policy: &Policy, name: &str, extension: &str) -> Option<String> {
