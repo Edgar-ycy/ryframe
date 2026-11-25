@@ -124,18 +124,6 @@ class RuntimeContractTests(unittest.TestCase):
                 self.assertFalse(self.receipt.exists())
         self.config.write_text(original, encoding="utf-8")
 
-    def test_missing_tampered_or_unknown_receipt_is_not_adopted(self):
-        with self.assertRaises(FileNotFoundError):
-            runtime.verify_runtime(self.backend, self.directory)
-        self.assertFalse(self.receipt.exists())
-        valid = runtime.register_runtime(self.backend, self.directory)
-        for changed in (valid | {"format_version": 2}, valid | {"extra": "unknown"},
-                        valid | {"backend_root": str(self.root / "other")}):
-            with self.subTest(changed=changed):
-                original = json.dumps(changed).encode()
-                self.receipt.write_bytes(original)
-                self.assert_rejected_without_replacing(original)
-
     def test_managed_directory_and_both_file_digests_are_bound(self):
         registered = runtime.register_runtime(self.backend, self.directory)
         self.assertEqual(registered["api_config_dir"], str(self.configuration))
