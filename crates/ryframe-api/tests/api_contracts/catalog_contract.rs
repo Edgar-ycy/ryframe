@@ -407,6 +407,104 @@ fn background_job_response_preserves_utc_precision_nullability_and_schema() {
 }
 
 #[test]
+fn export_job_response_preserves_utc_precision_nullability_and_schema() {
+    use chrono::{DateTime, Utc};
+    use ryframe_api::dto::public_dto::ExportJobVo;
+    use ryframe_application::ports::export::ExportRequesterRecord;
+    use ryframe_application::system::operations::export_requester_view;
+    use ryframe_kernel::AppError;
+    use serde_json::{Value, json};
+    use utoipa::OpenApi;
+
+    let job = export_requester_view(ExportRequesterRecord {
+        id: 42,
+        resource: "users".into(),
+        status: "succeeded".into(),
+        result_file_name: Some("users-42.xlsx".into()),
+        content_type: Some(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".into(),
+        ),
+        file_size: Some(256),
+        expires_at: DateTime::from_timestamp(20, 0),
+        error_message: None,
+        snapshot_at: DateTime::from_timestamp(0, 123_400_000).unwrap(),
+        matched_rows: 8,
+        created_at: DateTime::from_timestamp(0, 120_000_000).unwrap(),
+        updated_at: DateTime::from_timestamp(10, 0).unwrap(),
+        completed_at: DateTime::from_timestamp(9, 123_456_700),
+        notification_read_at: DateTime::from_timestamp(10, 0),
+        permission_code: "system:user:export".into(),
+        request_params: json!({"selected_ids": [10]}),
+        request_version: 1,
+        authorization_fingerprint: "authorization-fixture".into(),
+        upper_id: 99,
+        result_file_id: Some(7),
+    });
+    let encoded = serde_json::to_string(&ExportJobVo::try_from(job.clone()).unwrap()).unwrap();
+    assert_eq!(encoded, serde_json::to_string(&job).unwrap());
+    let response: Value = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(response["id"], "42");
+    assert_eq!(response["result_file_name"], "users-42.xlsx");
+    assert_eq!(response["snapshot_at"], "1970-01-01T00:00:00.123400Z");
+    assert_eq!(response["created_at"], "1970-01-01T00:00:00.120Z");
+    assert_eq!(response["updated_at"], "1970-01-01T00:00:10Z");
+    assert_eq!(response["expires_at"], "1970-01-01T00:00:20Z");
+    assert_eq!(response["completed_at"], "1970-01-01T00:00:09.123456700Z");
+    assert_eq!(response["notification_read_at"], "1970-01-01T00:00:10Z");
+
+    let document = serde_json::to_value(ApiDoc::openapi()).unwrap();
+    let schema = &document["components"]["schemas"]["ExportJobVo"];
+    let required = schema["required"].as_array().unwrap();
+    for field in ["snapshot_at", "created_at", "updated_at"] {
+        assert_eq!(
+            schema["properties"][field],
+            json!({"type":"string","format":"date-time"})
+        );
+        assert!(required.contains(&json!(field)));
+    }
+    for field in [
+        "permission_code",
+        "request_params",
+        "request_version",
+        "authorization_fingerprint",
+        "upper_id",
+        "result_file_id",
+    ] {
+        assert!(response.get(field).is_none());
+        assert!(schema["properties"].get(field).is_none());
+    }
+
+    let mut job = job;
+    job.expires_at = None;
+    job.completed_at = None;
+    job.notification_read_at = None;
+    job.created_at = DateTime::parse_from_rfc3339("1000-01-01T00:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    job.snapshot_at = DateTime::parse_from_rfc3339("9999-12-31T23:59:59.499999Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let response = serde_json::to_value(ExportJobVo::try_from(job.clone()).unwrap()).unwrap();
+    assert_eq!(response, serde_json::to_value(&job).unwrap());
+    assert_eq!(response["created_at"], "1000-01-01T00:00:00Z");
+    assert_eq!(response["snapshot_at"], "9999-12-31T23:59:59.499999Z");
+    for field in ["expires_at", "completed_at", "notification_read_at"] {
+        assert_eq!(response.get(field), Some(&Value::Null));
+        assert_eq!(
+            schema["properties"][field],
+            json!({"type":["string","null"],"format":"date-time"})
+        );
+        assert!(!required.contains(&json!(field)));
+    }
+
+    job.snapshot_at = DateTime::from_timestamp(-1, 1_123_456_000).unwrap();
+    assert!(matches!(
+        ExportJobVo::try_from(job),
+        Err(AppError::Internal(message)) if message.contains("snapshot_at")
+    ));
+}
+
+#[test]
 fn product_plan_version_response_preserves_published_at_utc_and_schema() {
     use ryframe_api::dto::product_dto::ProductPlanVersionVo;
     use ryframe_application::system::platform::ProductPlanVersionVo as ServiceVersion;

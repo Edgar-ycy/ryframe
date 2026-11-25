@@ -129,16 +129,17 @@ async fn list(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
 ) -> HttpResult<Json<ApiResponse<Vec<ExportJobVo>>>> {
-    state
+    let jobs = state
         .services
         .operations
         .export
         .list_for_requester(&current_user)
-        .await
-        .map_err(crate::http::HttpAppError::from)
-        .map(|jobs| jobs.into_iter().map(ExportJobVo::from).collect())
-        .map(ApiResponse::success)
-        .map(Json)
+        .await?;
+    let jobs = jobs
+        .into_iter()
+        .map(ExportJobVo::try_from)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Json(ApiResponse::success(jobs)))
 }
 
 /// 查询当前用户自己的导出任务。
@@ -152,16 +153,13 @@ async fn detail(
     current_user: RequestPrincipal,
     Path(id): Path<String>,
 ) -> HttpResult<Json<ApiResponse<ExportJobVo>>> {
-    state
+    let job = state
         .services
         .operations
         .export
         .find_for_requester(&current_user, parse_positive_id(&id, INVALID_EXPORT_ID)?)
-        .await
-        .map_err(crate::http::HttpAppError::from)
-        .map(ExportJobVo::from)
-        .map(ApiResponse::success)
-        .map(Json)
+        .await?;
+    Ok(Json(ApiResponse::success(ExportJobVo::try_from(job)?)))
 }
 
 /// 取消当前用户尚未完成的导出任务。
@@ -177,15 +175,13 @@ async fn cancel(
     Path(id): Path<String>,
     Json(_request): Json<CancelExportJobDto>,
 ) -> HttpResult<Json<ApiResponse<ExportJobVo>>> {
-    state
+    let job = state
         .services
         .operations
         .export
         .cancel_for_requester(&current_user, parse_positive_id(&id, INVALID_EXPORT_ID)?)
-        .await
-        .map_err(crate::http::HttpAppError::from)
-        .map(|job| ApiResponse::success(job.into()))
-        .map(Json)
+        .await?;
+    Ok(Json(ApiResponse::success(ExportJobVo::try_from(job)?)))
 }
 
 /// 下载当前用户尚未过期的导出结果。
@@ -241,11 +237,10 @@ pub(crate) async fn request_export(
                 confirm_all,
             },
         )
-        .await
-        .map_err(crate::http::HttpAppError::from)?;
+        .await?;
     Ok((
         StatusCode::ACCEPTED,
-        Json(ApiResponse::success(export.into())),
+        Json(ApiResponse::success(ExportJobVo::try_from(export)?)),
     ))
 }
 

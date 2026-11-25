@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use ryframe_application::ports::utc_timestamp;
 use ryframe_kernel::{AppError, AppResult};
 use serde::Serialize;
@@ -142,18 +141,32 @@ pub struct ExportJobVo {
     pub result_file_name: Option<String>,
     pub content_type: Option<String>,
     pub file_size: Option<i64>,
-    pub expires_at: Option<DateTime<Utc>>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub expires_at: Option<OffsetDateTime>,
     pub error_message: Option<String>,
-    pub snapshot_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub snapshot_at: OffsetDateTime,
     pub matched_rows: i64,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub completed_at: Option<DateTime<Utc>>,
-    pub notification_read_at: Option<DateTime<Utc>>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub created_at: OffsetDateTime,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub updated_at: OffsetDateTime,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub completed_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub notification_read_at: Option<OffsetDateTime>,
 }
 
-impl From<ServiceExportJobVo> for ExportJobVo {
-    fn from(value: ServiceExportJobVo) -> Self {
+impl TryFrom<ServiceExportJobVo> for ExportJobVo {
+    type Error = AppError;
+
+    fn try_from(value: ServiceExportJobVo) -> AppResult<Self> {
         let ServiceExportJobVo {
             id,
             resource,
@@ -170,21 +183,32 @@ impl From<ServiceExportJobVo> for ExportJobVo {
             completed_at,
             notification_read_at,
         } = value;
-        Self {
+        let to_utc = |timestamp, field| {
+            utc_timestamp::from_chrono(timestamp).map_err(|_| {
+                AppError::Internal(format!("导出任务响应的 {field} 无法精确表示为 UTC"))
+            })
+        };
+        Ok(Self {
             id,
             resource,
             status,
             result_file_name,
             content_type,
             file_size,
-            expires_at,
+            expires_at: expires_at
+                .map(|timestamp| to_utc(timestamp, "expires_at"))
+                .transpose()?,
             error_message,
-            snapshot_at,
+            snapshot_at: to_utc(snapshot_at, "snapshot_at")?,
             matched_rows,
-            created_at,
-            updated_at,
-            completed_at,
-            notification_read_at,
-        }
+            created_at: to_utc(created_at, "created_at")?,
+            updated_at: to_utc(updated_at, "updated_at")?,
+            completed_at: completed_at
+                .map(|timestamp| to_utc(timestamp, "completed_at"))
+                .transpose()?,
+            notification_read_at: notification_read_at
+                .map(|timestamp| to_utc(timestamp, "notification_read_at"))
+                .transpose()?,
+        })
     }
 }
