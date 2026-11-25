@@ -1,5 +1,6 @@
 //! seed 配额桥接沿用正式控制器和旧动作的完整阶段守卫。
 
+use super::super::registration;
 use super::{
     Context, Kind, Producer, RPC_TIMEOUT, SeedLaunch, Session, common, document, files,
     finish_session,
@@ -84,13 +85,25 @@ impl<'a> SeedLaunch<'a> {
         request: &'a Value,
         descriptor: &'a Value,
     ) -> Result<Self> {
-        let path = common::bound_file(context.backend, descriptor, "配额 seed 登记")?;
-        if path != context.run.join("seed-runtime.json") {
-            return Err("配额生产者登记不属于本 run".into());
+        let path = common::bound_file(context.backend, descriptor, "seed 生产者登记")?;
+        if registration::resolve(
+            context.backend,
+            context.run,
+            "seed-runtime",
+            descriptor,
+            Some(context.number),
+            false,
+        )? != *request
+        {
+            return Err("生产者登记不属于当前正式 seed 阶段".into());
         }
         let identity_plan =
             common::read_bound(context.backend, &request["identity_plan"], "配额身份计划")?;
         let mut inputs = BTreeSet::from([path]);
+        if descriptor["path"] != json!(context.run.join("seed-runtime.json")) {
+            let successor = common::read_bound(context.backend, descriptor, "后继身份工具登记")?;
+            files::bindings(context.backend, &successor, &mut inputs)?;
+        }
         for value in [request, &identity_plan] {
             files::bindings(context.backend, value, &mut inputs)?;
         }
@@ -116,17 +129,24 @@ impl<'a> SeedLaunch<'a> {
             || attempt["stage"] != "seed-runtime"
             || attempt["mode"] != context.mode
             || self.request["post_copy"] != context.post.descriptor
-            || common::read_bound(context.backend, self.descriptor, "配额 seed 登记")?
-                != *self.request
-            || seed::Registration::load(context.backend, context.run, false)?.value != *self.request
+            || registration::resolve(
+                context.backend,
+                context.run,
+                "seed-runtime",
+                self.descriptor,
+                Some(context.number),
+                false,
+            )? != *self.request
         {
             return Err("配额生产者不属于当前正式 seed 登记和阶段".into());
         }
-        if seed::identity::inputs(context.backend, context.run, self.request, &context.post)?
+        let original = seed::Registration::load(context.backend, context.run, false)?;
+        if seed::identity::inputs(context.backend, context.run, &original.value, &context.post)?
             != self.identity_plan
         {
             return Err("配额生产者的身份计划在绑定期间变化".into());
         }
+        original.assert_unchanged(context.backend, false)?;
         Ok(())
     }
 }

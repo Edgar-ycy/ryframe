@@ -27,6 +27,8 @@ pub(crate) mod generation;
 pub(crate) mod history;
 #[path = "seed/identity.rs"]
 pub(crate) mod identity;
+#[path = "seed/identity_successor.rs"]
+pub(crate) mod identity_successor;
 #[path = "seed/pair_entry.rs"]
 mod pair_entry;
 pub(super) use pair_entry::close_runtime;
@@ -70,6 +72,7 @@ pub(super) fn run(backend: &Path, options: &SeedRuntimeOptions) -> Result<Value>
         | SeedRuntimeOperation::DepartmentsReconcile
         | SeedRuntimeOperation::DepartmentsVerify
         | SeedRuntimeOperation::IdentitiesApply
+        | SeedRuntimeOperation::IdentitiesReconcile
         | SeedRuntimeOperation::IdentitiesVerify
         | SeedRuntimeOperation::Prepare
         | SeedRuntimeOperation::Start

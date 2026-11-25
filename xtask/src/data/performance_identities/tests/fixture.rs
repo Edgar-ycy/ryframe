@@ -72,13 +72,42 @@ pub(crate) struct FakeData {
     pub(crate) sessions: usize,
     pub(crate) closed: usize,
     pub(crate) inspections: usize,
+    pub(crate) created_observations: usize,
+    pub(crate) activated_observations: usize,
     pub(crate) fail_inspection: Option<usize>,
     pub(crate) drift_inspection: Option<usize>,
     pub(crate) fail_operation: Option<String>,
     pub(crate) fail_close_at: Option<usize>,
     pub(crate) bad_fragment: bool,
     pub(crate) bad_ordinary: bool,
+    pub(crate) bad_created_id: bool,
+    pub(crate) bad_created_password_flag: bool,
+    pub(crate) bad_activated_password_flag: bool,
+    pub(crate) creation_response_password_flag: Option<bool>,
+    pub(crate) detail_response_password_flag: Option<bool>,
     pub(crate) different_template: bool,
+}
+impl FakeData {
+    fn observe_user(
+        &self,
+        group: &Value,
+        user: &Value,
+        role_id: &str,
+        id: &str,
+        password_change_required: bool,
+    ) -> Result<()> {
+        let row = self.users.get(id).ok_or("测试数据库用户缺失")?;
+        if row["id"] != id
+            || row["tenant_id"] != group["tenant_id"]
+            || row["username"] != user["username"]
+            || row["status"] != "1"
+            || row["roles"] != json!([{"id":role_id,"is_super":0}])
+            || row["password_change_required"] != password_change_required
+        {
+            return Err("测试数据库用户状态与计划不符".into());
+        }
+        Ok(())
+    }
 }
 pub(crate) struct FakeContext {
     pub(crate) data: Rc<RefCell<FakeData>>,
@@ -115,6 +144,28 @@ impl Context for FakeContext {
             group,
             closed: false,
         }) as Box<dyn IdentitySession>)
+    }
+    async fn observe_created_user(
+        &mut self,
+        group: &Value,
+        user: &Value,
+        role_id: &str,
+        id: &str,
+    ) -> Result<()> {
+        let mut data = self.data.borrow_mut();
+        data.created_observations += 1;
+        data.observe_user(group, user, role_id, id, true)
+    }
+    async fn observe_activated_user(
+        &mut self,
+        group: &Value,
+        user: &Value,
+        role_id: &str,
+        id: &str,
+    ) -> Result<()> {
+        let mut data = self.data.borrow_mut();
+        data.activated_observations += 1;
+        data.observe_user(group, user, role_id, id, false)
     }
 }
 struct FakeSession {
@@ -174,7 +225,10 @@ impl FakeSession {
             "get_system_perms_tree" => json!(self.group["permissions"].as_array().unwrap().iter().enumerate().map(|(index,code)|json!({"id":format!("{}",10000+index),"code":code,"status":"1","children":[]})).collect::<Vec<_>>()),
             "get_system_roles_by_id" => data.roles.get(id).ok_or("测试角色缺失")?.clone(),
             "get_system_roles_by_id_permissions" => data.permissions.get(id).ok_or("测试权限缺失")?.clone(),
-            "get_system_users_by_id" => data.users.get(id).ok_or("测试用户缺失")?.clone(),
+            "get_system_users_by_id" => self.administrative_user(
+                data.users.get(id).ok_or("测试用户缺失")?,
+                data.detail_response_password_flag,
+            ),
             _ => self.mutate(&mut data, step, tenant)?,
         };
         if data.fail_operation.as_deref() == Some(operation) {
@@ -217,9 +271,16 @@ impl FakeSession {
                 Ok(Value::Null)
             }
             "post_system_users" => {
-                let value = json!({"id":id,"tenant_id":tenant,"username":step["body"]["username"],"status":"1","password_change_required":true,"roles":[{"id":step["body"]["role_ids"][0],"is_super":0}]});
-                data.users.insert(id, value.clone());
-                Ok(value)
+                let mut row = json!({"id":id,"tenant_id":tenant,"username":step["body"]["username"],"status":"1","password_change_required":true,"roles":[{"id":step["body"]["role_ids"][0],"is_super":0}]});
+                let response = self.administrative_user(&row, data.creation_response_password_flag);
+                if data.bad_created_id {
+                    row["id"] = json!("999999");
+                }
+                if data.bad_created_password_flag {
+                    row["password_change_required"] = json!(false);
+                }
+                data.users.insert(id, row);
+                Ok(response)
             }
             "post_system_users_by_id_password_reset_requests" => {
                 data.resets.insert(id.clone(), target.into());
@@ -230,10 +291,26 @@ impl FakeSession {
             "post_auth_password_reset_complete" => {
                 let request = step["body"]["request_id"].as_str().unwrap();
                 let user = data.resets.get(request).ok_or("测试重置请求缺失")?.clone();
-                data.users.get_mut(&user).unwrap()["password_change_required"] = json!(false);
+                let required = data.bad_activated_password_flag;
+                data.users.get_mut(&user).unwrap()["password_change_required"] = json!(required);
                 Ok(Value::Null)
             }
             _ => Err("测试遇到未声明操作".into()),
         }
+    }
+    fn administrative_user(&self, row: &Value, explicit_password_flag: Option<bool>) -> Value {
+        let mut response = json!({
+            "id":row["id"], "username":row["username"], "nickname":"运行时性能普通用户",
+            "email":"", "phone":"", "avatar":null, "status":row["status"],
+            "dept_id":null, "dept_name":null, "remark":null, "created_at":"2026-11-25T12:00:00Z",
+            "department":null, "roles":[{
+                "id":row["roles"][0]["id"], "name":"运行时性能普通用户",
+                "code":self.group["role_code"], "is_super":row["roles"][0]["is_super"]
+            }]
+        });
+        if let Some(flag) = explicit_password_flag {
+            response["password_change_required"] = json!(flag);
+        }
+        response
     }
 }

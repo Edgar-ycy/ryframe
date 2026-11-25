@@ -69,7 +69,14 @@ pub(crate) fn collect(
     let registration_binding = bound(&registration_path, run, Some(&launch["registration"]))?;
     let tool_path = source::tool(&launch[tool_key])?;
     source::script(attempt, backend, kind, &launch[source_key])?;
-    let request = registration::resolve(backend, run, stage, &launch["registration"], None, true)?;
+    let request = registration::resolve(
+        backend,
+        run,
+        stage,
+        &launch["registration"],
+        Some(number),
+        true,
+    )?;
     verify_command(
         backend,
         run,

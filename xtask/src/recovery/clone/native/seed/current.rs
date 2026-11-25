@@ -56,6 +56,7 @@ fn controller(backend: &Path, run: &Path, saved: &Value) -> Result<Value> {
             attempt["mode"].as_str(),
             Some(
                 "identities-apply"
+                    | "identities-reconcile"
                     | "identities-verify"
                     | "quotas-plan"
                     | "quotas-apply"

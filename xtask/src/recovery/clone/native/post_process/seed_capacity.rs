@@ -1,6 +1,9 @@
 //! seed 业务及运行准备共用原目标代次和复制后调度证明。
 
-use std::{cell::RefCell, path::Path};
+use std::{
+    cell::RefCell,
+    path::{Path, PathBuf},
+};
 
 use serde_json::{Value, json};
 
@@ -41,6 +44,7 @@ pub(in crate::recovery::clone::native) fn selected(operation: SeedRuntimeOperati
             | SeedRuntimeOperation::QuotasApply
             | SeedRuntimeOperation::QuotasReconcile
             | SeedRuntimeOperation::IdentitiesApply
+            | SeedRuntimeOperation::IdentitiesReconcile
             | SeedRuntimeOperation::IdentitiesVerify
             | SeedRuntimeOperation::DepartmentsPlan
             | SeedRuntimeOperation::DepartmentsApply
@@ -58,6 +62,7 @@ pub(in crate::recovery::clone::native) fn run(
 ) -> Result<Value> {
     if !selected(options.operation)
         || options.request.is_some()
+            != (options.operation == SeedRuntimeOperation::IdentitiesReconcile)
         || options.producer_binding.is_some()
     {
         return Err("seed 业务及运行准备沿用本 run 已发布登记和原身份计划".into());
@@ -69,6 +74,7 @@ pub(in crate::recovery::clone::native) fn run(
     }
     let runner = Runner {
         mode: options.operation.as_str(),
+        reconciliation: options.request.clone(),
         scope: RefCell::new(None),
         #[cfg(windows)]
         hold_originals: options.hold_originals,
@@ -85,6 +91,7 @@ pub(in crate::recovery::clone::native) fn run(
 
 struct Runner {
     mode: &'static str,
+    reconciliation: Option<PathBuf>,
     scope: RefCell<Option<Scope>>,
     #[cfg(windows)]
     hold_originals: bool,
@@ -145,19 +152,19 @@ impl StageRunner for Runner {
                             request, owner, scope, storage, None, held, true,
                         )?;
                         context.hold_plan()?;
-                        let result = execute(&context);
+                        let result = execute(&context, self.reconciliation.as_deref());
                         files::combine(result, context.check_end())
                     },
                 );
             }
             let context = Context::load(request, owner, scope, storage, None)?;
-            let result = execute(&context);
+            let result = execute(&context, self.reconciliation.as_deref());
             files::combine(result, context.check())
         })
     }
 }
 
-fn execute(context: &Context<'_>) -> Result<Value> {
+fn execute(context: &Context<'_>, reconciliation: Option<&Path>) -> Result<Value> {
     let registration = seed::Registration::load(context.backend, context.run, false)?;
     let registration_path = common::common_file(
         context.backend,
@@ -191,6 +198,15 @@ fn execute(context: &Context<'_>) -> Result<Value> {
     }
     if context.mode.starts_with("departments-") {
         return super::seed_department::execute(&guard, &registration.value, &descriptor);
+    }
+    if context.mode == "identities-reconcile" {
+        let path = reconciliation.ok_or("身份和解缺少明确请求")?;
+        return super::seed_identity_reconcile::execute(
+            &guard,
+            &registration.value,
+            &descriptor,
+            path,
+        );
     }
     if context.mode.starts_with("identities-") {
         return super::seed_identity::execute(&guard, &registration.value, &descriptor);

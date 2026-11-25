@@ -63,6 +63,8 @@ fn native_apply_then_verify_keeps_all_writes_and_exact_ordinary_sessions() {
     let data = fixture.context.data.borrow();
     assert_eq!(data.sessions, data.closed);
     assert_eq!(data.writes, 622);
+    assert_eq!(data.created_observations, 200);
+    assert_eq!(data.activated_observations, 200);
     for secret in [
         "Fixture-User!123",
         "Fixture-Admin!123",
@@ -109,6 +111,64 @@ fn committed_unknown_write_marks_reconciliation_and_never_replays() {
     assert!(execute(&mut fixture, "apply", &mut |_| Ok(())).is_err());
     assert!(execute(&mut fixture, "verify", &mut |_| Ok(())).is_err());
     assert_eq!(fixture.context.data.borrow().writes, before);
+}
+
+#[test]
+fn mismatched_creation_evidence_preserves_the_open_intent_without_replay() {
+    for (bad_id, bad_flag, response_flag) in [
+        (true, false, None),
+        (false, true, None),
+        (false, false, Some(false)),
+    ] {
+        let mut fixture = Fixture::new();
+        {
+            let mut data = fixture.context.data.borrow_mut();
+            data.bad_created_id = bad_id;
+            data.bad_created_password_flag = bad_flag;
+            data.creation_response_password_flag = response_flag;
+        }
+
+        assert!(execute(&mut fixture, "apply", &mut |_| Ok(())).is_err());
+        let ledger = fixture.ledger();
+        assert_eq!(ledger["status"], "needs-reconciliation");
+        assert_eq!(ledger["entries"].as_array().unwrap().len(), 3);
+        assert_eq!(ledger["entries"][2]["operation"], "post_system_users");
+        assert_eq!(ledger["entries"][2]["phase"], "started");
+        assert_eq!(ledger["users"], json!({}));
+        assert_eq!(
+            fixture.context.data.borrow().created_observations,
+            usize::from(response_flag.is_none())
+        );
+        assert!(execute(&mut fixture, "apply", &mut |_| Ok(())).is_err());
+        let data = fixture.context.data.borrow();
+        assert_eq!(data.writes, 3);
+        assert_eq!(data.sessions, data.closed);
+    }
+}
+
+#[test]
+fn contradictory_activation_evidence_prevents_prepared_publication() {
+    for (bad_database_flag, detail_flag) in [(true, None), (false, Some(true))] {
+        let mut fixture = Fixture::new();
+        {
+            let mut data = fixture.context.data.borrow_mut();
+            data.bad_activated_password_flag = bad_database_flag;
+            data.detail_response_password_flag = detail_flag;
+        }
+
+        assert!(execute(&mut fixture, "apply", &mut |_| Ok(())).is_err());
+        let ledger = fixture.ledger();
+        assert_eq!(ledger["status"], "applying");
+        assert_eq!(ledger["entries"].as_array().unwrap().len(), 5);
+        assert_eq!(ledger["entries"][4]["phase"], "confirmed");
+        let data = fixture.context.data.borrow();
+        assert_eq!(data.writes, 5);
+        assert_eq!(
+            data.activated_observations,
+            usize::from(detail_flag.is_none())
+        );
+        assert_eq!(data.sessions, data.closed);
+    }
 }
 #[test]
 fn ownership_and_process_drift_fail_before_first_mutation() {

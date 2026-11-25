@@ -9,6 +9,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[path = "ledger/reconcile.rs"]
+mod reconcile;
+
 pub(super) struct Ledger {
     pub(super) root: PathBuf,
     pub(super) state: Value,
@@ -85,6 +88,7 @@ impl Ledger {
                 self.unknown()?;
                 return Err("身份账本含未知写入，需要人工核对，禁止重放".into());
             }
+            reconcile::require_finalized(self)?;
             state::validate(&self.plan, &self.state, false)
         } else {
             state::validate(&self.plan, &self.state, true)

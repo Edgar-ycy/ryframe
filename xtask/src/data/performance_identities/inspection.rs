@@ -13,6 +13,10 @@ use std::{
     time::Duration,
 };
 
+#[path = "inspection/user_create.rs"]
+mod user_create;
+pub(super) use user_create::{observe_activated_user, observe_created_user};
+
 pub(super) const QUOTA_PHASE: &str = "quota";
 
 pub(super) fn inspect(plan: &Value, phase: &str) -> Result<(Value, PathBuf)> {

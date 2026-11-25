@@ -108,11 +108,16 @@ pub(super) fn role(value: &Value, group: &Value, id: &str) -> Result<()> {
     }
     Ok(())
 }
-pub(super) fn user_detail(value: &Value, user: &Value, role: &str, id: &str) -> Result<()> {
+pub(super) fn administrative_user_detail(
+    value: &Value,
+    user: &Value,
+    role: &str,
+    id: &str,
+) -> Result<()> {
     if value["id"] != id
         || value["username"] != user["username"]
         || value["status"] != "1"
-        || value["password_change_required"] != false
+        || contradictory_password_flag(value, false)
         || !value["roles"].as_array().is_some_and(|roles| {
             roles.len() == 1 && roles[0]["id"] == role && roles[0]["is_super"] == 0
         })
@@ -121,6 +126,13 @@ pub(super) fn user_detail(value: &Value, user: &Value, role: &str, id: &str) -> 
     }
     Ok(())
 }
+
+fn contradictory_password_flag(value: &Value, required: bool) -> bool {
+    value
+        .get("password_change_required")
+        .is_some_and(|flag| flag.as_bool() != Some(required))
+}
+
 async fn prepare_role(
     group: &Value,
     ledger: &mut Ledger,
@@ -136,11 +148,18 @@ async fn prepare_role(
         let step = json!({"operation":"post_system_roles","body":{
             "code":group["role_code"],"name":"运行时性能普通用户","sort":0,"data_scope":"1"
         }});
-        mutation(ledger, admin, "post_system_roles", slot, step, |response| {
-            let id = super::super::state::id(&response["data"]["id"])?;
-            role(&response["data"], group, id)?;
-            Ok(json!({"id":id}))
-        })
+        mutation(
+            ledger,
+            admin,
+            "post_system_roles",
+            slot,
+            step,
+            async |response| {
+                let id = super::super::state::id(&response["data"]["id"])?;
+                role(&response["data"], group, id)?;
+                Ok(json!({"id":id}))
+            },
+        )
         .await?;
     }
     let id = text(&ledger.state["roles"], slot)?.to_owned();
@@ -167,7 +186,7 @@ async fn prepare_role(
             "put_system_roles_by_id_permissions",
             slot,
             step,
-            |_| Ok(json!({"id":id})),
+            async |_| Ok(json!({"id":id})),
         )
         .await?;
     }
@@ -183,6 +202,46 @@ async fn prepare_role(
     }
     Ok(id)
 }
+async fn create_user(
+    group: &Value,
+    user: &Value,
+    role_id: &str,
+    ledger: &mut Ledger,
+    admin: &mut dyn IdentitySession,
+    context: &mut dyn Context,
+) -> Result<bool> {
+    let slot = text(user, "user_slot")?;
+    if ledger.take("post_system_users", slot)?.is_some() {
+        return Ok(true);
+    }
+    let step = json!({"operation":"post_system_users","body":{
+        "username":user["username"],"nickname":"运行时性能普通用户","role_ids":[role_id]
+    }});
+    mutation(
+        ledger,
+        admin,
+        "post_system_users",
+        slot,
+        step,
+        async |response| {
+            let value = &response["data"];
+            let id = super::super::state::id(&value["id"])?;
+            if value["username"] != user["username"]
+                || value["status"] != "1"
+                || contradictory_password_flag(value, true)
+            {
+                return Err("新用户响应的身份或启用、首次改密状态与计划不符".into());
+            }
+            context
+                .observe_created_user(group, user, role_id, id)
+                .await?;
+            Ok(json!({"id":id}))
+        },
+    )
+    .await?;
+    Ok(false)
+}
+
 async fn prepare_user(
     plan: &Value,
     group: &Value,
@@ -192,29 +251,20 @@ async fn prepare_user(
     admin: &mut dyn IdentitySession,
     context: &mut dyn Context,
 ) -> Result<()> {
+    let already_created = create_user(group, user, role_id, ledger, admin, context).await?;
     let slot = text(user, "user_slot")?;
-    if ledger.take("post_system_users", slot)?.is_none() {
-        let step = json!({"operation":"post_system_users","body":{
-            "username":user["username"],"nickname":"运行时性能普通用户","role_ids":[role_id]
-        }});
-        mutation(ledger, admin, "post_system_users", slot, step, |response| {
-            let value = &response["data"];
-            if value["username"] != user["username"]
-                || value["status"] != "1"
-                || value["password_change_required"] != true
-            {
-                return Err("新用户未处于启用且首次强制改密状态".into());
-            }
-            Ok(json!({"id":super::super::state::id(&value["id"])?}))
-        })
-        .await?;
-    }
     let id = text(&ledger.state["users"], slot)?.to_owned();
     let mut secret = None;
     if ledger
         .take("post_system_users_by_id_password_reset_requests", slot)?
         .is_none()
     {
+        // 已确认创建的后继仍先读取真实首次改密状态，再申请重置。
+        if already_created {
+            context
+                .observe_created_user(group, user, role_id, &id)
+                .await?;
+        }
         let step = json!({"operation":"post_system_users_by_id_password_reset_requests",
             "path":{"id":id},"body":{"reason":"本计划隔离性能普通用户首次改密"}});
         let response = mutation(
@@ -223,7 +273,7 @@ async fn prepare_user(
             "post_system_users_by_id_password_reset_requests",
             slot,
             step,
-            |response| {
+            async |response| {
                 let activation = activation(response, &plan["environment"], group)?;
                 Ok(json!({"id":id,"request_id":activation["request_id"]}))
             },
@@ -249,7 +299,7 @@ async fn prepare_user(
                 "post_auth_password_reset_complete",
                 slot,
                 json!({"operation":"post_auth_password_reset_complete","body":body}),
-                |_| Ok(json!({"id":id})),
+                async |_| Ok(json!({"id":id})),
             )
             .await?;
             Ok(())
@@ -257,18 +307,17 @@ async fn prepare_user(
         .await;
         close(&mut *session, result).await?;
     }
-    user_detail(
-        &request(
-            admin,
-            "get_system_users_by_id",
-            json!({"id":id}),
-            Value::Null,
-        )
-        .await?,
-        user,
-        role_id,
-        &id,
+    let detail = request(
+        admin,
+        "get_system_users_by_id",
+        json!({"id":id}),
+        Value::Null,
     )
+    .await?;
+    administrative_user_detail(&detail, user, role_id, &id)?;
+    context
+        .observe_activated_user(group, user, role_id, &id)
+        .await
 }
 async fn mutation(
     ledger: &mut Ledger,
@@ -276,12 +325,12 @@ async fn mutation(
     operation: &str,
     slot: &str,
     step: Value,
-    confirm: impl FnOnce(&Value) -> Result<Value>,
+    confirm: impl AsyncFnOnce(&Value) -> Result<Value>,
 ) -> Result<Value> {
     ledger.started(operation, slot)?;
     let result = async {
         let response = session.request(&step).await?;
-        let fields = confirm(&response)?;
+        let fields = confirm(&response).await?;
         ledger.confirmed(operation, slot, fields)?;
         Ok(response)
     }

@@ -41,6 +41,20 @@ impl Context for FakeContext {
         Err("测试上下文不检查外部服务".into())
     }
 
+    async fn observe_created_user(&mut self, _: &Value, _: &Value, _: &str, _: &str) -> Result<()> {
+        Err("配额与部门测试不读取用户创建后像".into())
+    }
+
+    async fn observe_activated_user(
+        &mut self,
+        _: &Value,
+        _: &Value,
+        _: &str,
+        _: &str,
+    ) -> Result<()> {
+        Err("配额与部门测试不读取用户改密后像".into())
+    }
+
     async fn session(&mut self, identity: &Value) -> Result<Box<dyn IdentitySession>> {
         let script = self.scripts.pop_front().ok_or("缺少测试会话")?;
         if script.identity != *identity {

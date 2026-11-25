@@ -85,10 +85,20 @@ impl Registration {
         if digest::file(&self.plan)?.sha256 != self.plan_sha256 {
             return Err("身份计划原始文件摘要变化".into());
         }
-        let registration_path = self.run.join("seed-runtime.json");
+        let original_path = self.run.join("seed-runtime.json");
         let seed =
             crate::recovery::clone::native::seed::Registration::load(root, &self.run, false)?;
-        let registration = &seed.value;
+        let original_binding = binding(&original_path)?;
+        let (registration, selected) =
+            crate::recovery::clone::native::seed::identity_successor::select(
+                root,
+                &self.run,
+                self.attempt,
+                &seed.value,
+                &original_binding,
+            )?;
+        let registration_path =
+            Path::new(selected["path"].as_str().ok_or("身份生产者登记路径缺失")?);
         let tool = &registration["identity_tool"];
         let command = self.command(tool)?;
         let mode = format!("identities-{}", self.mode);
@@ -101,7 +111,7 @@ impl Registration {
             mode: &mode,
             producer_kind: &producer_kind,
             operation: "start",
-            registration: &registration_path,
+            registration: registration_path,
             source: &source,
             command: &command,
             tool,
@@ -115,6 +125,9 @@ impl Registration {
         }
         if digest::file(&self.plan)?.sha256 != self.plan_sha256 {
             return Err("身份生产者授权期间计划变化".into());
+        }
+        if binding(registration_path)? != selected {
+            return Err("身份生产者的有效登记在授权期间变化".into());
         }
         seed.assert_unchanged(root, false)?;
         Ok(token)

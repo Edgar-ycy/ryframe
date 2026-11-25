@@ -95,7 +95,9 @@ pub(super) fn parse_seed_runtime(args: &[String]) -> Result<CloneCommand, CliErr
     if request.is_some()
         != matches!(
             operation,
-            SeedRuntimeOperation::Register | SeedRuntimeOperation::ArmInput
+            SeedRuntimeOperation::Register
+                | SeedRuntimeOperation::ArmInput
+                | SeedRuntimeOperation::IdentitiesReconcile
         )
         || producer_binding.is_some() != matches!(operation, SeedRuntimeOperation::RecoverSession)
     {
@@ -123,6 +125,7 @@ fn seed_operation(value: &str) -> Result<SeedRuntimeOperation, CliError> {
         "departments-reconcile" => SeedRuntimeOperation::DepartmentsReconcile,
         "departments-verify" => SeedRuntimeOperation::DepartmentsVerify,
         "identities-apply" => SeedRuntimeOperation::IdentitiesApply,
+        "identities-reconcile" => SeedRuntimeOperation::IdentitiesReconcile,
         "identities-verify" => SeedRuntimeOperation::IdentitiesVerify,
         "prepare" => SeedRuntimeOperation::Prepare,
         "start" => SeedRuntimeOperation::Start,

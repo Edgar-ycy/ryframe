@@ -94,6 +94,41 @@ impl Context for NativeContext {
         self.config["bindings"]["app_config_dir"] = json!(config_dir);
         Ok(value)
     }
+    async fn observe_created_user(
+        &mut self,
+        group: &Value,
+        user: &Value,
+        role_id: &str,
+        id: &str,
+    ) -> Result<()> {
+        let (plan, group, user) = (self.plan.clone(), group.clone(), user.clone());
+        let (role_id, id) = (role_id.to_owned(), id.to_owned());
+        tokio::task::spawn_blocking(move || {
+            inspection::observe_created_user(&plan, &group, &user, &role_id, Some(&id), None)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
+        .await
+        .map_err(|_| "新用户只读核对线程未完成")?
+        .map_err(Into::into)
+    }
+    async fn observe_activated_user(
+        &mut self,
+        group: &Value,
+        user: &Value,
+        role_id: &str,
+        id: &str,
+    ) -> Result<()> {
+        let (plan, group, user) = (self.plan.clone(), group.clone(), user.clone());
+        let (role_id, id) = (role_id.to_owned(), id.to_owned());
+        tokio::task::spawn_blocking(move || {
+            inspection::observe_activated_user(&plan, &group, &user, &role_id, &id)
+                .map_err(|error| error.to_string())
+        })
+        .await
+        .map_err(|_| "已激活用户只读核对线程未完成")?
+        .map_err(Into::into)
+    }
     async fn session(&mut self, identity: &Value) -> Result<Box<dyn IdentitySession>> {
         if self.baseline.is_none() {
             return Err("身份会话必须先通过资源 ownership 核验".into());

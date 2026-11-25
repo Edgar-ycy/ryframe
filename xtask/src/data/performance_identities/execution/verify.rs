@@ -96,7 +96,7 @@ async fn verify_admin(group: &Value, ledger: &Ledger, context: &mut dyn Context)
                 Value::Null,
             )
             .await?;
-            apply::user_detail(&detail, user, role_id, id)?;
+            apply::administrative_user_detail(&detail, user, role_id, id)?;
         }
         Ok(())
     }

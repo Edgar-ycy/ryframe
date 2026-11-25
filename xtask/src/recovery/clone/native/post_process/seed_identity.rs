@@ -43,7 +43,15 @@ pub(super) fn execute(
     guard.full()?;
     let plan = common::read_bound(context.backend, &request["identity_plan"], "seed 身份计划")?;
     let root = Path::new(document::text(&request["identity_state"], "seed 身份账本")?);
-    let result = producer::with_identity(context, request, registration)?;
+    let (producer_request, producer_registration) =
+        crate::recovery::clone::native::seed::identity_successor::select(
+            context.backend,
+            context.run,
+            context.number,
+            request,
+            registration,
+        )?;
+    let result = producer::with_identity(context, &producer_request, &producer_registration)?;
     require_result(&result, &plan["plan_sha256"], verify)?;
     let observe = || observe_identity(context.backend, &plan, root, verify);
     let identity = observe()?;
@@ -65,7 +73,7 @@ pub(super) fn execute(
     if attempt["number"].as_u64() != Some(context.number)
         || observed["alive"] != false
         || observed["producer_kind"] != kind
-        || observed["request"] != *request
+        || observed["request"] != producer_request
     {
         return Err("seed 身份生产者缺少完整退出证明".into());
     }

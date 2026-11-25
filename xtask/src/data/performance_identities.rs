@@ -48,6 +48,8 @@ mod producer;
 pub(crate) mod producer_authorization;
 #[path = "performance_identities/receipt.rs"]
 mod receipt;
+#[path = "performance_identities/reconcile.rs"]
+pub(crate) mod reconcile;
 #[path = "performance_identities/run_lock.rs"]
 mod run_lock;
 #[path = "performance_identities/seed_evidence.rs"]

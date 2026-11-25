@@ -26,6 +26,7 @@ pub(super) mod seed_capacity;
 mod seed_close;
 mod seed_department;
 mod seed_identity;
+mod seed_identity_reconcile;
 mod seed_prepare;
 mod seed_start;
 #[cfg(windows)]

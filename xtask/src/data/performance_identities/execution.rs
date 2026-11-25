@@ -25,6 +25,20 @@ pub(super) trait Context {
     async fn password(&mut self, slot: &str) -> Result<String>;
     async fn inspect(&mut self, phase: &str) -> Result<Value>;
     async fn session(&mut self, identity: &Value) -> Result<Box<dyn IdentitySession>>;
+    async fn observe_created_user(
+        &mut self,
+        group: &Value,
+        user: &Value,
+        role_id: &str,
+        id: &str,
+    ) -> Result<()>;
+    async fn observe_activated_user(
+        &mut self,
+        group: &Value,
+        user: &Value,
+        role_id: &str,
+        id: &str,
+    ) -> Result<()>;
 }
 pub(super) async fn execute(
     plan: &Value,

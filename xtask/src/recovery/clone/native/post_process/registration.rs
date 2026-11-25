@@ -20,10 +20,22 @@ pub(crate) fn resolve(
         }
         "seed-runtime" => {
             let path = common::bound_file(backend, descriptor, "seed 生产者登记")?;
+            if path == seed::identity_successor::path(run) {
+                require_identity_mode(run, current)?;
+                return seed::identity_successor::resolve(backend, run, descriptor, current);
+            }
             if path != run.join("seed-runtime.json") {
                 return Err("seed 生产者登记不属于本 run".into());
             }
             let request = json::read(&path)?;
+            if !cleanup && identity_mode(run, current)? {
+                let number = current.ok_or("当前身份阶段缺少序号")?;
+                let (_, selected) =
+                    seed::identity_successor::select(backend, run, number, &request, descriptor)?;
+                if selected != *descriptor {
+                    return Err("当前身份阶段已登记和解后的后继工具".into());
+                }
+            }
             if common::binding(&path)? != *descriptor {
                 return Err("seed 生产者登记在读取期间变化".into());
             }
@@ -31,6 +43,29 @@ pub(crate) fn resolve(
         }
         _ => Err("原生生产者历史不属于明确阶段".into()),
     }
+}
+
+fn identity_mode(run: &Path, current: Option<u64>) -> Result<bool> {
+    let Some(number) = current else {
+        return Ok(false);
+    };
+    use super::super::lifecycle::state;
+    let saved = state::load(run, false)?;
+    Ok(state::attempts(&saved)?.iter().any(|attempt| {
+        attempt["number"].as_u64() == Some(number)
+            && attempt["stage"] == "seed-runtime"
+            && matches!(
+                attempt["mode"].as_str(),
+                Some("identities-apply" | "identities-verify")
+            )
+    }))
+}
+
+fn require_identity_mode(run: &Path, current: Option<u64>) -> Result<()> {
+    if !identity_mode(run, current)? {
+        return Err("和解后的身份工具只用于正式身份应用和核验".into());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
