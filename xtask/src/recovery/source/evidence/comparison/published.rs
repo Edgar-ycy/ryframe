@@ -18,8 +18,6 @@ pub(in crate::recovery) struct Verified {
 
 impl Verified {
     pub(in crate::recovery) fn check_live(&self, backend: &Path) -> Result<()> {
-        use crate::recovery::clone::native::resources::common::require_closed_port;
-
         let saved = common::bound_file(backend, &self.state, "共享导出原账本")?;
         let run = saved.parent().ok_or("共享导出原账本缺少运行目录")?;
         let state = state::load(run, true)?;
@@ -29,14 +27,10 @@ impl Verified {
         }
         let request = &self.source["request"];
         let runtime = common::read_bound(backend, &request["runtime"], "共享导出原运行绑定")?;
-        require_closed_port(document::text(
-            &request["source"]["api_url"],
-            "来源 API 端点",
-        )?)?;
-        require_closed_port(document::text(
-            &runtime["worker_ready_url"],
-            "来源 Worker 端点",
-        )?)?;
+        common::require_closed_runtime_ports(
+            document::text(&request["source"]["api_url"], "来源 API 端点")?,
+            document::text(&runtime["worker_ready_url"], "来源 Worker 端点")?,
+        )?;
         self.check(backend)
     }
 

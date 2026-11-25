@@ -111,12 +111,8 @@ fn target_current(
         &frame.target,
     )?;
     let configuration = app_configuration::configuration_value(&root, &directory, "test")?;
-    let api_directory = Path::new(document::text(
-        &frame.runtime["api_config_dir"],
-        "API配置目录",
-    )?);
-    let api_configuration =
-        app_configuration::configuration_value(&frame.product, api_directory, "test")?;
+    let (api_directory, api_configuration) =
+        api_configuration_binding(&frame.backend, &frame.runtime)?;
     let mut declared = frame.target["target"].clone();
     declared["s3"] = json!({"configuration":api_configuration});
     if crate::recovery::source::evidence::binding::physical(&json!({"backend":root,
@@ -153,6 +149,15 @@ fn target_current(
         return Err("API交接期间原目标文件配置变化".into());
     }
     Ok(())
+}
+
+pub(super) fn api_configuration_binding<'a>(
+    evidence_root: &Path,
+    runtime: &'a Value,
+) -> Result<(&'a Path, Value)> {
+    let directory = Path::new(document::text(&runtime["api_config_dir"], "API配置目录")?);
+    let binding = app_configuration::configuration_value(evidence_root, directory, "test")?;
+    Ok((directory, binding))
 }
 
 fn verify_target_storage_layout(
@@ -240,9 +245,9 @@ fn addresses(frame: &Frame, directory: &Path) -> Result<()> {
     {
         return Err("API交接运行scope或Worker端口变化".into());
     }
-    common::require_closed_port(document::text(
+    target_verify::authority::require_closed(document::text(
         &frame.selected["worker_ready_url"],
-        "Worker端口",
+        "Worker就绪地址",
     )?)
 }
 

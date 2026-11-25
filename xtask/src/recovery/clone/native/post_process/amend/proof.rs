@@ -145,11 +145,10 @@ fn closed(
             return Err("旧API或Worker完整监督树尚未停止，保留原失败".into());
         }
     }
-    common::require_closed_port(document::text(&handoff["api_url"], "原API地址")?)?;
-    common::require_closed_port(document::text(
-        &runtime["worker_ready_url"],
-        "原Worker地址",
-    )?)
+    common::require_closed_runtime_ports(
+        document::text(&handoff["api_url"], "原API地址")?,
+        document::text(&runtime["worker_ready_url"], "原Worker地址")?,
+    )
 }
 
 fn gone(identity: &Value) -> Result<()> {

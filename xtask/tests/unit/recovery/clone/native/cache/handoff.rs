@@ -925,6 +925,20 @@ fn v2_product_build_uses_registered_bridge_root_for_prepare_and_frozen_handoff()
     )
     .unwrap();
     assert_eq!(contract["backend_root"], json!(product));
+    let (directory, binding) =
+        super::guard::api_configuration_binding(&fixture.backend, &contract).unwrap();
+    assert_eq!(binding["directory"], contract["api_config_dir"]);
+    let file = common::binding(&directory.join("app.test.toml")).unwrap();
+    assert_eq!(binding["files"]["app.test.toml"]["bytes"], file["bytes"]);
+    assert_eq!(binding["files"]["app.test.toml"]["sha256"], file["sha256"]);
+    let rejected = super::guard::api_configuration_binding(&product, &contract).unwrap_err();
+    let diagnosed =
+        super::diagnostic::failure(super::diagnostic::Phase::BeforeStart, rejected, None);
+    assert!(
+        diagnosed
+            .to_string()
+            .contains("配置目录不属于已登记配置归属根")
+    );
     assert_stopped_roles_preserve_frozen_runtime(&fixture, &product);
     assert!(
         super::registration::runtime(

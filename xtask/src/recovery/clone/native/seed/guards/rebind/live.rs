@@ -38,14 +38,10 @@ pub(crate) fn quiet(backend: &Path, input: &Value) -> Result<Value> {
     }
     let runtime_descriptor = &input["request"]["runtime"];
     let runtime = common::read_bound(backend, runtime_descriptor, "生产者运行绑定")?;
-    common::require_closed_port(document::text(
-        &input["request"]["source"]["api_url"],
-        "来源 API 端点",
-    )?)?;
-    common::require_closed_port(document::text(
-        &runtime["worker_ready_url"],
-        "来源 Worker 端点",
-    )?)?;
+    common::require_closed_runtime_ports(
+        document::text(&input["request"]["source"]["api_url"], "来源 API 端点")?,
+        document::text(&runtime["worker_ready_url"], "来源 Worker 端点")?,
+    )?;
     // 端口观察后复核谱系字节，不能以早先的停止身份掩盖刚发生的历史变化。
     common::bound_file(backend, descriptor, "生产者完整谱系")?;
     common::bound_file(backend, runtime_descriptor, "生产者运行绑定")?;
