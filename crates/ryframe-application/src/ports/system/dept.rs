@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppResult, PageResult, ValidatedPageQuery};
+use time::OffsetDateTime;
 
 use crate::PersistenceTransaction;
 
@@ -13,7 +14,7 @@ pub struct DeptRecord {
     pub sort: i32,
     pub status: String,
     pub remark: Option<String>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: OffsetDateTime,
     pub updated_at: DateTime<Utc>,
 }
 

@@ -38,7 +38,7 @@ fn department() -> DeptRecord {
         sort: 10,
         status: "1".into(),
         remark: Some("核心研发".into()),
-        created_at: DateTime::<Utc>::UNIX_EPOCH,
+        created_at: time::OffsetDateTime::UNIX_EPOCH,
         updated_at: DateTime::<Utc>::UNIX_EPOCH,
     }
 }

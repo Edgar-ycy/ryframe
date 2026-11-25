@@ -11,6 +11,7 @@ mod role_read;
 mod role_write;
 
 pub use config::port as config;
+pub(super) use dept::to_record as dept_record;
 pub use dept::{read_port as dept_read, write_port as dept_write};
 pub use dict::port as dict;
 pub use login_info::port as login_info;

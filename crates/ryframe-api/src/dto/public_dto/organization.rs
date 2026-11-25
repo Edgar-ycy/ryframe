@@ -1,7 +1,9 @@
 use chrono::{DateTime, Utc};
 use serde::Serialize;
+use time::OffsetDateTime;
 use utoipa::ToSchema;
 
+use ryframe_application::ports::utc_timestamp;
 use ryframe_application::system::{
     content::{
         ConfigVo as ServiceConfigVo, DictDataVo as ServiceDictDataVo,
@@ -126,7 +128,9 @@ pub struct DeptVo {
     pub sort: i32,
     pub status: String,
     pub remark: Option<String>,
-    pub created_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub created_at: OffsetDateTime,
 }
 
 impl From<ServiceDeptVo> for DeptVo {

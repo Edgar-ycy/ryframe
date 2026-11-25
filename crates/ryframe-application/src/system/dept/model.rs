@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 use crate::ports::system::{DeptRecord, DeptTreeRecord};
+use crate::ports::utc_timestamp;
 
 #[derive(Debug, Serialize)]
 pub struct DeptVo {
@@ -12,7 +14,8 @@ pub struct DeptVo {
     pub sort: i32,
     pub status: String,
     pub remark: Option<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    pub created_at: OffsetDateTime,
 }
 
 impl From<DeptRecord> for DeptVo {

@@ -85,6 +85,52 @@ fn navigation_created_at_preserves_utc_json_and_schema() {
 }
 
 #[test]
+fn department_created_at_preserves_utc_json_and_schema() {
+    use ryframe_api::dto::public_dto::DeptVo;
+    use ryframe_application::{ports::system::DeptRecord, system::identity::DeptVo as Dept};
+    use serde_json::json;
+    use time::{OffsetDateTime, UtcOffset};
+    use utoipa::PartialSchema;
+
+    let offset = UtcOffset::from_hms(8, 0, 0).unwrap();
+    for (nanos, expected) in [
+        (0, "1969-12-31T23:59:59Z"),
+        (120_000_000, "1969-12-31T23:59:59.120Z"),
+        (123_400_000, "1969-12-31T23:59:59.123400Z"),
+        (123_456_700, "1969-12-31T23:59:59.123456700Z"),
+    ] {
+        let dept = Dept::from(DeptRecord {
+            id: 1,
+            name: "研发部".into(),
+            parent_id: None,
+            ancestors: "0".into(),
+            sort: 0,
+            status: "1".into(),
+            remark: None,
+            created_at: OffsetDateTime::from_unix_timestamp(-1)
+                .unwrap()
+                .replace_nanosecond(nanos)
+                .unwrap()
+                .to_offset(offset),
+            updated_at: Default::default(),
+        });
+        assert_eq!(serde_json::to_value(&dept).unwrap()["created_at"], expected);
+        let response = serde_json::to_value(DeptVo::from(dept)).unwrap();
+        assert_eq!(response["created_at"], expected);
+    }
+
+    let schema = serde_json::to_value(DeptVo::schema()).unwrap();
+    assert_eq!(schema["properties"]["created_at"]["type"], "string");
+    assert_eq!(schema["properties"]["created_at"]["format"], "date-time");
+    assert!(
+        schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("created_at"))
+    );
+}
+
+#[test]
 fn schedule_preview_preserves_utc_precision_local_text_and_required_schema() {
     use ryframe_api::dto::public_dto::{JobScheduleOccurrence, JobSchedulePreview};
     use ryframe_application::{

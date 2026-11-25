@@ -2,12 +2,11 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     ControlDatabaseCluster, DbResultExt, DeptRepository, ReadConsistency, Repository,
-    RoleRepository, UserFilter, UserRepository,
+    RoleRepository, UserFilter, UserRepository, application_ports::system::dept_record,
 };
 use ryframe_kernel::{DataScopeContextRef, ExportCursorWindow, PageResult, ValidatedPageQuery};
 use sea_orm::DatabaseConnection;
 
-use ryframe_application::ports::system::DeptRecord;
 use ryframe_application::ports::users::{
     UserQueryDetailRecord, UserQueryFilter, UserQueryReadPort, UserQueryRecord, UserQueryRoleRecord,
 };
@@ -110,7 +109,8 @@ impl UserQueryReadPort for DatabaseUserQueryPersistence {
             Some(department_id) => DeptRepository
                 .find_by_id(&database, tenant_id, department_id)
                 .await?
-                .map(to_department),
+                .map(dept_record)
+                .transpose()?,
             None => None,
         };
         let mut user = to_user(user)?;
@@ -183,20 +183,6 @@ fn to_user(user: crate::entities::user::Model) -> ryframe_kernel::AppResult<User
         created_at: crate::repositories::utc_time_from_chrono(user.created_at)
             .db_context("读取用户创建时间")?,
     })
-}
-
-fn to_department(department: crate::entities::dept::Model) -> DeptRecord {
-    DeptRecord {
-        id: department.id,
-        name: department.name,
-        parent_id: department.parent_id,
-        ancestors: department.ancestors,
-        sort: department.sort,
-        status: department.status,
-        remark: department.remark,
-        created_at: department.created_at,
-        updated_at: department.updated_at,
-    }
 }
 
 async fn fill_department_names(

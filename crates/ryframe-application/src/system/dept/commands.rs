@@ -1,4 +1,5 @@
 use ryframe_kernel::{ActorContext, AppError, AppResult};
+use time::OffsetDateTime;
 
 use crate::ports::system::{DeptRecord, DeptWriteTransaction};
 use crate::{TransactionAuditMode, complete_transaction};
@@ -31,7 +32,7 @@ impl DeptService {
                         sort: command.sort,
                         status: DEPT_STATUS_NORMAL.into(),
                         remark: None,
-                        created_at: Default::default(),
+                        created_at: OffsetDateTime::UNIX_EPOCH,
                         updated_at: Default::default(),
                     },
                 )
