@@ -5,6 +5,7 @@ use ryframe_application::{
     JobSchedulePreview as ServicePreview, JobScheduleVo as ServiceScheduleVo,
     ScheduledJobTargetDescriptor as ServiceTargetDescriptor, ScheduledJobTargetScope,
 };
+use ryframe_kernel::{AppError, AppResult};
 use serde::Serialize;
 use time::OffsetDateTime;
 use utoipa::ToSchema;
@@ -80,29 +81,40 @@ pub struct JobScheduleExecutionVo {
     pub schedule_name: String,
     pub handler_key: String,
     pub trigger_kind: String,
-    pub scheduled_for: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub scheduled_for: OffsetDateTime,
     pub outcome: String,
     pub background_job_id: Option<String>,
     pub background_job_status: Option<String>,
     pub detail: Option<String>,
-    pub created_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub created_at: OffsetDateTime,
 }
 
-impl From<ServiceExecutionVo> for JobScheduleExecutionVo {
-    fn from(value: ServiceExecutionVo) -> Self {
-        Self {
+impl TryFrom<ServiceExecutionVo> for JobScheduleExecutionVo {
+    type Error = AppError;
+
+    fn try_from(value: ServiceExecutionVo) -> AppResult<Self> {
+        let to_utc = |timestamp, field| {
+            utc_timestamp::from_chrono(timestamp).map_err(|_| {
+                AppError::Internal(format!("调度执行记录响应的 {field} 无法精确表示为 UTC"))
+            })
+        };
+        Ok(Self {
             id: value.id,
             schedule_id: value.schedule_id,
             schedule_name: value.schedule_name,
             handler_key: value.handler_key,
             trigger_kind: value.trigger_kind,
-            scheduled_for: value.scheduled_for,
+            scheduled_for: to_utc(value.scheduled_for, "scheduled_for")?,
             outcome: value.outcome,
             background_job_id: value.background_job_id,
             background_job_status: value.background_job_status,
             detail: value.detail,
-            created_at: value.created_at,
-        }
+            created_at: to_utc(value.created_at, "created_at")?,
+        })
     }
 }
 

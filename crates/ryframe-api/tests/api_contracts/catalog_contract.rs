@@ -505,6 +505,90 @@ fn export_job_response_preserves_utc_precision_nullability_and_schema() {
 }
 
 #[test]
+fn schedule_execution_response_preserves_utc_precision_and_schema() {
+    use chrono::{DateTime, Utc};
+    use ryframe_api::dto::public_dto::JobScheduleExecutionVo;
+    use ryframe_application::{
+        JobScheduleExecutionVo as ServiceExecution, ports::jobs::JobScheduleExecutionRecord,
+    };
+    use ryframe_kernel::AppError;
+    use serde_json::{Value, json};
+    use utoipa::OpenApi;
+
+    let mut execution = ServiceExecution::from(JobScheduleExecutionRecord {
+        id: 42,
+        tenant_id: "tenant-fixture".into(),
+        schedule_id: 9,
+        schedule_name: "调度样例".into(),
+        handler_key: "fixture.job".into(),
+        fire_key: "manual:fixture".into(),
+        trigger_kind: "manual".into(),
+        scheduled_for: DateTime::from_timestamp(-1, 123_400_000).unwrap(),
+        outcome: "enqueued".into(),
+        background_job_id: Some(7),
+        background_job_status: Some("pending".into()),
+        detail: None,
+        created_at: DateTime::from_timestamp(0, 120_000_000).unwrap(),
+    });
+    let encoded =
+        serde_json::to_string(&JobScheduleExecutionVo::try_from(execution.clone()).unwrap())
+            .unwrap();
+    assert_eq!(encoded, serde_json::to_string(&execution).unwrap());
+    let response: Value = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(response["id"], "42");
+    assert_eq!(response["schedule_id"], "9");
+    assert_eq!(response["background_job_id"], "7");
+    assert_eq!(response["scheduled_for"], "1969-12-31T23:59:59.123400Z");
+    assert_eq!(response["created_at"], "1970-01-01T00:00:00.120Z");
+    assert_eq!(response.get("detail"), Some(&Value::Null));
+    assert!(response.get("tenant_id").is_none());
+    assert!(response.get("fire_key").is_none());
+
+    let document = serde_json::to_value(ApiDoc::openapi()).unwrap();
+    assert_eq!(
+        document["components"]["schemas"]["JobScheduleExecutionVo"],
+        json!({
+            "type": "object",
+            "required": [
+                "id", "schedule_id", "schedule_name", "handler_key",
+                "trigger_kind", "scheduled_for", "outcome", "created_at"
+            ],
+            "properties": {
+                "id": {"type": "string"},
+                "schedule_id": {"type": "string"},
+                "schedule_name": {"type": "string"},
+                "handler_key": {"type": "string"},
+                "trigger_kind": {"type": "string"},
+                "scheduled_for": {"type": "string", "format": "date-time"},
+                "outcome": {"type": "string"},
+                "background_job_id": {"type": ["string", "null"]},
+                "background_job_status": {"type": ["string", "null"]},
+                "detail": {"type": ["string", "null"]},
+                "created_at": {"type": "string", "format": "date-time"}
+            }
+        })
+    );
+
+    execution.scheduled_for = DateTime::parse_from_rfc3339("1000-01-01T00:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    execution.created_at = DateTime::parse_from_rfc3339("9999-12-31T23:59:59.499999Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let response =
+        serde_json::to_value(JobScheduleExecutionVo::try_from(execution.clone()).unwrap()).unwrap();
+    assert_eq!(response, serde_json::to_value(&execution).unwrap());
+    assert_eq!(response["scheduled_for"], "1000-01-01T00:00:00Z");
+    assert_eq!(response["created_at"], "9999-12-31T23:59:59.499999Z");
+
+    execution.scheduled_for = DateTime::from_timestamp(-1, 1_123_456_000).unwrap();
+    assert!(matches!(
+        JobScheduleExecutionVo::try_from(execution),
+        Err(AppError::Internal(message)) if message.contains("scheduled_for")
+    ));
+}
+
+#[test]
 fn product_plan_version_response_preserves_published_at_utc_and_schema() {
     use ryframe_api::dto::product_dto::ProductPlanVersionVo;
     use ryframe_application::system::platform::ProductPlanVersionVo as ServiceVersion;

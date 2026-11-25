@@ -284,7 +284,9 @@ async fn run_now(
         .await?;
     Ok((
         StatusCode::ACCEPTED,
-        Json(ApiResponse::success(execution.into())),
+        Json(ApiResponse::success(JobScheduleExecutionVo::try_from(
+            execution,
+        )?)),
     ))
 }
 
@@ -346,11 +348,13 @@ async fn executions(
             query.into_service_params(state.settings.pagination)?,
         )
         .await?;
+    let records = page
+        .records
+        .into_iter()
+        .map(JobScheduleExecutionVo::try_from)
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(Json(ApiPageResponse::page(
-        page.records
-            .into_iter()
-            .map(JobScheduleExecutionVo::from)
-            .collect(),
+        records,
         page.total,
         page.page,
         page.page_size,
