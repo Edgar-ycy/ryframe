@@ -5,6 +5,7 @@ use crate::{
     recovery::clone::native::{json as document, lifecycle::state, resources::common},
 };
 use serde_json::{Value, json};
+use std::path::Path;
 use std::{fs, path::PathBuf};
 
 #[test]
@@ -190,7 +191,7 @@ impl Fixture {
         self.published_runtime_at(&self.backend, None);
     }
 
-    fn published_runtime_at(&self, product: &std::path::Path, build: Option<Value>) {
+    fn published_runtime_at(&self, product: &Path, build: Option<Value>) {
         use crate::recovery::clone::native::lifecycle::stage;
         let listeners = (0..2)
             .map(|_| std::net::TcpListener::bind("127.0.0.1:0").unwrap())
@@ -816,7 +817,7 @@ fn frozen_published_product_root_keeps_coordinator_evidence_and_cleanup_independ
     );
 }
 
-fn audited_product_build(root: &std::path::Path) -> (PathBuf, Value, Value) {
+fn audited_product_build(root: &Path) -> (PathBuf, Value, Value) {
     use crate::recovery::clone::native::{bridge, source};
     let directory = root.join(".local-tests/product-root-build");
     fs::create_dir_all(&directory).unwrap();
@@ -897,8 +898,7 @@ fn v2_product_build_uses_registered_bridge_root_for_prepare_and_frozen_handoff()
     let mut changed = build;
     changed["build"]["jobs"] = json!("different");
     assert!(scope.registered_product_root(&path, &changed).is_err());
-    let mut wrong_bridge =
-        document::read(std::path::Path::new(bridge["path"].as_str().unwrap())).unwrap();
+    let mut wrong_bridge = document::read(Path::new(bridge["path"].as_str().unwrap())).unwrap();
     wrong_bridge["backend_root"] = json!(fixture.backend);
     let wrong_path = path.with_file_name("wrong-root-bridge.json");
     document::write_new(&wrong_path, &wrong_bridge).unwrap();
@@ -925,20 +925,7 @@ fn v2_product_build_uses_registered_bridge_root_for_prepare_and_frozen_handoff()
     )
     .unwrap();
     assert_eq!(contract["backend_root"], json!(product));
-    let (directory, binding) =
-        super::guard::api_configuration_binding(&fixture.backend, &contract).unwrap();
-    assert_eq!(binding["directory"], contract["api_config_dir"]);
-    let file = common::binding(&directory.join("app.test.toml")).unwrap();
-    assert_eq!(binding["files"]["app.test.toml"]["bytes"], file["bytes"]);
-    assert_eq!(binding["files"]["app.test.toml"]["sha256"], file["sha256"]);
-    let rejected = super::guard::api_configuration_binding(&product, &contract).unwrap_err();
-    let diagnosed =
-        super::diagnostic::failure(super::diagnostic::Phase::BeforeStart, rejected, None);
-    assert!(
-        diagnosed
-            .to_string()
-            .contains("配置目录不属于已登记配置归属根")
-    );
+    assert_v2_configuration_root(&fixture, &product, &contract);
     assert_stopped_roles_preserve_frozen_runtime(&fixture, &product);
     assert!(
         super::registration::runtime(
@@ -960,7 +947,21 @@ fn v2_product_build_uses_registered_bridge_root_for_prepare_and_frozen_handoff()
     assert_eq!(fs::read(copied).unwrap(), before);
 }
 
-fn assert_stopped_roles_preserve_frozen_runtime(fixture: &Fixture, product: &std::path::Path) {
+fn assert_v2_configuration_root(fixture: &Fixture, product: &Path, contract: &Value) {
+    let (directory, binding) =
+        super::guard::api_configuration_binding(&fixture.backend, contract).unwrap();
+    assert_eq!(Path::new(binding["directory"].as_str().unwrap()), directory);
+    let file = common::binding(&directory.join("app.test.toml")).unwrap();
+    assert_eq!(binding["files"]["app.test.toml"]["bytes"], file["bytes"]);
+    assert_eq!(binding["files"]["app.test.toml"]["sha256"], file["sha256"]);
+    let rejected = super::guard::api_configuration_binding(product, contract).unwrap_err();
+    let diagnosed =
+        super::diagnostic::failure(super::diagnostic::Phase::BeforeStart, rejected, None)
+            .to_string();
+    assert!(diagnosed.contains("配置目录不属于已登记配置归属根"));
+}
+
+fn assert_stopped_roles_preserve_frozen_runtime(fixture: &Fixture, product: &Path) {
     let canonical =
         crate::recovery::fixture_control::portable_path(&product.canonicalize().unwrap());
     let files = [

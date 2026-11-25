@@ -88,16 +88,13 @@ fn data_retention_overview_and_preview_preserve_utc_json_and_schema() {
     use std::collections::BTreeMap;
 
     use chrono::DateTime;
-    use ryframe_api::dto::public_dto::{
-        DataRetentionCutoff, DataRetentionOverview, DataRetentionPreview,
-    };
+    use ryframe_api::dto::public_dto::{DataRetentionOverview, DataRetentionPreview};
     use ryframe_application::system::operations::{
         DataRetentionCutoffVo as ServiceCutoff, DataRetentionOverview as ServiceOverview,
         DataRetentionPolicy, DataRetentionPreview as ServicePreview,
     };
     use ryframe_kernel::AppError;
-    use serde_json::{json, to_value};
-    use utoipa::PartialSchema;
+    use serde_json::to_value;
 
     let policy = DataRetentionPolicy {
         cleanup_batch_size: 100,
@@ -157,28 +154,7 @@ fn data_retention_overview_and_preview_preserve_utc_json_and_schema() {
         }
     }
 
-    for (schema, field) in [
-        (to_value(DataRetentionCutoff::schema()).unwrap(), "before"),
-        (
-            to_value(DataRetentionOverview::schema()).unwrap(),
-            "calculated_at",
-        ),
-        (
-            to_value(DataRetentionPreview::schema()).unwrap(),
-            "calculated_at",
-        ),
-    ] {
-        assert_eq!(
-            schema["properties"][field],
-            json!({"type":"string","format":"date-time"})
-        );
-        assert!(
-            schema["required"]
-                .as_array()
-                .unwrap()
-                .contains(&json!(field))
-        );
-    }
+    assert_retention_time_schema();
 
     let leap = DateTime::from_timestamp(-1, 1_123_456_000).unwrap();
     let overview = ServiceOverview {
@@ -212,7 +188,6 @@ fn tenant_backup_points_preserve_utc_precision_nullability_and_schema() {
     };
     use ryframe_kernel::AppError;
     use serde_json::{Value, from_str, json, to_string, to_value};
-    use utoipa::PartialSchema;
 
     let epoch = DateTime::from_timestamp(0, 0).unwrap();
     let mut record = TenantDataBackupPointRecord {
@@ -285,15 +260,43 @@ fn tenant_backup_points_preserve_utc_precision_nullability_and_schema() {
         assert_eq!(response.get("last_restore_drill_at"), Some(&Value::Null));
     }
 
+    assert_backup_point_time_schema();
+
+    record.last_restore_drill_at = DateTime::from_timestamp(-1, 1_123_456_000);
+    assert!(matches!(
+        ServiceBackupPoint::try_from(record),
+        Err(AppError::Internal(message)) if message.contains("last_restore_drill_at")
+    ));
+}
+
+fn assert_retention_time_schema() {
+    use ryframe_api::dto::public_dto::{
+        DataRetentionCutoff, DataRetentionOverview, DataRetentionPreview,
+    };
+    use serde_json::to_value;
+    use utoipa::PartialSchema;
+
+    assert_required_date_time(&to_value(DataRetentionCutoff::schema()).unwrap(), "before");
+    assert_required_date_time(
+        &to_value(DataRetentionOverview::schema()).unwrap(),
+        "calculated_at",
+    );
+    assert_required_date_time(
+        &to_value(DataRetentionPreview::schema()).unwrap(),
+        "calculated_at",
+    );
+}
+
+fn assert_backup_point_time_schema() {
+    use ryframe_api::dto::tenant_data_dto::BackupPointView;
+    use serde_json::{json, to_value};
+    use utoipa::PartialSchema;
+
     let schema = to_value(BackupPointView::schema()).unwrap();
-    let required = schema["required"].as_array().unwrap();
     for field in ["captured_at", "retention_until"] {
-        assert_eq!(
-            schema["properties"][field],
-            json!({"type":"string","format":"date-time"})
-        );
-        assert!(required.contains(&json!(field)));
+        assert_required_date_time(&schema, field);
     }
+    let required = schema["required"].as_array().unwrap();
     for field in ["expires_at", "last_restore_drill_at"] {
         assert_eq!(
             schema["properties"][field],
@@ -304,12 +307,21 @@ fn tenant_backup_points_preserve_utc_precision_nullability_and_schema() {
     for field in ["provider_ref", "validation_detail", "created_by"] {
         assert!(schema["properties"].get(field).is_none());
     }
+}
 
-    record.last_restore_drill_at = DateTime::from_timestamp(-1, 1_123_456_000);
-    assert!(matches!(
-        ServiceBackupPoint::try_from(record),
-        Err(AppError::Internal(message)) if message.contains("last_restore_drill_at")
-    ));
+fn assert_required_date_time(schema: &serde_json::Value, field: &str) {
+    use serde_json::json;
+
+    assert_eq!(
+        schema["properties"][field],
+        json!({"type":"string","format":"date-time"})
+    );
+    assert!(
+        schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(field))
+    );
 }
 
 #[test]
