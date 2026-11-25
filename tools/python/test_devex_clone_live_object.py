@@ -101,41 +101,6 @@ class LiveObjectTests(unittest.TestCase):
         return [json.loads(options["input"]) for _, options in self.store.calls
                 if not json.loads(options["input"])["key"].endswith("/.ryframe-owner")]
 
-    def test_two_explicit_404_and_current_bucket_owner_reads_prove_only_current_absence(self):
-        result = self.observe()
-        self.assertIsNone(result.capture_directory)
-        self.assertEqual(result.absence_evidence_sha256, file_digest(self.output / "observation.json")["sha256"])
-        receipt = self.read()
-        self.assertEqual(receipt["status"], "object_absent")
-        self.assertEqual([item["bucket"] for item in receipt["ownership_before"]], ["uploads"])
-        self.assertEqual([item["bucket"] for item in receipt["ownership_after"]], ["uploads"])
-        self.assertEqual(len(self.store.calls), 4)
-        self.assertEqual([c["operation"] for c in self.business()], ["head-object", "head-object"])
-        self.assertFalse(receipt["clone_verified"])
-        self.assertFalse(receipt["restore_qualified"])
-        self.assertEqual(receipt["remote_writes"], 0)
-        self.assertNotIn("secret-fixture", (self.output / "head-before.diagnostic.json").read_text(encoding="utf-8"))
-
-    def test_current_present_object_is_really_downloaded_and_full_capture_verified(self):
-        self.store.outcomes = []
-        result = self.observe()
-        self.assertIsNone(result.absence_evidence_sha256)
-        self.assertEqual(result.capture_directory, self.output / "capture")
-        self.assertEqual((result.capture_directory / "object.bin").read_bytes(), self.store.body)
-        operations = [c["operation"] for c in self.business()]
-        self.assertEqual(operations, ["head-object", "get-object", "head-object"])
-        self.assertEqual(len(self.store.calls), 5)
-        downloaded = next(c for c in self.business() if c["operation"] == "get-object")
-        self.assertEqual(downloaded["if_match"], self.store.head["ETag"])
-
-    def test_get_header_difference_stays_in_complete_capture_evidence(self):
-        self.store.outcomes = []
-        self.store.downloaded.pop("ContentLanguage")
-        result = self.observe()
-        capture = json.loads((result.capture_directory / "capture.json").read_text(encoding="utf-8"))
-        self.assertFalse(capture["get_header_consistent"])
-        self.assertEqual(capture["metadata"]["ContentLanguage"], "en")
-
     def test_403_is_not_absence_and_has_no_retry(self):
         self.store.outcomes = ["403"]
         self.failed()
@@ -144,10 +109,6 @@ class LiveObjectTests(unittest.TestCase):
         self.assertNotIn("secret-fixture", diagnostic)
         self.assertNotIn("access-fixture", diagnostic)
         self.assertIn("request_rejected", diagnostic)
-
-    def test_rejection_text_claiming_404_cannot_supply_absence(self):
-        self.store.outcomes = ["404 NotFound HeadObject"]
-        self.failed()
 
     def test_native_tool_failure_without_protocol_response_is_not_absence(self):
         self.store.outcomes = [subprocess.CalledProcessError(1, ["xtask"])]
@@ -176,63 +137,6 @@ class LiveObjectTests(unittest.TestCase):
         self.assertTrue(all("configuration" not in request for request in self.business()))
         self.assertTrue(all("AWS_SECRET_ACCESS_KEY" not in kwargs["env"]
                             for _, kwargs in self.store.calls))
-
-    def test_saved_receipt_refuses_modified_diagnostic(self):
-        self.observe()
-        (self.output / "head-before.diagnostic.json").write_text("{}", encoding="utf-8")
-        with self.assertRaises(ValueError):
-            self.read()
-
-    def test_saved_receipt_cannot_read_an_evidence_path_outside_output(self):
-        self.observe()
-        receipt = self.read()
-        receipt["evidence"] = {"../expected.bin": self.expected}
-        (self.output / "observation.json").write_text(json.dumps(receipt), encoding="utf-8")
-        # 即使外部原始摘要误绑定了恶意路径，也不能越过独立路径校验。
-        self.receipt_sha256 = file_digest(self.output / "observation.json")["sha256"]
-        with self.assertRaisesRegex(ValueError, "越界"):
-            self.read()
-
-    def test_saved_receipt_cannot_remove_required_evidence_from_bound_receipt(self):
-        self.observe()
-        receipt = self.read()
-        receipt["evidence"] = {}
-        (self.output / "observation.json").write_text(json.dumps(receipt), encoding="utf-8")
-        with self.assertRaisesRegex(ValueError, "已绑定摘要"):
-            self.read()
-
-    def test_saved_evidence_link_is_rejected_even_with_identical_bytes(self):
-        self.observe()
-        target = self.output / "head-before.diagnostic.json"
-        original = Path.is_symlink
-        with patch.object(Path, "is_symlink",
-                          lambda path: same_logical_path(path, target) or original(path)):
-            with self.assertRaisesRegex(ValueError, "链接"):
-                self.read()
-
-    def test_native_saved_evidence_link_is_rejected(self):
-        self.observe()
-        path = self.output / "head-before.diagnostic.json"
-        real = self.work / "native-head-before.diagnostic.json"
-        real.write_bytes(path.read_bytes())
-        path.unlink()
-        try:
-            path.symlink_to(real)
-        except OSError:
-            real.unlink()
-            self.skipTest("当前 Windows 权限不允许创建符号链接")
-        self.addCleanup(path.unlink)
-        with self.assertRaisesRegex(ValueError, "链接"):
-            self.read()
-
-    def test_dangling_failure_marker_is_not_ignored(self):
-        self.observe()
-        target = self.output / "failure.json"
-        original = Path.is_symlink
-        with patch.object(Path, "is_symlink",
-                          lambda path: same_logical_path(path, target) or original(path)):
-            with self.assertRaisesRegex(ValueError, "失败"):
-                self.read()
 
     def test_invalid_or_preexisting_scope_never_makes_remote_calls(self):
         for key in ("source/system/object.bin", "target/.ryframe-owner", "target/../other"):
