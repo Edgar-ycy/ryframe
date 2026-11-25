@@ -412,17 +412,16 @@ fn check_directory(directory: &Path, stage: &str) -> Result<(), String> {
 }
 
 fn ordinary(metadata: &fs::Metadata) -> bool {
-    if metadata.file_type().is_symlink() {
-        return false;
-    }
+    let ordinary = !metadata.file_type().is_symlink();
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
-        if metadata.file_attributes() & 0x400 != 0 {
-            return false;
-        }
+        ordinary && metadata.file_attributes() & 0x400 == 0
     }
-    true
+    #[cfg(not(windows))]
+    {
+        ordinary
+    }
 }
 
 fn stamp(metadata: &fs::Metadata) -> Stamp {

@@ -163,8 +163,8 @@ impl Scope {
     }
 
     /// 按原字节和 Git 规则复核所有持有根，直到完整观察结束都保留原句柄。
+    #[cfg(windows)]
     pub(crate) fn assert_unchanged_full(&self) -> Result<()> {
-        #[cfg(windows)]
         if let Some(held) = &self.held {
             held.verify_full()?;
         }
