@@ -35,7 +35,7 @@ pub(super) fn execute(plan: &GenerationPlan, tables: Option<&[TableInfo]>) -> Re
     let backend = CandidateWorkspace::create(&plan.workspace_root, true)?;
     let cache = plan.target_dir.join("ryframe-generate");
     let catalog_target = cache.join("catalog-target");
-    let pipeline_target = cache.join("pipeline");
+    let pipeline_target = safe_target_directory(&plan.target_dir.join("gen"))?;
     println!("→ 编译候选模型并生成整批 CRUD 与迁移");
     let mut backend_allowed = match backend::generate(plan, &backend.path, tables, &catalog_target)
     {
