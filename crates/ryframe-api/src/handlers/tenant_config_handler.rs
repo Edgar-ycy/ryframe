@@ -74,10 +74,8 @@ async fn request_package_export(
         .request_package_export(&scope, &idempotency_key_hash(&headers)?)
         .await
         .map_err(crate::http::HttpAppError::from)?;
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(ApiResponse::success(outcome.bundle.into())),
-    ))
+    let bundle = TenantConfigBundleVo::try_from(outcome.bundle)?;
+    Ok((StatusCode::ACCEPTED, Json(ApiResponse::success(bundle))))
 }
 
 #[get("/")]
@@ -104,8 +102,13 @@ async fn list_packages(
         .list_bundles(&scope, query.into_page(state.settings.pagination)?)
         .await
         .map_err(crate::http::HttpAppError::from)?;
+    let records = page
+        .records
+        .into_iter()
+        .map(TenantConfigBundleVo::try_from)
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(Json(page_response(
-        page.records.into_iter().map(Into::into).collect(),
+        records,
         page.total,
         page.page,
         page.page_size,
@@ -136,8 +139,8 @@ async fn get_package(
         .tenant_config_transfer
         .get_bundle(&scope, parse_positive_id(&id, "配置包 ID 必须是正整数")?)
         .await
+        .and_then(TenantConfigBundleVo::try_from)
         .map_err(crate::http::HttpAppError::from)
-        .map(TenantConfigBundleVo::from)
         .map(ApiResponse::success)
         .map(Json)
 }
@@ -258,10 +261,8 @@ async fn upload_transfer(
         .upload_package_and_create_transfer(&scope, file_name, data, &idempotency_hash)
         .await
         .map_err(crate::http::HttpAppError::from)?;
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(ApiResponse::success(outcome.transfer.into())),
-    ))
+    let transfer = TenantConfigTransferVo::try_from(outcome.transfer)?;
+    Ok((StatusCode::ACCEPTED, Json(ApiResponse::success(transfer))))
 }
 
 #[post("/from-package")]
@@ -297,10 +298,8 @@ async fn create_transfer_from_package(
         )
         .await
         .map_err(crate::http::HttpAppError::from)?;
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(ApiResponse::success(outcome.transfer.into())),
-    ))
+    let transfer = TenantConfigTransferVo::try_from(outcome.transfer)?;
+    Ok((StatusCode::ACCEPTED, Json(ApiResponse::success(transfer))))
 }
 
 #[get("/")]
@@ -327,8 +326,13 @@ async fn list_transfers(
         .list_transfers(&scope, query.into_page(state.settings.pagination)?)
         .await
         .map_err(crate::http::HttpAppError::from)?;
+    let records = page
+        .records
+        .into_iter()
+        .map(TenantConfigTransferVo::try_from)
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(Json(page_response(
-        page.records.into_iter().map(Into::into).collect(),
+        records,
         page.total,
         page.page,
         page.page_size,
@@ -359,8 +363,8 @@ async fn get_transfer(
         .tenant_config_transfer
         .get_transfer(&scope, parse_positive_id(&id, "配置迁移 ID 必须是正整数")?)
         .await
+        .and_then(TenantConfigTransferVo::try_from)
         .map_err(crate::http::HttpAppError::from)
-        .map(TenantConfigTransferVo::from)
         .map(ApiResponse::success)
         .map(Json)
 }
@@ -435,11 +439,9 @@ async fn request_preview(
             &idempotency_key_hash(&headers)?,
         )
         .await
+        .and_then(TenantConfigTransferVo::try_from)
         .map_err(crate::http::HttpAppError::from)?;
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(ApiResponse::success(transfer.into())),
-    ))
+    Ok((StatusCode::ACCEPTED, Json(ApiResponse::success(transfer))))
 }
 
 #[post("/{id}/apply")]
@@ -481,11 +483,9 @@ async fn request_apply(
             },
         )
         .await
+        .and_then(TenantConfigTransferVo::try_from)
         .map_err(crate::http::HttpAppError::from)?;
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(ApiResponse::success(transfer.into())),
-    ))
+    Ok((StatusCode::ACCEPTED, Json(ApiResponse::success(transfer))))
 }
 
 #[post("/{id}/rollback")]
@@ -520,11 +520,9 @@ async fn request_rollback(
             &idempotency_key_hash(&headers)?,
         )
         .await
+        .and_then(TenantConfigTransferVo::try_from)
         .map_err(crate::http::HttpAppError::from)?;
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(ApiResponse::success(transfer.into())),
-    ))
+    Ok((StatusCode::ACCEPTED, Json(ApiResponse::success(transfer))))
 }
 
 fn parse_authorization_epoch(value: &str) -> HttpResult<i32> {
