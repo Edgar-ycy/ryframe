@@ -101,7 +101,8 @@ pub struct UserImportRowVo {
     pub outcome: String,
     pub code: String,
     pub message: String,
-    pub created_at: DateTime<Utc>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize")]
+    pub created_at: time::OffsetDateTime,
 }
 
 impl From<UserImportRowRecord> for UserImportRowVo {

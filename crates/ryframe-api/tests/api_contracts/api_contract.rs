@@ -138,6 +138,60 @@ fn data_target_verification_preserves_nullable_utc_precision_and_schema() {
     );
 }
 
+#[test]
+fn user_import_row_preserves_created_at_utc_precision_and_required_schema() {
+    use ryframe_api::dto::public_dto::UserImportRowVo;
+    use ryframe_application::{
+        ports::users::UserImportRowRecord, system::identity::UserImportRowVo as ServiceRow,
+    };
+    use serde_json::json;
+    use time::{OffsetDateTime, UtcOffset};
+    use utoipa::PartialSchema;
+
+    for (nanos, fraction) in [
+        (0, ""),
+        (120_000_000, ".120"),
+        (123_400_000, ".123400"),
+        (123_456_700, ".123456700"),
+    ] {
+        let created_at = OffsetDateTime::from_unix_timestamp(-1)
+            .unwrap()
+            .replace_nanosecond(nanos)
+            .unwrap()
+            .to_offset(UtcOffset::from_hms(8, 0, 0).unwrap());
+        let service_row = ServiceRow::from(UserImportRowRecord {
+            row_number: 3,
+            username: "tester".into(),
+            outcome: "skipped".into(),
+            code: "already_exists".into(),
+            message: "用户已存在".into(),
+            created_at,
+        });
+        let service_json = serde_json::to_value(&service_row).unwrap();
+        let body = serde_json::to_value(UserImportRowVo::from(service_row)).unwrap();
+        assert_eq!(body, service_json);
+        assert_eq!(
+            body["created_at"],
+            format!("1969-12-31T23:59:59{fraction}Z")
+        );
+        assert_eq!(body["row_number"], 3);
+        assert_eq!(body["username"], "tester");
+        assert_eq!(body["outcome"], "skipped");
+        assert_eq!(body["code"], "already_exists");
+        assert_eq!(body["message"], "用户已存在");
+    }
+    let schema = serde_json::to_value(UserImportRowVo::schema()).unwrap();
+    let property = &schema["properties"]["created_at"];
+    assert_eq!(property["type"], json!("string"));
+    assert_eq!(property["format"], "date-time");
+    assert!(
+        schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("created_at"))
+    );
+}
+
 mod http {
     use super::*;
 

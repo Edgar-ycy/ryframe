@@ -142,7 +142,11 @@ impl UserImportPersistencePort for DatabaseUserImportPersistence {
             .list_row_results(self.database.write(), tenant_id, import_id, &page)
             .await?;
         Ok(PageResult::new(
-            result.records.into_iter().map(row_record).collect(),
+            result
+                .records
+                .into_iter()
+                .map(row_record)
+                .collect::<ryframe_kernel::AppResult<Vec<_>>>()?,
             result.total,
             &page,
         ))
@@ -155,8 +159,10 @@ impl UserImportPersistencePort for DatabaseUserImportPersistence {
     ) -> ryframe_kernel::AppResult<Vec<UserImportRowRecord>> {
         UserImportRepository
             .all_row_results(self.database.write(), tenant_id, import_id)
-            .await
-            .map(|rows| rows.into_iter().map(row_record).collect())
+            .await?
+            .into_iter()
+            .map(row_record)
+            .collect()
     }
 
     async fn requester_usernames<'a>(

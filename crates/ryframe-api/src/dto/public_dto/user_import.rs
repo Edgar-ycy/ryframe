@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use ryframe_application::ports::utc_timestamp;
 use ryframe_application::system::identity::{
     UserImportJobVo as ServiceJob, UserImportRowVo as ServiceRow,
 };
@@ -57,7 +58,9 @@ pub struct UserImportRowVo {
     pub outcome: String,
     pub code: String,
     pub message: String,
-    pub created_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub created_at: time::OffsetDateTime,
 }
 
 impl From<ServiceRow> for UserImportRowVo {
