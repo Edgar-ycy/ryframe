@@ -1,6 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     fs::{self, File},
     io::{Seek, SeekFrom, Write},
     path::{Path, PathBuf},
@@ -16,7 +16,8 @@ use crate::{
     Result,
     mysql_verification_client::{
         MYSQL_TIMEOUT_PARTIAL_STDOUT, MYSQL_VERIFICATION_STDERR, MysqlTimeoutTransport,
-        compile_mysql_timeout_client, compile_mysql_verification_client,
+        assert_mysql_ownership_retry, compile_mysql_timeout_client,
+        compile_mysql_verification_client,
     },
     recovery::clone::native::{
         digest,
@@ -154,6 +155,8 @@ struct Fake {
     code: u32,
     transport_error: bool,
     writer: RefCell<Option<File>>,
+    outputs: RefCell<VecDeque<&'static [u8]>>,
+    stderr: &'static [u8],
 }
 
 impl Fake {
@@ -163,6 +166,8 @@ impl Fake {
             code,
             transport_error,
             writer: RefCell::new(None),
+            outputs: RefCell::new(VecDeque::from([RAW])),
+            stderr: b"private-stdout",
         }
     }
 }
@@ -180,7 +185,12 @@ impl Transport for Fake {
         let StdoutTarget::HeldFile { mut file, .. } = spec.stdout else {
             return Err("MySQL 必须使用已持有文件".into());
         };
-        file.write_all(RAW)?;
+        let raw = self
+            .outputs
+            .borrow_mut()
+            .pop_front()
+            .expect("意外重试或多余查询");
+        file.write_all(raw)?;
         file.flush()?;
         *self.writer.borrow_mut() = Some(file.try_clone()?);
         if self.transport_error {
@@ -189,8 +199,67 @@ impl Transport for Fake {
         Ok(CommandOutput {
             status: status(self.code),
             stdout: Vec::new(),
-            stderr: b"private-stdout".to_vec(),
+            stderr: self.stderr.to_vec(),
         })
+    }
+}
+
+#[test]
+fn mysql_target_rejects_unsupported_selector_before_capture_or_transport() {
+    let fixture = Fixture::new();
+    let transport = Fake::new(0, false);
+    let port = Port {
+        configuration: None,
+        side: crate::cli::CloneSide::Target,
+        context: &fixture.context.storage_inputs(),
+        transport: &transport,
+        checkpoint: &|| panic!("无效查询不得进入采集检查点"),
+        directory: &fixture.context.observation_dir,
+    };
+    let before = fixture.files("");
+    for selector in ["", "IDENTITY", "ownership\n", "SELECT 1;"] {
+        let error = Evidence::default()
+            .mysql(&port, &fixture.database, selector)
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "数据库核验只允许固定 identity 或 ownership 查询"
+        );
+    }
+    assert_eq!(transport.calls.get(), 0);
+    assert_eq!(fixture.files(""), before);
+}
+
+#[test]
+fn mysql_target_ownership_retries_once_and_binds_both_outputs() {
+    let ownership = "tenant-data\tstdout-fixture\tryframe-owner:v1:stdout-fixture:tenant-data\n";
+    for second in [ownership.as_bytes(), b"".as_slice()] {
+        let fixture = Fixture::new();
+        let transport = Fake {
+            outputs: RefCell::new(VecDeque::from([b"".as_slice(), second])),
+            stderr: b"",
+            ..Fake::new(0, false)
+        };
+        let port = Port {
+            configuration: None,
+            side: crate::cli::CloneSide::Target,
+            context: &fixture.context.storage_inputs(),
+            transport: &transport,
+            checkpoint: &|| Ok(()),
+            directory: &fixture.context.observation_dir,
+        };
+        let result = Evidence::default().mysql(&port, &fixture.database, "ownership");
+        if second.is_empty() {
+            let error = result.unwrap_err();
+            let failure = error.downcast_ref::<super::VerificationError>().unwrap();
+            assert_eq!(failure.details["code"], "database_ownership_mismatch");
+            assert_eq!(failure.details["response_bytes"], 0);
+        } else {
+            assert_eq!(result.unwrap(), ownership.trim_end());
+        }
+        assert_eq!(transport.calls.get(), 2);
+        assert_eq!(fixture.files("command-").len(), 2);
+        assert_mysql_ownership_retry(port.directory, "shared", second);
     }
 }
 

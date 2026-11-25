@@ -1,7 +1,7 @@
 //! 固定 MySQL 查询和进程用例共用的本地客户端夹具。
 use std::{
     cell::{Cell, RefCell},
-    fs::File,
+    fs::{self, File},
     path::{Path, PathBuf},
     process::Command,
     time::Duration,
@@ -13,10 +13,61 @@ use crate::recovery::clone::native::{
     export::transport::{
         CommandOutput, CommandSpec, StderrDigest, StdoutTarget, SystemTransport, Transport,
     },
+    json as json_io,
+    resources::common,
     s3,
 };
 
 pub(crate) const MYSQL_VERIFICATION_STDERR: &[u8] = b"\xffmysql-verification-secret\n";
+
+pub(crate) fn assert_mysql_ownership_retry(work: &Path, target_key: &str, second_stdout: &[u8]) {
+    let receipts = fs::read_dir(work)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("mysql-ownership-") && name.ends_with(".json"))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(receipts.len(), 3);
+    let relation = receipts
+        .iter()
+        .map(|path| json_io::read(path).unwrap())
+        .find(|value| value["kind"] == "mysql-verification-retry")
+        .unwrap();
+    assert_eq!(relation["check"], "ownership");
+    assert_eq!(relation["target_key"], target_key);
+    assert_eq!(
+        relation["reason"],
+        "first_returncode_zero_stdout_stderr_exactly_empty"
+    );
+    assert_ne!(relation["first"]["path"], relation["second"]["path"]);
+    let mut stdout_paths = Vec::new();
+    for (slot, raw) in [("first", b"".as_slice()), ("second", second_stdout)] {
+        let receipt = &relation[slot];
+        let path = Path::new(receipt["path"].as_str().unwrap());
+        assert!(receipts.iter().any(|record| record.as_path() == path));
+        let actual = common::binding(path).unwrap();
+        assert_eq!(receipt["bytes"], actual["bytes"]);
+        assert_eq!(receipt["sha256"], actual["sha256"]);
+        let output = json_io::read(path).unwrap();
+        assert_eq!(output["kind"], "mysql-verification-output");
+        assert_eq!(output["check"], "ownership");
+        assert_eq!(output["target_key"], target_key);
+        assert_eq!(output["returncode"], 0);
+        assert!(output["error_type"].is_null());
+        assert_eq!(output["stderr_bytes"], 0);
+        let stdout = PathBuf::from(output["stdout_file"]["path"].as_str().unwrap());
+        assert_eq!(stdout.parent(), Some(work));
+        assert_eq!(fs::read(&stdout).unwrap(), raw);
+        let actual = common::binding(&stdout).unwrap();
+        assert_eq!(output["stdout_file"]["bytes"], actual["bytes"]);
+        assert_eq!(output["stdout_file"]["sha256"], actual["sha256"]);
+        stdout_paths.push(stdout);
+    }
+    assert_ne!(stdout_paths[0], stdout_paths[1]);
+}
 
 pub(crate) fn compile_mysql_verification_client(directory: &Path) -> PathBuf {
     let executable = directory.join(binary_name("mysql-verification-stderr"));

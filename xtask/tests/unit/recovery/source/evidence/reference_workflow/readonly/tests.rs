@@ -1,7 +1,7 @@
 use super::*;
 use crate::mysql_verification_client::{
     MYSQL_TIMEOUT_PARTIAL_STDOUT, MYSQL_VERIFICATION_STDERR, MysqlTimeoutTransport,
-    compile_mysql_timeout_client, compile_mysql_verification_client,
+    assert_mysql_ownership_retry, compile_mysql_timeout_client, compile_mysql_verification_client,
 };
 use native::export::transport::{
     CommandOutput, CommandSpec, CommandTimeout, StdoutTarget, SystemTransport, Transport,
@@ -179,6 +179,68 @@ fn selected_side_and_source_empty_check_preserve_readonly_contract() {
             }
         }
         inputs.unchanged().unwrap();
+    }
+}
+
+#[test]
+fn mysql_reference_rejects_unsupported_selector_before_capture_or_transport() {
+    let fixture = Fixture::new();
+    let inputs = fixture.inputs("source");
+    let transport = FakeTransport::new(&[]);
+    let tools = collector::Collector {
+        inputs: &inputs,
+        transport: &transport,
+    };
+    let before = fs::read_dir(&fixture.work).unwrap().count();
+    for selector in ["", "IDENTITY", "ownership\n", "SELECT 1;"] {
+        let error = tools
+            .query(&fixture.plan["source"]["databases"][0], selector)
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "数据库核验只允许固定 identity 或 ownership 查询"
+        );
+    }
+    assert!(transport.calls.borrow().is_empty());
+    assert_eq!(fs::read_dir(&fixture.work).unwrap().count(), before);
+}
+
+#[test]
+fn mysql_reference_ownership_retries_once_and_binds_both_outputs() {
+    let ownership = concat!(
+        "control\tsource\tryframe-owner:v1:source:control\n",
+        "tenant-data\tsource\tryframe-owner:v1:source:tenant-data\n"
+    );
+    for second in [ownership, ""] {
+        let fixture = Fixture::new();
+        let inputs = fixture.inputs("source");
+        let transport = FakeTransport::new(&["", second]);
+        let tools = collector::Collector {
+            inputs: &inputs,
+            transport: &transport,
+        };
+        let result = tools.query(&fixture.plan["source"]["databases"][0], "ownership");
+        if second.is_empty() {
+            assert_eq!(
+                result.unwrap_err().to_string(),
+                "MySQL 固定核验第二次仍为空；保留两次输出，禁止继续重试"
+            );
+        } else {
+            assert_eq!(result.unwrap(), ownership.trim_end());
+        }
+        let calls = transport.calls.borrow();
+        assert_eq!(calls.len(), 2);
+        for (args, stdin) in calls.iter() {
+            assert!(stdin.is_none());
+            assert_eq!(
+                args[args.len() - 2..],
+                [
+                    "--execute",
+                    "SELECT resource_kind, scope_id, marker FROM ryframe_resource_ownership ORDER BY resource_kind;",
+                ]
+            );
+        }
+        assert_mysql_ownership_retry(&fixture.work, "control", second.as_bytes());
     }
 }
 
