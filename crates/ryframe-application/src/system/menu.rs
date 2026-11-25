@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
+use time::OffsetDateTime;
 
 use crate::{
     AuthorizationCache, TransactionAuditMode, complete_transaction,
@@ -144,7 +145,7 @@ impl MenuService {
                         visible: command.visible,
                         status: MENU_STATUS_NORMAL.into(),
                         remark: None,
-                        created_at: Default::default(),
+                        created_at: OffsetDateTime::UNIX_EPOCH,
                         updated_at: Default::default(),
                     },
                 )

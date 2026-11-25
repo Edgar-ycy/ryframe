@@ -8,7 +8,7 @@ use crate::{
     repositories::menu_repo::MenuTreeNode as DatabaseMenuTreeNode,
 };
 use async_trait::async_trait;
-use ryframe_kernel::{AppResult, PageResult, ValidatedPageQuery};
+use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ColumnTrait, EntityTrait, QueryFilter, QuerySelect, TransactionTrait, sea_query::LockType,
 };
@@ -114,7 +114,11 @@ impl MenuReadPort for DatabaseMenuRead {
             )
             .await?;
         Ok(PageResult::new(
-            result.records.into_iter().map(to_record).collect(),
+            result
+                .records
+                .into_iter()
+                .map(to_record)
+                .collect::<AppResult<_>>()?,
             result.total,
             &page,
         ))
@@ -122,10 +126,11 @@ impl MenuReadPort for DatabaseMenuRead {
 
     async fn find_by_id(&self, tenant_id: &str, id: i64) -> AppResult<Option<MenuRecord>> {
         let database = self.eventual_read();
-        Ok(MenuRepository
+        MenuRepository
             .find_by_id(&database, tenant_id, id)
             .await?
-            .map(to_record))
+            .map(to_record)
+            .transpose()
     }
 }
 
@@ -162,10 +167,11 @@ impl MenuWriteTransaction for DatabaseMenuWriteTransaction {
         tenant_id: &str,
         id: i64,
     ) -> AppResult<Option<MenuRecord>> {
-        Ok(MenuRepository
+        MenuRepository
             .find_by_id_for_update(&self.transaction, tenant_id, id)
             .await?
-            .map(to_record))
+            .map(to_record)
+            .transpose()
     }
 
     async fn permission_exists_for_update(&self, tenant_id: &str, id: i64) -> AppResult<bool> {
@@ -183,7 +189,7 @@ impl MenuWriteTransaction for DatabaseMenuWriteTransaction {
         tenant_id: &str,
         route_key: &str,
     ) -> AppResult<Option<MenuRecord>> {
-        Ok(menu::Entity::find()
+        menu::Entity::find()
             .filter(menu::Column::TenantId.eq(tenant_id))
             .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
             .filter(menu::Column::RouteKey.eq(route_key))
@@ -191,25 +197,26 @@ impl MenuWriteTransaction for DatabaseMenuWriteTransaction {
             .one(&self.transaction)
             .await
             .db()?
-            .map(to_record))
+            .map(to_record)
+            .transpose()
     }
 
     async fn insert(&self, tenant_id: &str, record: MenuRecord) -> AppResult<MenuRecord> {
-        let mut entity = to_entity(tenant_id, record);
+        let mut entity = to_entity(tenant_id, record)?;
         entity.fill_on_insert(&FillContext::new())?;
         MenuRepository
             .insert_in_transaction(&self.transaction, tenant_id, entity)
             .await
-            .map(to_record)
+            .and_then(to_record)
     }
 
     async fn update(&self, tenant_id: &str, record: MenuRecord) -> AppResult<MenuRecord> {
-        let mut entity = to_entity(tenant_id, record);
+        let mut entity = to_entity(tenant_id, record)?;
         entity.fill_on_update(&FillContext::new())?;
         MenuRepository
             .update_in_transaction(&self.transaction, tenant_id, entity)
             .await
-            .map(to_record)
+            .and_then(to_record)
     }
 
     async fn has_child_for_update(&self, tenant_id: &str, id: i64) -> AppResult<bool> {
@@ -258,8 +265,8 @@ impl PersistenceTransaction for DatabaseMenuWriteTransaction {
     }
 }
 
-fn to_record(model: menu::Model) -> MenuRecord {
-    MenuRecord {
+fn to_record(model: menu::Model) -> AppResult<MenuRecord> {
+    Ok(MenuRecord {
         id: model.id,
         name: model.name,
         parent_id: model.parent_id,
@@ -271,13 +278,19 @@ fn to_record(model: menu::Model) -> MenuRecord {
         visible: model.visible,
         status: model.status,
         remark: model.remark,
-        created_at: model.created_at,
+        created_at: crate::repositories::utc_time_from_chrono(model.created_at)
+            .db_context("读取菜单创建时间")?,
         updated_at: model.updated_at,
-    }
+    })
 }
 
-fn to_entity(tenant_id: &str, record: MenuRecord) -> menu::Model {
-    menu::Model {
+fn to_entity(tenant_id: &str, record: MenuRecord) -> AppResult<menu::Model> {
+    let created_at = chrono::DateTime::from_timestamp(
+        record.created_at.unix_timestamp(),
+        record.created_at.nanosecond(),
+    )
+    .ok_or_else(|| AppError::Database("菜单创建时间超出 UTC 表示范围".into()))?;
+    Ok(menu::Model {
         id: record.id,
         tenant_id: tenant_id.to_owned(),
         name: record.name,
@@ -291,9 +304,9 @@ fn to_entity(tenant_id: &str, record: MenuRecord) -> menu::Model {
         status: record.status,
         remark: record.remark,
         del_flag: menu::Model::DEL_FLAG_NORMAL.into(),
-        created_at: record.created_at,
+        created_at,
         updated_at: record.updated_at,
-    }
+    })
 }
 
 fn to_tree_record(node: DatabaseMenuTreeNode) -> AppResult<MenuTreeRecord> {
@@ -321,4 +334,29 @@ fn parse_id(value: &str) -> AppResult<i64> {
     value
         .parse()
         .map_err(|_| ryframe_kernel::AppError::Internal("菜单树标识无效".into()))
+}
+
+#[test]
+fn menu_creation_timestamp_round_trips_with_untouched_update_time() {
+    let entity = menu::Model {
+        id: 1,
+        tenant_id: "system".into(),
+        name: "菜单".into(),
+        parent_id: None,
+        menu_type: "C".into(),
+        perm_id: Some(2),
+        route_key: None,
+        icon: None,
+        sort: 0,
+        visible: true,
+        status: "1".into(),
+        remark: None,
+        del_flag: menu::Model::DEL_FLAG_NORMAL.into(),
+        created_at: chrono::DateTime::from_timestamp(-1, 123_400_000).unwrap(),
+        updated_at: chrono::DateTime::from_timestamp(1, 0).unwrap(),
+    };
+    let record = to_record(entity.clone()).unwrap();
+    assert_eq!(record.created_at.unix_timestamp(), -1);
+    assert_eq!(record.created_at.nanosecond(), 123_400_000);
+    assert_eq!(to_entity("system", record).unwrap(), entity);
 }

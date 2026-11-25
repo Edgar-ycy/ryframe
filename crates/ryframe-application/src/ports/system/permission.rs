@@ -3,6 +3,7 @@ use std::collections::BTreeSet;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use ryframe_kernel::AppResult;
+use time::OffsetDateTime;
 
 use crate::PersistenceTransaction;
 
@@ -16,7 +17,7 @@ pub struct PermissionRecord {
     pub icon: Option<String>,
     pub sort: i32,
     pub status: String,
-    pub created_at: DateTime<Utc>,
+    pub created_at: OffsetDateTime,
     pub updated_at: DateTime<Utc>,
 }
 

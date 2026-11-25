@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppResult, PageResult, ValidatedPageQuery};
+use time::OffsetDateTime;
 
 use crate::PersistenceTransaction;
 
@@ -17,7 +18,7 @@ pub struct MenuRecord {
     pub visible: bool,
     pub status: String,
     pub remark: Option<String>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: OffsetDateTime,
     pub updated_at: DateTime<Utc>,
 }
 

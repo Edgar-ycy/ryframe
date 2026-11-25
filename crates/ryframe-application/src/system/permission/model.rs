@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 use crate::ports::system::PermissionRecord;
 
@@ -42,7 +43,8 @@ pub struct PermissionVo {
     pub icon: Option<String>,
     pub sort: i32,
     pub status: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize")]
+    pub created_at: OffsetDateTime,
 }
 
 impl From<PermissionRecord> for PermissionVo {

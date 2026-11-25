@@ -15,6 +15,76 @@ use ryframe_kernel::AppResult as KernelAppResult;
 use ryframe_kernel::*;
 
 #[test]
+fn navigation_created_at_preserves_utc_json_and_schema() {
+    use ryframe_api::dto::public_dto::{MenuVo, PermissionVo};
+    use ryframe_application::ports::system::{MenuRecord, PermissionRecord};
+    use ryframe_application::system::identity::{MenuVo as Menu, PermissionVo as Permission};
+    use serde_json::json;
+    use time::{OffsetDateTime, UtcOffset};
+    use utoipa::PartialSchema;
+
+    let offset = UtcOffset::from_hms(8, 0, 0).unwrap();
+    for (nanos, expected) in [
+        (0, "1969-12-31T23:59:59Z"),
+        (120_000_000, "1969-12-31T23:59:59.120Z"),
+        (123_400_000, "1969-12-31T23:59:59.123400Z"),
+        (123_456_700, "1969-12-31T23:59:59.123456700Z"),
+    ] {
+        let created_at = OffsetDateTime::from_unix_timestamp(-1)
+            .unwrap()
+            .replace_nanosecond(nanos)
+            .unwrap()
+            .to_offset(offset);
+        let menu = Menu::from(MenuRecord {
+            id: 1,
+            name: "菜单".into(),
+            parent_id: None,
+            menu_type: "C".into(),
+            perm_id: Some(2),
+            route_key: None,
+            icon: None,
+            sort: 0,
+            visible: true,
+            status: "1".into(),
+            remark: None,
+            created_at,
+            updated_at: Default::default(),
+        });
+        let permission = Permission::from(PermissionRecord {
+            id: 2,
+            name: "权限".into(),
+            code: "system:menu:list".into(),
+            parent_id: None,
+            perm_type: "menu".into(),
+            icon: None,
+            sort: 0,
+            status: "1".into(),
+            created_at,
+            updated_at: Default::default(),
+        });
+        for response in [
+            serde_json::to_value(&menu).unwrap(),
+            serde_json::to_value(&permission).unwrap(),
+            serde_json::to_value(MenuVo::try_from(menu).unwrap()).unwrap(),
+            serde_json::to_value(PermissionVo::try_from(permission).unwrap()).unwrap(),
+        ] {
+            assert_eq!(response["created_at"], expected);
+        }
+    }
+    for schema in [MenuVo::schema(), PermissionVo::schema()] {
+        let schema = serde_json::to_value(schema).unwrap();
+        assert_eq!(schema["properties"]["created_at"]["type"], "string");
+        assert_eq!(schema["properties"]["created_at"]["format"], "date-time");
+        assert!(
+            schema["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("created_at"))
+        );
+    }
+}
+
+#[test]
 fn schedule_preview_preserves_utc_precision_local_text_and_required_schema() {
     use ryframe_api::dto::public_dto::{JobScheduleOccurrence, JobSchedulePreview};
     use ryframe_application::{

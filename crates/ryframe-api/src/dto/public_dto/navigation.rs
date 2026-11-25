@@ -1,8 +1,9 @@
-use chrono::{DateTime, Utc};
 use ryframe_kernel::AppError;
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 use utoipa::ToSchema;
 
+use ryframe_application::ports::utc_timestamp;
 use ryframe_application::system::identity::{
     MenuTreeNode as ServiceMenuTreeNode, MenuType as ServiceMenuType, MenuVo as ServiceMenuVo,
     PermissionSyncReport as ServicePermissionSyncReport,
@@ -61,7 +62,9 @@ pub struct MenuVo {
     pub visible: bool,
     pub status: String,
     pub remark: Option<String>,
-    pub created_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub created_at: OffsetDateTime,
 }
 
 impl TryFrom<ServiceMenuVo> for MenuVo {
@@ -256,7 +259,9 @@ pub struct PermissionVo {
     pub icon: Option<String>,
     pub sort: i32,
     pub status: String,
-    pub created_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub created_at: OffsetDateTime,
 }
 
 impl TryFrom<ServicePermissionVo> for PermissionVo {

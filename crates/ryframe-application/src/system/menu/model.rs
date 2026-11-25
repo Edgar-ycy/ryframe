@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 use crate::ports::system::{MenuRecord, MenuTreeRecord};
 
@@ -35,7 +36,8 @@ pub struct MenuVo {
     pub visible: bool,
     pub status: String,
     pub remark: Option<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize")]
+    pub created_at: OffsetDateTime,
 }
 
 impl From<MenuRecord> for MenuVo {

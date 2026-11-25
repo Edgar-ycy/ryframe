@@ -2,6 +2,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 
 use ryframe_kernel::{ActorContext, AppError, AppResult};
+use time::OffsetDateTime;
 
 use crate::{
     AuthorizationCache, TransactionAuditMode, complete_transaction,
@@ -125,7 +126,7 @@ impl PermissionService {
                         icon: command.icon,
                         sort: command.sort,
                         status: command.status,
-                        created_at: Default::default(),
+                        created_at: OffsetDateTime::UNIX_EPOCH,
                         updated_at: Default::default(),
                     },
                 )
@@ -251,7 +252,7 @@ impl PermissionService {
                             icon: None,
                             sort: 0,
                             status: "1".into(),
-                            created_at: Default::default(),
+                            created_at: OffsetDateTime::UNIX_EPOCH,
                             updated_at: Default::default(),
                         },
                     )

@@ -6,6 +6,7 @@ use crate::{
     ReadConsistency, Repository, TenantConfigTransferRepository, entities::permission,
 };
 use async_trait::async_trait;
+use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, TransactionTrait,
     sea_query::LockType,
@@ -87,8 +88,10 @@ impl PermissionReadPort for DatabasePermissionRead {
         let database = self.strong_read();
         PermissionRepository
             .find_all(&database, tenant_id)
-            .await
-            .map(|permissions| permissions.into_iter().map(to_record).collect())
+            .await?
+            .into_iter()
+            .map(to_record)
+            .collect()
     }
 
     async fn find_by_id(
@@ -97,10 +100,11 @@ impl PermissionReadPort for DatabasePermissionRead {
         id: i64,
     ) -> ryframe_kernel::AppResult<Option<PermissionRecord>> {
         let database = self.strong_read();
-        Ok(PermissionRepository
+        PermissionRepository
             .find_by_id(&database, tenant_id, id)
             .await?
-            .map(to_record))
+            .map(to_record)
+            .transpose()
     }
 }
 
@@ -138,10 +142,11 @@ impl PermissionWriteTransaction for DatabasePermissionWriteTransaction {
         tenant_id: &str,
         id: i64,
     ) -> ryframe_kernel::AppResult<Option<PermissionRecord>> {
-        Ok(PermissionRepository
+        PermissionRepository
             .find_by_id_for_update(&self.transaction, tenant_id, id)
             .await?
-            .map(to_record))
+            .map(to_record)
+            .transpose()
     }
 
     async fn find_by_code_for_update(
@@ -149,14 +154,15 @@ impl PermissionWriteTransaction for DatabasePermissionWriteTransaction {
         tenant_id: &str,
         code: &str,
     ) -> ryframe_kernel::AppResult<Option<PermissionRecord>> {
-        Ok(permission::Entity::find()
+        permission::Entity::find()
             .filter(permission::Column::TenantId.eq(tenant_id))
             .filter(permission::Column::Code.eq(code))
             .lock(LockType::Update)
             .one(&self.transaction)
             .await
             .db()?
-            .map(to_record))
+            .map(to_record)
+            .transpose()
     }
 
     async fn find_all_for_update(
@@ -169,8 +175,10 @@ impl PermissionWriteTransaction for DatabasePermissionWriteTransaction {
             .lock(LockType::Update)
             .all(&self.transaction)
             .await
-            .map(|permissions| permissions.into_iter().map(to_record).collect())
-            .db()
+            .db()?
+            .into_iter()
+            .map(to_record)
+            .collect()
     }
 
     async fn insert(
@@ -178,12 +186,12 @@ impl PermissionWriteTransaction for DatabasePermissionWriteTransaction {
         tenant_id: &str,
         record: PermissionRecord,
     ) -> ryframe_kernel::AppResult<PermissionRecord> {
-        let mut entity = to_entity(tenant_id, record);
+        let mut entity = to_entity(tenant_id, record)?;
         entity.fill_on_insert(&FillContext::new())?;
         PermissionRepository
             .insert_in_transaction(&self.transaction, tenant_id, entity)
             .await
-            .map(to_record)
+            .and_then(to_record)
     }
 
     async fn update(
@@ -191,12 +199,12 @@ impl PermissionWriteTransaction for DatabasePermissionWriteTransaction {
         tenant_id: &str,
         record: PermissionRecord,
     ) -> ryframe_kernel::AppResult<PermissionRecord> {
-        let mut entity = to_entity(tenant_id, record);
+        let mut entity = to_entity(tenant_id, record)?;
         entity.fill_on_update(&FillContext::new())?;
         PermissionRepository
             .update_in_transaction(&self.transaction, tenant_id, entity)
             .await
-            .map(to_record)
+            .and_then(to_record)
     }
 
     async fn is_referenced(&self, tenant_id: &str, id: i64) -> ryframe_kernel::AppResult<bool> {
@@ -262,8 +270,8 @@ impl PersistenceTransaction for DatabasePermissionWriteTransaction {
     }
 }
 
-fn to_record(model: permission::Model) -> PermissionRecord {
-    PermissionRecord {
+fn to_record(model: permission::Model) -> AppResult<PermissionRecord> {
+    Ok(PermissionRecord {
         id: model.id,
         name: model.name,
         code: model.code,
@@ -272,13 +280,19 @@ fn to_record(model: permission::Model) -> PermissionRecord {
         icon: model.icon,
         sort: model.sort,
         status: model.status,
-        created_at: model.created_at,
+        created_at: crate::repositories::utc_time_from_chrono(model.created_at)
+            .db_context("读取权限创建时间")?,
         updated_at: model.updated_at,
-    }
+    })
 }
 
-fn to_entity(tenant_id: &str, record: PermissionRecord) -> permission::Model {
-    permission::Model {
+fn to_entity(tenant_id: &str, record: PermissionRecord) -> AppResult<permission::Model> {
+    let created_at = chrono::DateTime::from_timestamp(
+        record.created_at.unix_timestamp(),
+        record.created_at.nanosecond(),
+    )
+    .ok_or_else(|| AppError::Database("权限创建时间超出 UTC 表示范围".into()))?;
+    Ok(permission::Model {
         id: record.id,
         tenant_id: tenant_id.to_owned(),
         name: record.name,
@@ -288,7 +302,28 @@ fn to_entity(tenant_id: &str, record: PermissionRecord) -> permission::Model {
         icon: record.icon,
         sort: record.sort,
         status: record.status,
-        created_at: record.created_at,
+        created_at,
         updated_at: record.updated_at,
-    }
+    })
+}
+
+#[test]
+fn permission_creation_timestamp_round_trips_with_untouched_update_time() {
+    let entity = permission::Model {
+        id: 2,
+        tenant_id: "system".into(),
+        name: "权限".into(),
+        code: "system:menu:list".into(),
+        parent_id: None,
+        perm_type: "menu".into(),
+        icon: None,
+        sort: 0,
+        status: "1".into(),
+        created_at: chrono::DateTime::from_timestamp(-1, 123_400_000).unwrap(),
+        updated_at: chrono::DateTime::from_timestamp(1, 0).unwrap(),
+    };
+    let record = to_record(entity.clone()).unwrap();
+    assert_eq!(record.created_at.unix_timestamp(), -1);
+    assert_eq!(record.created_at.nanosecond(), 123_400_000);
+    assert_eq!(to_entity("system", record).unwrap(), entity);
 }
