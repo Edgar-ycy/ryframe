@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use ryframe_application::ports::utc_timestamp;
 use ryframe_application::{
     JobScheduleExecutionVo as ServiceExecutionVo, JobScheduleOccurrence as ServiceOccurrence,
@@ -46,16 +45,31 @@ pub struct JobScheduleVo {
     pub misfire_policy: String,
     pub concurrency_policy: String,
     pub max_runtime_seconds: i32,
-    pub next_run_at: Option<DateTime<Utc>>,
-    pub last_run_at: Option<DateTime<Utc>>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub next_run_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub last_run_at: Option<OffsetDateTime>,
     pub version: i64,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub created_at: OffsetDateTime,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub updated_at: OffsetDateTime,
 }
 
-impl From<ServiceScheduleVo> for JobScheduleVo {
-    fn from(value: ServiceScheduleVo) -> Self {
-        Self {
+impl TryFrom<ServiceScheduleVo> for JobScheduleVo {
+    type Error = AppError;
+
+    fn try_from(value: ServiceScheduleVo) -> AppResult<Self> {
+        let to_utc = |timestamp, field| {
+            utc_timestamp::from_chrono(timestamp).map_err(|_| {
+                AppError::Internal(format!("调度配置响应的 {field} 无法精确表示为 UTC"))
+            })
+        };
+        Ok(Self {
             id: value.id,
             name: value.name,
             handler_key: value.handler_key,
@@ -65,12 +79,18 @@ impl From<ServiceScheduleVo> for JobScheduleVo {
             misfire_policy: value.misfire_policy,
             concurrency_policy: value.concurrency_policy,
             max_runtime_seconds: value.max_runtime_seconds,
-            next_run_at: value.next_run_at,
-            last_run_at: value.last_run_at,
+            next_run_at: value
+                .next_run_at
+                .map(|instant| to_utc(instant, "next_run_at"))
+                .transpose()?,
+            last_run_at: value
+                .last_run_at
+                .map(|instant| to_utc(instant, "last_run_at"))
+                .transpose()?,
             version: value.version,
-            created_at: value.created_at,
-            updated_at: value.updated_at,
-        }
+            created_at: to_utc(value.created_at, "created_at")?,
+            updated_at: to_utc(value.updated_at, "updated_at")?,
+        })
     }
 }
 
@@ -155,5 +175,73 @@ impl From<ServicePreview> for JobSchedulePreview {
                 .map(JobScheduleOccurrence::from)
                 .collect(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Value;
+    use utoipa::OpenApi;
+
+    #[test]
+    fn schedule_response_preserves_utc_precision_and_snapshot_schema() {
+        let mut schedule = ServiceScheduleVo {
+            id: "42".into(),
+            name: "调度样例".into(),
+            handler_key: "fixture.job".into(),
+            cron_expression: "0 0 0 * * * *".into(),
+            timezone: "Asia/Shanghai".into(),
+            enabled: true,
+            misfire_policy: "fire_once".into(),
+            concurrency_policy: "forbid".into(),
+            max_runtime_seconds: 300,
+            next_run_at: Some("1970-01-02T00:00:00Z".parse().unwrap()),
+            last_run_at: Some("1969-12-31T23:59:58.120Z".parse().unwrap()),
+            version: 7,
+            created_at: "1969-12-31T23:59:57.123400Z".parse().unwrap(),
+            updated_at: "1969-12-31T23:59:59.123456700Z".parse().unwrap(),
+        };
+        let encoded =
+            serde_json::to_string(&JobScheduleVo::try_from(schedule.clone()).unwrap()).unwrap();
+        assert_eq!(encoded, serde_json::to_string(&schedule).unwrap());
+        let body: Value = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(body["next_run_at"], "1970-01-02T00:00:00Z");
+        assert_eq!(body["last_run_at"], "1969-12-31T23:59:58.120Z");
+        assert_eq!(body["created_at"], "1969-12-31T23:59:57.123400Z");
+        assert_eq!(body["updated_at"], "1969-12-31T23:59:59.123456700Z");
+
+        schedule.next_run_at = None;
+        schedule.last_run_at = None;
+        let body =
+            serde_json::to_value(JobScheduleVo::try_from(schedule.clone()).unwrap()).unwrap();
+        assert_eq!(body.get("next_run_at"), Some(&Value::Null));
+        assert_eq!(body.get("last_run_at"), Some(&Value::Null));
+
+        let leap_second = "2016-12-31T23:59:60.123456Z".parse().unwrap();
+        schedule.next_run_at = Some(leap_second);
+        assert!(
+            matches!(JobScheduleVo::try_from(schedule.clone()), Err(AppError::Internal(message))
+            if message == "调度配置响应的 next_run_at 无法精确表示为 UTC")
+        );
+        schedule.next_run_at = None;
+        schedule.updated_at = leap_second;
+        assert!(
+            matches!(JobScheduleVo::try_from(schedule), Err(AppError::Internal(message))
+            if message == "调度配置响应的 updated_at 无法精确表示为 UTC")
+        );
+
+        let snapshot: Value =
+            serde_json::from_str(include_str!("../../../../../openapi/openapi.json")).unwrap();
+        let generated = serde_json::to_value(crate::openapi::ApiDoc::openapi()).unwrap();
+        let schema_path = "/components/schemas/JobScheduleVo";
+        assert_eq!(
+            generated.pointer(schema_path),
+            Some(
+                snapshot
+                    .pointer(schema_path)
+                    .expect("快照包含定时任务响应契约")
+            )
+        );
     }
 }

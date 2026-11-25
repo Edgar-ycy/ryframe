@@ -111,8 +111,13 @@ async fn list(
             query.into_service_params(state.settings.pagination)?,
         )
         .await?;
+    let records = page
+        .records
+        .into_iter()
+        .map(JobScheduleVo::try_from)
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(Json(ApiPageResponse::page(
-        page.records.into_iter().map(JobScheduleVo::from).collect(),
+        records,
         page.total,
         page.page,
         page.page_size,
@@ -142,8 +147,8 @@ async fn detail(
     schedule_service(&state)?
         .get(&current_user, parse_positive_id(&id, INVALID_SCHEDULE_ID)?)
         .await
+        .and_then(JobScheduleVo::try_from)
         .map_err(crate::http::HttpAppError::from)
-        .map(JobScheduleVo::from)
         .map(ApiResponse::success)
         .map(Json)
 }
@@ -172,8 +177,8 @@ async fn create(
     schedule_service(&state)?
         .create(&current_user, request.into())
         .await
+        .and_then(JobScheduleVo::try_from)
         .map_err(crate::http::HttpAppError::from)
-        .map(JobScheduleVo::from)
         .map(ApiResponse::success)
         .map(Json)
 }
@@ -207,8 +212,8 @@ async fn update(
             request.into(),
         )
         .await
+        .and_then(JobScheduleVo::try_from)
         .map_err(crate::http::HttpAppError::from)
-        .map(JobScheduleVo::from)
         .map(ApiResponse::success)
         .map(Json)
 }
@@ -242,8 +247,8 @@ async fn update_status(
             request.enabled,
         )
         .await
+        .and_then(JobScheduleVo::try_from)
         .map_err(crate::http::HttpAppError::from)
-        .map(JobScheduleVo::from)
         .map(ApiResponse::success)
         .map(Json)
 }
