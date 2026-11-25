@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use chrono::Utc;
 use ryframe_kernel::{
     ActorContext, AppError, AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery,
 };
@@ -243,9 +242,7 @@ impl ConfigService {
     ) -> AppResult<ConfigVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         validate_portable_key(key, portable)?;
-        let now = Utc::now();
-        let created_at = utc_timestamp::from_chrono(now)
-            .map_err(|_| AppError::Internal("参数配置创建时间超出 UTC 表示范围".into()))?;
+        let now = OffsetDateTime::now_utc();
         let record = ConfigRecord {
             id: crate::next_id()?,
             name: name.to_owned(),
@@ -253,7 +250,7 @@ impl ConfigService {
             value: value.to_owned(),
             portable,
             remark: remark.map(str::to_owned),
-            created_at,
+            created_at: now,
             updated_at: now,
         };
         let transaction = self.persistence.begin().await?;
@@ -309,7 +306,7 @@ impl ConfigService {
             validate_portable_key(&config.key, portable)?;
             config.value = value.to_owned();
             config.portable = portable;
-            config.updated_at = Utc::now();
+            config.updated_at = OffsetDateTime::now_utc();
             let saved = transaction.update(tenant_id, config).await?;
             let namespace_version = transaction
                 .record_namespace_change(tenant_id, CONFIG_CACHE_NAMESPACE)

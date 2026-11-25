@@ -363,7 +363,8 @@ async fn soft_delete_simple_extras(
     {
         if config_keys.contains(&normalize_stable_key(&item.key)) {
             item.del_flag = config::Model::DEL_FLAG_DELETED.to_owned();
-            item.updated_at = now;
+            item.updated_at =
+                crate::repositories::utc_time_from_chrono(now).db_context("参数配置回滚时间")?;
             config::ActiveModel::from(item)
                 .reset_all()
                 .update(transaction)

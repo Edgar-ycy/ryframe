@@ -944,7 +944,7 @@ fn config_created_at_preserves_cache_json_and_required_api_schema() {
             portable: true,
             remark: Some("默认主题".into()),
             created_at,
-            updated_at: Default::default(),
+            updated_at: OffsetDateTime::UNIX_EPOCH,
         });
         let cached_json = json!({
             "id": "1",

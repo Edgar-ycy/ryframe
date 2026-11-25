@@ -52,6 +52,7 @@ impl ConfigPersistencePort for FakePersistence {
         if tenant_id == "unavailable" {
             return Err(AppError::ServiceUnavailable("配置不可用".into()));
         }
+        let now = time::OffsetDateTime::now_utc();
         Ok(Some(ConfigRecord {
             id: 1,
             name: "界面配置".into(),
@@ -59,8 +60,8 @@ impl ConfigPersistencePort for FakePersistence {
             value: format!("{tenant_id}:{key}"),
             portable: true,
             remark: None,
-            created_at: time::OffsetDateTime::now_utc(),
-            updated_at: chrono::Utc::now(),
+            created_at: now,
+            updated_at: now,
         }))
     }
 

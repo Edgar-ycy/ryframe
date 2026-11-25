@@ -77,6 +77,10 @@ async fn copy_configs(
     configs: Vec<TenantConfigTemplate>,
     now: DateTime<Utc>,
 ) -> AppResult<()> {
+    if configs.is_empty() {
+        return Ok(());
+    }
+    let now = crate::repositories::utc_time_from_chrono(now).db_context("参数配置初始化时间")?;
     let models = configs
         .into_iter()
         .map(|source| -> AppResult<_> {
@@ -94,12 +98,10 @@ async fn copy_configs(
             })
         })
         .collect::<AppResult<Vec<_>>>()?;
-    if !models.is_empty() {
-        config::Entity::insert_many(models)
-            .exec(transaction)
-            .await
-            .db()?;
-    }
+    config::Entity::insert_many(models)
+        .exec(transaction)
+        .await
+        .db()?;
     Ok(())
 }
 

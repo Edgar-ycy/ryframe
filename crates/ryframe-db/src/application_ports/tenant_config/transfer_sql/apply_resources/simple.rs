@@ -153,6 +153,7 @@ pub(super) async fn upsert_configs(
             .find(|candidate| {
                 normalize_stable_key(&candidate.key) == normalize_stable_key(&item.key)
             });
+        let now = crate::repositories::utc_time_from_chrono(now).db_context("参数配置应用时间")?;
         let model = config::Model {
             id: existing.as_ref().map(|item| item.id).unwrap_or(next_id()?),
             tenant_id: tenant_id.to_owned(),

@@ -6,6 +6,7 @@ use sea_orm::{
     EntityTrait, QueryFilter, QueryOrder, QuerySelect, Select,
     sea_query::{Expr, LockType},
 };
+use time::OffsetDateTime;
 
 use crate::{Repository, entities::config};
 
@@ -65,7 +66,7 @@ impl Repository<config::Model, i64> for ConfigRepository {
         entity: config::Model,
     ) -> AppResult<config::Model> {
         use sea_orm::sea_query::Expr;
-        let now = chrono::Utc::now();
+        let now = OffsetDateTime::now_utc();
         // 对 auto_increment=false 的 MySQL 主键使用显式更新，避免依赖
         // ActiveModel::update() 在不同 SeaORM 2.0 版本间的执行差异。
         config::Entity::update_many()
@@ -90,7 +91,7 @@ impl Repository<config::Model, i64> for ConfigRepository {
     }
 
     async fn delete(&self, db: &DatabaseConnection, tenant_id: &str, id: i64) -> AppResult<()> {
-        soft_delete_entity!(config, db, tenant_id, id)
+        soft_delete_entity!(config, db, tenant_id, id, OffsetDateTime::now_utc())
     }
 }
 
@@ -183,7 +184,10 @@ impl ConfigRepository {
                 config::Column::DelFlag,
                 Expr::value(config::Model::DEL_FLAG_DELETED),
             )
-            .col_expr(config::Column::UpdatedAt, Expr::value(chrono::Utc::now()))
+            .col_expr(
+                config::Column::UpdatedAt,
+                Expr::value(OffsetDateTime::now_utc()),
+            )
             .filter(config::Column::Id.eq(id))
             .filter(config::Column::TenantId.eq(tenant_id))
             .filter(config::Column::DelFlag.eq(config::Model::DEL_FLAG_NORMAL))
