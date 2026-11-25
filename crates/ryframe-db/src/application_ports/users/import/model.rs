@@ -2,11 +2,9 @@ use ryframe_application::ports::users::{
     NewImportedUser, NewUserImportRow, UserImportJobRecord, UserImportRowRecord,
     UserImportSourceRecord, UserImportSourceState,
 };
+use time::{PrimitiveDateTime, UtcOffset};
 
-use crate::{
-    DbResultExt,
-    entities::{sys_file, user, user_import_job, user_import_row_result},
-};
+use crate::entities::{sys_file, user, user_import_job, user_import_row_result};
 
 pub(super) fn job_record(job: user_import_job::Model) -> UserImportJobRecord {
     UserImportJobRecord {
@@ -62,18 +60,15 @@ pub(super) fn job_model(job: UserImportJobRecord) -> user_import_job::Model {
     }
 }
 
-pub(super) fn row_record(
-    row: user_import_row_result::Model,
-) -> ryframe_kernel::AppResult<UserImportRowRecord> {
-    Ok(UserImportRowRecord {
+pub(super) fn row_record(row: user_import_row_result::Model) -> UserImportRowRecord {
+    UserImportRowRecord {
         row_number: row.row_number,
         username: row.username_snapshot,
         outcome: row.outcome,
         code: row.code,
         message: row.message,
-        created_at: crate::repositories::utc_time_from_chrono(row.created_at)
-            .db_context("读取用户导入异常行创建时间")?,
-    })
+        created_at: row.created_at.assume_utc(),
+    }
 }
 
 pub(super) fn source_record(file: sys_file::Model) -> UserImportSourceRecord {
@@ -119,6 +114,7 @@ pub(super) fn user_model(user: NewImportedUser) -> user::Model {
 }
 
 pub(super) fn import_row_model(row: NewUserImportRow) -> user_import_row_result::Model {
+    let utc = row.created_at.to_offset(UtcOffset::UTC);
     user_import_row_result::Model {
         id: row.id,
         tenant_id: row.tenant_id,
@@ -128,7 +124,7 @@ pub(super) fn import_row_model(row: NewUserImportRow) -> user_import_row_result:
         outcome: row.outcome,
         code: row.code,
         message: row.message,
-        created_at: row.created_at,
+        created_at: PrimitiveDateTime::new(utc.date(), utc.time()),
     }
 }
 
@@ -137,37 +133,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn exception_row_read_preserves_time_and_rejects_unrepresentable_values() {
-        let model = |created_at| user_import_row_result::Model {
+    fn exception_row_mapping_preserves_utc_time_and_precision() {
+        let row = |created_at| NewUserImportRow {
             id: 11,
             tenant_id: "tenant-a".into(),
             import_job_id: 7,
             row_number: 3,
-            username_snapshot: "tester".into(),
+            username: "tester".into(),
             outcome: "skipped".into(),
             code: "already_exists".into(),
             message: "用户已存在".into(),
             created_at,
         };
         for nanos in [0, 120_000_000, 123_400_000, 123_456_700] {
-            let original = chrono::DateTime::from_timestamp(-1, nanos).unwrap();
-            let record = row_record(model(original)).unwrap();
+            let utc = time::OffsetDateTime::from_unix_timestamp(-1)
+                .unwrap()
+                .replace_nanosecond(nanos)
+                .unwrap();
+            let input = utc.to_offset(UtcOffset::from_hms(5, 30, 0).unwrap());
+            let model = import_row_model(row(input));
+            assert_eq!(
+                model.created_at,
+                PrimitiveDateTime::new(utc.date(), utc.time())
+            );
+            let record = row_record(model);
             assert_eq!(record.row_number, 3);
             assert_eq!(record.username, "tester");
             assert_eq!(record.outcome, "skipped");
             assert_eq!(record.code, "already_exists");
             assert_eq!(record.message, "用户已存在");
-            assert_eq!(record.created_at.offset(), time::UtcOffset::UTC);
+            assert_eq!(record.created_at.offset(), UtcOffset::UTC);
             assert_eq!(record.created_at.unix_timestamp(), -1);
             assert_eq!(record.created_at.nanosecond(), nanos);
-        }
-        for invalid in [
-            chrono::DateTime::from_timestamp(1_483_228_799, 1_123_456_000).unwrap(),
-            chrono::DateTime::from_timestamp(253_402_300_800, 0).unwrap(),
-        ] {
-            let error = row_record(model(invalid)).unwrap_err();
-            assert!(matches!(error, ryframe_kernel::AppError::Database(message)
-                if message.starts_with("读取用户导入异常行创建时间:")));
         }
     }
 }

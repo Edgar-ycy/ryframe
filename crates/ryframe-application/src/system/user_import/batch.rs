@@ -141,11 +141,7 @@ impl UserImportService {
         let (counts, epoch) =
             insert_prepared_users(transaction.as_ref(), &import.tenant_id, &mut prepared, now)
                 .await?;
-        let row_records = prepared
-            .issues
-            .into_iter()
-            .map(|issue| issue.into_record(&import.tenant_id, import_id, now))
-            .collect::<AppResult<Vec<_>>>()?;
+        let row_records = build_issue_records(prepared.issues, &import.tenant_id, import_id, now)?;
         transaction.insert_rows(row_records).await?;
         apply_batch_progress(&mut import, next_offset, counts, now)?;
         let tenant_id = import.tenant_id.clone();
@@ -305,7 +301,7 @@ impl RowIssue {
         self,
         tenant_id: &str,
         import_job_id: i64,
-        now: DateTime<Utc>,
+        created_at: time::OffsetDateTime,
     ) -> AppResult<NewUserImportRow> {
         Ok(NewUserImportRow {
             id: next_id()?,
@@ -316,9 +312,27 @@ impl RowIssue {
             outcome: self.outcome.to_owned(),
             code: self.code,
             message: self.message,
-            created_at: now,
+            created_at,
         })
     }
+}
+
+fn build_issue_records(
+    issues: Vec<RowIssue>,
+    tenant_id: &str,
+    import_job_id: i64,
+    now: DateTime<Utc>,
+) -> AppResult<Vec<NewUserImportRow>> {
+    if issues.is_empty() {
+        return Ok(Vec::new());
+    }
+    let created_at = crate::ports::utc_timestamp::from_chrono(now).map_err(|error| {
+        AppError::Database(format!("用户导入异常行创建时间无法精确表示为 UTC：{error}"))
+    })?;
+    issues
+        .into_iter()
+        .map(|issue| issue.into_record(tenant_id, import_job_id, created_at))
+        .collect()
 }
 
 fn build_user_record(
@@ -466,4 +480,27 @@ fn batch_counts(users: usize, issues: &[RowIssue]) -> AppResult<(i32, i32, i32)>
     .map_err(|_| AppError::Internal("用户导入失败计数溢出".into()))?;
 
     Ok((success_count, skipped_count, failure_count))
+}
+
+#[cfg(test)]
+mod import_row_tests {
+    use super::*;
+
+    #[test]
+    fn exception_rows_reject_unrepresentable_batch_time_only_when_present() {
+        for invalid in [
+            DateTime::from_timestamp(1_483_228_799, 1_123_456_000).unwrap(),
+            DateTime::from_timestamp(253_402_300_800, 0).unwrap(),
+        ] {
+            assert!(
+                build_issue_records(Vec::new(), "tenant-a", 7, invalid)
+                    .unwrap()
+                    .is_empty()
+            );
+            let issue = RowIssue::skipped(3, "tester", "already_exists", "用户已存在");
+            let error = build_issue_records(vec![issue], "tenant-a", 7, invalid).unwrap_err();
+            assert!(matches!(error, AppError::Database(message)
+                if message.starts_with("用户导入异常行创建时间无法精确表示为 UTC")));
+        }
+    }
 }

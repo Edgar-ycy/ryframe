@@ -1,9 +1,8 @@
-use chrono::{DateTime, Utc};
 use sea_orm::entity::prelude::*;
-use serde::{Deserialize, Serialize};
+use time::PrimitiveDateTime;
 
 /// 导入中被跳过或验证失败的行。
-#[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "sys_user_import_row_result")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
@@ -15,7 +14,7 @@ pub struct Model {
     pub outcome: String,
     pub code: String,
     pub message: String,
-    pub created_at: DateTime<Utc>,
+    pub created_at: PrimitiveDateTime,
 }
 
 impl Model {

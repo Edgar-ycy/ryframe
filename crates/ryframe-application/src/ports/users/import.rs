@@ -103,7 +103,7 @@ pub struct NewUserImportRow {
     pub outcome: String,
     pub code: String,
     pub message: String,
-    pub created_at: DateTime<Utc>,
+    pub created_at: time::OffsetDateTime,
 }
 
 #[derive(Clone, Copy, Debug)]
