@@ -1,18 +1,15 @@
 use super::{
     args::{Command, InventoryTime},
     context::Context,
-    output, preimage,
+    output::{self, Inventory, write_inventory},
+    preimage,
 };
 use chrono::{DateTime, Utc};
-use ryframe_application::ports::backup::*;
+use ryframe_application::ports::{backup::*, utc_timestamp};
 use ryframe_config::AppConfig;
 use ryframe_kernel::{AppError, AppResult};
 use serde::{Serialize, de::DeserializeOwned};
-use std::{
-    fs::OpenOptions,
-    io::{Read, Write},
-    path::Path,
-};
+use std::{io::Read, path::Path};
 
 pub struct BeginInput {
     pub plan: RestorePlan,
@@ -136,19 +133,6 @@ pub async fn status(config: &AppConfig, repository: &dyn BackupRepository) -> Ap
     )
 }
 
-#[derive(Serialize)]
-struct Inventory {
-    scope_id: String,
-    source_sha: String,
-    #[serde(flatten)]
-    observation: InventoryTime<DateTime<Utc>>,
-    captured_at: DateTime<Utc>,
-    control_schema_fingerprint: String,
-    tenant_schema_fingerprint: String,
-    databases: Vec<DatabaseBackup>,
-    objects: Vec<ObjectBackup>,
-}
-
 async fn inventory(
     config: &AppConfig,
     context: &Context,
@@ -175,6 +159,8 @@ async fn inventory(
             "库存观察开始时间不能在采集时间之后".into(),
         ));
     }
+    let captured_at = utc_timestamp::from_chrono(captured_at)
+        .map_err(|_| AppError::Internal("库存采集时间超出 UTC 表示范围".into()))?;
     let inventory = Inventory {
         scope_id: config.scope_id.as_str().into(),
         source_sha,
@@ -254,20 +240,6 @@ pub fn business_catalog(
         tenant_tables: ryframe_tenant_db::migration::tenant_data_catalog().tables(),
     };
     write_inventory(output, &catalog)
-}
-
-fn write_inventory(output: &Path, inventory: &impl Serialize) -> AppResult<()> {
-    let bytes = serde_json::to_vec_pretty(inventory)
-        .map_err(|_| AppError::Internal("备份清单序列化失败".into()))?;
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(output)
-        .map_err(|_| AppError::Validation("清单输出文件必须是不存在的新文件".into()))?;
-    file.write_all(&bytes)
-        .and_then(|()| file.sync_all())
-        .map_err(|_| AppError::Internal("备份清单写入失败".into()))?;
-    Ok(())
 }
 
 pub fn read_json<T: DeserializeOwned>(path: &Path) -> AppResult<T> {

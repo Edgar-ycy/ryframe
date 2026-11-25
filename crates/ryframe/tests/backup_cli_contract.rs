@@ -392,3 +392,62 @@ fn inventory_requires_one_observation_kind_and_serializes_only_that_fact() {
     assert!(arguments(base).is_err());
     assert!(arguments(&format!("{base} --quiesced-at time --observed-at time")).is_err());
 }
+
+#[test]
+fn backup_inventory_preserves_legacy_capture_bytes() {
+    use chrono::{DateTime, Utc};
+    use ryframe_application::ports::utc_timestamp;
+
+    let temporary = configuration_directory();
+    let started_at = DateTime::parse_from_rfc3339("2026-11-25T18:05:00.400000+08:00")
+        .unwrap()
+        .with_timezone(&Utc);
+    for (index, (input, legacy_capture)) in [
+        ("2026-11-25T10:06:00.000000Z", "2026-11-25T10:06:00Z"),
+        ("2026-11-25T10:06:00.120000Z", "2026-11-25T10:06:00.120Z"),
+        ("2026-11-25T10:06:00.123400Z", "2026-11-25T10:06:00.123400Z"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let captured_at = DateTime::parse_from_rfc3339(input)
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(
+            serde_json::to_string(&captured_at).unwrap(),
+            format!("\"{legacy_capture}\"")
+        );
+        for (key, observation) in [
+            ("quiesced_at", InventoryTime::QuiescedAt(started_at)),
+            ("observed_at", InventoryTime::ObservedAt(started_at)),
+        ] {
+            let inventory = output::Inventory {
+                scope_id: "fixture".into(),
+                source_sha: "0123456789abcdef0123456789abcdef01234567".into(),
+                observation,
+                captured_at: utc_timestamp::from_chrono(captured_at).unwrap(),
+                control_schema_fingerprint: "control".into(),
+                tenant_schema_fingerprint: "tenant".into(),
+                databases: vec![],
+                objects: vec![],
+            };
+            let path = temporary.path().join(format!("{key}-{index}.json"));
+            output::write_inventory(&path, &inventory).unwrap();
+            let expected = format!(
+                r#"{{
+  "scope_id": "fixture",
+  "source_sha": "0123456789abcdef0123456789abcdef01234567",
+  "{key}": "2026-11-25T10:05:00.400Z",
+  "captured_at": "{legacy_capture}",
+  "control_schema_fingerprint": "control",
+  "tenant_schema_fingerprint": "tenant",
+  "databases": [],
+  "objects": []
+}}"#
+            );
+            let actual = fs::read(path).unwrap();
+            assert_eq!(actual.last(), Some(&b'}'));
+            assert_eq!(actual.as_slice(), expected.as_bytes());
+        }
+    }
+}

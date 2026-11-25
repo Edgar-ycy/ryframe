@@ -133,6 +133,7 @@ bin-tenant-data = [
     "ryframe-db/repositories",
     "ryframe-tenant-db/repositories",
     "dep:chrono",
+    "dep:time",
     "dep:sha2",
     "dep:hex",
     "dep:same-file",

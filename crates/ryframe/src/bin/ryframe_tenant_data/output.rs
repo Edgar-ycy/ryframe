@@ -1,3 +1,9 @@
+use super::args::InventoryTime;
+use chrono::{DateTime, Utc};
+use ryframe_application::ports::{
+    backup::{DatabaseBackup, ObjectBackup},
+    utc_timestamp,
+};
 use ryframe_kernel::{AppError, AppResult};
 use serde::Serialize;
 use serde_json::Value;
@@ -7,8 +13,37 @@ use std::{
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
 };
+use time::OffsetDateTime;
 
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Serialize)]
+pub(super) struct Inventory {
+    pub(super) scope_id: String,
+    pub(super) source_sha: String,
+    #[serde(flatten)]
+    pub(super) observation: InventoryTime<DateTime<Utc>>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    pub(super) captured_at: OffsetDateTime,
+    pub(super) control_schema_fingerprint: String,
+    pub(super) tenant_schema_fingerprint: String,
+    pub(super) databases: Vec<DatabaseBackup>,
+    pub(super) objects: Vec<ObjectBackup>,
+}
+
+pub(super) fn write_inventory(output: &Path, inventory: &impl Serialize) -> AppResult<()> {
+    let bytes = serde_json::to_vec_pretty(inventory)
+        .map_err(|_| AppError::Internal("备份清单序列化失败".into()))?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)
+        .map_err(|_| AppError::Validation("清单输出文件必须是不存在的新文件".into()))?;
+    file.write_all(&bytes)
+        .and_then(|()| file.sync_all())
+        .map_err(|_| AppError::Internal("备份清单写入失败".into()))?;
+    Ok(())
+}
 
 pub fn validate_new_output(output: &Path) -> AppResult<PathBuf> {
     let name = output
