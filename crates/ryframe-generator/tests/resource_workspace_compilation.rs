@@ -1,5 +1,6 @@
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -218,6 +219,19 @@ fn prepare_shared_workspace(
         for directory in [".cargo", "catalog", "crates", "locales", "vendor", "xtask"] {
             sync_directory(&backend_source.join(directory), &backend.join(directory));
         }
+        // 候选生成器独立读取工具配置，继续使用资源控制文件登记的 Cargo 目标。
+        let settings_dir = backend.join(".local-tests");
+        let settings =
+            toml::to_string(&serde_json::json!({"generator": {"target_dir": &cargo_target}}))
+                .map_err(|error| format!("无法编码资源 Workspace 生成器配置：{error}"))?;
+        fs::create_dir(&settings_dir)
+            .map_err(|error| format!("无法创建资源 Workspace 工具配置目录：{error}"))?;
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(settings_dir.join("tools.toml"))
+            .and_then(|mut file| file.write_all(settings.as_bytes()))
+            .map_err(|error| format!("无法写入资源 Workspace 生成器配置：{error}"))?;
         prepare_frontend_workspace(&frontend_source, &frontend);
     } else {
         // targeted 只验证生成计划和重复写入，不运行临时 Workspace 编译；保留生成器
