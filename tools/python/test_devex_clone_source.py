@@ -4,8 +4,11 @@ import errno
 import json
 import os
 from pathlib import Path
+import shutil
 import socket
+import subprocess
 import sys
+import tomllib
 import unittest
 from unittest.mock import Mock, patch
 
@@ -87,6 +90,26 @@ class SourceExportTests(unittest.TestCase):
     def test_generation_keeps_real_build_context_in_control_and_resources_in_service(self):
         item = self.fixture
         controller = {**self.controller_environment, "CARGO_BUILD_JOBS": "4", "CARGO_TARGET_DIR": str(item.local / "target")}
+        if controller.get("RUSTUP_HOME"):
+            # 服务环境会过滤 RUSTUP_HOME，两侧共用固定工具链的实际目录。
+            root = Path(__file__).resolve().parents[2]
+            with (root / "rust-toolchain.toml").open("rb") as manifest:
+                channel = tomllib.load(manifest)["toolchain"]["channel"]
+            rustup = shutil.which("rustup", path=controller["PATH"])
+            self.assertIsNotNone(rustup, "控制环境的 PATH 中缺少 rustup")
+            tool_directories = []
+            for program in ("rustc", "cargo"):
+                resolved = subprocess.check_output(
+                    [rustup, "which", "--toolchain", channel, program],
+                    cwd=root, env=controller, encoding="utf-8", timeout=15,
+                ).strip()
+                self.assertTrue(resolved, f"Rustup 未返回固定工具链的 {program} 路径")
+                executable = Path(resolved).resolve(strict=True)
+                self.assertTrue(executable.is_file(), f"固定工具链的 {program} 路径不是文件")
+                tool_directories.append(executable.parent)
+            rustc_dir, cargo_dir = tool_directories
+            self.assertEqual(rustc_dir, cargo_dir, "固定工具链的 rustc 和 cargo 须来自同一目录")
+            controller["PATH"] = os.pathsep.join((str(rustc_dir), controller["PATH"]))
         service = configured(item.environment, controller)
         self.assertFalse(any(name.startswith("CARGO_") for name in service))
         environments = Environments(service, controller)
