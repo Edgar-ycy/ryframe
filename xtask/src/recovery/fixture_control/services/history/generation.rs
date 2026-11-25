@@ -47,6 +47,9 @@ pub(super) fn external(proof: &Value, run: &Path, owner: &Value, generation: &Va
     let evidence = &observation["evidence"];
     let (rustfs, redis) = paths(run, generation)?;
     use super::super::lifecycle::incident;
+    if proof["format_version"] == incident::MIXED_VERSION {
+        return mixed_external(run, &rustfs, &redis, owner, generation, proof);
+    }
     if proof["format_version"] == incident::VERSION {
         check(
             proof["kind"] == "reference-fixture-external-termination"
@@ -99,6 +102,56 @@ pub(super) fn external(proof: &Value, run: &Path, owner: &Value, generation: &Va
         validate_external_redis(evidence, run, &redis)?;
     }
     Ok(())
+}
+
+fn mixed_external(
+    run: &Path,
+    rustfs: &Path,
+    redis: &Path,
+    owner: &Value,
+    generation: &Value,
+    proof: &Value,
+) -> Result<()> {
+    check(
+        proof["kind"] == "reference-fixture-external-termination"
+            && super::evidence::path_is(&proof["run"], run)
+            && &proof["owner"] == owner
+            && proof["normal_shutdown_proof"].is_null()
+            && proof["remote_writes"] == 0
+            && proof["resources_deleted"] == false,
+        "混合终态证据未绑定原服务账本或错误记录正常关闭",
+    )?;
+    let registered = mixed_registration(run, generation)?;
+    super::super::lifecycle::incident::verify_mixed_historical(
+        run,
+        rustfs,
+        redis,
+        &registered,
+        &proof["observation"],
+    )
+}
+
+fn mixed_registration(run: &Path, generation: &Value) -> Result<Value> {
+    if generation["kind"] == "initial" {
+        use crate::recovery::clone::native::lifecycle::state;
+        let current = state::load(run, true)?;
+        let [storage, cache, ..] = state::attempts(&current)? else {
+            return Err("混合终态缺少固定的首代服务账本".into());
+        };
+        check(
+            storage["result"] == generation["rustfs"] && cache["result"] == generation["redis"],
+            "混合终态首代服务来源与固定历史不一致",
+        )?;
+        let rustfs = bound(run, &generation["rustfs"])?;
+        let redis = bound(run, &generation["redis"])?;
+        return Ok(json!({"tree":rustfs["tree"],"runtime":redis["runtime"],
+            "requests":{"rustfs":storage["sources"]["request"],"redis":cache["sources"]["request"]}}));
+    }
+    let original = super::evidence::restart_generation(run, generation)?;
+    Ok(
+        json!({"tree":original["rustfs"]["storage"]["tree"],"runtime":original["redis"]["runtime"],
+        "requests":{"rustfs":original["rustfs"]["request"],"redis":original["redis"]["request"]}}),
+    )
 }
 
 fn validate_external_redis(evidence: &Value, run: &Path, directory: &Path) -> Result<()> {

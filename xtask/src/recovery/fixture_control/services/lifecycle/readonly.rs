@@ -17,6 +17,26 @@ mod tree;
 
 const FIXTURE_MEMBERS: &[&str] = &["rustfs", "api", "worker"];
 
+#[cfg(windows)]
+pub(super) fn read_rustfs_completion(
+    backend: &Path,
+    directory: &Path,
+    scope: &str,
+) -> Result<(Value, Value, Value)> {
+    let tree_binding = common::binding(&directory.join("rustfs-tree.json"))?;
+    let tree = tree::read(backend, directory, scope)?;
+    if common::read_bound(backend, &tree_binding, "夹具原 RustFS 进程树")? != tree {
+        return Err("读取期间 RustFS 原进程树变化".into());
+    }
+    let path = super::observation::receipt(&tree, "stopped")?;
+    let completion = tree::read_members(backend, &tree, &path)?;
+    let proof = common::read_bound(backend, &completion, "原 RustFS 成员关闭收据")?;
+    if proof["format_version"] != 1 {
+        return Err("原 RustFS 成员关闭收据版本无效".into());
+    }
+    Ok((tree, tree_binding, completion))
+}
+
 pub(in crate::recovery) fn restore_completion(backend: &Path, tree: &Value) -> Result<Value> {
     tree::members(
         backend,

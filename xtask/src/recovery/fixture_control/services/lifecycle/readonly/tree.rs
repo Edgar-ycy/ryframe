@@ -116,7 +116,16 @@ fn members_once(backend: &Path, tree: &Value, roles: &[&str]) -> Result<Option<V
         Err(error) => return Err(error.into()),
         Ok(_) => (),
     }
-    let binding = common::binding(&filename)?;
+    let binding = read_members(backend, tree, &filename)?;
+    if before.is_some() || common::process_identity(pid)?.is_some() {
+        return Ok(None);
+    }
+    common::bound_file(backend, &binding, "进程树成员关闭证明")?;
+    Ok(Some(binding))
+}
+
+pub(super) fn read_members(backend: &Path, tree: &Value, filename: &Path) -> Result<Value> {
+    let binding = common::binding(filename)?;
     if binding["bytes"]
         .as_u64()
         .is_none_or(|bytes| bytes > 4 * 1024 * 1024)
@@ -125,11 +134,7 @@ fn members_once(backend: &Path, tree: &Value, roles: &[&str]) -> Result<Option<V
     }
     let proof = common::read_bound(backend, &binding, "进程树成员关闭证明")?;
     validate_members(tree, &proof)?;
-    if before.is_some() || common::process_identity(pid)?.is_some() {
-        return Ok(None);
-    }
-    common::bound_file(backend, &binding, "进程树成员关闭证明")?;
-    Ok(Some(binding))
+    Ok(binding)
 }
 
 pub(super) fn validate_members(tree: &Value, proof: &Value) -> Result<()> {
