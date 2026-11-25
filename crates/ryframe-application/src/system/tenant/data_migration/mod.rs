@@ -214,8 +214,10 @@ impl TenantDataMigrationService {
                 params.tenant_id.as_deref(),
                 params.limit.clamp(1, 200),
             )
-            .await
-            .map(|rows| rows.into_iter().map(BackupPointView::from).collect())
+            .await?
+            .into_iter()
+            .map(BackupPointView::try_from)
+            .collect()
     }
 
     pub async fn placement(

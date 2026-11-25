@@ -203,6 +203,116 @@ fn data_retention_overview_and_preview_preserve_utc_json_and_schema() {
 }
 
 #[test]
+fn tenant_backup_points_preserve_utc_precision_nullability_and_schema() {
+    use chrono::DateTime;
+    use ryframe_api::dto::tenant_data_dto::BackupPointView;
+    use ryframe_application::{
+        ports::tenant_data::TenantDataBackupPointRecord,
+        system::platform::BackupPointView as ServiceBackupPoint,
+    };
+    use ryframe_kernel::AppError;
+    use serde_json::{Value, from_str, json, to_string, to_value};
+    use utoipa::PartialSchema;
+
+    let epoch = DateTime::from_timestamp(0, 0).unwrap();
+    let mut record = TenantDataBackupPointRecord {
+        id: 42,
+        scope: "tenant".into(),
+        tenant_id: Some("tenant-a".into()),
+        target_key: "target-a".into(),
+        placement_generation: Some(9),
+        schema_fingerprint: "schema-a".into(),
+        provider_ref: "private-provider-reference".into(),
+        captured_at: epoch,
+        checksum: Some("checksum-a".into()),
+        validation_status: "valid".into(),
+        validation_detail: Some("private-validation-detail".into()),
+        retention_until: epoch,
+        expires_at: None,
+        last_restore_drill_at: None,
+        created_by: Some(7),
+        created_at: epoch,
+        updated_at: epoch,
+    };
+    for (nanos, fraction) in [
+        (0, ""),
+        (120_000_000, ".120"),
+        (123_400_000, ".123400"),
+        (123_456_700, ".123456700"),
+    ] {
+        record.captured_at = DateTime::from_timestamp(-1, nanos).unwrap();
+        record.retention_until = DateTime::from_timestamp(2, nanos).unwrap();
+        record.expires_at = DateTime::from_timestamp(3, nanos);
+        record.last_restore_drill_at = DateTime::from_timestamp(0, nanos);
+        let old = json!({
+            "id": "42",
+            "scope": "tenant",
+            "tenant_id": "tenant-a",
+            "target_key": "target-a",
+            "placement_generation": "9",
+            "schema_fingerprint": "schema-a",
+            "captured_at": record.captured_at,
+            "checksum": "checksum-a",
+            "validation_status": "valid",
+            "retention_until": record.retention_until,
+            "expires_at": record.expires_at,
+            "last_restore_drill_at": record.last_restore_drill_at,
+        });
+        assert_eq!(
+            old["captured_at"],
+            format!("1969-12-31T23:59:59{fraction}Z")
+        );
+        let service = ServiceBackupPoint::try_from(record.clone()).unwrap();
+        for payload in [
+            to_string(&service).unwrap(),
+            to_string(&BackupPointView::try_from(service).unwrap()).unwrap(),
+        ] {
+            let response: Value = from_str(&payload).unwrap();
+            assert_eq!(response, old);
+            assert!(response.get("provider_ref").is_none());
+            assert!(response.get("validation_detail").is_none());
+        }
+    }
+
+    record.expires_at = None;
+    record.last_restore_drill_at = None;
+    let service = ServiceBackupPoint::try_from(record.clone()).unwrap();
+    for response in [
+        to_value(&service).unwrap(),
+        to_value(BackupPointView::try_from(service).unwrap()).unwrap(),
+    ] {
+        assert_eq!(response.get("expires_at"), Some(&Value::Null));
+        assert_eq!(response.get("last_restore_drill_at"), Some(&Value::Null));
+    }
+
+    let schema = to_value(BackupPointView::schema()).unwrap();
+    let required = schema["required"].as_array().unwrap();
+    for field in ["captured_at", "retention_until"] {
+        assert_eq!(
+            schema["properties"][field],
+            json!({"type":"string","format":"date-time"})
+        );
+        assert!(required.contains(&json!(field)));
+    }
+    for field in ["expires_at", "last_restore_drill_at"] {
+        assert_eq!(
+            schema["properties"][field],
+            json!({"type":["string","null"],"format":"date-time"})
+        );
+        assert!(!required.contains(&json!(field)));
+    }
+    for field in ["provider_ref", "validation_detail", "created_by"] {
+        assert!(schema["properties"].get(field).is_none());
+    }
+
+    record.last_restore_drill_at = DateTime::from_timestamp(-1, 1_123_456_000);
+    assert!(matches!(
+        ServiceBackupPoint::try_from(record),
+        Err(AppError::Internal(message)) if message.contains("last_restore_drill_at")
+    ));
+}
+
+#[test]
 fn product_plan_version_response_preserves_published_at_utc_and_schema() {
     use ryframe_api::dto::product_dto::ProductPlanVersionVo;
     use ryframe_application::system::platform::ProductPlanVersionVo as ServiceVersion;

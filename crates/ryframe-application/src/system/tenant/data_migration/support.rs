@@ -5,6 +5,7 @@ use crate::ports::tenant_data::{
     TenantDataBackupPointRecord, TenantDataMigrationItemRecord, TenantDataMigrationRecord,
     TenantDataPlacementRecord, TenantDataTargetHealth, TenantDataTargetMetadata,
 };
+use crate::ports::utc_timestamp;
 
 use super::{
     BackupPointView, CreateMigrationCommand, DataPlacementView, DataTargetSummary,
@@ -155,22 +156,35 @@ pub(super) fn sha256_hex(value: &str) -> String {
     hex::encode(Sha256::digest(value.as_bytes()))
 }
 
-impl From<TenantDataBackupPointRecord> for BackupPointView {
-    fn from(model: TenantDataBackupPointRecord) -> Self {
-        Self {
+impl TryFrom<TenantDataBackupPointRecord> for BackupPointView {
+    type Error = AppError;
+
+    fn try_from(model: TenantDataBackupPointRecord) -> AppResult<Self> {
+        let to_utc = |timestamp, field| {
+            utc_timestamp::from_chrono(timestamp).map_err(|_| {
+                AppError::Internal(format!("租户数据备份点的 {field} 无法精确表示为 UTC"))
+            })
+        };
+        Ok(Self {
             id: model.id.to_string(),
             scope: model.scope,
             tenant_id: model.tenant_id,
             target_key: model.target_key,
             placement_generation: model.placement_generation.map(|value| value.to_string()),
             schema_fingerprint: model.schema_fingerprint,
-            captured_at: model.captured_at,
+            captured_at: to_utc(model.captured_at, "captured_at")?,
             checksum: model.checksum,
             validation_status: model.validation_status,
-            retention_until: model.retention_until,
-            expires_at: model.expires_at,
-            last_restore_drill_at: model.last_restore_drill_at,
-        }
+            retention_until: to_utc(model.retention_until, "retention_until")?,
+            expires_at: model
+                .expires_at
+                .map(|timestamp| to_utc(timestamp, "expires_at"))
+                .transpose()?,
+            last_restore_drill_at: model
+                .last_restore_drill_at
+                .map(|timestamp| to_utc(timestamp, "last_restore_drill_at"))
+                .transpose()?,
+        })
     }
 }
 

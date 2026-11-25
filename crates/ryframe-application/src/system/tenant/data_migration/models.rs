@@ -50,12 +50,16 @@ pub struct BackupPointView {
     pub target_key: String,
     pub placement_generation: Option<String>,
     pub schema_fingerprint: String,
-    pub captured_at: DateTime<Utc>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize")]
+    pub captured_at: time::OffsetDateTime,
     pub checksum: Option<String>,
     pub validation_status: String,
-    pub retention_until: DateTime<Utc>,
-    pub expires_at: Option<DateTime<Utc>>,
-    pub last_restore_drill_at: Option<DateTime<Utc>>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize")]
+    pub retention_until: time::OffsetDateTime,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize_optional")]
+    pub expires_at: Option<time::OffsetDateTime>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize_optional")]
+    pub last_restore_drill_at: Option<time::OffsetDateTime>,
 }
 
 #[derive(Clone, Debug, Serialize)]

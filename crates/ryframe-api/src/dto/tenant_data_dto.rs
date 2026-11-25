@@ -125,12 +125,20 @@ pub struct BackupPointView {
     pub target_key: String,
     pub placement_generation: Option<String>,
     pub schema_fingerprint: String,
-    pub captured_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub captured_at: time::OffsetDateTime,
     pub checksum: Option<String>,
     pub validation_status: BackupPointValidationStatus,
-    pub retention_until: DateTime<Utc>,
-    pub expires_at: Option<DateTime<Utc>>,
-    pub last_restore_drill_at: Option<DateTime<Utc>>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub retention_until: time::OffsetDateTime,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub expires_at: Option<time::OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub last_restore_drill_at: Option<time::OffsetDateTime>,
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
