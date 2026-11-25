@@ -4,12 +4,20 @@ use crate::recovery::fixture_control::services::lifecycle::readonly::restore_com
 #[derive(Clone, Copy)]
 enum StopCase {
     NaturalExit,
+    #[cfg(windows)]
+    NaturalExitLongPath,
     UnrecordedTree,
 }
 
 #[test]
 fn stop_keeps_the_original_completion_after_natural_api_exit() -> Result<()> {
     run_case(StopCase::NaturalExit)
+}
+
+#[cfg(windows)]
+#[test]
+fn stop_keeps_the_original_completion_at_a_long_windows_path() -> Result<()> {
+    run_case(StopCase::NaturalExitLongPath)
 }
 
 #[test]
@@ -21,6 +29,17 @@ fn run_case(case: StopCase) -> Result<()> {
     let mut fixture = Fixture::new();
     // 公开 stop/status 入口在登记阶段会规范化 Windows 分隔符。
     fixture.root = fixture.control.join("case").join("runtime");
+    #[cfg(windows)]
+    if matches!(case, StopCase::NaturalExitLongPath) {
+        use std::os::windows::ffi::OsStrExt;
+
+        let padding = 220_usize.saturating_sub(fixture.root.as_os_str().encode_wide().count());
+        let directory = fixture
+            .control
+            .join(format!("case-{}", "x".repeat(padding)));
+        fs::create_dir(&directory)?;
+        fixture.root = directory.join("runtime");
+    }
     let program = native_coordinator()?;
     let ports = configure(&mut fixture, &program)?;
     fs::write(fixture.control.join("product/worker-mode"), b"ready")?;
@@ -125,9 +144,10 @@ fn verify_and_stop(
     let state_path = fixture.root.join(STATE);
     let before = fs::read(&state_path)?;
     let observation = runtime_command(fixture, program, "status")?;
-    let expected = match case {
-        StopCase::NaturalExit => ("stopped", "running"),
-        StopCase::UnrecordedTree => ("running", "pending"),
+    let expected = if matches!(case, StopCase::UnrecordedTree) {
+        ("running", "pending")
+    } else {
+        ("stopped", "running")
     };
     check(
         observation["persisted_status"] == "starting"
@@ -175,9 +195,26 @@ fn verify_and_stop(
                 .try_exists()?,
             "自然退出后不应重签关闭收据或发送停止请求",
         )?;
+        #[cfg(windows)]
+        if matches!(case, StopCase::NaturalExitLongPath) {
+            verify_long_completion_path(state.directory(), api, completion)?;
+        }
         verify_completion(fixture, generation, "worker", false)?;
     }
     Ok(())
+}
+
+#[cfg(windows)]
+fn verify_long_completion_path(directory: &Path, tree: &Value, completion: &Value) -> Result<()> {
+    let path = document::text(&completion["path"], "长路径关闭收据")?;
+    let operation = document::text(&tree["operation_id"], "原 API 启动操作")?;
+    let expected = directory.join(format!("api-members-{operation}-stopped.json"));
+    check(
+        path.encode_utf16().count() > 260
+            && !path.starts_with(r"\\?\")
+            && Path::new(path) == expected.as_path(),
+        "关闭收据须使用超出 MAX_PATH 的原角色和代次路径，并保留普通 Windows 路径形式",
+    )
 }
 
 pub(super) fn runtime_command(fixture: &Fixture, program: &Path, operation: &str) -> Result<Value> {
