@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use ryframe_application::ports::utc_timestamp;
 use ryframe_application::system::identity::{
     UserImportJobVo as ServiceJob, UserImportRowVo as ServiceRow,
@@ -21,10 +20,18 @@ pub struct UserImportJobVo {
     pub cancel_requested: bool,
     pub report_available: bool,
     pub last_error: Option<String>,
-    pub started_at: Option<DateTime<Utc>>,
-    pub completed_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub started_at: Option<time::OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub completed_at: Option<time::OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub created_at: time::OffsetDateTime,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    #[schema(value_type = String, format = DateTime)]
+    pub updated_at: time::OffsetDateTime,
 }
 
 impl From<ServiceJob> for UserImportJobVo {

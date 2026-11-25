@@ -12,6 +12,8 @@ mod integer_wire_contract;
 mod middleware_response_contract;
 #[path = "api_contracts/runtime_contract.rs"]
 mod runtime_contract;
+#[path = "api_contracts/user_import_contract.rs"]
+mod user_import_contract;
 
 // 私有 ID helper 的源码测试复用产品中的整数传输校验。
 mod http {

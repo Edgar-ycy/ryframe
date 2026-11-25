@@ -51,15 +51,26 @@ pub struct UserImportJobVo {
     pub cancel_requested: bool,
     pub report_available: bool,
     pub last_error: Option<String>,
-    pub started_at: Option<DateTime<Utc>>,
-    pub completed_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize_optional")]
+    pub started_at: Option<time::OffsetDateTime>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize_optional")]
+    pub completed_at: Option<time::OffsetDateTime>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize")]
+    pub created_at: time::OffsetDateTime,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize")]
+    pub updated_at: time::OffsetDateTime,
 }
 
-impl From<UserImportJobRecord> for UserImportJobVo {
-    fn from(job: UserImportJobRecord) -> Self {
-        Self {
+impl TryFrom<UserImportJobRecord> for UserImportJobVo {
+    type Error = AppError;
+
+    fn try_from(job: UserImportJobRecord) -> AppResult<Self> {
+        let to_utc = |timestamp, field| {
+            crate::ports::utc_timestamp::from_chrono(timestamp).map_err(|_| {
+                AppError::Internal(format!("用户导入任务的 {field} 无法精确表示为 UTC"))
+            })
+        };
+        Ok(Self {
             id: job.id.to_string(),
             source_name: job.source_name_snapshot,
             requester_username: None,
@@ -73,24 +84,27 @@ impl From<UserImportJobRecord> for UserImportJobVo {
             cancel_requested: job.cancel_requested,
             report_available: job.error_report_file_id.is_some(),
             last_error: job.last_error,
-            started_at: job.started_at,
-            completed_at: job.completed_at,
-            created_at: job.created_at,
-            updated_at: job.updated_at,
-        }
+            started_at: job
+                .started_at
+                .map(|value| to_utc(value, "started_at"))
+                .transpose()?,
+            completed_at: job
+                .completed_at
+                .map(|value| to_utc(value, "completed_at"))
+                .transpose()?,
+            created_at: to_utc(job.created_at, "created_at")?,
+            updated_at: to_utc(job.updated_at, "updated_at")?,
+        })
     }
 }
 
-pub(super) fn job_vo_with_requester<T>(
-    job: T,
+fn job_vo_with_requester(
+    job: UserImportJobRecord,
     requester_username: Option<String>,
-) -> UserImportJobVo
-where
-    T: Into<UserImportJobVo>,
-{
-    let mut view = job.into();
+) -> AppResult<UserImportJobVo> {
+    let mut view = UserImportJobVo::try_from(job)?;
     view.requester_username = requester_username;
-    view
+    Ok(view)
 }
 
 /// 面向管理端的导入异常行安全视图。
