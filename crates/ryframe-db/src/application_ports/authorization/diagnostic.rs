@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use ryframe_kernel::{AppError, AppResult};
+use ryframe_kernel::AppResult;
 use time::OffsetDateTime;
 
 use crate::{
@@ -24,10 +24,7 @@ struct DatabaseAuthorizationDiagnosticPersistence {
 #[async_trait::async_trait]
 impl AuthorizationDiagnosticReadPort for DatabaseAuthorizationDiagnosticPersistence {
     async fn database_now(&self) -> AppResult<OffsetDateTime> {
-        let now = crate::repositories::database_utc_now(self.database.write()).await?;
-        OffsetDateTime::from_unix_timestamp(now.timestamp())
-            .and_then(|instant| instant.replace_nanosecond(now.timestamp_subsec_nanos()))
-            .map_err(|_| AppError::Database("授权诊断数据库时点无法精确表示为 UTC".into()))
+        crate::repositories::database_utc_now_time(self.database.write()).await
     }
 
     async fn user_tenant_id(&self, user_id: i64) -> ryframe_kernel::AppResult<Option<String>> {
