@@ -1,5 +1,6 @@
 //! 固定 Job 句柄与原创建身份共用同一回收边界。
 use std::{
+    collections::BTreeMap,
     path::Path,
     process::{ExitStatus, Stdio},
     sync::mpsc,
@@ -12,7 +13,7 @@ use serde_json::Value;
 use crate::{
     Result,
     process::{ChildGroup, ManagedChild, child_command, stop_child},
-    recovery::clone::native::resources::common,
+    recovery::clone::native::{export::transport::configure_environment, resources::common},
 };
 
 const CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -26,11 +27,14 @@ pub(super) struct Job {
 impl Job {
     pub(super) fn spawn(backend: &Path, argv: &[String], log: std::fs::File) -> Result<Self> {
         let mut command = child_command(argv.first().ok_or("生产者缺少已授权命令")?);
+        configure_environment(
+            &mut command,
+            &BTreeMap::from([("APP_ENV".into(), "test".into())]),
+            std::env::vars_os(),
+        )?;
         command
             .args(argv.iter().skip(1))
             .current_dir(backend)
-            .env_clear()
-            .env("APP_ENV", "test")
             .env("PATH", std::env::var_os("PATH").unwrap_or_default())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
