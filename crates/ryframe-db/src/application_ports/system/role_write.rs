@@ -19,6 +19,7 @@ use ryframe_application::{
 };
 
 use super::super::transaction::DatabasePortTransaction;
+use super::role_read::to_record;
 
 pub fn port(
     database: crate::ControlDatabaseCluster,
@@ -70,10 +71,11 @@ impl RoleWriteTransaction for DatabaseRoleWriteTransaction {
         tenant_id: &str,
         id: i64,
     ) -> ryframe_kernel::AppResult<Option<RoleRecord>> {
-        Ok(RoleRepository
+        RoleRepository
             .find_by_id_for_update(&self.transaction, tenant_id, id)
             .await?
-            .map(to_record))
+            .map(to_record)
+            .transpose()
     }
 
     async fn find_by_code_for_update(
@@ -81,7 +83,7 @@ impl RoleWriteTransaction for DatabaseRoleWriteTransaction {
         tenant_id: &str,
         code: &str,
     ) -> ryframe_kernel::AppResult<Option<RoleRecord>> {
-        Ok(role::Entity::find()
+        role::Entity::find()
             .filter(role::Column::TenantId.eq(tenant_id))
             .filter(role::Column::Code.eq(code))
             .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
@@ -89,7 +91,8 @@ impl RoleWriteTransaction for DatabaseRoleWriteTransaction {
             .one(&self.transaction)
             .await
             .db()?
-            .map(to_record))
+            .map(to_record)
+            .transpose()
     }
 
     async fn count_available_super_roles(
@@ -112,7 +115,7 @@ impl RoleWriteTransaction for DatabaseRoleWriteTransaction {
         tenant_id: &str,
         record: RoleRecord,
     ) -> ryframe_kernel::AppResult<RoleRecord> {
-        let entity = to_entity(tenant_id, record);
+        let entity = to_entity(tenant_id, record)?;
         if entity.tenant_id != tenant_id {
             return Err(ryframe_kernel::AppError::Authorization(
                 "角色租户不匹配".into(),
@@ -121,8 +124,8 @@ impl RoleWriteTransaction for DatabaseRoleWriteTransaction {
         role::ActiveModel::from(entity)
             .insert(&self.transaction)
             .await
-            .map(to_record)
             .db()
+            .and_then(to_record)
     }
 
     async fn update(
@@ -130,13 +133,13 @@ impl RoleWriteTransaction for DatabaseRoleWriteTransaction {
         tenant_id: &str,
         record: RoleRecord,
     ) -> ryframe_kernel::AppResult<RoleRecord> {
-        let entity = to_entity(tenant_id, record);
+        let entity = to_entity(tenant_id, record)?;
         role::ActiveModel::from(entity)
             .reset_all()
             .update(&self.transaction)
             .await
-            .map(to_record)
             .db()
+            .and_then(to_record)
     }
 
     async fn delete_many(&self, tenant_id: &str, ids: &[i64]) -> ryframe_kernel::AppResult<u64> {
@@ -266,23 +269,13 @@ impl PersistenceTransaction for DatabaseRoleWriteTransaction {
     }
 }
 
-fn to_record(model: role::Model) -> RoleRecord {
-    RoleRecord {
-        id: model.id,
-        name: model.name,
-        code: model.code,
-        is_super: model.is_super,
-        data_scope: model.data_scope,
-        status: model.status,
-        sort: model.sort,
-        remark: model.remark,
-        created_at: model.created_at,
-        updated_at: model.updated_at,
-    }
-}
-
-fn to_entity(tenant_id: &str, record: RoleRecord) -> role::Model {
-    role::Model {
+fn to_entity(tenant_id: &str, record: RoleRecord) -> ryframe_kernel::AppResult<role::Model> {
+    let created_at = chrono::DateTime::from_timestamp(
+        record.created_at.unix_timestamp(),
+        record.created_at.nanosecond(),
+    )
+    .ok_or_else(|| ryframe_kernel::AppError::Database("角色创建时间超出 UTC 表示范围".into()))?;
+    Ok(role::Model {
         id: record.id,
         tenant_id: tenant_id.to_owned(),
         name: record.name,
@@ -293,7 +286,48 @@ fn to_entity(tenant_id: &str, record: RoleRecord) -> role::Model {
         sort: record.sort,
         remark: record.remark,
         del_flag: role::Model::DEL_FLAG_NORMAL.into(),
-        created_at: record.created_at,
+        created_at,
         updated_at: record.updated_at,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::DateTime;
+    use time::UtcOffset;
+
+    use super::{role, to_entity, to_record};
+
+    #[test]
+    fn role_created_at_round_trips_through_the_db_adapter() {
+        let updated_at = DateTime::from_timestamp(1, 456_000_000).unwrap();
+        let offset = UtcOffset::from_hms(8, 0, 0).unwrap();
+        for (seconds, nanos) in [(0, 0), (-1, 123_456_700)] {
+            let created_at = DateTime::from_timestamp(seconds, nanos).unwrap();
+            let entity = role::Model {
+                id: 1,
+                tenant_id: "tenant-a".into(),
+                name: "工单审核员".into(),
+                code: "reviewer".into(),
+                is_super: 0,
+                data_scope: "1".into(),
+                status: "1".into(),
+                sort: 0,
+                remark: None,
+                del_flag: role::Model::DEL_FLAG_NORMAL.into(),
+                created_at,
+                updated_at,
+            };
+            let mut record = to_record(entity).unwrap();
+            assert_eq!(record.created_at.offset(), UtcOffset::UTC);
+            assert_eq!(record.created_at.unix_timestamp(), seconds);
+            assert_eq!(record.created_at.nanosecond(), nanos);
+            assert_eq!(record.updated_at, updated_at);
+
+            record.created_at = record.created_at.to_offset(offset);
+            let restored = to_entity("tenant-a", record).unwrap();
+            assert_eq!(restored.created_at, created_at);
+            assert_eq!(restored.updated_at, updated_at);
+        }
     }
 }

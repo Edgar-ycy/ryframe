@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-    ControlDatabaseCluster, PermissionRepository, ReadConsistency, Repository,
+    ControlDatabaseCluster, DbResultExt, PermissionRepository, ReadConsistency, Repository,
     RoleFilter as DatabaseRoleFilter, RoleRepository, entities::role,
 };
 use async_trait::async_trait;
@@ -20,10 +20,11 @@ struct DatabaseRoleRead {
 #[async_trait]
 impl RoleReadPort for DatabaseRoleRead {
     async fn find_by_id(&self, tenant_id: &str, id: i64) -> AppResult<Option<RoleRecord>> {
-        Ok(RoleRepository
+        RoleRepository
             .find_by_id(self.database.write(), tenant_id, id)
             .await?
-            .map(to_record))
+            .map(to_record)
+            .transpose()
     }
 
     async fn find_by_page(
@@ -47,7 +48,11 @@ impl RoleReadPort for DatabaseRoleRead {
             )
             .await?;
         Ok(PageResult::new(
-            result.records.into_iter().map(to_record).collect(),
+            result
+                .records
+                .into_iter()
+                .map(to_record)
+                .collect::<AppResult<_>>()?,
             result.total,
             &page,
         ))
@@ -68,8 +73,10 @@ impl RoleReadPort for DatabaseRoleRead {
                 include_super,
                 limit,
             )
-            .await
-            .map(|roles| roles.into_iter().map(to_record).collect())
+            .await?
+            .into_iter()
+            .map(to_record)
+            .collect()
     }
 
     async fn find_export_batch(
@@ -89,8 +96,10 @@ impl RoleReadPort for DatabaseRoleRead {
                 },
                 window,
             )
-            .await
-            .map(|roles| roles.into_iter().map(to_record).collect())
+            .await?
+            .into_iter()
+            .map(to_record)
+            .collect()
     }
 
     async fn find_role_dept_ids(&self, tenant_id: &str, role_id: i64) -> AppResult<Vec<i64>> {
@@ -124,8 +133,8 @@ impl RoleReadPort for DatabaseRoleRead {
     }
 }
 
-fn to_record(model: role::Model) -> RoleRecord {
-    RoleRecord {
+pub(super) fn to_record(model: role::Model) -> AppResult<RoleRecord> {
+    Ok(RoleRecord {
         id: model.id,
         name: model.name,
         code: model.code,
@@ -134,7 +143,8 @@ fn to_record(model: role::Model) -> RoleRecord {
         status: model.status,
         sort: model.sort,
         remark: model.remark,
-        created_at: model.created_at,
+        created_at: crate::repositories::utc_time_from_chrono(model.created_at)
+            .db_context("读取角色创建时间")?,
         updated_at: model.updated_at,
-    }
+    })
 }

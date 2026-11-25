@@ -1,14 +1,16 @@
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use ryframe_kernel::{
     ActorContext, AppError, AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery,
 };
 use serde::Serialize;
+use time::OffsetDateTime;
 
 use crate::{
     AuthorizationCache, TransactionAuditMode, complete_transaction,
     ports::system::{RoleFilter, RoleReadPort, RoleRecord, RoleWritePort, RoleWriteTransaction},
+    ports::utc_timestamp,
 };
 
 use super::option::{OptionItem, OptionList};
@@ -43,7 +45,8 @@ pub struct RoleVo {
     pub status: String,
     pub sort: i32,
     pub remark: Option<String>,
-    pub created_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    pub created_at: OffsetDateTime,
     /// 自定义数据权限的部门ID列表（仅查询详情时填充）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dept_ids: Option<Vec<String>>,
@@ -295,7 +298,8 @@ impl RoleService {
             status: "1".into(),
             sort,
             remark: None,
-            created_at: now,
+            created_at: utc_timestamp::from_chrono(now)
+                .map_err(|_| AppError::Internal("角色创建时间无法精确表示为 UTC".into()))?,
             updated_at: now,
         };
         let transaction = self.write.begin().await?;

@@ -85,6 +85,62 @@ fn navigation_created_at_preserves_utc_json_and_schema() {
 }
 
 #[test]
+fn role_created_at_preserves_utc_json_and_schema() {
+    use ryframe_api::dto::public_dto::RoleVo;
+    use ryframe_application::{
+        ports::{system::RoleRecord, utc_timestamp},
+        system::identity::RoleVo as Role,
+    };
+    use serde_json::json;
+    use time::{OffsetDateTime, UtcOffset};
+    use utoipa::PartialSchema;
+
+    let offset = UtcOffset::from_hms(8, 0, 0).unwrap();
+    for (nanos, expected) in [
+        (0, "1969-12-31T23:59:59Z"),
+        (120_000_000, "1969-12-31T23:59:59.120Z"),
+        (123_400_000, "1969-12-31T23:59:59.123400Z"),
+        (123_456_700, "1969-12-31T23:59:59.123456700Z"),
+    ] {
+        let role = Role::from(RoleRecord {
+            id: 1,
+            name: "工单审核员".into(),
+            code: "reviewer".into(),
+            is_super: 0,
+            data_scope: "1".into(),
+            status: "1".into(),
+            sort: 0,
+            remark: None,
+            created_at: OffsetDateTime::from_unix_timestamp(-1)
+                .unwrap()
+                .replace_nanosecond(nanos)
+                .unwrap()
+                .to_offset(offset),
+            updated_at: Default::default(),
+        });
+        assert_eq!(serde_json::to_value(&role).unwrap()["created_at"], expected);
+        assert_eq!(
+            utc_timestamp::format_with_offset(&role.created_at).unwrap(),
+            format!("{}+00:00", expected.strip_suffix('Z').unwrap())
+        );
+        let response = serde_json::to_value(RoleVo::from(role)).unwrap();
+        assert_eq!(response["created_at"], expected);
+    }
+
+    let schema = serde_json::to_value(RoleVo::schema()).unwrap();
+    assert_eq!(
+        schema["properties"]["created_at"],
+        json!({"type":"string","format":"date-time"})
+    );
+    assert!(
+        schema["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("created_at"))
+    );
+}
+
+#[test]
 fn department_created_at_preserves_utc_json_and_schema() {
     use ryframe_api::dto::public_dto::DeptVo;
     use ryframe_application::{ports::system::DeptRecord, system::identity::DeptVo as Dept};
