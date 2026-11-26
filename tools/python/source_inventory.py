@@ -46,10 +46,6 @@ def _native(action: str, **arguments):
     return _read_response(result, response)[0]["value"]
 
 
-def source_domain(relative: str) -> str:
-    return _native("domain", path=relative)
-
-
 def fingerprints(inventory: dict) -> dict:
     return _native("fingerprints", files=inventory["files"])
 

@@ -312,17 +312,6 @@ class SourceFingerprintsTests(unittest.TestCase):
         self.assertNotEqual(before["test_tools"], after["test_tools"])
         self.assertNotEqual(self.original["source"], changed["source"])
 
-    def test_product_inputs_and_unknown_paths_are_conservative(self):
-        for path in ("Cargo.lock", "rust-toolchain.toml", ".cargo/config.toml", "crates/app/src/main.rs",
-                     "vendor/dep/src/lib.rs", "config/app.toml", "locales/zh.json", "catalog/access.toml",
-                     "xtask/src/main.rs", "tools/python/embedded.rs", "unknown/input.dat"):
-            with self.subTest(path=path):
-                self.assertEqual(source_inventory.source_domain(path), "product")
-        self.assertEqual(source_inventory.source_domain("tools/python/test_copy.py"), "test_tools")
-        for path in ("tests/protocol.rs", "xtask/tests/state.rs", "crates/app/tests/fixture.json"):
-            with self.subTest(path=path):
-                self.assertEqual(source_inventory.source_domain(path), "test_tools")
-
     def test_added_and_removed_test_files_change_only_test_tool_fingerprint(self):
         before = sources.fingerprints(self.original)
         added = {**self.original, "files": [*self.original["files"],

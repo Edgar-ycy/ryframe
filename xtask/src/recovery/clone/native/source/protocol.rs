@@ -7,13 +7,6 @@ use crate::Result;
 pub(crate) fn request(args: &Value) -> Result<Value> {
     let action = native_json::text(&args["action"], "来源清单操作")?;
     match action {
-        "domain" => {
-            native_json::exact(args, &["action", "path"], "来源路径分类")?;
-            Ok(json!(domains::source_domain(native_json::text(
-                &args["path"],
-                "源码路径"
-            )?)?))
-        }
         "fingerprints" => {
             native_json::exact(args, &["action", "files"], "来源分组摘要")?;
             super::fingerprints(&super::parse_files(&args["files"], "完整来源文件")?)

@@ -20,9 +20,16 @@ fn request(action: &str, value: &Value, repository: &str) -> crate::Result<Value
 fn path_domains_preserve_conservative_product_and_reject_escapes() {
     for path in [
         "Cargo.lock",
+        "rust-toolchain.toml",
+        ".cargo/config.toml",
+        "crates/app/src/main.rs",
         "config/app.toml",
         "vendor/lib.rs",
+        "vendor/dep/src/lib.rs",
+        "locales/zh.json",
+        "catalog/access.toml",
         "xtask/src/main.rs",
+        "tools/python/embedded.rs",
         "unknown/input.dat",
         "README.en.md.rs",
         "other/README.en.md",
@@ -32,10 +39,13 @@ fn path_domains_preserve_conservative_product_and_reject_escapes() {
     }
     for path in [
         "tools/python/check.py",
+        "tools/python/test_copy.py",
         "crates/app/tests/fixture.json",
         ".github/workflows/ci.yml",
         "tests/test.rs",
+        "tests/protocol.rs",
         "xtask/tests/fixture.json",
+        "xtask/tests/state.rs",
     ] {
         assert_eq!(domains::source_domain(path).unwrap(), "test_tools");
     }
@@ -283,9 +293,7 @@ fn complete_inventory_and_domains_reject_tampering_and_unknown_fields() {
         );
     }
     assert!(request("domains", &value, "invalid").is_err());
-    assert!(
-        protocol::request(&json!({"action":"domain","path":"Cargo.toml","extra":true})).is_err()
-    );
+    assert!(protocol::request(&json!({"action":"fingerprints","files":[],"extra":true})).is_err());
 }
 
 #[path = "tests/git.rs"]

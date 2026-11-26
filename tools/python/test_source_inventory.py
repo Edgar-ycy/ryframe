@@ -19,7 +19,7 @@ class SourceInventoryAdapterTests(unittest.TestCase):
     def test_missing_binding_rejects_before_transport_or_cargo_fallback(self):
         with patch.object(sources, "tool_binding", return_value=None), \
                 patch.object(native_s3_client, "_invoke") as invoke, self.assertRaisesRegex(ValueError, "工具绑定"):
-            sources.source_domain("Cargo.toml")
+            sources.capture_inventory(Path("D:/source"))
         invoke.assert_not_called()
 
     def test_native_rejection_is_propagated_without_python_fallback(self):
@@ -28,7 +28,7 @@ class SourceInventoryAdapterTests(unittest.TestCase):
             "automatic_retry_permitted": False}}
         with patch.object(native_s3_client, "_invoke", return_value=(SimpleNamespace(returncode=1), response)), \
                 self.assertRaisesRegex(ValueError, "junction"):
-            sources.source_domain("nested/file")
+            sources.capture_inventory(Path("D:/source"))
 
     def test_transport_failure_propagates_without_git_or_algorithm_fallback(self):
         with patch.object(native_s3_client, "_invoke", side_effect=OSError("fixture unavailable")), \
