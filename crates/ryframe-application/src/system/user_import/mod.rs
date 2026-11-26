@@ -5,7 +5,6 @@ use std::{
 
 use crate::next_id;
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use futures_util::future::try_join_all;
 use ryframe_auth::password;
 use ryframe_kernel::{
@@ -13,6 +12,7 @@ use ryframe_kernel::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use time::{Duration, OffsetDateTime, UtcOffset};
 use tokio::sync::Semaphore;
 use validator::Validate;
 
@@ -69,3 +69,8 @@ include!("report.rs");
 include!("handler.rs");
 include!("department.rs");
 include!("batch.rs");
+
+fn orphan_cleanup_deadline(now: OffsetDateTime) -> AppResult<OffsetDateTime> {
+    now.checked_add(Duration::minutes(IMPORT_ORPHAN_CLEANUP_GRACE_MINUTES))
+        .ok_or_else(|| AppError::Database("文件时间无法精确表示为 UTC".into()))
+}

@@ -10,9 +10,13 @@ use crate::{
 
 mod model;
 
-use model::{import_row_model, job_model, job_record, row_record, source_record, user_model};
+use model::{
+    import_row_model, job_model, job_record, legacy_identity_time, row_record, source_record,
+    user_model,
+};
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
 use sea_orm::{EntityTrait, TransactionTrait};
+use time::OffsetDateTime;
 
 use super::super::transaction::DatabasePortTransaction;
 
@@ -174,7 +178,7 @@ impl UserImportPersistencePort for DatabaseUserImportPersistence {
         tenant_id: &'a str,
         import_id: i64,
     ) -> ryframe_kernel::AppResult<bool> {
-        let now = crate::repositories::database_utc_now(self.database.write()).await?;
+        let now = crate::repositories::database_utc_now_time(self.database.write()).await?;
         UserImportRepository
             .request_cancel(self.database.write(), tenant_id, import_id, now)
             .await
@@ -194,7 +198,7 @@ impl BackgroundJobTransaction for DatabaseUserImportTransaction {
         expected_job_type: &'a str,
         payload_key: &'a str,
         expected_resource_id: i64,
-        now: time::OffsetDateTime,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         <DatabasePortTransaction as BackgroundJobTransaction>::reactivate_linked(
             &self.transaction,
@@ -219,8 +223,8 @@ impl UserImportTransaction for DatabaseUserImportTransaction {
             .await
     }
 
-    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
-        crate::repositories::database_utc_now(&self.transaction).await
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime> {
+        crate::repositories::database_utc_now_time(&self.transaction).await
     }
 
     async fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()> {
@@ -273,14 +277,14 @@ impl UserImportTransaction for DatabaseUserImportTransaction {
         &'a self,
         tenant_id: &'a str,
         source_file_id: i64,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         FileRepository
             .restore_import_file_for_reference_in_txn(
                 &self.transaction,
                 tenant_id,
                 source_file_id,
-                crate::application_ports::files::utc_time_from_chrono(now)?,
+                now,
             )
             .await
     }
@@ -288,7 +292,7 @@ impl UserImportTransaction for DatabaseUserImportTransaction {
     async fn create(
         &self,
         job: NewUserImportJob,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<UserImportJobRecord> {
         UserImportRepository
             .create_in_txn(
@@ -313,16 +317,16 @@ impl UserImportTransaction for DatabaseUserImportTransaction {
         &'a self,
         tenant_id: &'a str,
         source_file_id: i64,
-        now: chrono::DateTime<chrono::Utc>,
-        cleanup_after: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
+        cleanup_after: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         FileRepository
             .mark_import_orphan_for_cleanup_in_txn(
                 &self.transaction,
                 tenant_id,
                 source_file_id,
-                crate::application_ports::files::utc_time_from_chrono(now)?,
-                crate::application_ports::files::utc_time_from_chrono(cleanup_after)?,
+                now,
+                cleanup_after,
             )
             .await
     }
@@ -348,7 +352,7 @@ impl UserImportTransaction for DatabaseUserImportTransaction {
         &'a self,
         tenant_id: &'a str,
         requester_user_id: i64,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<UserImportAuthorizationSnapshot> {
         let tenant = TenantRepository
             .lock_tenant_in_txn(&self.transaction, tenant_id)
@@ -358,7 +362,7 @@ impl UserImportTransaction for DatabaseUserImportTransaction {
             .await?;
         Ok(UserImportAuthorizationSnapshot {
             tenant_epoch: tenant.authorization_epoch,
-            tenant_available: tenant.is_available(now),
+            tenant_available: tenant.is_available(legacy_identity_time(now)?),
             requester_enabled: requester.as_ref().is_some_and(user::Model::is_enabled),
             requester_version: requester.map(|user| user.authorization_version),
         })
@@ -393,7 +397,10 @@ impl UserImportTransaction for DatabaseUserImportTransaction {
             .insert_many_in_txn(
                 &self.transaction,
                 tenant_id,
-                users.into_iter().map(user_model).collect(),
+                users
+                    .into_iter()
+                    .map(user_model)
+                    .collect::<ryframe_kernel::AppResult<Vec<_>>>()?,
             )
             .await
     }

@@ -1,5 +1,5 @@
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
+use time::OffsetDateTime;
 
 use crate::ports::jobs::BackgroundJobTransaction;
 
@@ -40,10 +40,10 @@ pub struct UserImportJobRecord {
     pub cancel_requested: bool,
     pub error_report_file_id: Option<i64>,
     pub last_error: Option<String>,
-    pub started_at: Option<DateTime<Utc>>,
-    pub completed_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub started_at: Option<OffsetDateTime>,
+    pub completed_at: Option<OffsetDateTime>,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
 }
 
 impl UserImportJobRecord {
@@ -72,7 +72,7 @@ pub struct UserImportRowRecord {
     pub outcome: String,
     pub code: String,
     pub message: String,
-    pub created_at: time::OffsetDateTime,
+    pub created_at: OffsetDateTime,
 }
 
 impl UserImportRowRecord {
@@ -90,7 +90,7 @@ pub struct NewImportedUser {
     pub email: String,
     pub phone: String,
     pub department_id: i64,
-    pub created_at: DateTime<Utc>,
+    pub created_at: OffsetDateTime,
 }
 
 #[derive(Debug)]
@@ -103,7 +103,7 @@ pub struct NewUserImportRow {
     pub outcome: String,
     pub code: String,
     pub message: String,
-    pub created_at: time::OffsetDateTime,
+    pub created_at: OffsetDateTime,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -160,7 +160,7 @@ pub trait UserImportTransaction:
     + BackgroundJobTransaction
     + crate::ports::data_scope::DataScopeMutationTransaction
 {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime>;
 
     async fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()>;
 
@@ -193,21 +193,21 @@ pub trait UserImportTransaction:
         &'a self,
         tenant_id: &'a str,
         source_file_id: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool>;
 
     async fn create(
         &self,
         job: NewUserImportJob,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<UserImportJobRecord>;
 
     async fn mark_source_for_cleanup<'a>(
         &'a self,
         tenant_id: &'a str,
         source_file_id: i64,
-        now: DateTime<Utc>,
-        cleanup_after: DateTime<Utc>,
+        now: OffsetDateTime,
+        cleanup_after: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool>;
 
     async fn lock_configuration(&self, import_id: i64)
@@ -217,7 +217,7 @@ pub trait UserImportTransaction:
         &'a self,
         tenant_id: &'a str,
         requester_user_id: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<UserImportAuthorizationSnapshot>;
 
     async fn existing_usernames<'a>(

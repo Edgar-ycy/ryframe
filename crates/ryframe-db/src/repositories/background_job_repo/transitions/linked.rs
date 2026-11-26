@@ -2,6 +2,7 @@ use super::*;
 use crate::DbResultExt;
 use chrono::{DateTime, Utc};
 use ryframe_kernel::AppError;
+use time::UtcOffset;
 
 impl BackgroundJobRepository {
     pub(super) async fn sync_linked_job_state<C>(
@@ -14,11 +15,16 @@ impl BackgroundJobRepository {
     where
         C: ConnectionTrait,
     {
+        let error = error_message.map(truncate_error);
+        if job.job_type == USER_IMPORT_JOB_TYPE {
+            let now = now
+                .checked_to_offset(UtcOffset::UTC)
+                .ok_or_else(|| AppError::Internal("关联任务状态时间超出 UTC 表示范围".into()))?;
+            return Self::sync_import_job(db, job, disposition, error, now).await;
+        }
         let now = DateTime::from_timestamp(now.unix_timestamp(), now.nanosecond())
             .ok_or_else(|| AppError::Internal("关联任务状态时间超出 UTC 表示范围".into()))?;
-        let error = error_message.map(truncate_error);
         match job.job_type.as_str() {
-            USER_IMPORT_JOB_TYPE => Self::sync_import_job(db, job, disposition, error, now).await,
             EXPORT_JOB_TYPE => Self::sync_export_job(db, job, disposition, error, now).await,
             DATA_RETENTION_JOB_TYPE => {
                 Self::sync_retention_job(db, job, disposition, error, now).await
@@ -68,9 +74,9 @@ impl BackgroundJobRepository {
         job: &background_job::Model,
         disposition: LinkedJobDisposition,
         error: Option<String>,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<LinkedJobSyncResult> {
-        let (status, completed_at, statuses): (&str, Option<DateTime<Utc>>, &[&str]) =
+        let (status, completed_at, statuses): (&str, Option<OffsetDateTime>, &[&str]) =
             match disposition {
                 LinkedJobDisposition::Retried => (
                     user_import_job::Model::STATUS_PENDING,

@@ -162,7 +162,7 @@ async fn insert_prepared_users(
     transaction: &dyn crate::ports::users::UserImportTransaction,
     tenant_id: &str,
     prepared: &mut PreparedBatch,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<((i32, i32, i32), Option<i32>)> {
     let usernames = prepared
         .users
@@ -195,7 +195,7 @@ fn apply_batch_progress(
     import: &mut UserImportJobRecord,
     next_offset: usize,
     counts: (i32, i32, i32),
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<()> {
     import.processed_rows = i32::try_from(next_offset)
         .map_err(|_| AppError::Internal("用户导入进度计数溢出".into()))?;
@@ -301,7 +301,7 @@ impl RowIssue {
         self,
         tenant_id: &str,
         import_job_id: i64,
-        created_at: time::OffsetDateTime,
+        created_at: OffsetDateTime,
     ) -> AppResult<NewUserImportRow> {
         Ok(NewUserImportRow {
             id: next_id()?,
@@ -321,14 +321,14 @@ fn build_issue_records(
     issues: Vec<RowIssue>,
     tenant_id: &str,
     import_job_id: i64,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<Vec<NewUserImportRow>> {
     if issues.is_empty() {
         return Ok(Vec::new());
     }
-    let created_at = crate::ports::utc_timestamp::from_chrono(now).map_err(|error| {
-        AppError::Database(format!("用户导入异常行创建时间无法精确表示为 UTC：{error}"))
-    })?;
+    let created_at = now
+        .checked_to_offset(UtcOffset::UTC)
+        .ok_or_else(|| AppError::Database("用户导入异常行创建时间无法精确表示为 UTC".into()))?;
     issues
         .into_iter()
         .map(|issue| issue.into_record(tenant_id, import_job_id, created_at))
@@ -338,7 +338,7 @@ fn build_issue_records(
 fn build_user_record(
     tenant_id: &str,
     prepared: PreparedUser,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<NewImportedUser> {
     Ok(NewImportedUser {
         id: next_id()?,
@@ -489,8 +489,13 @@ mod import_row_tests {
     #[test]
     fn exception_rows_reject_unrepresentable_batch_time_only_when_present() {
         for invalid in [
-            DateTime::from_timestamp(1_483_228_799, 1_123_456_000).unwrap(),
-            DateTime::from_timestamp(253_402_300_800, 0).unwrap(),
+            time::Date::MIN
+                .midnight()
+                .assume_offset(time::macros::offset!(+01:00)),
+            time::Date::MAX
+                .with_hms(23, 59, 59)
+                .unwrap()
+                .assume_offset(time::macros::offset!(-01:00)),
         ] {
             assert!(
                 build_issue_records(Vec::new(), "tenant-a", 7, invalid)

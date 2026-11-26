@@ -1,7 +1,7 @@
 use ryframe_application::ports::jobs::{ExecutionTenantScope, FailJobCommand, JobFailureOutcome};
 use ryframe_db::{ControlDatabaseCluster, application_ports, migration};
-use sea_orm::DatabaseConnection;
-use time::{Duration, OffsetDateTime};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use time::{Duration, OffsetDateTime, PrimitiveDateTime, macros::offset};
 
 use super::mysql::{execute, require_count, run_mysql_test};
 
@@ -201,8 +201,9 @@ async fn terminal_business_states_converge_across_failure_paths() {
             .retry_dead("tenant-terminal", false, 7304, 1, now)
             .await
             .map_err(|error| error.to_string())?;
+        let retry_clock = now.to_offset(offset!(+05:30));
         let eligible_retry = persistence
-            .retry_dead("tenant-terminal", false, 7305, 1, now)
+            .retry_dead("tenant-terminal", false, 7305, 1, retry_clock)
             .await
             .map_err(|error| error.to_string())?;
 
@@ -229,13 +230,22 @@ async fn terminal_business_states_converge_across_failure_paths() {
             1,
         )
         .await?;
-        require_count(
-            &database,
-            "SELECT COUNT(*) AS value FROM sys_user_import_job \
-             WHERE id = 7405 AND status = 'pending' AND completed_at IS NULL",
-            1,
-        )
-        .await?;
+        let row = database
+            .query_one_raw(Statement::from_string(
+                DbBackend::MySql,
+                "SELECT updated_at FROM sys_user_import_job \
+                 WHERE id = 7405 AND status = 'pending' AND completed_at IS NULL"
+                    .to_owned(),
+            ))
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or("未找到回到待执行状态的用户导入任务")?;
+        let updated_at: PrimitiveDateTime = row
+            .try_get("", "updated_at")
+            .map_err(|error| error.to_string())?;
+        if updated_at.assume_utc() != now {
+            return Err(format!("导入重试时间应保留数据库 UTC 微秒：{updated_at}"));
+        }
         require_count(
             &database,
             "SELECT COUNT(*) AS value FROM sys_background_job_attempt \

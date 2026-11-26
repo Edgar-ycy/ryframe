@@ -26,11 +26,7 @@ impl UserImportService {
             .collect::<Vec<_>>();
         let bytes = self
             .spreadsheets
-            .export_rows(
-                report_rows,
-                "导入结果",
-                USER_IMPORT_REPORT_HEADERS,
-            )
+            .export_rows(report_rows, "导入结果", USER_IMPORT_REPORT_HEADERS)
             .await?;
         let report_sha256 = hex::encode(Sha256::digest(&bytes));
         let mut policy = self.upload_policy();
@@ -79,7 +75,9 @@ impl UserImportService {
             current.updated_at = now;
             current.last_error = None;
             transaction.save(current).await?;
-            transaction.commit(crate::TransactionAuditMode::Skip).await?;
+            transaction
+                .commit(crate::TransactionAuditMode::Skip)
+                .await?;
         } else {
             // 并发执行已经关联报告，或人工重投已使任务离开终态时，本次上传可能成为
             // 无引用对象。只为确实没有任何引用的文件建立可恢复墓碑。
@@ -88,11 +86,13 @@ impl UserImportService {
                     &import.tenant_id,
                     file_id,
                     now,
-                    now + chrono::Duration::minutes(IMPORT_ORPHAN_CLEANUP_GRACE_MINUTES),
+                    orphan_cleanup_deadline(now)?,
                 )
                 .await?;
             if marked {
-                transaction.commit(crate::TransactionAuditMode::Skip).await?;
+                transaction
+                    .commit(crate::TransactionAuditMode::Skip)
+                    .await?;
             } else {
                 transaction.rollback().await?;
             }
@@ -101,10 +101,7 @@ impl UserImportService {
     }
 
     /// 生成异常报告，并只在明确的报告阶段记录错误，避免把租约或队列错误写入已完成导入。
-    async fn ensure_error_report_with_status(
-        &self,
-        import: &UserImportJobRecord,
-    ) -> AppResult<()> {
+    async fn ensure_error_report_with_status(&self, import: &UserImportJobRecord) -> AppResult<()> {
         match self.ensure_error_report(import).await {
             Ok(()) => Ok(()),
             Err(error) => {
@@ -125,8 +122,7 @@ impl UserImportService {
 
     async fn record_error_report_failure(&self, import_id: i64, error: &str) -> AppResult<()> {
         let transaction = self.persistence.begin().await?;
-        let Some(mut import) = transaction.lock(import_id).await?
-        else {
+        let Some(mut import) = transaction.lock(import_id).await? else {
             transaction.rollback().await?;
             return Ok(());
         };

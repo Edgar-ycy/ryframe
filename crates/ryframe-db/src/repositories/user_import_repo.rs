@@ -6,6 +6,7 @@ use sea_orm::{
     EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Statement,
     sea_query::{Expr, LockType},
 };
+use time::OffsetDateTime;
 
 use crate::entities::{user_import_job, user_import_row_result};
 
@@ -88,7 +89,7 @@ impl UserImportRepository {
         &self,
         transaction: &DatabaseTransaction,
         command: CreateUserImportJob,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<user_import_job::Model> {
         validate_create_command(&command)?;
         user_import_job::ActiveModel::from(user_import_job::Model {
@@ -205,7 +206,7 @@ impl UserImportRepository {
         db: &DatabaseConnection,
         tenant_id: &str,
         id: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<bool> {
         let result = user_import_job::Entity::update_many()
             .col_expr(user_import_job::Column::CancelRequested, Expr::value(true))

@@ -1,8 +1,10 @@
+use chrono::{DateTime, Utc};
 use ryframe_application::ports::users::{
     NewImportedUser, NewUserImportRow, UserImportJobRecord, UserImportRowRecord,
     UserImportSourceRecord, UserImportSourceState,
 };
-use time::{PrimitiveDateTime, UtcOffset};
+use ryframe_kernel::{AppError, AppResult};
+use time::{OffsetDateTime, PrimitiveDateTime, UtcOffset};
 
 use crate::entities::{sys_file, user, user_import_job, user_import_row_result};
 
@@ -88,8 +90,14 @@ pub(super) fn source_record(file: sys_file::Model) -> UserImportSourceRecord {
     }
 }
 
-pub(super) fn user_model(user: NewImportedUser) -> user::Model {
-    user::Model {
+pub(super) fn legacy_identity_time(instant: OffsetDateTime) -> AppResult<DateTime<Utc>> {
+    DateTime::from_timestamp(instant.unix_timestamp(), instant.nanosecond())
+        .ok_or_else(|| AppError::Database("导入账号使用的数据库时间超出 UTC 表示范围".into()))
+}
+
+pub(super) fn user_model(user: NewImportedUser) -> AppResult<user::Model> {
+    let created_at = legacy_identity_time(user.created_at)?;
+    Ok(user::Model {
         id: user.id,
         tenant_id: user.tenant_id,
         username: user.username,
@@ -108,9 +116,9 @@ pub(super) fn user_model(user: NewImportedUser) -> user::Model {
         login_ip: None,
         login_date: None,
         del_flag: user::Model::DEL_FLAG_NORMAL.to_owned(),
-        created_at: user.created_at,
-        updated_at: user.created_at,
-    }
+        created_at,
+        updated_at: created_at,
+    })
 }
 
 pub(super) fn import_row_model(row: NewUserImportRow) -> user_import_row_result::Model {

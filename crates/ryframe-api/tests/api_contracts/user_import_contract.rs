@@ -1,18 +1,21 @@
-use chrono::{DateTime, Utc};
 use ryframe_api::dto::public_dto::UserImportJobVo;
 use ryframe_application::{
     ports::users::UserImportJobRecord, system::identity::UserImportJobVo as ServiceJob,
 };
 use ryframe_kernel::AppError;
 use serde_json::{json, to_value};
+use time::{
+    OffsetDateTime,
+    macros::{datetime, offset},
+};
 use utoipa::PartialSchema;
 
 #[test]
 fn user_import_job_timestamps_preserve_utc_json_and_nullable_schema() {
-    let created_at = DateTime::from_timestamp(-2, 0).unwrap();
-    let started_at = DateTime::from_timestamp(-1, 120_000_000).unwrap();
-    let completed_at = DateTime::from_timestamp(0, 123_400_000).unwrap();
-    let updated_at = DateTime::from_timestamp(0, 123_456_700).unwrap();
+    let created_at = datetime!(1969-12-31 23:59:58 UTC);
+    let started_at = datetime!(1970-01-01 05:29:59.120 +05:30);
+    let completed_at = datetime!(1970-01-01 00:00:00.123400 UTC);
+    let updated_at = datetime!(1970-01-01 00:00:00.123456700 UTC);
 
     for (started_at, completed_at) in [
         (None, None),
@@ -28,10 +31,16 @@ fn user_import_job_timestamps_preserve_utc_json_and_nullable_schema() {
         let response = to_value(UserImportJobVo::from(job)).unwrap();
         assert_eq!(response, service_json);
         for (field, expected) in [
-            ("started_at", json!(started_at)),
-            ("completed_at", json!(completed_at)),
-            ("created_at", json!(created_at)),
-            ("updated_at", json!(updated_at)),
+            (
+                "started_at",
+                json!(started_at.map(|_| "1969-12-31T23:59:59.120Z")),
+            ),
+            (
+                "completed_at",
+                json!(completed_at.map(|_| "1970-01-01T00:00:00.123400Z")),
+            ),
+            ("created_at", json!("1969-12-31T23:59:58Z")),
+            ("updated_at", json!("1970-01-01T00:00:00.123456700Z")),
         ] {
             assert_eq!(response[field], expected, "{field}");
         }
@@ -57,15 +66,15 @@ fn user_import_job_timestamps_preserve_utc_json_and_nullable_schema() {
 
 #[test]
 fn user_import_job_rejects_an_unrepresentable_timestamp_with_its_field() {
-    let mut record = job_record(DateTime::UNIX_EPOCH);
-    record.completed_at = Some(DateTime::from_timestamp(-1, 1_123_456_000).unwrap());
+    let mut record = job_record(OffsetDateTime::UNIX_EPOCH);
+    record.completed_at = Some(time::Date::MIN.midnight().assume_offset(offset!(+01:00)));
     assert!(matches!(
         ServiceJob::try_from(record),
         Err(AppError::Internal(message)) if message.contains("completed_at")
     ));
 }
 
-fn job_record(now: DateTime<Utc>) -> UserImportJobRecord {
+fn job_record(now: OffsetDateTime) -> UserImportJobRecord {
     UserImportJobRecord {
         id: 42,
         tenant_id: "tenant-a".into(),

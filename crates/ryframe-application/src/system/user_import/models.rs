@@ -65,8 +65,8 @@ impl TryFrom<UserImportJobRecord> for UserImportJobVo {
     type Error = AppError;
 
     fn try_from(job: UserImportJobRecord) -> AppResult<Self> {
-        let to_utc = |timestamp, field| {
-            crate::ports::utc_timestamp::from_chrono(timestamp).map_err(|_| {
+        let to_utc = |timestamp: OffsetDateTime, field| {
+            timestamp.checked_to_offset(UtcOffset::UTC).ok_or_else(|| {
                 AppError::Internal(format!("用户导入任务的 {field} 无法精确表示为 UTC"))
             })
         };

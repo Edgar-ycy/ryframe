@@ -164,18 +164,17 @@ impl UserImportService {
                 "用户导入源文件已进入最终回收阶段".into(),
             ));
         }
-        let queue_now = crate::jobs::queue_time_from_database(now)?;
         let trace_context = crate::trace_context::current_trace_context();
         let queued = transaction
             .enqueue(EnqueueJob {
                 tenant_id: Some(tenant_id.to_owned()),
                 schedule_id: None,
-                scheduled_for: Some(queue_now),
+                scheduled_for: Some(now),
                 max_runtime_seconds: Some(USER_IMPORT_MAX_RUNTIME_SECONDS),
                 job_type: USER_IMPORT_JOB_TYPE.to_owned(),
                 payload: serde_json::json!({ "import_job_id": import_id.to_string() }),
                 priority: 0,
-                available_at: queue_now,
+                available_at: now,
                 max_attempts: USER_IMPORT_MAX_ATTEMPTS,
                 dedupe_key: Some(format!("{tenant_id}:{}", command.idempotency_key_hash)),
                 traceparent: trace_context.traceparent,
@@ -219,10 +218,7 @@ impl UserImportService {
         let result: AppResult<bool> = async {
             transaction.lock_tenant(tenant_id).await?;
             let now = transaction.database_now().await?;
-            let Some(file) = transaction
-                .lock_source(tenant_id, source_file_id)
-                .await?
-            else {
+            let Some(file) = transaction.lock_source(tenant_id, source_file_id).await? else {
                 return Ok(false);
             };
             if file.bucket != IMPORT_BUCKET {
@@ -233,14 +229,18 @@ impl UserImportService {
                     tenant_id,
                     source_file_id,
                     now,
-                    now + chrono::Duration::minutes(IMPORT_ORPHAN_CLEANUP_GRACE_MINUTES),
+                    orphan_cleanup_deadline(now)?,
                 )
                 .await
         }
         .await;
         match result {
             // 该事务只负责失败补偿，不能把主请求提前标记为审计成功。
-            Ok(true) => transaction.commit(crate::TransactionAuditMode::CurrentRequest).await,
+            Ok(true) => {
+                transaction
+                    .commit(crate::TransactionAuditMode::CurrentRequest)
+                    .await
+            }
             Ok(false) => transaction.rollback().await,
             Err(error) => {
                 if let Err(rollback_error) = transaction.rollback().await {
@@ -320,10 +320,7 @@ impl UserImportService {
     ) -> AppResult<PageResult<UserImportRowVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         self.ensure_visible(tenant_id, id).await?;
-        let rows = self
-            .persistence
-            .rows(tenant_id, id, page)
-            .await?;
+        let rows = self.persistence.rows(tenant_id, id, page).await?;
         Ok(PageResult::new(
             rows.records
                 .into_iter()
@@ -383,9 +380,7 @@ pub fn validate_import_source(
     expected_sha256: &str,
 ) -> AppResult<bool> {
     if source.bucket != IMPORT_BUCKET {
-        return Err(AppError::Validation(
-            "用户导入源文件存储边界不匹配".into(),
-        ));
+        return Err(AppError::Validation("用户导入源文件存储边界不匹配".into()));
     }
     if source.sha256 != expected_sha256 {
         return Err(AppError::Validation("用户导入源文件摘要不匹配".into()));
