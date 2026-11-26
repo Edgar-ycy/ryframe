@@ -5,7 +5,8 @@ use crate::{
     RetentionCleanupResult as DatabaseCleanupResult, RetentionCutoff as DatabaseCutoff,
     RetentionResource as DatabaseResource, UserImportRepository,
 };
-use chrono::{DateTime, Utc};
+use ryframe_kernel::{AppError, AppResult};
+use time::{OffsetDateTime, PrimitiveDateTime, UtcOffset};
 
 use ryframe_application::ports::retention::{
     ExpiredImportArtifact, RetentionCleanupPersistencePort, RetentionCleanupResult,
@@ -31,7 +32,7 @@ impl RetentionCleanupPersistencePort for DatabaseRetentionCleanupPersistence {
             .iter()
             .copied()
             .map(to_database_cutoff)
-            .collect::<Vec<_>>();
+            .collect::<AppResult<Vec<_>>>()?;
         DataRetentionRepository
             .preview(self.database.write(), &database_cutoffs, current_run_id)
             .await
@@ -47,7 +48,7 @@ impl RetentionCleanupPersistencePort for DatabaseRetentionCleanupPersistence {
         DataRetentionRepository
             .cleanup_resource(
                 self.database.write(),
-                to_database_cutoff(cutoff),
+                to_database_cutoff(cutoff)?,
                 batch_size,
                 maximum,
                 current_run_id,
@@ -58,21 +59,26 @@ impl RetentionCleanupPersistencePort for DatabaseRetentionCleanupPersistence {
 
     async fn count_expired_import_artifacts(
         &self,
-        before: DateTime<Utc>,
+        before: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<u64> {
         UserImportRepository
-            .count_expired_artifacts(self.database.write(), before)
+            .count_expired_artifacts(self.database.write(), database_cutoff_time(before)?)
             .await
     }
 
     async fn list_expired_import_artifacts(
         &self,
-        before: DateTime<Utc>,
+        before: OffsetDateTime,
         after_id: Option<i64>,
         limit: usize,
     ) -> ryframe_kernel::AppResult<Vec<ExpiredImportArtifact>> {
         UserImportRepository
-            .list_expired_artifacts_after_id(self.database.write(), before, after_id, limit)
+            .list_expired_artifacts_after_id(
+                self.database.write(),
+                database_cutoff_time(before)?,
+                after_id,
+                limit,
+            )
             .await
             .map(|artifacts| {
                 artifacts
@@ -86,11 +92,18 @@ impl RetentionCleanupPersistencePort for DatabaseRetentionCleanupPersistence {
     }
 }
 
-fn to_database_cutoff(cutoff: RetentionCutoff) -> DatabaseCutoff {
-    DatabaseCutoff {
+fn to_database_cutoff(cutoff: RetentionCutoff) -> AppResult<DatabaseCutoff> {
+    Ok(DatabaseCutoff {
         resource: to_database_resource(cutoff.resource),
-        before: cutoff.before,
-    }
+        before: database_cutoff_time(cutoff.before)?,
+    })
+}
+
+fn database_cutoff_time(instant: OffsetDateTime) -> AppResult<PrimitiveDateTime> {
+    let utc = instant
+        .checked_to_offset(UtcOffset::UTC)
+        .ok_or_else(|| AppError::Database("数据保留截止时间无法精确表示为 UTC".into()))?;
+    Ok(PrimitiveDateTime::new(utc.date(), utc.time()))
 }
 
 const fn to_database_resource(resource: RetentionResource) -> DatabaseResource {

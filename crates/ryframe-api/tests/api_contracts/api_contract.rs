@@ -368,12 +368,15 @@ fn data_target_verification_preserves_nullable_utc_precision_and_schema() {
 
 #[test]
 fn data_retention_run_preserves_utc_json_nullability_and_schema() {
-    use chrono::DateTime;
     use ryframe_api::dto::public_dto::DataRetentionRunVo;
     use ryframe_application::{
         ports::retention::RetentionRunRecord, system::operations::DataRetentionRunVo as ServiceRun,
     };
     use serde_json::{Value, json};
+    use time::{
+        Date,
+        macros::{datetime, offset},
+    };
     use utoipa::PartialSchema;
 
     let mut record = RetentionRunRecord {
@@ -389,8 +392,8 @@ fn data_retention_run_preserves_utc_json_nullability_and_schema() {
         error_summary: None,
         started_at: None,
         completed_at: None,
-        created_at: DateTime::from_timestamp(-1, 123_400_000).unwrap(),
-        updated_at: DateTime::from_timestamp(0, 123_456_700).unwrap(),
+        created_at: datetime!(1970-01-01 05:29:59.123400 +05:30),
+        updated_at: datetime!(1970-01-01 00:00:00.123456700 UTC),
     };
     let pending = ServiceRun::try_from(record.clone()).unwrap();
     for response in [
@@ -402,8 +405,8 @@ fn data_retention_run_preserves_utc_json_nullability_and_schema() {
     }
 
     record.status = RetentionRunRecord::STATUS_SUCCEEDED.into();
-    record.started_at = DateTime::from_timestamp(-1, 0);
-    record.completed_at = DateTime::from_timestamp(0, 120_000_000);
+    record.started_at = Some(datetime!(1969-12-31 23:59:59 UTC));
+    record.completed_at = Some(datetime!(1970-01-01 00:00:00.120 UTC));
     let completed = ServiceRun::try_from(record.clone()).unwrap();
     for response in [
         serde_json::to_value(&completed).unwrap(),
@@ -432,7 +435,7 @@ fn data_retention_run_preserves_utc_json_nullability_and_schema() {
         assert!(required.contains(&json!(field)));
     }
 
-    record.completed_at = Some(DateTime::from_timestamp(-1, 1_123_456_000).unwrap());
+    record.completed_at = Some(Date::MIN.midnight().assume_offset(offset!(+01:00)));
     assert!(matches!(
         ServiceRun::try_from(record),
         Err(AppError::Internal(message)) if message.contains("completed_at")

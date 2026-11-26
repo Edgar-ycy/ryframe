@@ -87,7 +87,6 @@ fn message_response_preserves_utc_precision_null_and_schema() {
 fn data_retention_overview_and_preview_preserve_utc_json_and_schema() {
     use std::collections::BTreeMap;
 
-    use chrono::DateTime;
     use ryframe_api::dto::public_dto::{DataRetentionOverview, DataRetentionPreview};
     use ryframe_application::system::operations::{
         DataRetentionCutoffVo as ServiceCutoff, DataRetentionOverview as ServiceOverview,
@@ -95,6 +94,7 @@ fn data_retention_overview_and_preview_preserve_utc_json_and_schema() {
     };
     use ryframe_kernel::AppError;
     use serde_json::to_value;
+    use time::{Date, OffsetDateTime, macros::offset};
 
     let policy = DataRetentionPolicy {
         cleanup_batch_size: 100,
@@ -123,8 +123,10 @@ fn data_retention_overview_and_preview_preserve_utc_json_and_schema() {
         (123_400_000, ".123400"),
         (123_456_700, ".123456700"),
     ] {
-        let calculated_at = DateTime::from_timestamp(-1, nanos).unwrap();
-        let before = DateTime::from_timestamp(-2, nanos).unwrap();
+        let calculated_at = OffsetDateTime::from_unix_timestamp_nanos(-1_000_000_000 + nanos)
+            .unwrap()
+            .to_offset(offset!(+05:30));
+        let before = OffsetDateTime::from_unix_timestamp_nanos(-2_000_000_000 + nanos).unwrap();
         let overview = ServiceOverview {
             calculated_at,
             policy,
@@ -156,9 +158,9 @@ fn data_retention_overview_and_preview_preserve_utc_json_and_schema() {
 
     assert_retention_time_schema();
 
-    let leap = DateTime::from_timestamp(-1, 1_123_456_000).unwrap();
+    let outside_utc = Date::MIN.midnight().assume_offset(offset!(+01:00));
     let overview = ServiceOverview {
-        calculated_at: leap,
+        calculated_at: outside_utc,
         policy,
         cutoffs: Vec::new(),
     };
@@ -167,9 +169,9 @@ fn data_retention_overview_and_preview_preserve_utc_json_and_schema() {
         Err(AppError::Internal(message)) if message.contains("calculated_at")
     ));
     let preview = ServicePreview {
-        calculated_at: DateTime::from_timestamp(0, 0).unwrap(),
+        calculated_at: OffsetDateTime::UNIX_EPOCH,
         policy,
-        cutoffs: vec![cutoff(leap)],
+        cutoffs: vec![cutoff(outside_utc)],
         eligible_counts: BTreeMap::new(),
     };
     assert!(matches!(

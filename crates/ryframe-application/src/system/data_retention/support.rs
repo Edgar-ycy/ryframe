@@ -5,7 +5,7 @@ pub(super) fn new_run_record(
     background_job_id: i64,
     trigger_kind: &str,
     requested_by: Option<i64>,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> RetentionRunRecord {
     RetentionRunRecord {
         id,
@@ -27,13 +27,13 @@ pub(super) fn new_run_record(
 
 pub(super) fn cutoff(
     resource: RetentionResource,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
     days: u32,
-) -> RetentionCutoff {
-    RetentionCutoff {
-        resource,
-        before: now - Duration::days(i64::from(days)),
-    }
+) -> AppResult<RetentionCutoff> {
+    let before = now
+        .checked_sub(Duration::days(i64::from(days)))
+        .ok_or_else(|| AppError::Internal("数据保留响应的 before 无法精确表示为 UTC".into()))?;
+    Ok(RetentionCutoff { resource, before })
 }
 
 pub(super) fn cutoff_views(cutoffs: &[RetentionCutoff]) -> Vec<DataRetentionCutoffVo> {

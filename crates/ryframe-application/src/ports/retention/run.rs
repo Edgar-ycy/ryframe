@@ -1,5 +1,5 @@
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
+use time::OffsetDateTime;
 
 use crate::ports::jobs::BackgroundJobTransaction;
 
@@ -15,10 +15,10 @@ pub struct RetentionRunRecord {
     pub remaining_counts: serde_json::Value,
     pub requested_by: Option<i64>,
     pub error_summary: Option<String>,
-    pub started_at: Option<DateTime<Utc>>,
-    pub completed_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub started_at: Option<OffsetDateTime>,
+    pub completed_at: Option<OffsetDateTime>,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
 }
 
 impl RetentionRunRecord {
@@ -33,7 +33,7 @@ impl RetentionRunRecord {
 
 #[async_trait::async_trait]
 pub trait RetentionRunTransaction: crate::PersistenceTransaction + Send + Sync {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime>;
 
     fn background_jobs(&self) -> &dyn BackgroundJobTransaction;
 
@@ -55,13 +55,13 @@ pub trait RetentionRunTransaction: crate::PersistenceTransaction + Send + Sync {
     async fn begin_run(
         &self,
         record: RetentionRunRecord,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<Option<RetentionRunRecord>>;
 }
 
 #[async_trait::async_trait]
 pub trait RetentionRunPersistencePort: Send + Sync {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime>;
 
     async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn RetentionRunTransaction>>;
 

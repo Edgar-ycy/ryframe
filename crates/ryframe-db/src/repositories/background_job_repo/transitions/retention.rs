@@ -1,12 +1,11 @@
 use super::*;
 use crate::DbResultExt;
-use chrono::{DateTime, Utc};
 
 impl BackgroundJobRepository {
     pub(super) async fn ensure_retention_run<C>(
         db: &C,
         job: &background_job::Model,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<()>
     where
         C: ConnectionTrait,

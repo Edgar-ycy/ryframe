@@ -9,7 +9,7 @@ use ryframe_application::system::operations::{
 use ryframe_kernel::{AppError, AppResult};
 use serde::Serialize;
 use serde_json::Value;
-use time::OffsetDateTime;
+use time::{OffsetDateTime, UtcOffset};
 use utoipa::ToSchema;
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -67,8 +67,7 @@ impl TryFrom<ServiceCutoff> for DataRetentionCutoff {
     fn try_from(value: ServiceCutoff) -> AppResult<Self> {
         Ok(Self {
             resource: value.resource,
-            before: utc_timestamp::from_chrono(value.before)
-                .map_err(|_| retention_utc_error("before"))?,
+            before: retention_utc(value.before, "before")?,
         })
     }
 }
@@ -87,8 +86,7 @@ impl TryFrom<ServiceOverview> for DataRetentionOverview {
 
     fn try_from(value: ServiceOverview) -> AppResult<Self> {
         Ok(Self {
-            calculated_at: utc_timestamp::from_chrono(value.calculated_at)
-                .map_err(|_| retention_utc_error("calculated_at"))?,
+            calculated_at: retention_utc(value.calculated_at, "calculated_at")?,
             policy: value.policy.into(),
             cutoffs: value
                 .cutoffs
@@ -114,8 +112,7 @@ impl TryFrom<ServicePreview> for DataRetentionPreview {
 
     fn try_from(value: ServicePreview) -> AppResult<Self> {
         Ok(Self {
-            calculated_at: utc_timestamp::from_chrono(value.calculated_at)
-                .map_err(|_| retention_utc_error("calculated_at"))?,
+            calculated_at: retention_utc(value.calculated_at, "calculated_at")?,
             policy: value.policy.into(),
             cutoffs: value
                 .cutoffs
@@ -127,8 +124,10 @@ impl TryFrom<ServicePreview> for DataRetentionPreview {
     }
 }
 
-fn retention_utc_error(field: &str) -> AppError {
-    AppError::Internal(format!("数据保留响应的 {field} 无法精确表示为 UTC"))
+fn retention_utc(value: OffsetDateTime, field: &str) -> AppResult<OffsetDateTime> {
+    value
+        .checked_to_offset(UtcOffset::UTC)
+        .ok_or_else(|| AppError::Internal(format!("数据保留响应的 {field} 无法精确表示为 UTC")))
 }
 
 #[derive(Debug, Serialize, ToSchema)]

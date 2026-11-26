@@ -151,7 +151,7 @@ fn every_application_resource_maps_to_same_database_key() {
 
 #[test]
 fn run_mapping_preserves_state() {
-    let now = Utc.with_ymd_and_hms(2026, 8, 21, 2, 3, 4).unwrap();
+    let now = time::macros::datetime!(2026-08-21 02:03:04.123456 UTC);
     let record = RetentionRunRecord {
         id: 1,
         background_job_id: 2,
@@ -169,8 +169,9 @@ fn run_mapping_preserves_state() {
         updated_at: now,
     };
 
+    let model = retention_run_model(record);
     assert_eq!(
-        retention_run_record(retention_run_model(record)).background_job_id,
-        2
+        retention_run_model(retention_run_record(model.clone())),
+        model
     );
 }

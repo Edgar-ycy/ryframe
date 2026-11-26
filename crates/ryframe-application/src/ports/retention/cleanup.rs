@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Utc};
+use time::OffsetDateTime;
 
 /// 数据保留用例允许清理的固定资源。
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -44,7 +44,7 @@ impl RetentionResource {
 #[derive(Clone, Copy, Debug)]
 pub struct RetentionCutoff {
     pub resource: RetentionResource,
-    pub before: DateTime<Utc>,
+    pub before: OffsetDateTime,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -77,12 +77,12 @@ pub trait RetentionCleanupPersistencePort: Send + Sync {
 
     async fn count_expired_import_artifacts(
         &self,
-        before: DateTime<Utc>,
+        before: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<u64>;
 
     async fn list_expired_import_artifacts(
         &self,
-        before: DateTime<Utc>,
+        before: OffsetDateTime,
         after_id: Option<i64>,
         limit: usize,
     ) -> ryframe_kernel::AppResult<Vec<ExpiredImportArtifact>>;

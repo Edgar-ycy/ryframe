@@ -1,19 +1,17 @@
 use super::*;
-use time::OffsetDateTime;
-
 impl DataRetentionService {
-    pub(super) fn import_artifact_cutoff(&self, now: DateTime<Utc>) -> DateTime<Utc> {
-        now - Duration::hours(i64::from(self.config.user_import_artifact_hours))
+    pub(super) fn import_artifact_cutoff(&self, now: OffsetDateTime) -> AppResult<OffsetDateTime> {
+        now.checked_sub(Duration::hours(i64::from(
+            self.config.user_import_artifact_hours,
+        )))
+        .ok_or_else(|| AppError::Database("导入文件保留截止时间无法精确表示为 UTC".into()))
     }
 
     pub(super) async fn cleanup_import_artifacts(
         &self,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<RetentionCleanupResult> {
-        let before = self.import_artifact_cutoff(now);
-        let file_cutoff = OffsetDateTime::from_unix_timestamp(before.timestamp())
-            .and_then(|instant| instant.replace_nanosecond(before.timestamp_subsec_nanos()))
-            .map_err(|_| AppError::Database("导入文件保留截止时间无法精确表示为 UTC".into()))?;
+        let before = self.import_artifact_cutoff(now)?;
         let maximum = self.config.max_rows_per_resource_per_run;
         let mut deleted = 0_u64;
         let mut after_id = None;
@@ -36,11 +34,7 @@ impl DataRetentionService {
                 after_id = Some(artifact.file_id);
                 if self
                     .file
-                    .delete_expired_import_artifact(
-                        &artifact.tenant_id,
-                        artifact.file_id,
-                        file_cutoff,
-                    )
+                    .delete_expired_import_artifact(&artifact.tenant_id, artifact.file_id, before)
                     .await?
                 {
                     deleted = deleted.saturating_add(1);

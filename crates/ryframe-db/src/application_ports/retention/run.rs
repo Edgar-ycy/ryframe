@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::{ControlDatabaseCluster, DataRetentionRepository, entities::data_retention_run};
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
 use sea_orm::TransactionTrait;
+use time::OffsetDateTime;
 
 use super::super::transaction::DatabasePortTransaction;
 
@@ -30,8 +31,8 @@ struct DatabaseRetentionRunTransaction {
 
 #[async_trait::async_trait]
 impl RetentionRunPersistencePort for DatabaseRetentionRunPersistence {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
-        crate::repositories::database_utc_now(self.database.write()).await
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime> {
+        crate::repositories::database_utc_now_time(self.database.write()).await
     }
 
     async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn RetentionRunTransaction>> {
@@ -79,8 +80,8 @@ impl RetentionRunPersistencePort for DatabaseRetentionRunPersistence {
 
 #[async_trait::async_trait]
 impl RetentionRunTransaction for DatabaseRetentionRunTransaction {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
-        crate::repositories::database_utc_now(&self.transaction).await
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime> {
+        crate::repositories::database_utc_now_time(&self.transaction).await
     }
 
     fn background_jobs(&self) -> &dyn BackgroundJobTransaction {
@@ -120,7 +121,7 @@ impl RetentionRunTransaction for DatabaseRetentionRunTransaction {
     async fn begin_run(
         &self,
         record: RetentionRunRecord,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<Option<RetentionRunRecord>> {
         DataRetentionRepository
             .begin_run_in_txn(&self.transaction, to_model(record), now)

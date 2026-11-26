@@ -16,19 +16,21 @@ impl BackgroundJobRepository {
         C: ConnectionTrait,
     {
         let error = error_message.map(truncate_error);
-        if job.job_type == USER_IMPORT_JOB_TYPE {
+        let job_type = job.job_type.as_str();
+        if matches!(job_type, USER_IMPORT_JOB_TYPE | DATA_RETENTION_JOB_TYPE) {
             let now = now
                 .checked_to_offset(UtcOffset::UTC)
                 .ok_or_else(|| AppError::Internal("关联任务状态时间超出 UTC 表示范围".into()))?;
-            return Self::sync_import_job(db, job, disposition, error, now).await;
+            return if job_type == USER_IMPORT_JOB_TYPE {
+                Self::sync_import_job(db, job, disposition, error, now).await
+            } else {
+                Self::sync_retention_job(db, job, disposition, error, now).await
+            };
         }
         let now = DateTime::from_timestamp(now.unix_timestamp(), now.nanosecond())
             .ok_or_else(|| AppError::Internal("关联任务状态时间超出 UTC 表示范围".into()))?;
-        match job.job_type.as_str() {
+        match job_type {
             EXPORT_JOB_TYPE => Self::sync_export_job(db, job, disposition, error, now).await,
-            DATA_RETENTION_JOB_TYPE => {
-                Self::sync_retention_job(db, job, disposition, error, now).await
-            }
             TENANT_CONFIG_EXPORT_JOB_TYPE => {
                 Self::sync_config_bundle(db, job, disposition, error, now).await
             }
@@ -231,10 +233,10 @@ impl BackgroundJobRepository {
         job: &background_job::Model,
         disposition: LinkedJobDisposition,
         error: Option<String>,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<LinkedJobSyncResult> {
         Self::ensure_retention_run(db, job, now).await?;
-        let (status, completed_at, statuses): (&str, Option<DateTime<Utc>>, &[&str]) =
+        let (status, completed_at, statuses): (&str, Option<OffsetDateTime>, &[&str]) =
             match disposition {
                 LinkedJobDisposition::Retried => (
                     data_retention_run::Model::STATUS_PENDING,

@@ -50,9 +50,9 @@ impl DataRetentionService {
         transaction
             .commit(crate::TransactionAuditMode::Skip)
             .await?;
-        let overview = self.overview_at(now);
+        let overview = self.overview_at(now)?;
         run.policy_snapshot = serde_json::to_value(&overview).map_err(json_error)?;
-        let cutoffs = self.cutoffs(now);
+        let cutoffs = self.cutoffs(now)?;
         let mut eligible = self
             .cleanup_persistence
             .preview(&cutoffs, Some(run.id))
@@ -60,7 +60,7 @@ impl DataRetentionService {
         eligible.insert(
             "user_import_artifacts".to_owned(),
             self.cleanup_persistence
-                .count_expired_import_artifacts(self.import_artifact_cutoff(now))
+                .count_expired_import_artifacts(self.import_artifact_cutoff(now)?)
                 .await?,
         );
         eligible.extend(self.preview_tenant_config_artifacts(now).await?);

@@ -1,13 +1,13 @@
 use crate::DbResultExt;
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
     QueryOrder, QuerySelect, Statement, TransactionTrait, TryGetable,
     sea_query::{Expr, LockType},
 };
+use time::{OffsetDateTime, PrimitiveDateTime};
 
 use crate::entities::data_retention_run;
 
@@ -87,7 +87,7 @@ impl RetentionResource {
 #[derive(Clone, Copy, Debug)]
 pub struct RetentionCutoff {
     pub resource: RetentionResource,
-    pub before: DateTime<Utc>,
+    pub before: PrimitiveDateTime,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -166,7 +166,7 @@ impl DataRetentionRepository {
         &self,
         transaction: &sea_orm::DatabaseTransaction,
         mut model: data_retention_run::Model,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<Option<data_retention_run::Model>> {
         if matches!(
             model.status.as_str(),
@@ -358,7 +358,7 @@ fn condition_and_values(
     current_run_id: Option<i64>,
 ) -> (String, Vec<sea_orm::Value>) {
     let mut condition = cutoff.resource.predicate().to_owned();
-    let mut values = vec![cutoff.before.naive_utc().into()];
+    let mut values = vec![cutoff.before.into()];
     if cutoff.resource == RetentionResource::RetentionRuns
         && let Some(current_run_id) = current_run_id
     {

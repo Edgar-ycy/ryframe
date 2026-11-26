@@ -323,6 +323,100 @@ async fn linked_state_conflict_rolls_back_attempt_and_background_updates() {
     .await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn retention_cutoff_keeps_utc_microseconds_and_excludes_current_run() {
+    use ryframe_application::{
+        TransactionAuditMode,
+        ports::retention::{RetentionCutoff, RetentionResource, RetentionRunRecord},
+    };
+    use serde_json::json;
+    use time::{UtcOffset, macros::datetime};
+
+    run_mysql_test("retention-utc-cutoff", |database| async move {
+        install_control_schema(&database).await?;
+        let cluster = ControlDatabaseCluster::single(database.clone());
+        let runs = application_ports::retention::run(cluster.clone());
+        let cleanup = application_ports::retention::cleanup(cluster);
+        let at = datetime!(2026-11-26 05:30:00.123456 +05:30);
+        let older = at - Duration::microseconds(1);
+        for (id, completed_at) in [
+            (9001, Some(older)),
+            (9002, Some(at)),
+            (9003, Some(older)),
+            (9004, None),
+        ] {
+            let status = if completed_at.is_some() {
+                RetentionRunRecord::STATUS_SUCCEEDED
+            } else {
+                RetentionRunRecord::STATUS_PENDING
+            };
+            runs.insert_if_missing(RetentionRunRecord {
+                id,
+                background_job_id: id + 1000,
+                trigger_kind: RetentionRunRecord::TRIGGER_MANUAL.into(),
+                status: status.into(),
+                policy_snapshot: json!({}),
+                eligible_counts: json!({}),
+                deleted_counts: json!({}),
+                remaining_counts: json!({}),
+                requested_by: None,
+                error_summary: None,
+                started_at: None,
+                completed_at,
+                created_at: at,
+                updated_at: at,
+            })
+            .await
+            .map_err(|error| error.to_string())?;
+        }
+        let transaction = runs.begin().await.map_err(|error| error.to_string())?;
+        let run = transaction
+            .lock_by_background_job(10004)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or("未找到待执行的保留记录")?;
+        let started = transaction
+            .begin_run(run, at)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or("保留记录未进入执行态")?;
+        assert_eq!(started.started_at, Some(at.to_offset(UtcOffset::UTC)));
+        transaction
+            .commit(TransactionAuditMode::Skip)
+            .await
+            .map_err(|error| error.to_string())?;
+        require_count(
+            &database,
+            "SELECT COUNT(*) AS value FROM sys_data_retention_run WHERE id = 9004 \
+             AND started_at = '2026-11-26 00:00:00.123456' AND completed_at IS NULL \
+             AND updated_at = '2026-11-26 00:00:00.123456' AND status = 'running'",
+            1,
+        )
+        .await?;
+        let cutoff = RetentionCutoff {
+            resource: RetentionResource::RetentionRuns,
+            before: at,
+        };
+        let eligible = cleanup
+            .preview(&[cutoff], Some(9003))
+            .await
+            .map_err(|error| error.to_string())?;
+        assert_eq!(eligible.get("retention_runs"), Some(&1));
+        let result = cleanup
+            .cleanup_resource(cutoff, 10, 10, Some(9003))
+            .await
+            .map_err(|error| error.to_string())?;
+        assert_eq!((result.deleted, result.remaining), (1, 0));
+        require_count(
+            &database,
+            "SELECT COUNT(*) AS value FROM sys_data_retention_run WHERE id IN (9002, 9003, 9004)",
+            3,
+        )
+        .await
+    })
+    .await;
+}
+
 async fn install_control_schema(database: &DatabaseConnection) -> Result<(), String> {
     for statement in migration::control_ddl_statements() {
         execute(database, statement).await?;

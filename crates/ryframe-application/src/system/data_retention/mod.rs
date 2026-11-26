@@ -1,11 +1,10 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;
-use chrono::{DateTime, Duration, Utc};
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use serde::Serialize;
 use serde_json::{Value, json};
-use time::OffsetDateTime;
+use time::{Duration, OffsetDateTime, UtcOffset};
 
 use crate::{
     ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue,
@@ -56,19 +55,22 @@ pub struct DataRetentionPolicy {
 #[derive(Clone, Debug, Serialize)]
 pub struct DataRetentionCutoffVo {
     pub resource: String,
-    pub before: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    pub before: OffsetDateTime,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct DataRetentionOverview {
-    pub calculated_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    pub calculated_at: OffsetDateTime,
     pub policy: DataRetentionPolicy,
     pub cutoffs: Vec<DataRetentionCutoffVo>,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct DataRetentionPreview {
-    pub calculated_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    pub calculated_at: OffsetDateTime,
     pub policy: DataRetentionPolicy,
     pub cutoffs: Vec<DataRetentionCutoffVo>,
     pub eligible_counts: BTreeMap<String, u64>,
@@ -100,8 +102,8 @@ impl TryFrom<RetentionRunRecord> for DataRetentionRunVo {
     type Error = AppError;
 
     fn try_from(model: RetentionRunRecord) -> AppResult<Self> {
-        let to_utc = |timestamp, field| {
-            utc_timestamp::from_chrono(timestamp).map_err(|_| {
+        let to_utc = |timestamp: OffsetDateTime, field| {
+            timestamp.checked_to_offset(UtcOffset::UTC).ok_or_else(|| {
                 AppError::Internal(format!("数据保留运行记录的 {field} 无法精确表示为 UTC"))
             })
         };
@@ -162,18 +164,18 @@ impl DataRetentionService {
     pub async fn overview(&self, actor: &ActorContext) -> AppResult<DataRetentionOverview> {
         ensure_system_tenant(actor)?;
         let calculated_at = self.run_persistence.database_now().await?;
-        Ok(self.overview_at(calculated_at))
+        self.overview_at(calculated_at)
     }
 
     pub async fn preview(&self, actor: &ActorContext) -> AppResult<DataRetentionPreview> {
         ensure_system_tenant(actor)?;
         let calculated_at = self.run_persistence.database_now().await?;
-        let cutoffs = self.cutoffs(calculated_at);
+        let cutoffs = self.cutoffs(calculated_at)?;
         let mut eligible_counts = self.cleanup_persistence.preview(&cutoffs, None).await?;
         eligible_counts.insert(
             "user_import_artifacts".to_owned(),
             self.cleanup_persistence
-                .count_expired_import_artifacts(self.import_artifact_cutoff(calculated_at))
+                .count_expired_import_artifacts(self.import_artifact_cutoff(calculated_at)?)
                 .await?,
         );
         eligible_counts.extend(self.preview_tenant_config_artifacts(calculated_at).await?);
@@ -198,7 +200,6 @@ impl DataRetentionService {
         let result = async {
             let now = transaction.database_now().await?;
             let proposed_run_id = crate::next_id()?;
-            let queue_now = crate::jobs::queue_time_from_database(now)?;
             let trace_context = crate::trace_context::current_trace_context();
             let enqueue = self
                 .queue
@@ -207,7 +208,7 @@ impl DataRetentionService {
                     EnqueueJob {
                         tenant_id: None,
                         schedule_id: None,
-                        scheduled_for: Some(queue_now),
+                        scheduled_for: Some(now),
                         max_runtime_seconds: Some(900),
                         job_type: DATA_RETENTION_JOB_TYPE.to_owned(),
                         payload: json!({
@@ -216,7 +217,7 @@ impl DataRetentionService {
                             "requested_by": actor.user_id.to_string(),
                         }),
                         priority: -20,
-                        available_at: queue_now,
+                        available_at: now,
                         max_attempts: 20,
                         dedupe_key: Some(format!("manual:{idempotency_key_hash}")),
                         traceparent: trace_context.traceparent,
@@ -275,12 +276,15 @@ impl DataRetentionService {
         })
     }
 
-    pub(super) fn overview_at(&self, calculated_at: DateTime<Utc>) -> DataRetentionOverview {
-        let cutoffs = self.cutoffs(calculated_at);
+    pub(super) fn overview_at(
+        &self,
+        calculated_at: OffsetDateTime,
+    ) -> AppResult<DataRetentionOverview> {
+        let cutoffs = self.cutoffs(calculated_at)?;
         let mut cutoff_views = cutoff_views(&cutoffs);
         cutoff_views.push(DataRetentionCutoffVo {
             resource: "user_import_artifacts".to_owned(),
-            before: self.import_artifact_cutoff(calculated_at),
+            before: self.import_artifact_cutoff(calculated_at)?,
         });
         cutoff_views.push(DataRetentionCutoffVo {
             resource: "tenant_config_packages".to_owned(),
@@ -292,10 +296,10 @@ impl DataRetentionService {
             // 回滚窗口同样由 rollback_expires_at 表达，清理条件是截止时间不晚于当前时刻。
             before: calculated_at,
         });
-        DataRetentionOverview {
+        Ok(DataRetentionOverview {
             calculated_at,
             policy: self.config,
             cutoffs: cutoff_views,
-        }
+        })
     }
 }

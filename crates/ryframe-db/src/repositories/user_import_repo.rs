@@ -1,12 +1,11 @@
 use crate::DbResultExt;
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
     EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Statement,
     sea_query::{Expr, LockType},
 };
-use time::OffsetDateTime;
+use time::{OffsetDateTime, PrimitiveDateTime};
 
 use crate::entities::{user_import_job, user_import_row_result};
 
@@ -322,7 +321,7 @@ impl UserImportRepository {
     pub async fn count_expired_artifacts(
         &self,
         db: &DatabaseConnection,
-        before: DateTime<Utc>,
+        before: PrimitiveDateTime,
     ) -> AppResult<u64> {
         let sql = format!(
             "SELECT COUNT(*) AS artifact_count FROM sys_file file WHERE {}",
@@ -332,11 +331,7 @@ impl UserImportRepository {
             .query_one_raw(Statement::from_sql_and_values(
                 db.get_database_backend(),
                 sql,
-                [
-                    before.naive_utc().into(),
-                    before.naive_utc().into(),
-                    before.naive_utc().into(),
-                ],
+                [before.into(), before.into(), before.into()],
             ))
             .await
             .db()?
@@ -348,7 +343,7 @@ impl UserImportRepository {
     pub async fn list_expired_artifacts_after_id(
         &self,
         db: &DatabaseConnection,
-        before: DateTime<Utc>,
+        before: PrimitiveDateTime,
         after_id: Option<i64>,
         limit: usize,
     ) -> AppResult<Vec<UserImportArtifact>> {
@@ -356,11 +351,7 @@ impl UserImportRepository {
             "SELECT file.tenant_id, file.id FROM sys_file file WHERE {}",
             expired_artifact_predicate()
         );
-        let mut values = vec![
-            before.naive_utc().into(),
-            before.naive_utc().into(),
-            before.naive_utc().into(),
-        ];
+        let mut values = vec![before.into(), before.into(), before.into()];
         if let Some(after_id) = after_id {
             sql.push_str(" AND file.id > ?");
             values.push(after_id.into());
