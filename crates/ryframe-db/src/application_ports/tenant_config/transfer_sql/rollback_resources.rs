@@ -192,7 +192,7 @@ pub(crate) async fn restore_snapshot_in_transaction(
     let created = load_created_item_keys(transaction, tenant_id, transfer_id).await?;
 
     let created_role_codes = created_keys(&created, "role").collect::<BTreeSet<_>>();
-    let extra_roles = role::Entity::find()
+    for item in role::Entity::find()
         .filter(role::Column::TenantId.eq(tenant_id))
         .filter(role::Column::IsSuper.eq(0))
         .all(transaction)
@@ -200,8 +200,7 @@ pub(crate) async fn restore_snapshot_in_transaction(
         .db()?
         .into_iter()
         .filter(|item| created_role_codes.contains(&normalize_stable_key(&item.code)))
-        .collect::<Vec<_>>();
-    for item in extra_roles {
+    {
         role_permission::Entity::delete_many()
             .filter(role_permission::Column::TenantId.eq(tenant_id))
             .filter(role_permission::Column::RoleId.eq(item.id))
@@ -256,15 +255,14 @@ pub(crate) async fn restore_snapshot_in_transaction(
     }
 
     let created_permission_codes = created_keys(&created, "permission").collect::<BTreeSet<_>>();
-    let extra_permissions = permission::Entity::find()
+    for item in permission::Entity::find()
         .filter(permission::Column::TenantId.eq(tenant_id))
         .all(transaction)
         .await
         .db()?
         .into_iter()
         .filter(|item| created_permission_codes.contains(&normalize_stable_key(&item.code)))
-        .collect::<Vec<_>>();
-    for item in extra_permissions {
+    {
         let referenced = role_permission::Entity::find()
             .filter(role_permission::Column::TenantId.eq(tenant_id))
             .filter(role_permission::Column::PermId.eq(item.id))
