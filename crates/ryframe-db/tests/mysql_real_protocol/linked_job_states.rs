@@ -30,14 +30,21 @@ async fn outbox_delivery_keeps_utc_lease_and_atomic_queue_boundaries() {
                     event_type: "system.message.published".into(),
                     aggregate_id: "42".into(),
                     payload: serde_json::json!({"message_id":"42"}),
-                    available_at: chrono::DateTime::from_timestamp(now.unix_timestamp(), 0)
-                        .expect("固定的数据库时刻有效"),
+                    available_at: now,
                     traceparent: None,
                     tracestate: None,
                 })
             .await
             .map_err(|error| error.to_string())?;
         transaction.commit(TransactionAuditMode::Skip).await.map_err(|error| error.to_string())?;
+        require_count(
+            &database,
+            "SELECT COUNT(*) AS value FROM sys_outbox_event WHERE dedupe_key = 'message:42' \
+             AND available_at = '2026-11-26 00:00:00' AND created_at = '2026-11-26 00:00:00' \
+             AND updated_at = '2026-11-26 00:00:00'",
+            1,
+        )
+        .await?;
         let outbox = application_ports::jobs::outbox(cluster);
         assert!(outbox.claim_next("first", lease, now - Duration::SECOND, &scope).await.map_err(|error| error.to_string())?.is_none());
         let first = outbox.claim_next("first", lease, now, &scope).await

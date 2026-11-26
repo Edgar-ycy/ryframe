@@ -167,8 +167,7 @@ impl MessageTransaction for DatabaseMessageTransaction {
 
     async fn record_outbox(&self, event: MessageOutboxRecord) -> ryframe_kernel::AppResult<()> {
         let dedupe_key = format!("message:{}", event.aggregate_id);
-        let available_at = crate::repositories::utc_time_from_chrono(event.available_at)
-            .db_context("写入消息发件箱 UTC 时间")?;
+        let available_at = event.available_at;
         OutboxEventRepository
             .record_in_transaction(
                 &self.transaction,

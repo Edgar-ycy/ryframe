@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
+use time::OffsetDateTime;
 
 use crate::{JobQueue, ports::system::MessagePersistencePort};
 
@@ -42,7 +43,10 @@ impl MessageService {
     }
 
     async fn database_now(&self) -> AppResult<DateTime<Utc>> {
-        let now = self.queue.database_now().await?;
+        Self::legacy_persistence_time(self.queue.database_now().await?)
+    }
+
+    fn legacy_persistence_time(now: OffsetDateTime) -> AppResult<DateTime<Utc>> {
         DateTime::from_timestamp(now.unix_timestamp(), now.nanosecond())
             .ok_or_else(|| AppError::Database("消息持久化时间无法精确表示为 UTC".into()))
     }

@@ -80,7 +80,7 @@ pub struct MessageOutboxRecord {
     pub event_type: String,
     pub aggregate_id: String,
     pub payload: Value,
-    pub available_at: DateTime<Utc>,
+    pub available_at: OffsetDateTime,
     pub traceparent: Option<String>,
     pub tracestate: Option<String>,
 }

@@ -42,7 +42,8 @@ impl MessageService {
             }
             None => actor_tenant_id.to_owned(),
         };
-        let now = self.database_now().await?;
+        let available_at = self.queue.database_now().await?;
+        let now = Self::legacy_persistence_time(available_at)?;
         let maximum_expiry = now + Duration::days(i64::from(self.config.retention_days));
         let expires_at = expires_at.unwrap_or(maximum_expiry);
         if expires_at > maximum_expiry {
@@ -98,7 +99,7 @@ impl MessageService {
                     payload: serde_json::json!({
                         "message_id": published.message.id.to_string()
                     }),
-                    available_at: now,
+                    available_at,
                     traceparent: trace_context.traceparent,
                     tracestate: trace_context.tracestate,
                 })
