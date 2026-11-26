@@ -14,7 +14,7 @@ mod publication;
 pub(super) mod record;
 mod runner;
 pub(super) mod steps;
-mod target_port;
+pub(super) mod target_port;
 pub(crate) mod verify_target_objects;
 
 pub(crate) use marker_recovery::MarkerRecovery;

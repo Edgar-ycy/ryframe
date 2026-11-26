@@ -1,6 +1,6 @@
 use super::super::super::super::model::{
     CacheOperation, CacheOptions, CliError, CloneCommand, CloneRole, CloneRuntimeOperation,
-    CloneRuntimeOptions, StorageOperation, StorageOptions,
+    CloneRuntimeOptions, CloneSide, StorageOperation, StorageOptions,
 };
 
 use super::{optional_path, parse_options, require_write, required, run_dir, side};
@@ -12,16 +12,35 @@ pub(super) fn parse_runtime(args: &[String]) -> Result<CloneCommand, CliError> {
         "stop" => CloneRuntimeOperation::Stop,
         "status" => CloneRuntimeOperation::Status,
         "recover" => CloneRuntimeOperation::Recover,
+        "restart-api" => CloneRuntimeOperation::RestartApi,
+        "reconcile-api" => CloneRuntimeOperation::ReconcileApi,
         value => return Err(CliError::new(format!("runtime --operation 无效：{value}"))),
     };
     require_write("runtime", &options, operation.effect().requires_write())?;
-    Ok(CloneCommand::Runtime(CloneRuntimeOptions {
-        run_dir: run_dir(&options)?,
-        side: side(required(&options, "--side")?)?,
-        operation,
-        roles: options
+    let run_dir = run_dir(&options)?;
+    let side = side(required(&options, "--side")?)?;
+    let roles = if operation.is_api_successor() {
+        if side != CloneSide::Target
+            || options
+                .roles
+                .as_deref()
+                .is_some_and(|roles| roles != [CloneRole::Api])
+        {
+            return Err(CliError::new(
+                "API 接续只允许 --side target 和单独 api 角色",
+            ));
+        }
+        vec![CloneRole::Api]
+    } else {
+        options
             .roles
-            .unwrap_or_else(|| vec![CloneRole::Api, CloneRole::Worker]),
+            .unwrap_or_else(|| vec![CloneRole::Api, CloneRole::Worker])
+    };
+    Ok(CloneCommand::Runtime(CloneRuntimeOptions {
+        run_dir,
+        side,
+        operation,
+        roles,
     }))
 }
 

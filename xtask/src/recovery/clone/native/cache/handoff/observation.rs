@@ -14,6 +14,7 @@ use crate::{
                 stage::{StageRequest, StageRunner},
                 state,
             },
+            post_process::api_successor,
             resources::common,
             seed,
             target_verify::guard::Inputs,
@@ -38,13 +39,24 @@ impl StageRunner for Runner<'_> {
         if request.stage != "runtime-target"
             || request.mode != self.options.operation.as_str()
             || self.options.side != CloneSide::Target
-            || self.options.operation == CloneRuntimeOperation::Start
+            || matches!(
+                self.options.operation,
+                CloneRuntimeOperation::Start
+                    | CloneRuntimeOperation::RestartApi
+                    | CloneRuntimeOperation::ReconcileApi
+            )
             || request.run_dir != self.options.run_dir
         {
             return Err("已监督API控制必须绑定当前固定target操作".into());
         }
         if self.options.roles != [CloneRole::Api] {
             return Err("复制后交接只允许API，Worker必须保持停止".into());
+        }
+        if self.options.operation == CloneRuntimeOperation::Status {
+            let post = seed::history::post(request.backend, request.run_dir, None, None, true)?;
+            if api_successor::load(request.backend, request.run_dir, &post.descriptor)?.is_some() {
+                return Ok(());
+            }
         }
         retirement::preflight(request.backend, request.run_dir)
     }
@@ -54,7 +66,11 @@ impl StageRunner for Runner<'_> {
             CloneRuntimeOperation::Status => Phase::Observe,
             CloneRuntimeOperation::Stop => Phase::BeforeStop,
             CloneRuntimeOperation::Recover => Phase::Recover,
-            CloneRuntimeOperation::Start => return Err("启动必须使用一次原生预留".into()),
+            CloneRuntimeOperation::Start
+            | CloneRuntimeOperation::RestartApi
+            | CloneRuntimeOperation::ReconcileApi => {
+                return Err("启动与接续核对必须使用相应原生入口".into());
+            }
         };
         diagnostic::context(
             request.run_dir,
@@ -67,7 +83,9 @@ impl StageRunner for Runner<'_> {
                     CloneRuntimeOperation::Status => frame.status(),
                     CloneRuntimeOperation::Stop => stop(&frame),
                     CloneRuntimeOperation::Recover => recovery::run(&frame),
-                    CloneRuntimeOperation::Start => unreachable!(),
+                    CloneRuntimeOperation::Start
+                    | CloneRuntimeOperation::RestartApi
+                    | CloneRuntimeOperation::ReconcileApi => unreachable!(),
                 }
             })(),
         )
@@ -80,7 +98,9 @@ pub(super) struct Frame {
     pub run: PathBuf,
     pub number: u64,
     pub post: seed::history::Post,
+    pub directory: PathBuf,
     pub runtime: Value,
+    successor: Option<Value>,
     environment: Value,
     state: Value,
     cleanup: bool,
@@ -108,31 +128,21 @@ impl Frame {
         let post = seed::history::post(request.backend, request.run_dir, None, None, true)?;
         common::local_directory(request.backend, &post.runtime, "已发布API运行目录")?;
         let environment = post.request["api_environment"].clone();
-        let mut files = vec![
-            request.run_dir.join("manifest.json"),
-            request.run_dir.join("state.json"),
-            request.run_dir.join("run.lock/owner.json"),
-            state::controller_path(request.run_dir, number),
-            common::bound_file(request.backend, &post.descriptor, "活动API登记")?,
-            common::bound_file(request.backend, &environment, "冻结API环境")?,
-        ];
-        for name in ["runtime.json", "binaries.json", "handoff.json"] {
-            let file = post.runtime.join(name);
-            files.push(common::common_file(
-                request.backend,
-                &file,
-                "API交接固定文件",
-            )?);
-        }
-        let roles = role_files(request.backend, &post.runtime)?;
+        let successor = api_successor::load(request.backend, request.run_dir, &post.descriptor)?;
+        let mut files = stage_files(request, &post, number, &environment)?;
+        let directory = active_directory(request.backend, &post, successor.as_ref(), &mut files)?;
+        let roles = role_files(request.backend, &directory)?;
         files.extend(
             roles
                 .iter()
                 .filter(|(_, binding)| binding.is_some())
                 .map(|(path, _)| path.clone()),
         );
-        let retirement =
-            retirement::Retirement::load(request.backend, request.run_dir, &post, &saved)?;
+        let retirement = if cleanup || successor.is_none() {
+            retirement::Retirement::load(request.backend, request.run_dir, &post, &saved)?
+        } else {
+            None
+        };
         if let Some(retirement) = &retirement {
             files.extend(retirement.paths(request.backend)?);
         }
@@ -148,7 +158,9 @@ impl Frame {
             run: request.run_dir.to_owned(),
             number,
             post,
+            directory,
             runtime,
+            successor,
             environment,
             state: saved,
             cleanup,
@@ -164,10 +176,10 @@ impl Frame {
         self.protected.check()?;
         if let Some(retirement) = &self.retirement {
             retirement.check(&self.backend)?;
-        } else {
+        } else if self.successor.is_none() {
             super::guard::absent(&self.run.join("seed-runtime.json"))?;
         }
-        if role_files(&self.backend, &self.post.runtime)? != self.roles {
+        if role_files(&self.backend, &self.directory)? != self.roles {
             return Err("API或Worker角色收据、完整树或原缺失事实在观察期间变化".into());
         }
         if state::load(&self.run, !self.cleanup)? != self.state {
@@ -178,6 +190,7 @@ impl Frame {
             || post.descriptor != self.post.descriptor
             || post.runtime != self.post.runtime
             || registration::cleanup_runtime(&self.backend, &self.run, &post)? != self.runtime
+            || api_successor::load(&self.backend, &self.run, &post.descriptor)? != self.successor
         {
             return Err("API控制活动登记或准备合同在操作期间变化".into());
         }
@@ -199,15 +212,15 @@ impl Frame {
         let api = controller::observe_bound(
             Role::Api,
             &self.product,
-            &self.post.runtime,
+            &self.directory,
             &self.environment,
         )?;
         if api["state"] == "running" {
             let actual =
                 crate::recovery::clone::native::target_verify::storage::protocol::arguments(
                     &self.backend,
-                    &self.post.runtime,
-                    &common::binding(&self.post.runtime.join("api.json"))?,
+                    &self.directory,
+                    &common::binding(&self.directory.join("api.json"))?,
                     &api["identity"],
                 )?;
             if actual["actual_arguments_sha256"]
@@ -226,17 +239,17 @@ impl Frame {
 
     fn worker_stopped(&self) -> Result<()> {
         self.check()?;
-        let worker = match legacy_lock_only(&self.backend, &self.post.runtime)? {
+        let worker = match legacy_lock_only(&self.backend, &self.directory)? {
             Some(owner) => controller::observe_worker_under_outer_lock(
                 &self.product,
-                &self.post.runtime,
+                &self.directory,
                 &self.environment,
                 &owner,
             )?,
             None => controller::observe_bound(
                 Role::Worker,
                 &self.product,
-                &self.post.runtime,
+                &self.directory,
                 &self.environment,
             )?,
         };
@@ -253,7 +266,7 @@ impl Frame {
             if history.binding.is_none() {
                 return Err("API生产者历史未形成完整已启动代次，保留未知现场".into());
             }
-            let receipt = document::read(&self.post.runtime.join("api.json"))?;
+            let receipt = document::read(&self.directory.join("api.json"))?;
             if history
                 .identity
                 .as_ref()
@@ -269,10 +282,69 @@ impl Frame {
         let observed = self.observed()?;
         Ok(
             json!({"format_version":1,"kind":"devex-clone-runtime-observation","operation":"status",
-            "scope_id":self.runtime["scope_id"],"runtime_directory":self.post.runtime,
+            "scope_id":self.runtime["scope_id"],"runtime_directory":self.directory,
             "processes":{"api":process(&observed)}}),
         )
     }
+}
+
+fn stage_files(
+    request: &StageRequest<'_>,
+    post: &seed::history::Post,
+    number: u64,
+    environment: &Value,
+) -> Result<Vec<PathBuf>> {
+    let mut files = vec![
+        request.run_dir.join("manifest.json"),
+        request.run_dir.join("state.json"),
+        request.run_dir.join("run.lock/owner.json"),
+        state::controller_path(request.run_dir, number),
+        common::bound_file(request.backend, &post.descriptor, "活动API登记")?,
+        common::bound_file(request.backend, environment, "冻结API环境")?,
+    ];
+    for name in ["runtime.json", "binaries.json", "handoff.json"] {
+        files.push(common::common_file(
+            request.backend,
+            &post.runtime.join(name),
+            "API交接固定文件",
+        )?);
+    }
+    Ok(files)
+}
+
+fn active_directory(
+    backend: &Path,
+    post: &seed::history::Post,
+    successor: Option<&Value>,
+    files: &mut Vec<PathBuf>,
+) -> Result<PathBuf> {
+    let Some(successor) = successor else {
+        return Ok(post.runtime.clone());
+    };
+    let directory = common::local_directory(
+        backend,
+        Path::new(document::text(
+            &successor["runtime_directory"],
+            "API后继目录",
+        )?),
+        "API后继运行目录",
+    )?;
+    if directory == post.runtime {
+        return Err("API后继不能使用原历史运行目录".into());
+    }
+    files.push(common::bound_file(
+        backend,
+        &successor["intent"],
+        "API后继意图",
+    )?);
+    for name in ["runtime.json", "binaries.json"] {
+        let file = common::common_file(backend, &directory.join(name), "API后继固定文件")?;
+        if digest::file(&file)? != digest::file(&post.runtime.join(name))? {
+            return Err("API后继运行合同或构建清单与原冻结字节不同".into());
+        }
+        files.push(file);
+    }
+    Ok(directory)
 }
 
 fn role_files(backend: &Path, directory: &Path) -> Result<Vec<(PathBuf, Option<Value>)>> {
@@ -320,7 +392,7 @@ fn legacy_lock_only(backend: &Path, directory: &Path) -> Result<Option<Value>> {
 }
 
 fn stop(frame: &Frame) -> Result<Value> {
-    let lock = locks::Runtime::acquire_for(&frame.backend, &frame.post.runtime, "stop")?;
+    let lock = locks::Runtime::acquire_for(&frame.backend, &frame.directory, "stop")?;
     let result = diagnostic::context(
         &frame.run,
         Some(frame.number),
@@ -329,12 +401,11 @@ fn stop(frame: &Frame) -> Result<Value> {
             // 停止资格由原生controller在同一角色guard中复核，不能先要求待停止API仍ready。
             frame.worker_stopped()?;
             // 历史不是停止权限；失败保留至完整树关闭后报告，不能阻止显式回收原登记API。
-            let history =
-                super::history::closing(&frame.backend, &frame.product, &frame.post.runtime)
-                    .and_then(|history| {
-                        frame.history_identity(&history)?;
-                        Ok(history)
-                    });
+            let history = super::history::closing(&frame.backend, &frame.product, &frame.directory)
+                .and_then(|history| {
+                    frame.history_identity(&history)?;
+                    Ok(history)
+                });
             let history = if frame.retirement.is_some() {
                 Ok(history?)
             } else {
@@ -345,7 +416,7 @@ fn stop(frame: &Frame) -> Result<Value> {
                 Role::Api,
                 "stop",
                 &frame.product,
-                &frame.post.runtime,
+                &frame.directory,
                 60.0,
                 &frame.environment,
             ) {
@@ -367,19 +438,12 @@ fn stop(frame: &Frame) -> Result<Value> {
                     let history = history?;
                     super::history::closed(
                         &frame.backend,
-                        &frame.post.runtime,
+                        &frame.directory,
                         &frame.runtime,
                         &history,
                     )?;
                     frame.check()?;
-                    let mut value = json!({"format_version":1,"kind":"devex-clone-runtime-control","operation":"stop",
-                "scope_id":frame.runtime["scope_id"],"runtime_directory":frame.post.runtime,
-                "processes":{"api":process(&after)},
-                "producer_history":if history.binding.is_some(){json!(frame.post.runtime.join("producer-history.json"))}else{Value::Null}});
-                    if let Some(retirement) = &frame.retirement {
-                        value["seed_retirement"] = retirement.evidence();
-                    }
-                    Ok(value)
+                    Ok(stopped_result(frame, &after, history.binding.is_some()))
                 })(),
             )
         })(),
@@ -390,6 +454,22 @@ fn stop(frame: &Frame) -> Result<Value> {
         Phase::AfterStop,
         lock.finish(&frame.backend, result),
     )
+}
+
+fn stopped_result(frame: &Frame, observed: &Value, has_history: bool) -> Value {
+    let history = has_history.then(|| frame.directory.join("producer-history.json"));
+    let mut result = json!({"format_version":1,"kind":"devex-clone-runtime-control","operation":"stop",
+        "scope_id":frame.runtime["scope_id"],"runtime_directory":frame.directory,
+        "processes":{"api":process(observed)},"producer_history":history});
+    if let Some(retirement) = &frame.retirement {
+        let mut evidence = retirement.evidence();
+        if let Some(successor) = &frame.successor {
+            evidence["successor"] = json!({"intent":successor["intent"],
+                "api_process":successor["api"],"api_tree":successor["api_tree"]});
+        }
+        result["seed_retirement"] = evidence;
+    }
+    result
 }
 
 fn process(observed: &Value) -> Value {

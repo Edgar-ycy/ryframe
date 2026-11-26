@@ -3,7 +3,7 @@ use super::super::super::{
     bridge::scope::Scope, export::transport::Transport, json as document, resources::common,
 };
 use super::super::{
-    authority,
+    authority::{self, generation::PortWindow},
     input::{request, request_physical},
     storage::{self, StorageInputs, SystemObserver},
 };
@@ -29,13 +29,23 @@ impl<T: Transport> Resources<'_, T> {
         owner: Option<&super::super::guard::Generation>,
         publish: bool,
     ) -> Result<(Value, selection::Selected, Option<Value>)> {
+        self.generation_in_window(owner, publish, PortWindow::Closed)
+    }
+
+    pub(in crate::recovery::clone::native) fn generation_in_window(
+        &self,
+        owner: Option<&super::super::guard::Generation>,
+        publish: bool,
+        window: PortWindow<'_>,
+    ) -> Result<(Value, selection::Selected, Option<Value>)> {
         storage::redis_layout::require_windows(&self.inputs.request["storage"]["redis"])?;
-        let mut generation = authority::generation::observe(
+        let mut generation = authority::generation::observe_in_window(
             self.inputs.backend,
             self.inputs.request,
             self.inputs.environment,
             &mut |root, path, value| self.scope.maintenance(root, path, value),
             &mut authority::require_closed,
+            window,
         )?;
         let (selected, cache) =
             selection::transition(self.inputs.backend, self.inputs.request, self.run, owner)?;

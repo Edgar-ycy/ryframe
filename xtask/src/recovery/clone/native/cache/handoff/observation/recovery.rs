@@ -14,8 +14,8 @@ use std::{
 };
 
 pub(super) fn run(frame: &Frame) -> Result<Value> {
-    let guard = ProcessGuard::acquire_named(&frame.post.runtime, "runtime-control.guard")?;
-    let original = Original::load(&frame.backend, &frame.post.runtime)?;
+    let guard = ProcessGuard::acquire_named(&frame.directory, "runtime-control.guard")?;
+    let original = Original::load(&frame.backend, &frame.directory)?;
     let operation = document::text(&original.owner["operation"], "原 API 操作")?;
     if frame.retirement.is_some() && operation != "stop" {
         return Err("seed 原 API 退场只回收原停止控制锁".into());
@@ -24,7 +24,7 @@ pub(super) fn run(frame: &Frame) -> Result<Value> {
     let _ = crate::recovery::full_stack::worker::controller::reconcile_completed_bound(
         crate::recovery::full_stack::worker::role::Role::Api,
         &frame.product,
-        &frame.post.runtime,
+        &frame.directory,
         &frame.environment,
         &original.owner["identity"],
         operation,
@@ -37,7 +37,7 @@ pub(super) fn run(frame: &Frame) -> Result<Value> {
     frame.check()?;
     let value = json!({"format_version":1,"kind":"devex-clone-runtime-lock-reconciliation",
         "owner":original.owner,"observed_identity":actual,"remote_writes_reconciled":false});
-    let receipt = frame.post.runtime.join(format!(
+    let receipt = frame.directory.join(format!(
         "controller-reconcile-{}.json",
         uuid::Uuid::new_v4().simple()
     ));

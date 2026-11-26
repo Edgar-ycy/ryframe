@@ -9,11 +9,15 @@ use crate::{
         clone::native::{
             json as document,
             lifecycle::{manifest, state},
+            post_process::{api_successor, runtime as post_runtime},
             resources::{common, origin},
             seed::{protocol::guards, runtime_model},
-            target_verify::{authority, input::request_configuration::canonical_path, published},
+            target_verify::{
+                authority, guard::Inputs, input::request_configuration::canonical_path, published,
+            },
         },
         fixture_control::services::history as fixture_history,
+        full_stack::worker::{controller, role::Role},
     },
 };
 
@@ -166,7 +170,7 @@ pub(crate) fn handoff(
                 &request,
             )?;
             let selected = &initial["generation"]["selected"];
-            require_quiet(backend, selected, &runtime, &close)?;
+            require_quiet(backend, &run, selected, &runtime, &close)?;
             marker_contract(selected, &request)
         })?;
     if common::binding(&state_path)? != state_binding
@@ -303,6 +307,7 @@ fn active_services(
 
 fn require_quiet(
     backend: &Path,
+    run: &Path,
     selected: &Value,
     seed: &runtime_model::Inputs,
     close: &Value,
@@ -325,6 +330,7 @@ fn require_quiet(
     if let Some(worker) = origin::receipt_file(&original.join("worker.json"))? {
         require_stopped_role(&worker, "worker", scope)?;
     }
+    require_stopped_successor(backend, run, seed)?;
     for role in ["api", "worker"] {
         let filename = format!("{role}.json");
         let receipt = origin::receipt_file(&seed.runtime.join(&filename))?
@@ -342,6 +348,52 @@ fn require_quiet(
     }
     common::bound_file(backend, original_api, "原 post-copy API 收据后像")?;
     Ok(())
+}
+
+fn require_stopped_successor(
+    backend: &Path,
+    run: &Path,
+    seed: &runtime_model::Inputs,
+) -> Result<()> {
+    let registration = common::read_bound(backend, &seed.handoff["registration"], "原 seed 登记")?;
+    let Some(successor) = api_successor::load(backend, run, &registration["post_copy"])? else {
+        return Ok(());
+    };
+    let directory = common::local_directory(
+        backend,
+        Path::new(document::text(
+            &successor["runtime_directory"],
+            "RustFS 交接的 API 后继目录",
+        )?),
+        "RustFS 交接的 API 后继目录",
+    )?;
+    let paths = [
+        ("runtime", "runtime.json"),
+        ("binaries", "binaries.json"),
+        ("api", "api.json"),
+        ("api_tree", "api-tree.json"),
+    ];
+    let protected = Inputs::open(paths.map(|(_, name)| directory.join(name)))?;
+    for (field, name) in paths {
+        if common::bound_file(backend, &successor[field], "RustFS 交接的 API 后继证据")?
+            != directory.join(name)
+        {
+            return Err("RustFS 交接的 API 后继证据不同于已发布代次".into());
+        }
+    }
+    let contract = common::read_bound(backend, &successor["runtime"], "API 后继运行合同")?;
+    let product = post_runtime::product_root(backend, &contract)?;
+    // 只读观察核对已登记的同一进程树、监督器关闭收据及原配置端口。
+    let observed = controller::observe_bound(
+        Role::Api,
+        &product,
+        &directory,
+        &seed.handoff["api_environment"],
+    )?;
+    if observed["state"] != "stopped" || !observed["identity"].is_null() {
+        return Err("RustFS 交接前必须确认已发布的 API 后继完整停止".into());
+    }
+    protected.check()
 }
 
 fn require_stopped_role(receipt: &Value, role: &str, scope: &str) -> Result<()> {

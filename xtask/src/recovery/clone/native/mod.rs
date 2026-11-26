@@ -87,6 +87,9 @@ pub(crate) fn run(command: &CloneCommand, backend: &Path) -> Result<()> {
         }
         CloneCommand::Storage(_) => resources::run(command, backend)?,
         CloneCommand::Cache(options) => cache::run(backend, options)?,
+        CloneCommand::Runtime(options) if options.operation.is_api_successor() => {
+            cache::handoff::run_api_successor(backend, options)?
+        }
         CloneCommand::Runtime(options)
             if options.operation == CloneRuntimeOperation::Status
                 && !cache::handoff::selected(backend, options)? =>

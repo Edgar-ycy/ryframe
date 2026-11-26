@@ -15,6 +15,7 @@ use super::super::{
     resources::common,
     s3::app_configuration,
     target_verify::{
+        authority::generation::PortWindow,
         fresh::{self, resources::Resources, selection::Selected},
         guard::{Generation, Inputs},
         input::request_configuration,
@@ -98,7 +99,7 @@ impl Target {
         if observed["initialized"] != manifest["initialized"] {
             return Err("复制首次复验不属于原目标初始化".into());
         }
-        self.check_current(None)?;
+        self.check_current(None, PortWindow::Closed)?;
         Ok(observed)
     }
 
@@ -106,7 +107,15 @@ impl Target {
         &self,
         owner: &Generation,
     ) -> Result<()> {
-        self.check_current(Some(owner))
+        self.check_current(Some(owner), PortWindow::Closed)
+    }
+
+    pub(in crate::recovery::clone::native) fn check_generation_for_api_successor(
+        &self,
+        owner: &Generation,
+        active_api_url: &str,
+    ) -> Result<()> {
+        self.check_current(Some(owner), PortWindow::LiveApi(active_api_url))
     }
 
     pub(in crate::recovery::clone::native) fn check_redis(&self, owner: &Generation) -> Result<()> {
@@ -121,7 +130,7 @@ impl Target {
 }
 
 impl<S: Borrow<Scope>> Target<S> {
-    pub(super) fn bind(
+    pub(in crate::recovery::clone::native) fn bind(
         backend: &Path,
         manifest: &Value,
         storage_run: &Path,
@@ -135,6 +144,27 @@ impl<S: Borrow<Scope>> Target<S> {
             storage_run,
             observation_directory,
             owner,
+            PortWindow::Closed,
+            scope,
+        )
+    }
+
+    pub(in crate::recovery::clone::native) fn bind_for_api_successor(
+        backend: &Path,
+        manifest: &Value,
+        storage_run: &Path,
+        observation_directory: &Path,
+        owner: Option<&Generation>,
+        active_api_url: &str,
+        scope: impl FnOnce() -> Result<S>,
+    ) -> Result<Self> {
+        Self::bind_history(
+            backend,
+            TargetBinding::Copy(manifest.clone()),
+            storage_run,
+            observation_directory,
+            owner,
+            PortWindow::LiveApi(active_api_url),
             scope,
         )
     }
@@ -145,6 +175,7 @@ impl<S: Borrow<Scope>> Target<S> {
         storage_run: &Path,
         observation_directory: &Path,
         owner: Option<&Generation>,
+        window: PortWindow<'_>,
         scope: impl FnOnce() -> Result<S>,
     ) -> Result<Self> {
         let history = History::read(backend, &binding, owner)?;
@@ -172,6 +203,7 @@ impl<S: Borrow<Scope>> Target<S> {
             scope.borrow(),
             &storage_run,
             owner,
+            window,
         )?;
         history.unchanged(backend, &binding, owner)?;
         if tree::protected_snapshot(backend, &history.target, owner)? != before
@@ -247,7 +279,7 @@ impl<S: Borrow<Scope>> Target<S> {
         Ok(history)
     }
 
-    fn check_current(&self, owner: Option<&Generation>) -> Result<()> {
+    fn check_current(&self, owner: Option<&Generation>, window: PortWindow<'_>) -> Result<()> {
         self.check_inputs()?;
         let history = self.history(owner)?;
         let (generation, selected, cache) = observe(
@@ -257,6 +289,7 @@ impl<S: Borrow<Scope>> Target<S> {
             self.scope.borrow(),
             &self.storage_run,
             owner,
+            window,
         )?;
         if generation != self.observed_generation
             || selected.value != self.storage.value
@@ -339,6 +372,7 @@ impl<'a> ReferenceTarget<'a> {
                     &storage.directory,
                     &observation,
                     None,
+                    PortWindow::Closed,
                     || Ok(scope),
                 )?;
                 if target.storage_run != storage.directory
@@ -357,7 +391,10 @@ impl<'a> ReferenceTarget<'a> {
     }
 
     pub(crate) fn check(&self) -> Result<()> {
-        reference_fence(|| self.check_storage(), || self.target.check_current(None))
+        reference_fence(
+            || self.check_storage(),
+            || self.target.check_current(None, PortWindow::Closed),
+        )
     }
 
     pub(crate) fn checkpoint(&self) -> Result<()> {
@@ -368,7 +405,7 @@ impl<'a> ReferenceTarget<'a> {
         reference_fence(
             || self.check_storage(),
             || {
-                self.target.check_current(None)?;
+                self.target.check_current(None, PortWindow::Closed)?;
                 let observed = self.target.read_redis()?;
                 self.target.check_inputs()?;
                 Ok(observed)
@@ -441,6 +478,7 @@ fn observe(
     scope: &Scope,
     storage_run: &Path,
     owner: Option<&Generation>,
+    window: PortWindow<'_>,
 ) -> Result<(Value, Selected, Option<Value>)> {
     let backend = inputs.backend;
     let active = history.active_storage(backend, binding, storage_run, owner)?;
@@ -455,7 +493,7 @@ fn observe(
         scope,
         run: active.as_deref(),
     };
-    let (generation, selected, cache) = resources.generation_owned(owner, false)?;
+    let (generation, selected, cache) = resources.generation_in_window(owner, false, window)?;
     storage::generation::validate_complete(
         &history.initialized["generation"],
         &generation,

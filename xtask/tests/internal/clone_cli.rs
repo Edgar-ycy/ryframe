@@ -294,6 +294,56 @@ fn parses_service_controls_without_ambiguous_roles_or_requests() {
 }
 
 #[test]
+fn api_successor_requires_target_api_and_explicit_write() {
+    let fixture = Fixture::new();
+    for (name, operation, effect) in [
+        (
+            "restart-api",
+            CloneRuntimeOperation::RestartApi,
+            CloneEffect::BusinessWrite,
+        ),
+        (
+            "reconcile-api",
+            CloneRuntimeOperation::ReconcileApi,
+            CloneEffect::EvidenceWrite,
+        ),
+    ] {
+        let parse = |side, extra: &[&str]| {
+            let mut args = vec![
+                "runtime",
+                "--run-dir",
+                Fixture::value(&fixture.run),
+                "--side",
+                side,
+                "--operation",
+                name,
+            ];
+            args.extend_from_slice(extra);
+            fixture.parse(&args)
+        };
+        assert!(parse("target", &[]).is_err());
+        let CloneCommand::Runtime(parsed) = parse("target", &["--write"]).unwrap() else {
+            panic!("runtime 类型错误");
+        };
+        assert_eq!(parsed.operation, operation);
+        assert_eq!(parsed.operation.as_str(), name);
+        assert_eq!(parsed.operation.effect(), effect);
+        assert_eq!(parsed.roles, [CloneRole::Api]);
+
+        assert!(parse("target", &["--write", "--roles", "api"]).is_ok());
+        assert!(parse("target", &["--write", "--roles", "api", "worker"]).is_err());
+        assert!(parse("source", &["--write"]).is_err());
+        assert!(
+            parse(
+                "target",
+                &["--write", "--request", Fixture::value(&fixture.first)]
+            )
+            .is_err()
+        );
+    }
+}
+
+#[test]
 fn post_copy_held_originals_require_supported_windows_operations() {
     let fixture = Fixture::new();
     let run = Fixture::value(&fixture.run);

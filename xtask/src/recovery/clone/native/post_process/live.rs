@@ -1,26 +1,29 @@
 //! 同一原生控制窗口核对角色配置、Worker 停止、存储及业务阶段的活动 API。
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 
 use serde_json::{Value, json};
 
-use super::{context::Context, files, images, inspection, runtime, schedule_images};
+use super::{api_successor, context::Context, files, images, inspection, runtime, schedule_images};
 use crate::{
     Result,
-    recovery::clone::native::{
-        copy_transfer::observe_source::ReadWindow,
-        export::transport::SystemTransport,
-        input::BUCKETS,
-        json as document,
-        lifecycle::state,
-        resources::common,
-        s3::app_configuration,
-        target_verify::{
-            self, guard::Inputs, input::request_configuration, storage::StorageInputs,
+    recovery::{
+        clone::native::{
+            copy_transfer::observe_source::ReadWindow,
+            export::transport::SystemTransport,
+            input::BUCKETS,
+            json as document,
+            lifecycle::state,
+            resources::common,
+            s3::app_configuration,
+            target_verify::{
+                self, guard::Inputs, input::request_configuration, storage::StorageInputs,
+            },
         },
+        full_stack::worker::controller,
     },
 };
 
@@ -33,6 +36,7 @@ pub(super) struct Live<'a, 'c> {
     environment: BTreeMap<String, String>,
     runtime: Value,
     api: Value,
+    successor: Option<ActiveSuccessor>,
     roles: RoleWindow,
     files: Inputs,
 }
@@ -55,7 +59,11 @@ impl<'a, 'c> Live<'a, 'c> {
         let mut source_request = context.source.request.clone();
         source_request["target"] = context.source.request["source"].clone();
         source_request["execution_backend"] = json!({"path":context.source.execution_backend});
-        let (runtime, api, files) = api_bindings(context, &product)?;
+        let (runtime, original_api, files) = api_bindings(context, &product)?;
+        let successor = ActiveSuccessor::load(context)?;
+        let api = successor
+            .as_ref()
+            .map_or(original_api, |active| active.tree["process"].clone());
         let guard = Self {
             context,
             execution,
@@ -65,6 +73,7 @@ impl<'a, 'c> Live<'a, 'c> {
             environment,
             runtime,
             api,
+            successor,
             roles: RoleWindow::select(context.stage, context.mode),
             files,
         };
@@ -93,10 +102,13 @@ impl<'a, 'c> Live<'a, 'c> {
     pub(super) fn checkpoint(&self) -> Result<()> {
         self.context.owner.checkpoint()?;
         self.files.checkpoint()?;
-        if self.roles == RoleWindow::OriginalApi {
+        if let Some(successor) = &self.successor {
+            successor.protected.checkpoint()?;
+        }
+        if self.roles == RoleWindow::ActiveApi {
             let pid = process_id(&self.api)?;
             if common::process_identity(pid)?.as_ref() != Some(&self.api) {
-                return Err("目标 API 原进程已退出或身份变化".into());
+                return Err("目标活动 API 进程已退出或身份变化".into());
             }
         }
         Ok(())
@@ -156,8 +168,11 @@ impl<'a, 'c> Live<'a, 'c> {
             return Err("API 运行合同或角色配置发生变化".into());
         }
         self.checkpoint()?;
-        if self.roles != RoleWindow::OriginalApi {
+        if self.roles != RoleWindow::ActiveApi {
             return Ok(());
+        }
+        if let Some(successor) = &self.successor {
+            successor.check(&self.runtime)?;
         }
         inspection::require_actual_argv(
             &self.api,
@@ -202,9 +217,78 @@ impl<'a, 'c> Live<'a, 'c> {
     }
 }
 
+struct ActiveSuccessor {
+    directory: PathBuf,
+    tree: Value,
+    protected: Inputs,
+}
+
+impl ActiveSuccessor {
+    fn load(context: &Context<'_>) -> Result<Option<Self>> {
+        let backend = context.backend;
+        let Some(publication) =
+            api_successor::load(backend, context.run, &context.post.descriptor)?
+        else {
+            return Ok(None);
+        };
+        let published = context
+            .run
+            .join("post-copy")
+            .join("api-successors")
+            .join("published.json");
+        let mut paths = BTreeSet::from([published.clone()]);
+        files::bindings(backend, &publication, &mut paths)?;
+        let protected = Inputs::open(paths)?;
+        files::bindings(backend, &publication, &mut BTreeSet::new())?;
+        if document::read(&published)? != publication {
+            return Err("活动 API 后继发布在取得保护前变化".into());
+        }
+        let directory = PathBuf::from(document::text(
+            &publication["runtime_directory"],
+            "活动 API 后继运行目录",
+        )?);
+        let tree = common::read_bound(backend, &publication["api_tree"], "活动 API 后继进程树")?;
+        protected.check()?;
+        Ok(Some(Self {
+            directory,
+            tree,
+            protected,
+        }))
+    }
+
+    fn check(&self, original_contract: &Value) -> Result<()> {
+        self.protected.check()?;
+        self.require_no_pending()?;
+        // 两份运行合同和产物清单的原始字节相同，仍由外层核对原配置及产物。
+        controller::require_api_tree(&self.directory, original_contract)?;
+        for member in ["process", "supervisor", "monitor"] {
+            let identity = &self.tree[member];
+            if common::process_identity(process_id(identity)?)?.as_ref() != Some(identity) {
+                return Err("已发布 API 后继的实际进程或监督树已变化".into());
+            }
+        }
+        self.require_no_pending()?;
+        self.protected.check()
+    }
+
+    fn require_no_pending(&self) -> Result<()> {
+        for name in [
+            "api-control.lock",
+            "worker-control.lock",
+            "worker.json",
+            "worker-tree.json",
+            "source-pair.json",
+            "runtime-evidence.json",
+        ] {
+            files::absent(&self.directory.join(name))?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RoleWindow {
-    OriginalApi,
+    ActiveApi,
     SeedPrepare,
     SeedRuntime,
 }
@@ -214,7 +298,7 @@ impl RoleWindow {
         match (stage, mode) {
             ("seed-runtime", "prepare") => Self::SeedPrepare,
             ("seed-runtime", "start" | "close") => Self::SeedRuntime,
-            _ => Self::OriginalApi,
+            _ => Self::ActiveApi,
         }
     }
 }
@@ -322,11 +406,11 @@ mod tests {
 
     #[test]
     fn only_seed_lifecycle_allows_the_new_worker_to_occupy_its_port() {
-        use RoleWindow::{OriginalApi, SeedPrepare, SeedRuntime};
+        use RoleWindow::{ActiveApi, SeedPrepare, SeedRuntime};
         assert!(RoleWindow::select("seed-runtime", "start") == SeedRuntime);
         assert!(RoleWindow::select("seed-runtime", "close") == SeedRuntime);
         assert!(RoleWindow::select("seed-runtime", "prepare") == SeedPrepare);
-        assert!(RoleWindow::select("seed-runtime", "departments-apply") == OriginalApi);
-        assert!(RoleWindow::select("post-copy", "prepare") == OriginalApi);
+        assert!(RoleWindow::select("seed-runtime", "departments-apply") == ActiveApi);
+        assert!(RoleWindow::select("post-copy", "prepare") == ActiveApi);
     }
 }

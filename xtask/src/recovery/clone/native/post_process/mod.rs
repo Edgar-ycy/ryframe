@@ -1,6 +1,7 @@
 //! 复制后处理生产者的计划、证据核验、精确回收和私有协议。
 
 pub(crate) mod amend;
+pub(in crate::recovery::clone::native) mod api_successor;
 mod business_binding;
 pub(crate) mod command;
 mod context;

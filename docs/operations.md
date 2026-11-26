@@ -190,6 +190,10 @@ B0 后端构建仍由当前受信任工具执行，但 `--source-backend` 必须
 
 目标对象最终 HEAD 和参考恢复资源像在发布前后检查本次绑定的子对象证据目录中是否存在失败标记。复制后业务核验先读取完整五桶范围。移交结果前，用本地证据复核五桶观察目录的身份，以及各补集对象的原目录身份、观察与采集收据、证据文件集合、字节数和摘要。该复核不发起新的 S3 请求。证据缺失、发生变化或目录出现 `failure.json` 时，阶段失败。保留已写出的原响应和收据，按对应阶段的失败证据核查现场。
 
+已经开始复制后业务核验的 Windows 运行发生 API 监督清理事故时，先沿原夹具账本完成 Redis 接续和该事故绑定的目标标记确认。`cargo xtask check recovery clone runtime --run-dir <原运行> --side target --operation restart-api --write` 仅启动 API。独立后继目录继承原二进制和配置，启动前绑定旧停止失败、原运行身份、标记收据及唯一预留 ID。旧角色、业务登记和种子历史仍保留原文件。
+
+启动结果未知时先核对原阶段和预留。外层控制器遗留运行锁时，用现有 `clone recover` 绑定该阶段的 `controller-NNNN.json` 收口原控制器。随后用 `cargo xtask check recovery clone runtime --run-dir <原运行> --side target --operation reconcile-api --write` 核对原预留的成功结果和实际进程及监听归属。若结果仍未知，保留现场。后继发布后，`status` 查询实际代次。Seed 启动前仍须按原顺序完成准备和后继 API 的受管关闭，核对后继监督树及原角色保留证据。
+
 ### 指标与告警
 
 API 与 Worker 的备份采集器每 60 秒读取控制库汇总，整次采集最多等待 10 秒，输出到现有 Prometheus 指标接口。运行时监控页显示采集状态、必需及异常资源、最近恢复结果与耗时；未知、失败和陈旧状态不表示当前数据可用，保留的有效快照仅供诊断。备份故障独立展示和告警，不改变 API readiness。 `ryframe_backup_last_success_timestamp_seconds` 取所有必需目标的最旧有效备份采集时间，重新登记旧备份不会刷新恢复点。`ryframe_backup_resources` 使用固定的 required/missing/expired/invalid 维度，`ryframe_backup_collector_up` 表示采集成功与否，`ryframe_backup_collector_last_success_timestamp_seconds` 记录最近成功读取汇总的时间；后者缺失或超过 150 秒会触发采集告警，不能用它替代备份恢复点。恢复指标包括最新完成结果、耗时、恢复点年龄和 running/overdue 汇总。指标没有租户、端点或对象键标签。

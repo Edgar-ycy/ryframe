@@ -333,27 +333,42 @@ fn objects(inputs: &StorageInputs<'_>) -> Result<()> {
 }
 
 fn api(frame: &Frame) -> Result<()> {
-    let observed = worker::controller::observe(Role::Api, &frame.product, &frame.post.runtime)?;
+    live_api(
+        &frame.backend,
+        &frame.product,
+        &frame.post.runtime,
+        &frame.runtime,
+    )
+    .map(|_| ())
+}
+
+pub(super) fn live_api(
+    backend: &Path,
+    product: &Path,
+    directory: &Path,
+    runtime: &Value,
+) -> Result<Value> {
+    let observed = worker::controller::observe(Role::Api, product, directory)?;
     if observed["state"] != "running"
-        || observed["identity"]["executable"] != frame.runtime["artifacts"]["api"]["path"]
+        || observed["identity"]["executable"] != runtime["artifacts"]["api"]["path"]
     {
         return Err("API实际内核身份、完整监督树或产物不同于冻结交接".into());
     }
     let actual = target_verify::storage::protocol::arguments(
-        &frame.backend,
-        &frame.post.runtime,
-        &common::binding(&frame.post.runtime.join("api.json"))?,
+        backend,
+        directory,
+        &common::binding(&directory.join("api.json"))?,
         &observed["identity"],
     )?;
     let expected = json!([
-        frame.runtime["artifacts"]["api"]["path"],
+        runtime["artifacts"]["api"]["path"],
         "--config-dir",
-        frame.runtime["api_config_dir"]
+        runtime["api_config_dir"]
     ]);
     if actual["actual_arguments_sha256"] != digest::plan_hash(&expected)? {
         return Err("API完整实际参数不同于冻结产物和明确配置目录".into());
     }
-    Ok(())
+    Ok(observed)
 }
 
 pub(super) fn absent(path: &Path) -> Result<()> {

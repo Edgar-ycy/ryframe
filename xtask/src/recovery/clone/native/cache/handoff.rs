@@ -26,6 +26,8 @@ mod input;
 pub(crate) mod locks;
 mod observation;
 pub(crate) mod registration;
+mod successor;
+pub(crate) use successor::run as run_api_successor;
 
 pub(crate) fn selected(backend: &Path, options: &CloneRuntimeOptions) -> Result<bool> {
     if options.side != CloneSide::Target {

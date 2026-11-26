@@ -100,6 +100,32 @@ pub(crate) fn state_with_observer(
     })
 }
 
+/// 活动 API 可以填充缓存；只核对同代 Redis 的两个已确认归属标记。
+pub(in crate::recovery::clone::native) fn verify_live_markers(
+    inputs: &super::storage::StorageInputs<'_>,
+    redis: &Value,
+    expected: &Value,
+    observer: &impl StorageObserver,
+) -> Result<()> {
+    observer.redis_window(inputs, redis, |command| {
+        let scope = inputs.target_scope()?;
+        let owner = get(command, &format!("ryframe:{{{scope}}}:.ryframe-owner"))?;
+        let sentinel = get(
+            command,
+            super::super::json::text(&inputs.request["reset"]["sentinel_key"], "Redis sentinel")?,
+        )?;
+        if owner.is_none()
+            || sentinel.is_none()
+            || json!(owner) != expected["owner"]
+            || json!(sentinel) != expected["sentinel"]
+            || !info_matches(redis, &command(&["INFO", "server"])?)?
+        {
+            return Err("活动 API 所用 Redis 代次、owner 或 sentinel 不同于确认后像".into());
+        }
+        Ok(())
+    })
+}
+
 pub(super) fn state(
     inputs: &super::storage::StorageInputs<'_>,
     initialized: bool,
