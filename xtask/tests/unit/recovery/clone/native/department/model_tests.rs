@@ -110,6 +110,9 @@ fn image_rejects_bad_ids_wildcards_subject_changes_and_partial_pages() {
         value["list"]["response"]["data"][field] = json!(true);
         assert!(model::image(&action(), &value, &target()).is_err());
     }
+    let mut inconsistent_page = observed(false);
+    inconsistent_page["list"]["response"]["data"]["total_pages"] = json!(1);
+    assert!(model::image(&action(), &inconsistent_page, &target()).is_err());
     for segment in ["list", "template"] {
         let mut value = observed(false);
         value[segment]["authorization"]["permissions"] =

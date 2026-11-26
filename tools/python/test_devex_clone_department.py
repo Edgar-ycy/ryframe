@@ -423,17 +423,13 @@ class DepartmentTests(unittest.TestCase):
         self.assertFalse(any(attempt.glob("reconcile-*.json")))
 
 
-    def test_template_path_drift_and_inconsistent_page_metadata_fail_before_write(self):
+    def test_template_path_drift_fails_before_department_write(self):
         self.run_mode("departments-plan")
         tenant = self.targets[0]["tenant_id"]
         self.bridge.template_extra[tenant] = ["意外可用路径"]
         with self.assertRaises(ValueError):
             self.run_mode("departments-apply")
         self.assertFalse(any(item[0] == "create" for item in self.bridge.calls))
-        page = self.bridge.page([])
-        page["data"]["total_pages"] = 1
-        with self.assertRaises(ValueError):
-            model.page_data(page, directory=self.directory)
 
     def test_model_input_cleanup_on_failure_or_cancel_preserves_unknown_write_evidence(self):
         marker = self.directory / "unknown-write.json"
