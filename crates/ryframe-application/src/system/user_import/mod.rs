@@ -74,3 +74,31 @@ fn orphan_cleanup_deadline(now: OffsetDateTime) -> AppResult<OffsetDateTime> {
     now.checked_add(Duration::minutes(IMPORT_ORPHAN_CLEANUP_GRACE_MINUTES))
         .ok_or_else(|| AppError::Database("文件时间无法精确表示为 UTC".into()))
 }
+
+#[cfg(test)]
+mod import_row_tests {
+    use super::*;
+
+    #[test]
+    fn exception_rows_reject_unrepresentable_batch_time_only_when_present() {
+        for invalid in [
+            time::Date::MIN
+                .midnight()
+                .assume_offset(time::macros::offset!(+01:00)),
+            time::Date::MAX
+                .with_hms(23, 59, 59)
+                .unwrap()
+                .assume_offset(time::macros::offset!(-01:00)),
+        ] {
+            assert!(
+                build_issue_records(Vec::new(), "tenant-a", 7, invalid)
+                    .unwrap()
+                    .is_empty()
+            );
+            let issue = RowIssue::skipped(3, "tester", "already_exists", "用户已存在");
+            let error = build_issue_records(vec![issue], "tenant-a", 7, invalid).unwrap_err();
+            assert!(matches!(error, AppError::Database(message)
+                if message.starts_with("用户导入异常行创建时间无法精确表示为 UTC")));
+        }
+    }
+}

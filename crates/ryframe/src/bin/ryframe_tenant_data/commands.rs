@@ -125,7 +125,8 @@ pub async fn execute(
 
 pub async fn status(config: &AppConfig, repository: &dyn BackupRepository) -> AppResult<()> {
     let resources = repository.required_resources().await?;
-    let now = repository.database_now().await?;
+    let now = utc_timestamp::from_chrono(repository.database_now().await?)
+        .map_err(|_| AppError::Database("备份健康时间超出 UTC 表示范围".into()))?;
     print_json(
         &repository
             .health(config.scope_id.as_str(), &resources, now)
