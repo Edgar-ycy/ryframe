@@ -5,8 +5,11 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use chrono::NaiveDate;
 use serde_json::{Value, json};
+use time::{
+    Date,
+    macros::{date, format_description},
+};
 
 use super::check::{
     CheckExecutionState, CheckPlanMode, PolicyProfile, TaskExecutionMode, TaskExecutor,
@@ -26,8 +29,8 @@ fn findings(value: &Value) -> BTreeSet<Finding> {
     serde_json::from_value(value.clone()).unwrap()
 }
 
-fn today() -> NaiveDate {
-    NaiveDate::from_ymd_opt(2026, 10, 17).unwrap()
+fn today() -> i32 {
+    date!(2026 - 10 - 17).to_julian_day()
 }
 
 #[test]
@@ -132,9 +135,13 @@ fn prerelease_allowlist_preserves_original_cases_with_two_strict_schema_rejectio
                 .map(|entry| {
                     let finding: Finding =
                         serde_json::from_value(entry["finding"].clone()).unwrap();
-                    let date =
-                        NaiveDate::parse_from_str(string(entry, "date"), "%Y-%m-%d").unwrap();
-                    (finding, date)
+                    let day = Date::parse(
+                        string(entry, "date"),
+                        format_description!("[year]-[month]-[day]"),
+                    )
+                    .unwrap()
+                    .to_julian_day();
+                    (finding, day)
                 })
                 .collect::<BTreeMap<_, _>>();
             assert_eq!(parsed.unwrap(), expected, "{case}");
@@ -146,6 +153,55 @@ fn prerelease_allowlist_preserves_original_cases_with_two_strict_schema_rejectio
             .unwrap_err()
             .to_string();
         assert!(!error.contains("secret"));
+    }
+}
+
+#[test]
+fn prerelease_review_date_preserves_legacy_week_boundaries() {
+    for (input, expected) in [
+        ("2026- 1-01", Some(date!(2026 - 01 - 01).to_julian_day())),
+        ("+026-01-01", Some(date!(0026 - 01 - 01).to_julian_day())),
+        ("2026W1 1", Some(date!(2025 - 12 - 29).to_julian_day())),
+        ("2026W 1", None),
+        ("0000-W01-1", None),
+        ("0000W011", None),
+        ("0000-W01", Some(date!(0000 - 01 - 03).to_julian_day())),
+        ("0000W01", Some(date!(0000 - 01 - 03).to_julian_day())),
+        (
+            "9999-W52-7",
+            Some(date!(9999 - 12 - 31).to_julian_day() + 2),
+        ),
+        ("9999W527", Some(date!(9999 - 12 - 31).to_julian_day() + 2)),
+    ] {
+        let source = json!({
+            "schema": 1,
+            "entries": [{
+                "ecosystem": "cargo",
+                "name": "review-date-probe",
+                "version": "1.0.0-rc.1",
+                "source": "Cargo.lock",
+                "review_after": input,
+                "reason": "测试预发布复审日期",
+                "evidence": "https://example.test/review-date",
+            }],
+        });
+        let result = prerelease::parse_allowlist(&source.to_string());
+        if let Some(day) = expected {
+            assert_eq!(
+                result.unwrap(),
+                BTreeMap::from([(
+                    Finding::new("cargo", "review-date-probe", "1.0.0-rc.1", "Cargo.lock"),
+                    day,
+                )]),
+                "{input:?}",
+            );
+        } else {
+            let error = result.unwrap_err().to_string();
+            assert!(
+                error.ends_with("review_after 必须是 ISO 日期"),
+                "{input:?}: {error}"
+            );
+        }
     }
 }
 
@@ -180,14 +236,14 @@ fn prerelease_evaluation_preserves_sorting_stale_entries_and_inclusive_due_date(
     assert_eq!(evaluation.stale, [stale]);
     assert_eq!(evaluation.expired, [first]);
     assert!(
-        prerelease::evaluate(&values, &allowed, today().pred_opt().unwrap())
+        prerelease::evaluate(&values, &allowed, today() - 1)
             .expired
             .is_empty()
     );
     let allowed = values
         .iter()
         .cloned()
-        .map(|finding| (finding, today().succ_opt().unwrap()))
+        .map(|finding| (finding, today() + 1))
         .collect();
     let evaluation = prerelease::evaluate(&values, &allowed, today());
     assert!(

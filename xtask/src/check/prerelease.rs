@@ -7,9 +7,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use chrono::{Local, NaiveDate};
+use chrono::{Datelike, Local};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use time::{Date, Month, Weekday, macros::date};
 
 use crate::{Result, process::PreservedFailure};
 
@@ -19,6 +20,7 @@ pub(crate) mod deployment;
 pub(crate) mod version;
 
 const ALLOWLIST: &str = "scripts/prerelease_dependency_allowlist.json";
+const LAST_DAY_BEFORE_COMMON_ERA: i32 = date!(0001 - 01 - 01).to_julian_day() - 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub(crate) struct Finding {
@@ -39,7 +41,8 @@ impl Finding {
     }
 }
 
-pub(crate) type Allowlist = BTreeMap<Finding, NaiveDate>;
+/// 复审日期以儒略日保存，使跨出公历 9999 年的 ISO 周仍可参与排序。
+pub(crate) type Allowlist = BTreeMap<Finding, i32>;
 
 fn invalid(source: &str, reason: &str) -> Box<dyn std::error::Error> {
     format!("预发布依赖输入无效：{source}：{reason}").into()
@@ -92,26 +95,83 @@ pub(crate) fn parse_allowlist(source: &str) -> Result<Allowlist> {
     Ok(allowed)
 }
 
-fn parse_date(value: &str) -> Option<NaiveDate> {
-    // Python date.fromisoformat 同时接受基本格式和 ISO 周日期。
-    let format = match value.len() {
-        8 if value.bytes().all(|b| b.is_ascii_digit()) => "%Y%m%d",
+fn parse_date(value: &str) -> Option<i32> {
+    let day = match value.len() {
+        8 if value.bytes().all(|b| b.is_ascii_digit()) => calendar_day(value, ""),
         10 if value.as_bytes().get(4) == Some(&b'-') && value.as_bytes().get(7) == Some(&b'-') => {
-            "%Y-%m-%d"
+            calendar_day(value, "-")
         }
-        10 if value.as_bytes().get(5) == Some(&b'W') => "%G-W%V-%u",
-        8 if value.as_bytes().get(4) == Some(&b'W') => "%GW%V%u",
+        10 if value.as_bytes().get(5) == Some(&b'W') => iso_week_day(value, "-W", "-"),
+        8 if value.as_bytes().get(4) == Some(&b'W') => iso_week_day(value, "W", ""),
+        // 隐式星期一按原格式追加；这两个历史分支也保留公元前及零年的结果。
         8 if value.as_bytes().get(5) == Some(&b'W') => {
-            return NaiveDate::parse_from_str(&format!("{value}-1"), "%G-W%V-%u").ok();
+            return iso_week_day(&format!("{value}-1"), "-W", "-");
         }
         7 if value.as_bytes().get(4) == Some(&b'W') => {
-            return NaiveDate::parse_from_str(&format!("{value}1"), "%GW%V%u").ok();
+            return iso_week_day(&format!("{value}1"), "W", "");
         }
         _ => return None,
-    };
-    NaiveDate::parse_from_str(value, format)
+    }?;
+    (day > LAST_DAY_BEFORE_COMMON_ERA).then_some(day)
+}
+
+fn calendar_day(mut input: &str, separator: &str) -> Option<i32> {
+    let year = parse_year(&mut input)?;
+    input = input.strip_prefix(separator)?;
+    let month = Month::try_from(date_number(&mut input, 2)?).ok()?;
+    input = input.strip_prefix(separator)?;
+    let day = date_number(&mut input, 2)?;
+    if !input.is_empty() {
+        return None;
+    }
+    Date::from_calendar_date(year, month, day)
         .ok()
-        .filter(|date| chrono::Datelike::year(date) > 0)
+        .map(Date::to_julian_day)
+}
+
+fn iso_week_day(mut input: &str, week_prefix: &str, weekday_prefix: &str) -> Option<i32> {
+    let year = parse_year(&mut input)?;
+    input = input.strip_prefix(week_prefix)?;
+    let week = date_number(&mut input, 2)?;
+    input = input.strip_prefix(weekday_prefix)?;
+    let weekday = date_number(&mut input, 1)?;
+    if !input.is_empty() || !(1..=7).contains(&weekday) {
+        return None;
+    }
+    // 先验证 ISO 周的星期一，日序可表达第 9999 年末周跨到下一年的结果。
+    let monday = Date::from_iso_week_date(year, week, Weekday::Monday).ok()?;
+    Some(monday.to_julian_day() + i32::from(weekday - 1))
+}
+
+fn parse_year(input: &mut &str) -> Option<i32> {
+    *input = (*input).trim_start();
+    let value = *input;
+    let sign = match value.as_bytes().first() {
+        Some(b'+') => 1,
+        Some(b'-') => -1,
+        _ => return digits(input, 4)?.parse().ok(),
+    };
+    *input = &value[1..];
+    // 年份的符号之后不再跳过空白，显式符号也解除原四位读取宽度。
+    let year: i32 = digits(input, usize::MAX)?.parse().ok()?;
+    year.checked_mul(sign)
+}
+
+fn date_number(input: &mut &str, width: usize) -> Option<u8> {
+    *input = (*input).trim_start();
+    digits(input, width)?.parse().ok()
+}
+
+fn digits<'a>(input: &mut &'a str, width: usize) -> Option<&'a str> {
+    let value = *input;
+    let count = value
+        .bytes()
+        .take(width)
+        .take_while(u8::is_ascii_digit)
+        .count();
+    let (number, remaining) = value.split_at(count);
+    *input = remaining;
+    (!number.is_empty()).then_some(number)
 }
 
 fn read(root: &Path, relative: &str) -> Result<String> {
@@ -231,7 +291,7 @@ pub(crate) struct Evaluation {
 pub(crate) fn evaluate(
     findings: &BTreeSet<Finding>,
     allowed: &Allowlist,
-    today: NaiveDate,
+    today: i32,
 ) -> Evaluation {
     Evaluation {
         unexpected: findings
@@ -252,7 +312,7 @@ pub(crate) fn evaluate(
     }
 }
 
-pub(crate) fn check(root: &Path, today: NaiveDate) -> Result<Vec<String>> {
+pub(crate) fn check(root: &Path, today: i32) -> Result<Vec<String>> {
     let allowed = parse_allowlist(&read(root, ALLOWLIST)?)?;
     let findings = collect(root)?;
     let evaluation = evaluate(&findings, &allowed, today);
@@ -280,8 +340,9 @@ pub(crate) fn check(root: &Path, today: NaiveDate) -> Result<Vec<String>> {
 }
 
 pub(crate) fn run(root: &Path) -> Result<()> {
-    let errors = check(root, Local::now().date_naive())
-        .map_err(|error| PreservedFailure::new(error.to_string(), Some(1)))?;
+    let today = Local::now().date_naive().num_days_from_ce() + LAST_DAY_BEFORE_COMMON_ERA;
+    let errors =
+        check(root, today).map_err(|error| PreservedFailure::new(error.to_string(), Some(1)))?;
     if !errors.is_empty() {
         return Err(PreservedFailure::new(errors.join("\n"), Some(1)).into());
     }
