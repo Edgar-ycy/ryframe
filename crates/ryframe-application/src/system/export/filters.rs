@@ -1,8 +1,9 @@
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 use super::{EXPORT_STATUS_SUCCEEDED, RequestExportCommand};
+use crate::ports::utc_timestamp;
 
 /// 用户导出的规范化筛选条件。
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -103,8 +104,18 @@ pub struct OperLogExportFilter {
     ids: Option<Vec<i64>>,
     oper_name: Option<String>,
     status: Option<String>,
-    begin_time: Option<DateTime<Utc>>,
-    end_time: Option<DateTime<Utc>>,
+    #[serde(
+        default,
+        serialize_with = "utc_timestamp::serialize_optional",
+        deserialize_with = "utc_timestamp::deserialize_optional"
+    )]
+    begin_time: Option<OffsetDateTime>,
+    #[serde(
+        default,
+        serialize_with = "utc_timestamp::serialize_optional",
+        deserialize_with = "utc_timestamp::deserialize_optional"
+    )]
+    end_time: Option<OffsetDateTime>,
 }
 
 impl OperLogExportFilter {
@@ -132,11 +143,11 @@ impl OperLogExportFilter {
         self.status.as_deref()
     }
 
-    pub const fn begin_time(&self) -> Option<DateTime<Utc>> {
+    pub const fn begin_time(&self) -> Option<OffsetDateTime> {
         self.begin_time
     }
 
-    pub const fn end_time(&self) -> Option<DateTime<Utc>> {
+    pub const fn end_time(&self) -> Option<OffsetDateTime> {
         self.end_time
     }
 
@@ -157,8 +168,18 @@ pub struct LoginLogExportFilter {
     ids: Option<Vec<i64>>,
     user_name: Option<String>,
     status: Option<String>,
-    begin_time: Option<DateTime<Utc>>,
-    end_time: Option<DateTime<Utc>>,
+    #[serde(
+        default,
+        serialize_with = "utc_timestamp::serialize_optional",
+        deserialize_with = "utc_timestamp::deserialize_optional"
+    )]
+    begin_time: Option<OffsetDateTime>,
+    #[serde(
+        default,
+        serialize_with = "utc_timestamp::serialize_optional",
+        deserialize_with = "utc_timestamp::deserialize_optional"
+    )]
+    end_time: Option<OffsetDateTime>,
 }
 
 impl LoginLogExportFilter {
@@ -186,11 +207,11 @@ impl LoginLogExportFilter {
         self.status.as_deref()
     }
 
-    pub const fn begin_time(&self) -> Option<DateTime<Utc>> {
+    pub const fn begin_time(&self) -> Option<OffsetDateTime> {
         self.begin_time
     }
 
-    pub const fn end_time(&self) -> Option<DateTime<Utc>> {
+    pub const fn end_time(&self) -> Option<OffsetDateTime> {
         self.end_time
     }
 

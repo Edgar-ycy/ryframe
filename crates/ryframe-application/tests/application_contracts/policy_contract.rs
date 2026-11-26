@@ -8,7 +8,7 @@ use ryframe_application::{
     system::{identity::RoleOptionPurpose, operations::parse_log_time_range},
 };
 use ryframe_kernel::AppError;
-use time::macros::datetime;
+use time::{UtcOffset, macros::datetime};
 
 fn role(code: &str, is_super: bool) -> IdentityRoleRecord {
     IdentityRoleRecord {
@@ -117,29 +117,54 @@ fn persisted_schedule_validation_uses_application_values() {
 #[test]
 fn log_time_range_is_strict_and_normalized() {
     let (begin, end) = parse_log_time_range(
-        Some(" 2026-08-20T10:00:00+08:00 "),
-        Some("2026-08-20T03:00:00Z"),
+        Some(" 1970-01-01 07:59:59.123456789+08:00 "),
+        Some("1969-12-31t23:59:59.123456789z"),
     )
-    .expect("有效时间区间应通过");
-    assert_eq!(
-        begin.map(|time| time.to_rfc3339()),
-        Some("2026-08-20T02:00:00+00:00".into())
-    );
-    assert_eq!(
-        end.map(|time| time.to_rfc3339()),
-        Some("2026-08-20T03:00:00+00:00".into())
-    );
+    .expect("偏移跨日且表示同一时刻的区间应通过");
+    let instant = datetime!(1969-12-31 23:59:59.123456789 UTC);
+    assert_eq!((begin, end), (Some(instant), Some(instant)));
+    assert_eq!(begin.unwrap().offset(), UtcOffset::UTC);
+    assert_eq!(end.unwrap().offset(), UtcOffset::UTC);
+
     assert_eq!(
         parse_log_time_range(Some("  "), None).expect("空值应转为缺省"),
         (None, None)
     );
+    assert_eq!(
+        parse_log_time_range(Some("0000-01-01T00:00:00Z"), Some("")).unwrap(),
+        (Some(datetime!(0000-01-01 0:00 UTC)), None),
+    );
+    assert_eq!(
+        parse_log_time_range(None, Some("9999-12-31T23:59:59.999999999Z")).unwrap(),
+        (None, Some(datetime!(9999-12-31 23:59:59.999999999 UTC))),
+    );
+
+    for invalid in [
+        "2026-08-20",
+        "2026-08-20T10:00:00",
+        "2026-08-20X10:00:00Z",
+        "2026-02-30T00:00:00Z",
+        "2016-12-31T23:59:60Z",
+        "0000-01-01T00:00:00+01:00",
+        "9999-12-31T23:59:59-01:00",
+    ] {
+        assert!(
+            matches!(
+                parse_log_time_range(Some(invalid), None),
+                Err(AppError::Validation(message))
+                    if message == "日志筛选 begin_time 必须是包含时区的 RFC3339 时间"
+            ),
+            "{invalid}"
+        );
+    }
     assert!(matches!(
-        parse_log_time_range(Some("2026-08-20"), None),
-        Err(AppError::Validation(_))
+        parse_log_time_range(None, Some("2026-08-20")),
+        Err(AppError::Validation(message))
+            if message == "日志筛选 end_time 必须是包含时区的 RFC3339 时间"
     ));
     assert!(matches!(
         parse_log_time_range(Some("2026-08-20T04:00:00Z"), Some("2026-08-20T03:00:00Z")),
-        Err(AppError::Validation(_))
+        Err(AppError::Validation(message)) if message == "日志筛选开始时间不能晚于结束时间"
     ));
 }
 

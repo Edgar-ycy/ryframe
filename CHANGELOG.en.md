@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Use UTC time types for login and operation log filters. Pagination and exports retain inclusive bounds. Stored selections and request fingerprints retain their original format.
+
 - Use the database UTC clock in the profile password-change and avatar cleanup paths. Preserve the login timestamp format and five-minute avatar cleanup grace period.
 
 - Remove the single-path source classification entry point. Source domains and fingerprints continue to share the Rust classifier and source protocol validation.

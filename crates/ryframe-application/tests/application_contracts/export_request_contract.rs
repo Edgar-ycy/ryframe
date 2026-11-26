@@ -4,6 +4,8 @@ use ryframe_kernel::*;
 
 mod filters {
     use super::*;
+    use sha2::{Digest, Sha256};
+    use time::macros::datetime;
 
     #[test]
     fn selected_rows_are_normalized_persisted_and_need_no_all_confirmation() {
@@ -84,8 +86,8 @@ mod filters {
         .expect("有效时间区间应通过");
         assert_eq!(filter.oper_name(), Some("operator"));
         assert_eq!(
-            filter.begin_time().map(|time| time.to_rfc3339()),
-            Some("2026-08-20T02:00:00+00:00".into())
+            filter.begin_time(),
+            Some(datetime!(2026-08-20 02:00:00 UTC))
         );
 
         let missing_timezone =
@@ -99,6 +101,81 @@ mod filters {
             Some("2026-08-20T03:00:00Z".into()),
         );
         assert!(matches!(reversed, Err(AppError::Validation(_))));
+    }
+
+    #[test]
+    fn log_filters_preserve_legacy_selection_bytes_and_request_fingerprints() {
+        for fraction in ["", ".120", ".123400", ".123456700"] {
+            let input = format!("1970-01-01T07:59:59{fraction}+08:00");
+            let legacy_time = DateTime::parse_from_rfc3339(&input)
+                .unwrap()
+                .with_timezone(&Utc);
+            let timestamp = serde_json::to_string(&legacy_time).unwrap();
+            let operation = OperLogExportFilter::new(
+                Some("operator".into()),
+                Some("1".into()),
+                Some(input.clone()),
+                None,
+            )
+            .unwrap();
+            let login = LoginLogExportFilter::new(
+                Some("operator".into()),
+                Some("1".into()),
+                None,
+                Some(input),
+            )
+            .unwrap();
+
+            for (selection, name, begin, end, permission) in [
+                (
+                    ExportSelection::OperLogs(operation),
+                    "oper_name",
+                    timestamp.as_str(),
+                    "null",
+                    "system:operlog:export",
+                ),
+                (
+                    ExportSelection::LoginLogs(login),
+                    "user_name",
+                    "null",
+                    timestamp.as_str(),
+                    "system:logininfor:export",
+                ),
+            ] {
+                let resource = selection.resource();
+                let legacy = format!(
+                    r#"{{"resource":"{resource}","filter":{{"{name}":"operator","status":"1","begin_time":{begin},"end_time":{end}}}}}"#
+                );
+                assert_eq!(serde_json::to_string(&selection).unwrap(), legacy);
+                assert_eq!(
+                    serde_json::from_str::<ExportSelection>(&legacy).unwrap(),
+                    selection
+                );
+
+                let sparse = legacy
+                    .replace(r#""begin_time":null,"#, "")
+                    .replace(r#","end_time":null"#, "");
+                assert_eq!(
+                    serde_json::from_str::<ExportSelection>(&sparse).unwrap(),
+                    selection
+                );
+                let legacy_fingerprint = hex::encode(Sha256::digest(
+                    [
+                        b"ryframe:export-request:v1\0tenant-a\0".as_slice(),
+                        &7_i64.to_be_bytes(),
+                        permission.as_bytes(),
+                        b"\0auth\0",
+                        legacy.as_bytes(),
+                    ]
+                    .concat(),
+                ));
+                assert_eq!(
+                    calculate_request_fingerprint("tenant-a", 7, permission, &selection, "auth")
+                        .unwrap(),
+                    legacy_fingerprint,
+                );
+            }
+        }
     }
 
     #[test]

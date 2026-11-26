@@ -1,11 +1,11 @@
 use crate::DbResultExt;
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult, DataScopeContextRef, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
     EntityTrait, QueryFilter, QueryOrder, QuerySelect, Select,
 };
+use time::OffsetDateTime;
 
 use crate::{Repository, entities::oper_log};
 
@@ -14,8 +14,8 @@ pub struct OperLogRepository;
 pub struct OperLogFilter<'a> {
     pub oper_name: Option<&'a str>,
     pub status: Option<&'a str>,
-    pub begin_time: Option<DateTime<Utc>>,
-    pub end_time: Option<DateTime<Utc>>,
+    pub begin_time: Option<OffsetDateTime>,
+    pub end_time: Option<OffsetDateTime>,
 }
 
 #[async_trait]

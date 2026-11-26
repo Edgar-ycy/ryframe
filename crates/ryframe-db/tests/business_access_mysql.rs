@@ -1,11 +1,21 @@
 //! 独立测试进程安装业务目录，避免影响框架固定快照与其他真实协议测试。
-use chrono::{TimeZone, Utc};
-use ryframe_application::ports::system::{
-    LoginInfoFilter, LoginInfoPersistencePort, LoginInfoRecord, OperLogFilter,
-    OperLogPersistencePort, OperLogRecord,
+use ryframe_application::{
+    ports::system::{
+        LoginInfoFilter, LoginInfoPersistencePort, LoginInfoRecord, OperLogFilter,
+        OperLogPersistencePort, OperLogRecord,
+    },
+    system::operations::{
+        ExportSelection, LoginLogExportFilter, OperLogExportFilter, parse_log_time_range,
+    },
 };
-use ryframe_db::{ControlDatabaseCluster, application_ports::system, migration};
-use ryframe_kernel::{DataScopeContext, ExportCursorWindow, PaginationPolicy, ValidatedPageQuery};
+use ryframe_db::{
+    ControlDatabaseCluster,
+    application_ports::{export, system},
+    migration,
+};
+use ryframe_kernel::{
+    ActorContext, DataScope, ExportCursorWindow, PaginationPolicy, ValidatedPageQuery,
+};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use time::{UtcOffset, macros::datetime};
 
@@ -102,7 +112,7 @@ async fn insert_legacy_log_rows(database: &DatabaseConnection) -> Result<(), Str
 async fn verify_log_time_round_trip(database: &DatabaseConnection) -> Result<(), String> {
     let cluster = ControlDatabaseCluster::single(database.clone());
     let operations = system::oper_log(cluster.clone());
-    let logins = system::login_info(cluster);
+    let logins = system::login_info(cluster.clone());
     // 小数低于半秒，保留 DATETIME(0) 在舍入和截断模式下的共同预期。
     let recorded_at = datetime!(2026-08-21 08:00:00.123456 +08:00);
     operations
@@ -161,19 +171,33 @@ async fn verify_log_time_round_trip(database: &DatabaseConnection) -> Result<(),
         1,
     )
     .await?;
-    verify_log_time_ranges(operations.as_ref(), logins.as_ref()).await
+    verify_log_time_ranges(&cluster, operations.as_ref(), logins.as_ref()).await
 }
 
 async fn verify_log_time_ranges(
+    cluster: &ControlDatabaseCluster,
     operations: &dyn OperLogPersistencePort,
     logins: &dyn LoginInfoPersistencePort,
 ) -> Result<(), String> {
+    const BEGIN_TIME: &str = "2026-08-21T07:59:58+08:00";
+    const END_TIME: &str = "2026-08-20T18:30:00-05:30";
     let page = ValidatedPageQuery::new(1, 10, PaginationPolicy::new(10, 100))
         .map_err(|error| error.to_string())?;
-    let actor = DataScopeContext::super_admin(1);
-    let scope = actor.as_ref();
-    let begin_time = Some(Utc.with_ymd_and_hms(2026, 8, 20, 23, 59, 58).unwrap());
-    let end_time = Some(Utc.with_ymd_and_hms(2026, 8, 21, 0, 0, 0).unwrap());
+    let actor = ActorContext {
+        user_id: 1,
+        tenant_id: "system".into(),
+        username: "tester".into(),
+        dept_id: None,
+        dept_path: None,
+        data_scope: DataScope::All,
+        custom_dept_ids: Vec::new(),
+        include_self: false,
+        data_scope_version: 1,
+        is_super_admin: true,
+    };
+    let scope = actor.data_scope_context();
+    let (begin_time, end_time) = parse_log_time_range(Some(BEGIN_TIME), Some(END_TIME))
+        .map_err(|error| error.to_string())?;
     let operation_filter = OperLogFilter {
         oper_name: None,
         status: None,
@@ -239,7 +263,37 @@ async fn verify_log_time_ranges(
         login_batch.iter().map(login_time).collect::<Vec<_>>(),
         [first, last]
     );
-    Ok(())
+    verify_log_export_summaries(cluster, &actor, BEGIN_TIME, END_TIME).await
+}
+
+async fn verify_log_export_summaries(
+    cluster: &ControlDatabaseCluster,
+    actor: &ActorContext,
+    begin_time: &str,
+    end_time: &str,
+) -> Result<(), String> {
+    let operation =
+        OperLogExportFilter::new(None, None, Some(begin_time.into()), Some(end_time.into()))
+            .map_err(|error| error.to_string())?;
+    let login =
+        LoginLogExportFilter::new(None, None, Some(begin_time.into()), Some(end_time.into()))
+            .map_err(|error| error.to_string())?;
+    let request = export::request(cluster.clone());
+    let transaction = request.begin().await.map_err(|error| error.to_string())?;
+    for selection in [
+        ExportSelection::OperLogs(operation),
+        ExportSelection::LoginLogs(login),
+    ] {
+        let snapshot = transaction
+            .summarize_selection(&actor.tenant_id, actor, &selection)
+            .await
+            .map_err(|error| error.to_string())?;
+        assert_eq!((snapshot.matched_rows, snapshot.upper_id), (2, Some(42)));
+    }
+    transaction
+        .rollback()
+        .await
+        .map_err(|error| error.to_string())
 }
 
 async fn assert_lossless(database: &DatabaseConnection) -> Result<(), String> {

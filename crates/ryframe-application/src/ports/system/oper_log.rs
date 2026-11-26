@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{
     AppResult, DataScopeContextRef, ExportCursorWindow, PageResult, ValidatedPageQuery,
 };
@@ -32,8 +31,8 @@ pub struct OperLogRecord {
 pub struct OperLogFilter<'a> {
     pub oper_name: Option<&'a str>,
     pub status: Option<&'a str>,
-    pub begin_time: Option<DateTime<Utc>>,
-    pub end_time: Option<DateTime<Utc>>,
+    pub begin_time: Option<OffsetDateTime>,
+    pub end_time: Option<OffsetDateTime>,
 }
 
 #[async_trait]
