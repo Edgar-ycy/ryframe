@@ -113,9 +113,15 @@ pub(super) fn identity_projection(
 }
 
 pub(super) fn template_identities(backend: &Path, run: &Path, request: &Value) -> Result<Value> {
+    templates(backend, run, request, false)
+}
+
+fn templates(backend: &Path, run: &Path, request: &Value, verify_resume: bool) -> Result<Value> {
     let plan = identity_plan(backend, request)?;
     let projected = identity_projection(backend, run, request, false)?;
-    if !matches!(projected["state"].as_str(), Some("prepared" | "verified")) {
+    if !matches!(projected["state"].as_str(), Some("prepared" | "verified"))
+        && !(verify_resume && projected["state"] == "verifying")
+    {
         return Err("部门模板需要已确认的固定身份账本".into());
     }
     let ledger = common::read_bound(backend, &projected["ledger"], "部门模板身份账本")?;
@@ -191,6 +197,23 @@ pub(super) fn read_prerequisite(backend: &Path, run: &Path) -> Result<Value> {
 }
 
 pub(super) fn validate_plan(backend: &Path, run: &Path, request: &Value) -> Result<Value> {
+    validate_plan_with_identity(backend, run, request, false)
+}
+
+pub(super) fn validate_plan_for_identity_verification(
+    backend: &Path,
+    run: &Path,
+    request: &Value,
+) -> Result<Value> {
+    validate_plan_with_identity(backend, run, request, true)
+}
+
+fn validate_plan_with_identity(
+    backend: &Path,
+    run: &Path,
+    request: &Value,
+    verify_resume: bool,
+) -> Result<Value> {
     let path = run.join("seed-runtime/department-plan.json");
     let bound = common::binding(&path)?;
     let mut plan = common::read_bound(backend, &bound, "部门计划")?;
@@ -209,7 +232,7 @@ pub(super) fn validate_plan(backend: &Path, run: &Path, request: &Value) -> Resu
     )?;
     let source = identity_plan(backend, request)?;
     let expected_targets = targets(&source)?;
-    let templates = template_identities(backend, run, request)?;
+    let templates = templates(backend, run, request, verify_resume)?;
     let hash = plan
         .as_object_mut()
         .ok_or("部门计划不是对象")?

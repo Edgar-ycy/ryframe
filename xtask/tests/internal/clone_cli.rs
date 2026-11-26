@@ -598,7 +598,33 @@ fn assert_native_seed_runtime_modes(fixture: &Fixture) {
 }
 
 #[test]
-fn seed_runtime_held_originals_are_limited_to_windows_quota_plan_and_apply() {
+fn seed_runtime_build_requests_are_limited_to_department_plan_and_identity_verify() {
+    let fixture = Fixture::new();
+    for (operation, accepted) in [
+        ("departments-plan", true),
+        ("identities-verify", true),
+        ("departments-apply", false),
+        ("departments-reconcile", false),
+        ("departments-verify", false),
+        ("identities-apply", false),
+        ("quotas-plan", false),
+    ] {
+        let parsed = fixture.parse(&[
+            "seed-runtime",
+            "--run-dir",
+            Fixture::value(&fixture.run),
+            "--operation",
+            operation,
+            "--request",
+            Fixture::value(&fixture.first),
+            "--write",
+        ]);
+        assert_eq!(parsed.is_ok(), accepted, "{operation}");
+    }
+}
+
+#[test]
+fn seed_runtime_held_originals_are_limited_to_selected_windows_quota_and_department_modes() {
     let fixture = Fixture::new();
     let run = Fixture::value(&fixture.run);
     for (mode, originals, supported) in [
@@ -607,8 +633,13 @@ fn seed_runtime_held_originals_are_limited_to_windows_quota_plan_and_apply() {
         ("quotas-plan", "full", false),
         ("quotas-apply", "full", false),
         ("quotas-reconcile", "held", false),
-        ("departments-plan", "held", false),
+        ("departments-plan", "held", true),
+        ("departments-apply", "held", true),
+        ("departments-verify", "held", true),
+        ("departments-plan", "full", false),
+        ("departments-reconcile", "held", false),
         ("identities-apply", "held", false),
+        ("identities-verify", "held", false),
         ("recover", "held", false),
     ] {
         let parsed = fixture.parse(&[

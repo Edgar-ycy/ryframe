@@ -20,13 +20,28 @@ pub(crate) fn resolve(
         }
         "seed-runtime" => {
             let path = common::bound_file(backend, descriptor, "seed 生产者登记")?;
+            if path == seed::identity_verification_tool::path(run) {
+                return seed::identity_verification_tool::resolve(
+                    backend, run, descriptor, current, cleanup,
+                );
+            }
+            seed::identity_verification_tool::require_original(run, current, cleanup)?;
             if path == seed::identity_successor::path(run) {
                 require_identity_mode(run, current)?;
                 return seed::identity_successor::resolve(backend, run, descriptor, current);
             }
+            if path == seed::department_successor::path(run)
+                || path == seed::department_successor::correction_path(run)
+                || path == seed::department_successor::runtime_correction_path(run)
+            {
+                return seed::department_successor::resolve(
+                    backend, run, descriptor, current, cleanup,
+                );
+            }
             if path != run.join("seed-runtime.json") {
                 return Err("seed 生产者登记不属于本 run".into());
             }
+            seed::department_successor::require_original(run, current, cleanup)?;
             let request = json::read(&path)?;
             if !cleanup && identity_mode(run, current)? {
                 let number = current.ok_or("当前身份阶段缺少序号")?;

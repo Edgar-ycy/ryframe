@@ -1,7 +1,7 @@
 use super::{
     evidence,
     execution::{Context, IdentitySession},
-    inspection,
+    inspection::{self, DepartmentApi, VerifiedApi},
     plan::{self, text},
 };
 use crate::{
@@ -25,13 +25,35 @@ pub(super) struct NativeContext {
     catalog: BTreeMap<String, Value>,
     artifacts: PathBuf,
     baseline: Option<Value>,
+    api: Option<VerifiedApi>,
 }
 impl NativeContext {
-    pub(super) fn new(plan: &Value, root: &Path, mode: &str) -> Result<Self> {
-        Self::new_at(plan, root.join(format!("{mode}-{}", uuid::Uuid::new_v4())))
+    pub(super) fn new(
+        plan: &Value,
+        root: &Path,
+        mode: &str,
+        api: Option<VerifiedApi>,
+    ) -> Result<Self> {
+        Self::with_api(
+            plan,
+            root.join(format!("{mode}-{}", uuid::Uuid::new_v4())),
+            api,
+        )
     }
 
-    pub(super) fn new_at(plan: &Value, artifacts: PathBuf) -> Result<Self> {
+    pub(super) fn new_at(
+        plan: &Value,
+        artifacts: PathBuf,
+        department_api: Option<DepartmentApi>,
+    ) -> Result<Self> {
+        Self::with_api(
+            plan,
+            artifacts,
+            department_api.map(DepartmentApi::into_verified),
+        )
+    }
+
+    fn with_api(plan: &Value, artifacts: PathBuf, api: Option<VerifiedApi>) -> Result<Self> {
         if std::env::var("APP_ENV").ok().as_deref() != Some("test") {
             return Err("身份执行要求 APP_ENV=test 与已绑定的隔离配置文件".into());
         }
@@ -58,6 +80,7 @@ impl NativeContext {
             catalog,
             artifacts,
             baseline: None,
+            api,
         })
     }
 }
@@ -73,8 +96,9 @@ impl Context for NativeContext {
     async fn inspect(&mut self, phase: &str) -> Result<Value> {
         let plan = self.plan.clone();
         let phase = phase.to_owned();
+        let api = self.api.clone();
         let (value, config_dir) = tokio::task::spawn_blocking(move || {
-            inspection::inspect(&plan, &phase).map_err(|error| error.to_string())
+            inspection::inspect(&plan, &phase, api.as_ref()).map_err(|error| error.to_string())
         })
         .await
         .map_err(|_| "身份环境检查线程未完成")?

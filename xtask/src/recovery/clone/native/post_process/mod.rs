@@ -5,6 +5,7 @@ pub(in crate::recovery::clone::native) mod api_successor;
 mod business_binding;
 pub(crate) mod command;
 mod context;
+pub(in crate::recovery::clone::native) mod department_api;
 pub(crate) mod diagnostic;
 pub(crate) mod entry;
 mod execution;
@@ -32,6 +33,7 @@ mod seed_prepare;
 mod seed_start;
 #[cfg(windows)]
 pub(super) mod source_proofs;
+pub(crate) use department_api::{department_api_proof, identity_verification_api_proof};
 pub(super) use inspection::inspect_historical;
 pub(super) use prepare::require_runtime_receipts;
 

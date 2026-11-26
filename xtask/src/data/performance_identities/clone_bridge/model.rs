@@ -1,13 +1,17 @@
 use super::super::{plan, producer_authorization, state};
 use crate::{
     Result,
-    recovery::clone::native::{digest, json as document},
+    recovery::clone::native::{
+        digest, json as document, post_process::registration, resources::common, seed,
+    },
 };
 use serde_json::{Map, Value, json};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
 };
+
+const DEPARTMENT_MODES: [&str; 4] = ["plan", "apply", "reconcile", "verify"];
 
 pub(super) struct Registration {
     pub run: PathBuf,
@@ -71,7 +75,7 @@ impl Registration {
         let valid = if family == "quota" {
             matches!(mode, "plan" | "apply" | "reconcile")
         } else {
-            matches!(mode, "plan" | "apply" | "reconcile" | "verify")
+            DEPARTMENT_MODES.contains(&mode)
         };
         if !valid {
             return Err("身份桥接模式无效".into());
@@ -106,10 +110,16 @@ impl Registration {
         if digest::file(&self.plan_path)?.sha256 != self.plan_sha256 {
             return Err("身份桥接计划原始文件摘要变化".into());
         }
-        let registration_path = self.run.join("seed-runtime.json");
-        let seed =
-            crate::recovery::clone::native::seed::Registration::load(root, &self.run, false)?;
-        let registration = &seed.value;
+        let original = self.run.join("seed-runtime.json");
+        let seed = seed::Registration::load(root, &self.run, false)?;
+        let selected = if self.is_department_stage() {
+            Some(self.department_registration(root, &original)?)
+        } else {
+            None
+        };
+        let (registration_path, registration) = selected
+            .as_ref()
+            .map_or((&original, &seed.value), |(path, _, value)| (path, value));
         let tool = &registration["identity_tool"];
         let source = root.join("xtask/src/data/performance_identities/clone_bridge.rs");
         let command = self.command(tool)?;
@@ -122,7 +132,7 @@ impl Registration {
             mode: &mode,
             producer_kind: &producer_kind,
             operation: "initialize",
-            registration: &registration_path,
+            registration: registration_path,
             source: &source,
             command: &command,
             tool,
@@ -137,7 +147,9 @@ impl Registration {
             "process":grant["process"],
         });
         producer_authorization::authorize(root, &spec, &authorization)?;
-        if registration["identity_plan"] != producer_authorization::binding(&self.plan_path)? {
+        if seed.value["identity_plan"] != producer_authorization::binding(&self.plan_path)?
+            || registration["identity_plan"] != seed.value["identity_plan"]
+        {
             return Err("身份桥接登记未绑定当前计划".into());
         }
         let value = document::read(&self.plan_path)?;
@@ -148,7 +160,35 @@ impl Registration {
             return Err("身份桥接授权期间计划变化".into());
         }
         seed.assert_unchanged(root, false)?;
+        if let Some((path, binding, _)) = selected
+            && common::binding(&path)? != binding
+        {
+            return Err("部门生产者授权期间后继登记变化".into());
+        }
         Ok(value)
+    }
+
+    pub(super) fn is_department_stage(&self) -> bool {
+        self.family == "department" && DEPARTMENT_MODES.contains(&self.mode.as_str())
+    }
+
+    fn department_registration(
+        &self,
+        root: &Path,
+        original: &Path,
+    ) -> Result<(PathBuf, Value, Value)> {
+        let path = seed::department_successor::launch_path(root, &self.run, self.attempt)?
+            .unwrap_or_else(|| original.to_path_buf());
+        let binding = common::binding(&path)?;
+        let request = registration::resolve(
+            root,
+            &self.run,
+            "seed-runtime",
+            &binding,
+            Some(self.attempt),
+            false,
+        )?;
+        Ok((path, binding, request))
     }
 
     fn command(&self, tool: &Value) -> Result<Vec<String>> {
@@ -242,4 +282,27 @@ pub(super) fn authorization(
         "is_super_admin": auth["is_super_admin"],
         "permissions": permissions,
     }))
+}
+
+#[cfg(test)]
+#[test]
+fn only_the_four_department_stages_use_department_authority() {
+    let mut registration = Registration {
+        run: PathBuf::new(),
+        attempt: 1,
+        family: "department",
+        mode: String::new(),
+        plan_path: PathBuf::new(),
+        plan_sha256: String::new(),
+    };
+    for mode in ["plan", "apply", "reconcile", "verify"] {
+        registration.mode = mode.into();
+        registration.family = "department";
+        assert!(registration.is_department_stage());
+        registration.family = "quota";
+        assert!(!registration.is_department_stage());
+    }
+    registration.family = "department";
+    registration.mode = "recover".into();
+    assert!(!registration.is_department_stage());
 }

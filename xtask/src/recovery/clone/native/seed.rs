@@ -17,10 +17,13 @@ pub(in crate::recovery) mod arm_input;
 pub(crate) mod capacity;
 #[path = "seed/cleanup_entry.rs"]
 pub(super) mod cleanup_entry;
+pub(crate) mod continuation_tool;
 #[path = "seed/current.rs"]
 mod current;
 pub(crate) use current::Current;
 
+#[path = "seed/department_successor.rs"]
+pub(crate) mod department_successor;
 #[path = "seed/generation.rs"]
 pub(crate) mod generation;
 #[path = "seed/history.rs"]
@@ -29,6 +32,8 @@ pub(crate) mod history;
 pub(crate) mod identity;
 #[path = "seed/identity_successor.rs"]
 pub(crate) mod identity_successor;
+#[path = "seed/identity_verification_tool.rs"]
+pub(crate) mod identity_verification_tool;
 #[path = "seed/pair_entry.rs"]
 mod pair_entry;
 pub(super) use pair_entry::close_runtime;

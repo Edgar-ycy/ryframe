@@ -6,7 +6,11 @@ use serde_json::{Map, Value, json};
 use super::{adoption, common, document};
 use crate::{
     Result,
-    recovery::clone::native::{lifecycle::state, post_process::inspect_historical},
+    recovery::clone::native::{
+        lifecycle::state,
+        post_process::{inspect_historical, registration},
+        seed::department_successor,
+    },
 };
 
 #[allow(
@@ -103,10 +107,9 @@ fn observe(
     };
     for attempt in prior {
         let number = attempt["number"].as_u64().ok_or("历史部门阶段序号无效")?;
-        producers.insert(
-            number.to_string(),
-            inspect_historical(backend, run, attempt)?,
-        );
+        let mut producer = inspect_historical(backend, run, attempt)?;
+        original_request(backend, run, number, request, &mut producer)?;
+        producers.insert(number.to_string(), producer);
     }
     let observed = adoption::dispatch(
         backend,
@@ -116,4 +119,37 @@ fn observe(
     )?;
     document::exact(&observed, &["evidence", "prerequisite"], "部门采用证据")?;
     Ok(observed)
+}
+
+fn original_request(
+    backend: &Path,
+    run: &Path,
+    number: u64,
+    request: &Value,
+    producer: &mut Value,
+) -> Result<()> {
+    if producer.is_null() || producer["request"] == *request {
+        return Ok(());
+    }
+    let launch = common::read_bound(backend, &producer["value"]["launch"], "部门采用的原启动")?;
+    let descriptor = &launch["registration"];
+    if common::bound_file(backend, descriptor, "部门采用的原生产者登记")?
+        != department_successor::path(run)
+    {
+        return Ok(());
+    }
+    let projected =
+        registration::resolve(backend, run, "seed-runtime", descriptor, Some(number), true)?;
+    let mut expected = request.clone();
+    expected["identity_tool"] = projected["identity_tool"].clone();
+    if producer["producer_kind"] != "department-plan"
+        || producer["request"] != projected
+        || projected != expected
+        || launch["tool"] != projected["identity_tool"]
+    {
+        return Err("部门采用不能改变原业务登记或接受其他生产者工具".into());
+    }
+    // 业务验证仍使用原 seed 登记，原进程、启动及后继工具的文件绑定原样保留。
+    producer["request"] = request.clone();
+    Ok(())
 }

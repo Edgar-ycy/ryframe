@@ -172,7 +172,7 @@ fresh 参考夹具环境准备会在源 bootstrap 输出目录独占创建私有
 
 在 Windows 的 source-to-seed 复制后准备阶段，可以运行 `cargo xtask check recovery clone post-copy --run-dir <registered-run> --operation prepare --originals held --write`。在同一运行锁内持有已登记的原对象、SQL 原件、静态源码、来源导出证明和存储服务历史证明，开始和结束时进行完整核验。每次检查仍核对持有身份、文件成员、运行配置和实际资源。在同一 source-to-seed 流程中，可将示例中的 `prepare` 替换为 `schedules` 或 `verify`。这两个阶段在每个检查点仍核对已登记的受保护输入字节。调度继续按已登记的完整前后像执行，既有业务核验仍读回完整样本和对象。
 
-在 Windows 上，同一 source-to-seed 运行可使用 `cargo xtask check recovery clone seed-runtime --run-dir <registered-run> --operation quotas-plan --originals held --write` 规划配额。规划通过后，应用配额时可将操作改为 `quotas-apply`。两个阶段仍绑定已登记的身份计划，应用阶段还核对已发布的配额计划。持有原件期间继续核对实际 API 和 Redis，执行 SQL 检查并验证五桶归属。规划记录原值与用量，应用核对完整前后像。各阶段开始和结束时仍完整核验已登记原件的字节。省略该参数时，继续按原方式核验原件字节。
+在 Windows 上，同一 source-to-seed 运行可使用 `cargo xtask check recovery clone seed-runtime --run-dir <registered-run> --operation quotas-plan --originals held --write` 规划配额。规划通过后，应用配额时可将操作改为 `quotas-apply`。两个阶段仍绑定已登记的身份计划，应用阶段还核对已发布的配额计划。持有原件期间继续核对实际 API 和 Redis，执行 SQL 检查并验证五桶归属。规划记录原值与用量，应用核对完整前后像。各阶段开始和结束时仍完整核验已登记原件的字节。同一 Windows source-to-seed 运行的 `departments-plan`、`departments-apply` 和 `departments-verify` 也可使用 `--originals held`。每个阶段首尾完整核验原件字节，完整检查仍核对实际 API 的创建身份和监听、Worker 闭口及 Redis。部门应用仍使用通过的部门计划，写入前后均校验身份前提、实际角色状态和停用调度；写入结果不明时按 `departments-reconcile` 核对完整前后像。省略该参数时，继续按原方式核验原件字节。
 
 原准备阶段仍存活且目标配置、运行目录和生产者均未创建时，可用 `cargo xtask check recovery clone prepare-lock-observe --run-dir <registered-run> --owner-binding <controller.json> --output <observation.json> --write` 登记原空目标锁。
 
@@ -193,6 +193,12 @@ B0 后端构建仍由当前受信任工具执行，但 `--source-backend` 必须
 已经开始复制后业务核验的 Windows 运行发生 API 监督清理事故时，先沿原夹具账本完成 Redis 接续和该事故绑定的目标标记确认。`cargo xtask check recovery clone runtime --run-dir <原运行> --side target --operation restart-api --write` 仅启动 API。独立后继目录继承原二进制和配置，启动前绑定旧停止失败、原运行身份、标记收据及唯一预留 ID。旧角色、业务登记和种子历史仍保留原文件。
 
 启动结果未知时先核对原阶段和预留。外层控制器遗留运行锁时，用现有 `clone recover` 绑定该阶段的 `controller-NNNN.json` 收口原控制器。随后用 `cargo xtask check recovery clone runtime --run-dir <原运行> --side target --operation reconcile-api --write` 核对原预留的成功结果和实际进程及监听归属。若结果仍未知，保留现场。后继发布后，`status` 查询实际代次。Seed 启动前仍须按原顺序完成准备和后继 API 的受管关闭，核对后继监督树及原角色保留证据。
+
+原部门规划在会话初始化时失败并已完成零写入回收的，继续执行原运行的 `departments-plan`。控制器登记已发布后继 API 对应的执行器。部门计划正式通过后，应用、和解和核验复用同一执行器，并核对已发布计划及其生产者证明。各阶段子进程沿用原身份计划和私有配置，在只读数据库检查前后复核同一运行合同及实际 API 创建身份。
+
+若该执行器在部门会话初始化时失败，保留原计划及失败、启动和进程收据。已启动的会话先用 `recover-session` 确认零写入。续作可用 `cargo xtask check recovery clone seed-runtime --run-dir <registered-run> --operation departments-plan --request <department-tool-build.json> --write` 单独登记经过验证的冻结部门工具，已发布的 API 后继继续运行。部门核验通过后，可用 `cargo xtask check recovery clone seed-runtime --run-dir <registered-run> --operation identities-verify --request <identity-tool-build.json> --write` 单独登记身份核验工具，绑定原身份准备和最新通过的部门后像。两种构建请求都绑定实际控制器二进制、冻结记录和通过的测试结果。原启动和回收收据继续解析原执行器。
+
+若已登记的部门修正工具在首次规划的认证前因 Tokio 就绪探针失败，保留原启动与进程收据、标准错误、注销错误及正式失败记录。确认同一生产者已完成零写入回收，且没有认证或部门意图后，才可用同一 `departments-plan --request` 命令登记独立验证的探针修正构建。该登记继续使用同一 API 后继，原两代工具及各自的运行证据继续参与历史核对。
 
 ### 指标与告警
 

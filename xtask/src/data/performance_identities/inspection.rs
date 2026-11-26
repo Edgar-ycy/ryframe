@@ -6,6 +6,7 @@ use crate::{
         job_evidence::protocol::Session,
         runtime_native::{mysql::Mysql, process::Cancellation},
     },
+    recovery::clone::native::post_process,
 };
 use serde_json::{Value, json};
 use std::{
@@ -19,14 +20,106 @@ pub(super) use user_create::{observe_activated_user, observe_created_user};
 
 pub(super) const QUOTA_PHASE: &str = "quota";
 
-pub(super) fn inspect(plan: &Value, phase: &str) -> Result<(Value, PathBuf)> {
-    if !matches!(phase, "apply" | "verify" | QUOTA_PHASE) {
+pub(super) struct DepartmentApi(VerifiedApi);
+
+#[derive(Clone)]
+pub(super) struct VerifiedApi {
+    coordinator: PathBuf,
+    run: PathBuf,
+    attempt: u64,
+    proof: Value,
+    read: ApiProofReader,
+}
+
+type ApiProofReader = fn(&Path, &Path, u64, &Value) -> Result<Option<Value>>;
+
+impl DepartmentApi {
+    /// 只由已授权的部门子进程建立，保持身份计划和私有配置的原始绑定。
+    pub(super) fn select(
+        coordinator: &Path,
+        run: &Path,
+        attempt: u64,
+        plan: &Value,
+    ) -> Result<Option<Self>> {
+        let product = Path::new(text(&plan["environment"], "backend_dir")?);
+        let environment = plan::load(plan, product)?;
+        Ok(VerifiedApi::select(
+            coordinator,
+            run,
+            attempt,
+            &environment,
+            post_process::department_api_proof,
+        )?
+        .map(Self))
+    }
+
+    pub(super) fn into_verified(self) -> VerifiedApi {
+        self.0
+    }
+}
+
+impl VerifiedApi {
+    pub(super) fn select_identity(
+        coordinator: &Path,
+        run: &Path,
+        attempt: u64,
+        environment: &Value,
+    ) -> Result<Option<Self>> {
+        Self::select(
+            coordinator,
+            run,
+            attempt,
+            environment,
+            post_process::identity_verification_api_proof,
+        )
+    }
+
+    fn select(
+        coordinator: &Path,
+        run: &Path,
+        attempt: u64,
+        environment: &Value,
+        read: ApiProofReader,
+    ) -> Result<Option<Self>> {
+        let proof = read(coordinator, run, attempt, environment)?;
+        Ok(proof.map(|proof| Self {
+            coordinator: coordinator.to_owned(),
+            run: run.to_owned(),
+            attempt,
+            proof,
+            read,
+        }))
+    }
+
+    fn observe(&self, environment: &Value) -> Result<Value> {
+        let observed = (self.read)(&self.coordinator, &self.run, self.attempt, environment)?;
+        self.require_same(observed)
+    }
+
+    fn require_same(&self, observed: Option<Value>) -> Result<Value> {
+        let observed = observed.ok_or("已绑定的 API 后继不再可用")?;
+        if observed != self.proof {
+            return Err("API 后继运行合同或进程身份变化".into());
+        }
+        Ok(observed)
+    }
+}
+
+pub(super) fn inspect(
+    plan: &Value,
+    phase: &str,
+    api: Option<&VerifiedApi>,
+) -> Result<(Value, PathBuf)> {
+    if !matches!(phase, "apply" | "verify" | QUOTA_PHASE) || (api.is_some() && phase != "verify") {
         return Err("身份环境检查阶段无效".into());
     }
     let backend = Path::new(text(&plan["environment"], "backend_dir")?);
     let private = plan::load(plan, backend)?;
     let environment = &private;
-    let proof = runtime_proof(environment)?;
+    let proof = match api {
+        Some(api) => api.observe(environment)?,
+        None => runtime_proof(environment)?,
+    };
     let directory = PathBuf::from(text(&proof["runtime"], "api_config_dir")?);
     let table = crate::rate_limit::load_app_table(backend, Some(&directory), "test")
         .map_err(|error| error.message().to_owned())?;
@@ -70,6 +163,9 @@ pub(super) fn inspect(plan: &Value, phase: &str) -> Result<(Value, PathBuf)> {
     if private != plan::load(plan, backend)? {
         return Err("身份环境检查期间来源变化".into());
     }
+    if let Some(api) = api {
+        api.observe(environment)?;
+    }
     Ok((
         json!({
             "scope_id": environment["scope_id"],
@@ -88,8 +184,9 @@ fn runtime_proof(environment: &Value) -> Result<Value> {
         "scope_id": environment["scope_id"],
         "api_url": environment["api_url"]
     });
-    crate::recovery::clone::native::post_process::runtime_proof(&request)
+    post_process::runtime_proof(&request)
 }
+
 fn open(database: &Value, control: &Value) -> Result<Mysql> {
     let mut session = Mysql::open(
         &json!({"control":control,"mysql_client":database["mysql_client"]}),
@@ -242,6 +339,36 @@ pub(super) fn quota(row: &Value, group: &Value, environment: &Value, phase: &str
         if row["target_key"] != tenant["target_key"] || row["placement_state"] != "active" {
             return Err("租户放置目标或状态不同".into());
         }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[test]
+fn api_successor_requires_the_same_proof_and_the_read_only_inspection_phase() -> Result<()> {
+    let proof = json!({"runtime":{"scope_id":"fixture"},"api_process":{"pid":31,"started":"40"}});
+    let api = VerifiedApi {
+        coordinator: PathBuf::new(),
+        run: PathBuf::new(),
+        attempt: 51,
+        proof: proof.clone(),
+        read: post_process::department_api_proof,
+    };
+    assert_eq!(api.require_same(Some(proof.clone()))?, proof);
+    assert!(api.require_same(None).is_err());
+    let mut reused_pid = proof.clone();
+    reused_pid["api_process"]["started"] = json!("41");
+    assert!(api.require_same(Some(reused_pid)).is_err());
+    let mut changed_contract = proof;
+    changed_contract["runtime"]["scope_id"] = json!("other");
+    assert!(api.require_same(Some(changed_contract)).is_err());
+    for phase in ["apply", QUOTA_PHASE] {
+        assert_eq!(
+            inspect(&Value::Null, phase, Some(&api))
+                .unwrap_err()
+                .to_string(),
+            "身份环境检查阶段无效"
+        );
     }
     Ok(())
 }

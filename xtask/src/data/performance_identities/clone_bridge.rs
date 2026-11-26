@@ -1,6 +1,6 @@
 //! 配额与部门阶段共用身份计划、原生会话和有界 stdin 协议。
 
-use super::{execution::Context, native::NativeContext};
+use super::{execution::Context, inspection::DepartmentApi, native::NativeContext};
 use crate::Result;
 use serde_json::{Value, json};
 use std::{
@@ -28,6 +28,7 @@ impl Controller {
         registration: &model::Registration,
         plan: Value,
         request: &Value,
+        department_api: Option<DepartmentApi>,
     ) -> Result<(Self, Value)> {
         let artifacts = Path::new(
             request["artifacts"]
@@ -35,7 +36,8 @@ impl Controller {
                 .ok_or("身份桥接 artifacts 无效")?,
         )
         .to_path_buf();
-        let mut context: Box<dyn Context> = Box::new(NativeContext::new_at(&plan, artifacts)?);
+        let mut context: Box<dyn Context> =
+            Box::new(NativeContext::new_at(&plan, artifacts, department_api)?);
         let quota = registration.family == "quota";
         let phase = if quota {
             super::inspection::QUOTA_PHASE
@@ -207,7 +209,13 @@ async fn initialize(
     }
     let plan = registration.authorize(root, request)?;
     let proof = crate::recovery::clone::native::seed::Current::load(root, &registration.run)?;
-    let (controller, receipt) = Controller::initialize(registration, plan, request).await?;
+    let department_api = if registration.is_department_stage() {
+        DepartmentApi::select(root, &registration.run, registration.attempt, &plan)?
+    } else {
+        None
+    };
+    let (controller, receipt) =
+        Controller::initialize(registration, plan, request, department_api).await?;
     // 初始化若失败也必须关闭已创建会话，不依赖后来来源是否仍有效。
     let mut controller = controller;
     if let Err(error) = proof.check(root) {

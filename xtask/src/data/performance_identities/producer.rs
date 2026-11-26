@@ -1,13 +1,14 @@
 //! 生产者只有在 launch、内核身份收据及当前控制器授权全部匹配后才执行。
-use super::{evidence, producer_authorization};
+use super::{evidence, inspection::VerifiedApi, producer_authorization};
 use crate::{
     Result,
     local_test_path::{LocalTestPathKind, validate_local_test_path},
-    recovery::clone::native::digest,
+    recovery::clone::native::{digest, post_process::registration, seed},
 };
 use serde_json::Value;
 use std::{
-    io::Read,
+    fs,
+    io::{ErrorKind, Read},
     path::{Path, PathBuf},
 };
 
@@ -86,17 +87,17 @@ impl Registration {
             return Err("身份计划原始文件摘要变化".into());
         }
         let original_path = self.run.join("seed-runtime.json");
-        let seed =
-            crate::recovery::clone::native::seed::Registration::load(root, &self.run, false)?;
+        let seed = seed::Registration::load(root, &self.run, false)?;
         let original_binding = binding(&original_path)?;
-        let (registration, selected) =
-            crate::recovery::clone::native::seed::identity_successor::select(
-                root,
-                &self.run,
-                self.attempt,
-                &seed.value,
-                &original_binding,
-            )?;
+        let selected = self.selected_registration(root, &seed.value, &original_binding)?;
+        let registration = registration::resolve(
+            root,
+            &self.run,
+            "seed-runtime",
+            &selected,
+            Some(self.attempt),
+            false,
+        )?;
         let registration_path =
             Path::new(selected["path"].as_str().ok_or("身份生产者登记路径缺失")?);
         let tool = &registration["identity_tool"];
@@ -119,6 +120,7 @@ impl Registration {
         };
         let token = producer_authorization::authorize(root, &spec, grant)?;
         if registration["identity_plan"] != binding(&self.plan)?
+            || registration["identity_plan"] != seed.value["identity_plan"]
             || registration["identity_state"].as_str() != self.state.to_str()
         {
             return Err("身份生产者登记未绑定固定计划或账本".into());
@@ -131,6 +133,30 @@ impl Registration {
         }
         seed.assert_unchanged(root, false)?;
         Ok(token)
+    }
+
+    fn selected_registration(
+        &self,
+        root: &Path,
+        original: &Value,
+        original_binding: &Value,
+    ) -> Result<Value> {
+        if self.mode == "verify" {
+            let path = seed::identity_verification_tool::path(&self.run);
+            match fs::symlink_metadata(&path) {
+                Ok(_) => return binding(&path),
+                Err(error) if error.kind() == ErrorKind::NotFound => (),
+                Err(error) => return Err(error.into()),
+            }
+        }
+        let (_, descriptor) = seed::identity_successor::select(
+            root,
+            &self.run,
+            self.attempt,
+            original,
+            original_binding,
+        )?;
+        Ok(descriptor)
     }
 
     fn command(&self, tool: &Value) -> Result<Vec<String>> {
@@ -180,6 +206,14 @@ pub(super) fn run_hidden_if_requested() -> Option<i32> {
             &registration.mode,
             &token,
             Some(&registration.plan_sha256),
+            |environment| {
+                VerifiedApi::select_identity(
+                    &root,
+                    &registration.run,
+                    registration.attempt,
+                    environment,
+                )
+            },
             &mut |_| current.check(&root),
         )
     })();

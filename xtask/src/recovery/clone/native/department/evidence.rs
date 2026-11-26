@@ -16,7 +16,14 @@ pub(super) fn dispatch(backend: &Path, run: &Path, method: &Value, args: &Value)
         &["request", "record"]
     };
     model::exact_args(args, fields)?;
-    let proof = department_evidence(backend, run, &args["request"], &args["record"])?;
+    let verify_resume = method == "authorize-identity" && args["mode"] == "verify";
+    let proof = department_evidence_for(
+        backend,
+        run,
+        &args["request"],
+        &args["record"],
+        verify_resume,
+    )?;
     if method == "department-evidence" {
         return Ok(proof);
     }
@@ -51,7 +58,21 @@ pub(super) fn department_evidence(
     request: &Value,
     record: &Value,
 ) -> Result<Value> {
-    let plan = plan::validate_plan(backend, run, request)?;
+    department_evidence_for(backend, run, request, record, false)
+}
+
+fn department_evidence_for(
+    backend: &Path,
+    run: &Path,
+    request: &Value,
+    record: &Value,
+    verify_resume: bool,
+) -> Result<Value> {
+    let plan = if verify_resume {
+        plan::validate_plan_for_identity_verification(backend, run, request)?
+    } else {
+        plan::validate_plan(backend, run, request)?
+    };
     let result = common::read_bound(backend, &record["result"], "部门最终阶段结果")?;
     document::exact(
         &result,

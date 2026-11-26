@@ -65,6 +65,27 @@ impl Fixture {
 }
 
 #[test]
+fn held_department_modes_require_a_windows_seed_runtime_from_source_to_seed() {
+    let source_to_seed = json!("source_to_seed");
+    let seed_to_arm = json!("seed_to_arm");
+    for mode in [
+        "departments-plan",
+        "departments-apply",
+        "departments-verify",
+    ] {
+        assert_eq!(
+            supports("seed-runtime", mode, &source_to_seed),
+            cfg!(windows),
+        );
+        assert!(!supports("seed-runtime", mode, &seed_to_arm));
+        assert!(!supports("post-copy", mode, &source_to_seed));
+    }
+    for mode in ["departments-reconcile", "identities-verify"] {
+        assert!(!supports("seed-runtime", mode, &source_to_seed));
+    }
+}
+
+#[test]
 fn held_source_proofs_protect_the_exact_files_and_preserve_the_root_failure_marker() {
     let fixture = Fixture::new();
     let writer = fs::OpenOptions::new()

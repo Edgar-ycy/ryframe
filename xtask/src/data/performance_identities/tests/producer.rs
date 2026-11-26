@@ -227,6 +227,7 @@ fn granted_producer_rechecks_exact_plan_bytes_before_loading_any_configuration()
         "apply",
         &uuid::Uuid::new_v4().to_string(),
         Some(&"a".repeat(64)),
+        |_| panic!("摘要不匹配时不读取后继 API"),
         &mut |_| Ok(()),
     )
     .unwrap_err()
@@ -246,6 +247,7 @@ fn stopped_seed_guard_prevents_loading_private_configuration_or_creating_any_led
         "apply",
         &uuid::Uuid::new_v4().to_string(),
         None,
+        |_| panic!("apply 不选择后继 API"),
         &mut |phase| {
             phases.push(phase.to_owned());
             Err("seed 已失效".into())

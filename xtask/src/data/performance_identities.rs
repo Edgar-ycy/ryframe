@@ -185,18 +185,20 @@ pub(super) fn run(command: &PerformanceIdentitiesCommand) -> Result<()> {
         command.operation(),
         &uuid::Uuid::new_v4().to_string(),
         None,
+        |_| Ok(None),
         &mut |_| Ok(()),
     )?;
     println!("{}", serde_json::to_string(&summary)?);
     Ok(())
 }
 
-pub(super) fn execute_at(
+fn execute_at(
     path: &Path,
     state_dir: &Path,
     mode: &str,
     owner: &str,
     expected_raw_sha256: Option<&str>,
+    select_verify_api: impl FnOnce(&Value) -> Result<Option<inspection::VerifiedApi>>,
     checkpoint: &mut dyn FnMut(&str) -> Result<()>,
 ) -> Result<Value> {
     checkpoint("before-load")?;
@@ -206,11 +208,17 @@ pub(super) fn execute_at(
         return Err("身份计划原始字节在授权后变化；未创建账本或远程会话".into());
     }
     let prepared = evidence::parse(&bytes)?;
-    plan::load(&prepared, &root)?;
-    if mode == "verify" {
-        state::verify_input(&prepared, state_dir, &root)?;
-    }
-    let mut context = native::NativeContext::new(&prepared, state_dir, mode)?;
+    let api = {
+        let environment = plan::load(&prepared, &root)?;
+        if mode == "verify" {
+            state::verify_input(&prepared, state_dir, &root)?;
+            // 先核对已授权的活动 API，随后才进入会写入 verifying 前缀的执行器。
+            select_verify_api(&environment)?
+        } else {
+            None
+        }
+    };
+    let mut context = native::NativeContext::new(&prepared, state_dir, mode, api)?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;

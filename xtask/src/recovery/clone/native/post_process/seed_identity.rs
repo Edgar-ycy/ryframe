@@ -4,12 +4,15 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
-use super::{inspection, producer, seed_capacity::Guard};
+use super::{context::Context, inspection, producer, seed_capacity::Guard};
 use crate::{
     Result,
     data::performance_identities::seed_evidence,
     recovery::clone::native::{
-        department, json as document, lifecycle::state, resources::common, seed::capacity,
+        department, json as document,
+        lifecycle::state,
+        resources::common,
+        seed::{capacity, identity_successor, identity_verification_tool},
     },
 };
 
@@ -17,6 +20,7 @@ pub(super) fn execute(
     guard: &Guard<'_, '_>,
     request: &Value,
     registration: &Value,
+    producer_build: Option<&Path>,
 ) -> Result<Value> {
     let context = guard.live.context;
     let verify = match context.mode {
@@ -43,14 +47,13 @@ pub(super) fn execute(
     guard.full()?;
     let plan = common::read_bound(context.backend, &request["identity_plan"], "seed 身份计划")?;
     let root = Path::new(document::text(&request["identity_state"], "seed 身份账本")?);
-    let (producer_request, producer_registration) =
-        crate::recovery::clone::native::seed::identity_successor::select(
-            context.backend,
-            context.run,
-            context.number,
-            request,
-            registration,
-        )?;
+    let (producer_request, producer_registration) = select_producer(
+        context,
+        request,
+        registration,
+        producer_build,
+        original_departments.as_ref(),
+    )?;
     let result = producer::with_identity(context, &producer_request, &producer_registration)?;
     require_result(&result, &plan["plan_sha256"], verify)?;
     let observe = || observe_identity(context.backend, &plan, root, verify);
@@ -91,6 +94,36 @@ pub(super) fn execute(
         response["departments"] = departments;
     }
     Ok(response)
+}
+
+fn select_producer(
+    context: &Context<'_>,
+    request: &Value,
+    registration: &Value,
+    producer_build: Option<&Path>,
+    departments: Option<&Value>,
+) -> Result<(Value, Value)> {
+    if let Some(departments) = departments {
+        return identity_verification_tool::select(
+            context.backend,
+            context.run,
+            context.number,
+            request,
+            registration,
+            producer_build,
+            departments,
+        );
+    }
+    if producer_build.is_some() {
+        return Err("身份应用沿用已登记工具，不能使用核验构建".into());
+    }
+    identity_successor::select(
+        context.backend,
+        context.run,
+        context.number,
+        request,
+        registration,
+    )
 }
 
 fn require_result(result: &Value, digest: &Value, verify: bool) -> Result<()> {

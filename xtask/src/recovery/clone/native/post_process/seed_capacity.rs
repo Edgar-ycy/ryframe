@@ -61,8 +61,11 @@ pub(in crate::recovery::clone::native) fn run(
     options: &SeedRuntimeOptions,
 ) -> Result<Value> {
     if !selected(options.operation)
-        || options.request.is_some()
-            != (options.operation == SeedRuntimeOperation::IdentitiesReconcile)
+        || (!matches!(
+            options.operation,
+            SeedRuntimeOperation::DepartmentsPlan | SeedRuntimeOperation::IdentitiesVerify
+        ) && options.request.is_some()
+            != (options.operation == SeedRuntimeOperation::IdentitiesReconcile))
         || options.producer_binding.is_some()
     {
         return Err("seed 业务及运行准备沿用本 run 已发布登记和原身份计划".into());
@@ -74,7 +77,7 @@ pub(in crate::recovery::clone::native) fn run(
     }
     let runner = Runner {
         mode: options.operation.as_str(),
-        reconciliation: options.request.clone(),
+        request_file: options.request.clone(),
         scope: RefCell::new(None),
         #[cfg(windows)]
         hold_originals: options.hold_originals,
@@ -91,7 +94,7 @@ pub(in crate::recovery::clone::native) fn run(
 
 struct Runner {
     mode: &'static str,
-    reconciliation: Option<PathBuf>,
+    request_file: Option<PathBuf>,
     scope: RefCell<Option<Scope>>,
     #[cfg(windows)]
     hold_originals: bool,
@@ -152,19 +155,19 @@ impl StageRunner for Runner {
                             request, owner, scope, storage, None, held, true,
                         )?;
                         context.hold_plan()?;
-                        let result = execute(&context, self.reconciliation.as_deref());
+                        let result = execute(&context, self.request_file.as_deref());
                         files::combine(result, context.check_end())
                     },
                 );
             }
             let context = Context::load(request, owner, scope, storage, None)?;
-            let result = execute(&context, self.reconciliation.as_deref());
+            let result = execute(&context, self.request_file.as_deref());
             files::combine(result, context.check())
         })
     }
 }
 
-fn execute(context: &Context<'_>, reconciliation: Option<&Path>) -> Result<Value> {
+fn execute(context: &Context<'_>, request_file: Option<&Path>) -> Result<Value> {
     let registration = seed::Registration::load(context.backend, context.run, false)?;
     let registration_path = common::common_file(
         context.backend,
@@ -197,10 +200,15 @@ fn execute(context: &Context<'_>, reconciliation: Option<&Path>) -> Result<Value
         return super::seed_close::execute(&guard, &registration.value);
     }
     if context.mode.starts_with("departments-") {
-        return super::seed_department::execute(&guard, &registration.value, &descriptor);
+        return super::seed_department::execute(
+            &guard,
+            &registration.value,
+            &descriptor,
+            request_file,
+        );
     }
     if context.mode == "identities-reconcile" {
-        let path = reconciliation.ok_or("身份和解缺少明确请求")?;
+        let path = request_file.ok_or("身份和解缺少明确请求")?;
         return super::seed_identity_reconcile::execute(
             &guard,
             &registration.value,
@@ -209,7 +217,12 @@ fn execute(context: &Context<'_>, reconciliation: Option<&Path>) -> Result<Value
         );
     }
     if context.mode.starts_with("identities-") {
-        return super::seed_identity::execute(&guard, &registration.value, &descriptor);
+        return super::seed_identity::execute(
+            &guard,
+            &registration.value,
+            &descriptor,
+            request_file,
+        );
     }
     guard.quota()?;
     // 先验证全部已有配额意图和发布计划，再启动会话生产者。

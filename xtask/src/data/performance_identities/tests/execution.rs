@@ -27,6 +27,45 @@ fn apply(fixture: &mut Fixture) {
 }
 
 #[test]
+fn rejected_api_successor_leaves_the_prepared_identity_inventory_unchanged() {
+    let mut fixture = Fixture::new();
+    apply(&mut fixture);
+    let state = fixture.root();
+    let ledger = state.join("ledger.json");
+    let before = fs::read(&ledger).unwrap();
+    let files = || {
+        fs::read_dir(&state)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    let original_files = files();
+    let plan = fixture.directory.join("verify-plan.json");
+    evidence::new(&plan, &fixture.plan).unwrap();
+    let digest = evidence::hash(fs::read(&plan).unwrap());
+    let error = super::execute_at(
+        &plan,
+        &state,
+        "verify",
+        &uuid::Uuid::new_v4().to_string(),
+        Some(&digest),
+        |environment| {
+            assert_eq!(
+                environment["runtime"],
+                fixture.plan["environment"]["runtime"]
+            );
+            Err("测试 API 后继身份未通过".into())
+        },
+        &mut |_| Ok(()),
+    )
+    .unwrap_err()
+    .to_string();
+    assert_eq!(error, "测试 API 后继身份未通过");
+    assert_eq!(fs::read(&ledger).unwrap(), before);
+    assert_eq!(files(), original_files);
+}
+
+#[test]
 fn native_apply_then_verify_keeps_all_writes_and_exact_ordinary_sessions() {
     let mut fixture = Fixture::new();
     apply(&mut fixture);

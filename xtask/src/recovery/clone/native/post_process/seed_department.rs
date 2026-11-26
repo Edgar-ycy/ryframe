@@ -1,6 +1,6 @@
 //! 部门阶段沿用同一 seed 控制窗口和原 API/Worker 守卫。
 
-use std::cell::RefCell;
+use std::{cell::RefCell, path::Path};
 
 use serde_json::Value;
 
@@ -10,9 +10,12 @@ use super::{
 };
 use crate::{
     Result,
-    recovery::clone::native::department::{
-        self,
-        orchestration::{Port, Prepared},
+    recovery::clone::native::{
+        department::{
+            self,
+            orchestration::{Port, Prepared},
+        },
+        seed::department_successor,
     },
 };
 
@@ -20,6 +23,7 @@ pub(super) fn execute(
     guard: &Guard<'_, '_>,
     request: &Value,
     registration: &Value,
+    producer_build: Option<&Path>,
 ) -> Result<Value> {
     let context = guard.live.context;
     let checks = Checks {
@@ -27,7 +31,7 @@ pub(super) fn execute(
         request,
         schedules: RefCell::new(None),
     };
-    if context.mode == "departments-plan" {
+    if context.mode == "departments-plan" && producer_build.is_none() {
         let adopted = department::adopt_plan::run(
             context.backend,
             context.run,
@@ -50,10 +54,21 @@ pub(super) fn execute(
         request,
         context.mode,
     )?;
+    let successor = department_successor::select(
+        context.backend,
+        context.run,
+        context.number,
+        registration,
+        producer_build,
+    )?;
+    let (producer_request, producer_registration) = successor
+        .as_ref()
+        .map(|(request, registration)| (request, registration))
+        .unwrap_or((request, registration));
     producer::with_department(
         context,
-        request,
-        registration,
+        producer_request,
+        producer_registration,
         |session| {
             prepared.run(&mut DepartmentPort {
                 checks: &checks,

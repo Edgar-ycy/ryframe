@@ -86,19 +86,23 @@ pub(super) fn parse_seed_runtime(args: &[String]) -> Result<CloneCommand, CliErr
         Some("held") if SeedRuntimeOperation::supports_held_originals(operation.as_str()) => true,
         Some(_) => {
             return Err(CliError::new(
-                "seed-runtime --originals 只接受 held，且仅适用于 Windows quotas-plan 和 quotas-apply",
+                "seed-runtime --originals 只接受 held，且仅适用于 Windows 上的 quotas-plan、quotas-apply、departments-plan、departments-apply 和 departments-verify",
             ));
         }
     };
     let request = optional_path(&options, "--request")?;
     let producer_binding = optional_path(&options, "--producer-binding")?;
-    if request.is_some()
-        != matches!(
-            operation,
-            SeedRuntimeOperation::Register
-                | SeedRuntimeOperation::ArmInput
-                | SeedRuntimeOperation::IdentitiesReconcile
-        )
+    let requires_request = matches!(
+        operation,
+        SeedRuntimeOperation::Register
+            | SeedRuntimeOperation::ArmInput
+            | SeedRuntimeOperation::IdentitiesReconcile
+    );
+    let permits_tool_build = matches!(
+        operation,
+        SeedRuntimeOperation::DepartmentsPlan | SeedRuntimeOperation::IdentitiesVerify
+    );
+    if !permits_tool_build && request.is_some() != requires_request
         || producer_binding.is_some() != matches!(operation, SeedRuntimeOperation::RecoverSession)
     {
         return Err(CliError::new(
