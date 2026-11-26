@@ -13,7 +13,8 @@ where
     Ok(DateTime::from_naive_utc_and_offset(value, Utc))
 }
 
-pub(crate) async fn utc_now_time<C>(database: &C) -> AppResult<OffsetDateTime>
+/// 从指定连接或事务读取数据库 UTC 时钟，保留微秒精度。
+pub async fn utc_now_time<C>(database: &C) -> AppResult<OffsetDateTime>
 where
     C: ConnectionTrait + ?Sized,
 {

@@ -1,10 +1,12 @@
 use super::*;
 use ryframe_application::ports::tenant_data::TenantDataFence;
+use ryframe_application::ports::utc_timestamp::from_chrono;
 use ryframe_db::{
     entities::tenant::{data_migration, data_placement, operation_lease},
-    repositories::database_utc_now,
+    repositories::database_utc_now_time,
 };
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QuerySelect, sea_query::LockType};
+use time::OffsetDateTime;
 
 impl TenantDataScopeProjectionPublisher {
     pub(super) async fn publish_migration_projection(
@@ -59,7 +61,7 @@ impl TenantDataScopeProjectionPublisher {
                 .await
                 .map_err(map_error)?;
             verification::publish_verified(control, &target, fence, version).await?;
-            if expires_at <= database_utc_now(control).await? {
+            if expires_at <= database_utc_now_time(control).await? {
                 return Err(AppError::TenantOperationConflict(
                     "迁移投影发布期间操作租约已过期".into(),
                 ));
@@ -84,7 +86,7 @@ impl TenantDataScopeProjectionPublisher {
 async fn lock_migration_context(
     control: &DatabaseTransaction,
     fence: TenantDataFence<'_>,
-) -> AppResult<(i64, chrono::DateTime<chrono::Utc>)> {
+) -> AppResult<(i64, OffsetDateTime)> {
     // 与租户长操作保持相同锁序；共享租户锁固定版本及身份、组织数据快照。
     let tenant = TenantVersionRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::MySql,
@@ -119,12 +121,13 @@ async fn lock_migration_context(
         .db()?
         .ok_or_else(|| AppError::NotFound("迁移投影缺少权威迁移记录".into()))?;
     validate_migration_context(fence, &placement, &migration, &lease)?;
-    if lease.expires_at <= database_utc_now(control).await? {
+    let expires_at = from_chrono(lease.expires_at).db_context("读取迁移投影租约截止时间")?;
+    if expires_at <= database_utc_now_time(control).await? {
         return Err(AppError::TenantOperationConflict(
             "迁移投影操作租约已过期".into(),
         ));
     }
-    Ok((tenant.data_scope_version, lease.expires_at))
+    Ok((tenant.data_scope_version, expires_at))
 }
 
 fn validate_migration_context(

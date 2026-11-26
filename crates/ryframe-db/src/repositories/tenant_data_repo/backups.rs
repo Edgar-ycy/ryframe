@@ -1,6 +1,7 @@
 use crate::entities::tenant::data_backup_point;
 use chrono::{DateTime, Utc};
 use sea_orm::ActiveValue::Set;
+use time::OffsetDateTime;
 
 #[derive(Clone, Debug)]
 pub struct CreateTenantDataMigration {
@@ -75,8 +76,8 @@ pub struct ValidatedTenantDataBackup<'a> {
     pub target_mode: &'a str,
     pub target_generation: i64,
     pub schema_fingerprint: &'a str,
-    pub not_before: DateTime<Utc>,
-    pub now: DateTime<Utc>,
+    pub not_before: OffsetDateTime,
+    pub now: OffsetDateTime,
 }
 
 #[cfg(test)]

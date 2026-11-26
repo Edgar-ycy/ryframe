@@ -10,8 +10,8 @@ use crate::ports::tenant_data::{
     TenantDataMigrationRecord, TenantDataRow,
 };
 
-use super::TenantDataMigrationService;
 use super::workflow::ensure_not_cancel_requested;
+use super::{TenantDataMigrationService, migration_record_time};
 
 impl TenantDataMigrationService {
     pub(super) async fn copy_catalog(
@@ -206,7 +206,7 @@ impl TenantDataMigrationService {
             item.target_row_count = Some(next_count);
             item.source_digest = Some(next_digest.clone());
             item.target_digest = Some(next_digest);
-            item.updated_at = progress_now;
+            item.updated_at = migration_record_time(progress_now)?;
             item = progress_transaction.save_item(item).await?;
             progress_transaction
                 .commit(crate::TransactionAuditMode::Skip)

@@ -3483,7 +3483,6 @@ name = "ryframe-tenant-db"
 version = "0.13.1"
 dependencies = [
  "async-trait",
- "chrono",
  "futures-util",
  "hex",
  "rust_decimal",

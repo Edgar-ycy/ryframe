@@ -272,8 +272,9 @@ async fn activation_rejects_scope_placement_and_original_fence_drift() {
 
 #[async_trait]
 impl TenantDataMigrationPersistencePort for Persistence {
-    async fn database_now(&self) -> AppResult<chrono::DateTime<Utc>> {
-        Ok(self.shared.persisted.lock().unwrap().migration.updated_at)
+    async fn database_now(&self) -> AppResult<OffsetDateTime> {
+        let now = self.shared.persisted.lock().unwrap().migration.updated_at;
+        Ok(crate::ports::utc_timestamp::from_chrono(now).unwrap())
     }
     async fn begin(&self) -> AppResult<Box<dyn TenantDataMigrationTransaction>> {
         self.shared.events.lock().unwrap().push("begin".into());
@@ -340,8 +341,8 @@ impl TenantDataMigrationPersistencePort for Persistence {
     async fn has_validated_backup<'a>(
         &'a self,
         _: &'a TenantDataMigrationRecord,
-        _: chrono::DateTime<Utc>,
-        _: chrono::DateTime<Utc>,
+        _: OffsetDateTime,
+        _: OffsetDateTime,
     ) -> AppResult<bool> {
         unreachable!()
     }

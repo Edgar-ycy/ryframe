@@ -10,6 +10,7 @@ use ryframe_db::{
     },
     repositories::{CreateTenantDataMigration, ValidatedTenantDataBackup},
 };
+use time::OffsetDateTime;
 
 pub fn map_migration(model: tenant_data_migration::Model) -> TenantDataMigrationRecord {
     TenantDataMigrationRecord {
@@ -235,8 +236,8 @@ pub(super) fn map_create_migration(
 
 pub(super) fn validated_backup_query(
     migration: &TenantDataMigrationRecord,
-    not_before: chrono::DateTime<chrono::Utc>,
-    now: chrono::DateTime<chrono::Utc>,
+    not_before: OffsetDateTime,
+    now: OffsetDateTime,
 ) -> ValidatedTenantDataBackup<'_> {
     ValidatedTenantDataBackup {
         tenant_id: &migration.tenant_id,

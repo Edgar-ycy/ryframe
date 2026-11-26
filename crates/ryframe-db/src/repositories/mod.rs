@@ -52,7 +52,7 @@ pub use data_retention_repo::{
     DataRetentionRepository, RetentionCleanupResult, RetentionCutoff, RetentionResource,
 };
 pub use database_clock::utc_now as database_utc_now;
-pub(crate) use database_clock::utc_now_time as database_utc_now_time;
+pub use database_clock::utc_now_time as database_utc_now_time;
 pub(crate) use database_clock::utc_time_from_chrono;
 pub use dept_repo::DeptRepository;
 pub use dict_repo::{DictDataRepository, DictTypeFilter, DictTypeRepository};

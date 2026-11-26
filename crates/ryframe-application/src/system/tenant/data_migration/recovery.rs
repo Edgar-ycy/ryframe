@@ -64,7 +64,6 @@ impl TenantDataMigrationService {
                 .await?;
             return Ok(false);
         }
-        let queue_now = crate::jobs::queue_time_from_database(now)?;
         if let Some(job_id) = migration.background_job_id
             && self
                 .queue
@@ -74,7 +73,7 @@ impl TenantDataMigrationService {
                     TENANT_DATA_MIGRATION_JOB_TYPE,
                     "migration_id",
                     migration.id,
-                    queue_now,
+                    now,
                 )
                 .await?
         {
@@ -98,7 +97,7 @@ impl TenantDataMigrationService {
                     job_type: TENANT_DATA_MIGRATION_JOB_TYPE.into(),
                     payload: json!({ "migration_id": migration.id.to_string() }),
                     priority: 20,
-                    available_at: queue_now,
+                    available_at: now,
                     max_attempts: 8,
                     dedupe_key: Some(format!(
                         "migration-recovery:{}:{recovery_generation}:{}",
@@ -111,7 +110,7 @@ impl TenantDataMigrationService {
             )
             .await?;
         migration.background_job_id = Some(queued.job_id);
-        migration.updated_at = now;
+        migration.updated_at = migration_record_time(now)?;
         transaction.save_migration(migration).await?;
         transaction
             .commit(crate::TransactionAuditMode::Skip)
@@ -164,6 +163,7 @@ impl TenantDataMigrationService {
                 "取消收口时源 placement 已变化".into(),
             ));
         }
+        let now = migration_record_time(now)?;
         migration.state = TenantDataMigrationRecord::STATE_CANCELLED.into();
         migration.cancelled_at = Some(now);
         migration.updated_at = now;
@@ -183,7 +183,11 @@ impl TenantDataMigrationService {
     ) -> AppResult<TenantDataMigrationRecord> {
         validate_recovery_intent(&snapshot, RecoveryIntent::Finalize)?;
         let now = self.persistence.database_now().await?;
-        if snapshot.retention_until.is_none_or(|until| until > now) {
+        let record_now = migration_record_time(now)?;
+        if snapshot
+            .retention_until
+            .is_none_or(|until| until > record_now)
+        {
             return Err(AppError::TenantOperationConflict(
                 "源数据保留期尚未结束".into(),
             ));
@@ -194,7 +198,7 @@ impl TenantDataMigrationService {
             .ok_or_else(|| AppError::Conflict("迁移缺少激活时间".into()))?;
         if !self
             .persistence
-            .has_validated_backup(&snapshot, not_before, now)
+            .has_validated_backup(&snapshot, backup_window_start(not_before)?, now)
             .await?
         {
             return Err(AppError::TenantOperationConflict(
@@ -227,6 +231,7 @@ impl TenantDataMigrationService {
                 "finalize 收口时当前 placement 已变化".into(),
             ));
         }
+        let now = migration_record_time(now)?;
         migration.state = TenantDataMigrationRecord::STATE_FINALIZED.into();
         migration.finalized_at = Some(now);
         migration.updated_at = now;
@@ -290,7 +295,7 @@ impl TenantDataMigrationService {
         let changed = placement.state != TenantDataPlacementRecord::STATE_ACTIVE;
         if changed {
             placement.state = TenantDataPlacementRecord::STATE_ACTIVE.into();
-            placement.updated_at = now;
+            placement.updated_at = migration_record_time(now)?;
             transaction.save_placement(placement).await?;
             transaction
                 .increment_runtime_epoch(&migration.tenant_id)
@@ -356,7 +361,7 @@ impl TenantDataMigrationService {
                             .map_err(|_| AppError::Internal("cleanup row count overflow".into()))?,
                     )
                     .ok_or_else(|| AppError::Internal("cleanup row count overflow".into()))?;
-                item.updated_at = now;
+                item.updated_at = migration_record_time(now)?;
                 item = transaction.save_item(item).await?;
                 transaction
                     .commit(crate::TransactionAuditMode::Skip)
@@ -374,8 +379,9 @@ impl TenantDataMigrationService {
         let mut checkpoint = checkpoint_transaction.lock_migration(snapshot.id).await?;
         validate_recovery_intent(&checkpoint, intent)?;
         if checkpoint.cleanup_ready_at.is_none() {
-            checkpoint.cleanup_ready_at = Some(checkpoint_now);
-            checkpoint.updated_at = checkpoint_now;
+            let recorded_at = migration_record_time(checkpoint_now)?;
+            checkpoint.cleanup_ready_at = Some(recorded_at);
+            checkpoint.updated_at = recorded_at;
             checkpoint_transaction.save_migration(checkpoint).await?;
         }
         checkpoint_transaction
@@ -413,7 +419,7 @@ impl TenantDataMigrationService {
         if intent.error_code.is_none() {
             intent.error_code = Some(error_code.chars().take(64).collect());
             intent.error_detail = None;
-            intent.updated_at = now;
+            intent.updated_at = migration_record_time(now)?;
             intent = intent_transaction.save_migration(intent).await?;
         }
         intent_transaction
@@ -458,6 +464,7 @@ impl TenantDataMigrationService {
                 "失败补偿收口时源 placement 已变化".into(),
             ));
         }
+        let now = migration_record_time(now)?;
         migration.state = TenantDataMigrationRecord::STATE_FAILED.into();
         migration.failed_at = Some(now);
         migration.updated_at = now;
@@ -487,7 +494,7 @@ impl TenantDataMigrationService {
         if let Some(item) = existing_item {
             Ok(item)
         } else {
-            let now = self.persistence.database_now().await?;
+            let now = migration_record_time(self.persistence.database_now().await?)?;
             self.persistence
                 .insert_item(TenantDataMigrationItemRecord {
                     id: crate::next_id()?,
