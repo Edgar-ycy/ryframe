@@ -2,6 +2,7 @@ use super::reject;
 use crate::{Result, recovery::clone::native::json as strict};
 use serde_json::{Value, json};
 use std::{
+    error::Error,
     net::{SocketAddr, TcpStream},
     thread,
     time::{Duration, Instant},
@@ -42,6 +43,20 @@ pub(super) fn execute(args: &Value) -> Result<Value> {
 
 fn ready(url: reqwest::Url) -> Result<Value> {
     crate::http_session::install_crypto_provider()?;
+    let result = if tokio::runtime::Handle::try_current().is_ok() {
+        // 同步就绪探针也会由已有异步运行时的会话调用。
+        thread::Builder::new()
+            .spawn(move || ready_response(url))?
+            .join()
+            .map_err(|_| "Worker 就绪探针线程异常退出")?
+    } else {
+        ready_response(url)
+    };
+    let ready = result.map_err(|error| -> Box<dyn Error> { error })?;
+    Ok(json!(ready))
+}
+
+fn ready_response(url: reqwest::Url) -> std::result::Result<bool, Box<dyn Error + Send + Sync>> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
@@ -56,7 +71,7 @@ fn ready(url: reqwest::Url) -> Result<Value> {
             response = client.get(url).send() => response.is_ok_and(|r| r.status().as_u16() == 200),
             _ = tokio::signal::ctrl_c() => false,
         };
-        Ok(json!(ready))
+        Ok(ready)
     })
 }
 

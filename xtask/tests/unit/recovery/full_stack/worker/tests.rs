@@ -674,6 +674,25 @@ fn occupied_port_rejects_status_and_timeout_then_accepts_closed_port() {
     probe("free", format!("http://{address}/readyz"), 0.0).unwrap();
 }
 
+fn readiness_response(status: &'static str) -> (String, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut bytes = [0; 4096];
+        assert!(stream.read(&mut bytes).unwrap() > 0);
+        write!(stream,"HTTP/1.1 {status}\r\nLocation: http://{address}/other\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+    });
+    (format!("http://{address}/readyz"), server)
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn readiness_accepts_200_inside_current_thread_tokio_runtime() {
+    let (url, server) = readiness_response("200 OK");
+    assert_eq!(probe("ready", url, 0.0).unwrap(), json!(true));
+    server.join().unwrap();
+}
+
 #[test]
 fn readiness_accepts_200_and_never_follows_redirect_or_waits_forever() {
     for (status, expected) in [
@@ -681,18 +700,8 @@ fn readiness_accepts_200_and_never_follows_redirect_or_waits_forever() {
         ("302 Found", false),
         ("500 Failed", false),
     ] {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut bytes = [0; 4096];
-            assert!(stream.read(&mut bytes).unwrap() > 0);
-            write!(stream,"HTTP/1.1 {status}\r\nLocation: http://{address}/other\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
-        });
-        assert_eq!(
-            probe("ready", format!("http://{address}/readyz"), 0.0).unwrap(),
-            json!(expected)
-        );
+        let (url, server) = readiness_response(status);
+        assert_eq!(probe("ready", url, 0.0).unwrap(), json!(expected));
         server.join().unwrap();
     }
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
