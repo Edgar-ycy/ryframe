@@ -34,13 +34,13 @@ hex = { workspace = true, optional = true }
 same-file = { version = "1.0.6", optional = true }
 serde = { workspace = true, optional = true, features = ["derive"] }
 serde_json = { workspace = true, optional = true }
-chrono = { workspace = true, optional = true }
 time = { workspace = true, optional = true, features = ["formatting", "macros", "parsing"] }
 async-trait = { workspace = true, optional = true }
 zip = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 
 [dev-dependencies]
+chrono.workspace = true
 same-file.workspace = true
 futures-util.workspace = true
 tempfile.workspace = true
@@ -85,7 +85,6 @@ runtime-services = [
     "dep:redis",
     "dep:futures-util",
     "dep:serde_json",
-    "dep:chrono",
     "dep:time",
     "dep:async-trait",
     "dep:zip",
@@ -132,7 +131,6 @@ bin-tenant-data = [
     "ryframe-sdk/runtime",
     "ryframe-db/repositories",
     "ryframe-tenant-db/repositories",
-    "dep:chrono",
     "dep:time",
     "dep:sha2",
     "dep:hex",

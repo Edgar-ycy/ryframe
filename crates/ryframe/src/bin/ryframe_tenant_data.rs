@@ -9,6 +9,8 @@ mod args;
 mod commands;
 #[path = "ryframe_tenant_data/context.rs"]
 mod context;
+#[path = "ryframe_tenant_data/inventory_timestamp.rs"]
+mod inventory_timestamp;
 #[path = "ryframe_tenant_data/output.rs"]
 mod output;
 #[path = "ryframe_tenant_data/preimage.rs"]

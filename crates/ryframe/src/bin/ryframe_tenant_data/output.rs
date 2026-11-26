@@ -1,5 +1,4 @@
-use super::args::InventoryTime;
-use chrono::{DateTime, Utc};
+use super::{args::InventoryTime, inventory_timestamp::InventoryTimestamp};
 use ryframe_application::ports::{
     backup::{DatabaseBackup, ObjectBackup},
     utc_timestamp,
@@ -22,7 +21,7 @@ pub(super) struct Inventory {
     pub(super) scope_id: String,
     pub(super) source_sha: String,
     #[serde(flatten)]
-    pub(super) observation: InventoryTime<DateTime<Utc>>,
+    pub(super) observation: InventoryTime<InventoryTimestamp>,
     #[serde(serialize_with = "utc_timestamp::serialize")]
     pub(super) captured_at: OffsetDateTime,
     pub(super) control_schema_fingerprint: String,

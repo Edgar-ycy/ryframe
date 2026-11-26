@@ -1,10 +1,10 @@
 use super::{
     args::{Command, InventoryTime},
     context::Context,
+    inventory_timestamp::InventoryTimestamp,
     output::{self, Inventory, write_inventory},
     preimage,
 };
-use chrono::{DateTime, Utc};
 use ryframe_application::ports::{backup::*, utc_timestamp};
 use ryframe_config::AppConfig;
 use ryframe_kernel::{AppError, AppResult};
@@ -150,17 +150,10 @@ async fn inventory(
     let value = match &observation {
         InventoryTime::QuiescedAt(value) | InventoryTime::ObservedAt(value) => value,
     };
-    let started_at = DateTime::parse_from_rfc3339(value)
-        .map_err(|_| AppError::Validation("库存观察时间必须是 RFC3339".into()))?
-        .with_timezone(&Utc);
-    let captured_at = context.repository.database_now().await?;
-    if started_at > captured_at {
-        return Err(AppError::Validation(
-            "库存观察开始时间不能在采集时间之后".into(),
-        ));
-    }
-    let captured_at = utc_timestamp::from_chrono(captured_at)
+    let started_at = InventoryTimestamp::parse(value)?;
+    let captured_at = utc_timestamp::from_chrono(context.repository.database_now().await?)
         .map_err(|_| AppError::Internal("库存采集时间超出 UTC 表示范围".into()))?;
+    started_at.validate_not_after(captured_at)?;
     let inventory = Inventory {
         scope_id: config.scope_id.as_str().into(),
         source_sha,
