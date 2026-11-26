@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use time::OffsetDateTime;
 
 use crate::PersistenceTransaction;
@@ -17,7 +16,7 @@ pub struct ProfileRecord {
     pub status: String,
     pub remark: Option<String>,
     pub login_ip: Option<String>,
-    pub login_date: Option<DateTime<Utc>>,
+    pub login_date: Option<OffsetDateTime>,
     pub created_at: OffsetDateTime,
     pub roles: Vec<String>,
     pub permissions: Vec<String>,
@@ -74,7 +73,7 @@ pub trait ProfileTransaction: PersistenceTransaction + Sync {
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<()>;
 
     async fn increment_user_authorization_version<'a>(
@@ -83,7 +82,7 @@ pub trait ProfileTransaction: PersistenceTransaction + Sync {
         user_id: i64,
     ) -> ryframe_kernel::AppResult<Vec<(i64, i32)>>;
 
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime>;
 
     async fn find_avatar_file_for_update<'a>(
         &'a self,
@@ -95,7 +94,7 @@ pub trait ProfileTransaction: PersistenceTransaction + Sync {
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool>;
 
     async fn update_avatar<'a>(
@@ -104,7 +103,7 @@ pub trait ProfileTransaction: PersistenceTransaction + Sync {
         user_id: i64,
         avatar_url: String,
         avatar_file_id: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<()>;
 
     async fn count_avatar_references<'a>(
@@ -117,8 +116,8 @@ pub trait ProfileTransaction: PersistenceTransaction + Sync {
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
-        now: DateTime<Utc>,
-        cleanup_after: DateTime<Utc>,
+        now: OffsetDateTime,
+        cleanup_after: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool>;
 }
 

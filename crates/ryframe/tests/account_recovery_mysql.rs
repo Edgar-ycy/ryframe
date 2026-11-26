@@ -28,6 +28,8 @@ mod configuration_fixture;
 mod imported_accounts;
 #[path = "../../ryframe-db/tests/support/mysql.rs"]
 mod mysql;
+#[path = "account_recovery_mysql/profile_utc.rs"]
+mod profile_utc;
 #[path = "../../ryframe-adapters/tests/support/configuration.rs"]
 mod redis_configuration;
 #[path = "account_recovery_mysql/role_assignment.rs"]

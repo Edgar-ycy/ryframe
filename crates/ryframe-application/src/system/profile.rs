@@ -3,6 +3,7 @@ use std::sync::Arc;
 use ryframe_auth::password;
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use serde::Serialize;
+use time::{Duration, OffsetDateTime};
 
 use crate::{
     AuthorizationCache, TransactionAuditMode,
@@ -10,7 +11,7 @@ use crate::{
     ports::utc_timestamp,
 };
 
-const AVATAR_CLEANUP_GRACE_MINUTES: i64 = 5;
+const AVATAR_CLEANUP_GRACE: Duration = Duration::minutes(5);
 
 /// 用户个人信息响应。
 #[derive(Debug, Clone, Serialize)]
@@ -72,7 +73,14 @@ impl ProfileService {
             status: profile.status,
             remark: profile.remark,
             login_ip: profile.login_ip,
-            login_date: profile.login_date.map(|date| date.to_rfc3339()),
+            login_date: profile
+                .login_date
+                .as_ref()
+                .map(utc_timestamp::format_with_offset)
+                .transpose()
+                .map_err(|_| {
+                    AppError::Database("读取个人资料登录时间：时间无法精确表示为 UTC".into())
+                })?,
             created_at: utc_timestamp::format_with_offset(&profile.created_at).map_err(|_| {
                 AppError::Database("读取个人资料创建时间：时间无法精确表示为 UTC".into())
             })?,
@@ -241,12 +249,7 @@ impl ProfileService {
                 == 0
         {
             transaction
-                .mark_avatar_orphan(
-                    tenant_id,
-                    old_file_id,
-                    now,
-                    now + chrono::Duration::minutes(AVATAR_CLEANUP_GRACE_MINUTES),
-                )
+                .mark_avatar_orphan(tenant_id, old_file_id, now, avatar_cleanup_after(now)?)
                 .await?;
         }
         Ok(())
@@ -303,14 +306,14 @@ impl ProfileService {
             return Ok(false);
         }
         transaction
-            .mark_avatar_orphan(
-                tenant_id,
-                avatar_file_id,
-                now,
-                now + chrono::Duration::minutes(AVATAR_CLEANUP_GRACE_MINUTES),
-            )
+            .mark_avatar_orphan(tenant_id, avatar_file_id, now, avatar_cleanup_after(now)?)
             .await
     }
+}
+
+fn avatar_cleanup_after(now: OffsetDateTime) -> AppResult<OffsetDateTime> {
+    now.checked_add(AVATAR_CLEANUP_GRACE)
+        .ok_or_else(|| AppError::Database("头像清理时间超出 UTC 表示范围".into()))
 }
 
 pub fn normalize_preferred_locale(locale: Option<String>) -> AppResult<Option<String>> {

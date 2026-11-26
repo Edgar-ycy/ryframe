@@ -8,6 +8,7 @@ use crate::{
     entities::{sys_file, user},
 };
 use sea_orm::{ActiveModelTrait, TransactionTrait};
+use time::OffsetDateTime;
 
 use ryframe_application::{
     AuthorizationCache, PersistenceTransaction, TransactionAuditMode,
@@ -88,7 +89,11 @@ impl ProfilePersistencePort for DatabaseProfilePersistence {
             status: user.status,
             remark: user.remark,
             login_ip: user.login_ip,
-            login_date: user.login_date,
+            login_date: user
+                .login_date
+                .map(crate::repositories::utc_time_from_chrono)
+                .transpose()
+                .db_context("读取个人资料登录时间")?,
             created_at: user.created_at,
             roles: role_codes,
             permissions,
@@ -178,13 +183,8 @@ impl ProfileTransaction for DatabaseProfileTransaction {
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<()> {
-        let now = time::OffsetDateTime::from_unix_timestamp(now.timestamp())
-            .and_then(|utc| utc.replace_nanosecond(now.timestamp_subsec_nanos()))
-            .map_err(|_| {
-                ryframe_kernel::AppError::Database("密码重置撤销时间无法精确表示为 UTC".into())
-            })?;
         PasswordResetRequestRepository
             .expire_pending_for_user_in_txn(&self.transaction, tenant_id, user_id, now)
             .await
@@ -200,8 +200,8 @@ impl ProfileTransaction for DatabaseProfileTransaction {
             .await
     }
 
-    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
-        crate::repositories::database_utc_now(&self.transaction).await
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime> {
+        crate::repositories::database_utc_now_time(&self.transaction).await
     }
 
     async fn find_avatar_file_for_update<'a>(
@@ -230,15 +230,10 @@ impl ProfileTransaction for DatabaseProfileTransaction {
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         FileRepository
-            .restore_avatar_file_for_reference_in_txn(
-                &self.transaction,
-                tenant_id,
-                file_id,
-                crate::application_ports::files::utc_time_from_chrono(now)?,
-            )
+            .restore_avatar_file_for_reference_in_txn(&self.transaction, tenant_id, file_id, now)
             .await
     }
 
@@ -248,7 +243,7 @@ impl ProfileTransaction for DatabaseProfileTransaction {
         user_id: i64,
         avatar_url: String,
         avatar_file_id: i64,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<()> {
         UserRepository
             .update_avatar_in_txn(
@@ -257,7 +252,7 @@ impl ProfileTransaction for DatabaseProfileTransaction {
                 user_id,
                 avatar_url,
                 avatar_file_id,
-                crate::application_ports::files::utc_time_from_chrono(now)?,
+                now,
             )
             .await
     }
@@ -276,16 +271,16 @@ impl ProfileTransaction for DatabaseProfileTransaction {
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
-        now: chrono::DateTime<chrono::Utc>,
-        cleanup_after: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
+        cleanup_after: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         FileRepository
             .mark_avatar_orphan_for_cleanup_in_txn(
                 &self.transaction,
                 tenant_id,
                 file_id,
-                crate::application_ports::files::utc_time_from_chrono(now)?,
-                crate::application_ports::files::utc_time_from_chrono(cleanup_after)?,
+                now,
+                cleanup_after,
             )
             .await
     }

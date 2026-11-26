@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Use the database UTC clock in the profile password-change and avatar cleanup paths. Preserve the login timestamp format and five-minute avatar cleanup grace period.
+
 - Remove the single-path source classification entry point. Source domains and fingerprints continue to share the Rust classifier and source protocol validation.
 
 - Use UTC time types for tenant expiration across the API, application, and database adapters. Equivalent time-zone values preserve the session version. Clearing or changing expiration continues to invalidate older tenant sessions.
