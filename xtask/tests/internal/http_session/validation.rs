@@ -15,6 +15,7 @@ fn selected_operation_paths_match_the_current_openapi_document() {
         "get_auth_context",
         "get_monitor_schedules_by_id",
         "put_monitor_schedules_by_id_status",
+        "delete_system_online_by_sid",
     ] {
         let entry = &operations[operation];
         let method = entry["method"].as_str().unwrap().to_ascii_lowercase();
@@ -149,6 +150,7 @@ fn unsupported_steps_and_invalid_parameters_fail_without_hooks_or_http() {
             json!({"operation": "get_auth_context", "workflow": {}}),
             json!({"operation": "get_auth_context", "steps": []}),
             json!({"operation": "delete_example"}),
+            json!({"operation": "delete_system_online_by_sid", "path": {"sid":fixture::SESSION_ID}, "idempotency_key":fixture::FORCE_LOGOUT_KEY}),
             json!({"operation": "get_monitor_schedules_by_id"}),
             json!({"operation": "get_monitor_schedules_by_id", "path": {"id": ".."}}),
             json!({"operation": "get_auth_context", "query": {"filter": []}}),
@@ -159,6 +161,69 @@ fn unsupported_steps_and_invalid_parameters_fail_without_hooks_or_http() {
             json!({"operation": "unknown_operation"}),
         ] {
             let error = session.request(&step, &mut hook).await.unwrap_err();
+            assert_redacted(&error);
+        }
+        assert_eq!((hook.before, hook.complete), (0, 0));
+        assert!(server.seen.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn force_logout_rejects_unbound_sid_route_key_or_missing_login_before_http() {
+    run(async {
+        let server = Server::start(vec![]);
+        let config = fixture::config(&server.url, 1000);
+        let mut hook = Hook::default();
+        for (method, path, sid, key, category) in [
+            (
+                "DELETE",
+                "/api/v1/system/online/{sid}",
+                "s-../other",
+                fixture::FORCE_LOGOUT_KEY,
+                "invalid_request",
+            ),
+            (
+                "DELETE",
+                "/api/v1/system/online/{sid}",
+                fixture::SESSION_ID,
+                "invalid",
+                "invalid_request",
+            ),
+            (
+                "DELETE",
+                "/api/v1/other/{sid}",
+                fixture::SESSION_ID,
+                fixture::FORCE_LOGOUT_KEY,
+                "unsupported_step",
+            ),
+            (
+                "POST",
+                "/api/v1/system/online/{sid}",
+                fixture::SESSION_ID,
+                fixture::FORCE_LOGOUT_KEY,
+                "unsupported_step",
+            ),
+            (
+                "DELETE",
+                "/api/v1/system/online/{sid}",
+                fixture::SESSION_ID,
+                fixture::FORCE_LOGOUT_KEY,
+                "missing_credentials",
+            ),
+        ] {
+            let mut catalog = fixture::catalog();
+            catalog.insert(
+                "delete_system_online_by_sid".into(),
+                json!({"method":method,"path":path}),
+            );
+            let mut session = Session::new(&config, catalog, &fixture::identity()).unwrap();
+            let outcome = session
+                .force_logout_online_session(sid, key, &mut hook)
+                .await;
+            assert!(!outcome.request_started);
+            assert!(outcome.status.is_none() && outcome.request_id.is_none());
+            let error = outcome.result.unwrap_err();
+            assert_eq!(error.category, category);
             assert_redacted(&error);
         }
         assert_eq!((hook.before, hook.complete), (0, 0));

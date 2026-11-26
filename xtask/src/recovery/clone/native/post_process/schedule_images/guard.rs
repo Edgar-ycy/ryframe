@@ -92,7 +92,7 @@ pub(in crate::recovery::clone::native) fn require_disabled_schedules(
 /// 使用固定目标共享控制库和原 MySQL 只读窗口，SQL 由受管 Rust 调用点提供。
 pub(in crate::recovery::clone::native) fn read_target_control<T>(
     target: &StorageInputs<'_>,
-    (label, sql): (&'static str, &'static str),
+    (label, sql): (&'static str, &str),
     transport: &impl Transport,
     checkpoint: &dyn Fn() -> Result<()>,
     decode: impl FnOnce(&str) -> Result<T>,

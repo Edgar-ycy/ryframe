@@ -18,7 +18,7 @@ pub(crate) use error::SessionError;
 pub(crate) fn install_crypto_provider() -> Result<(), SessionError> {
     tls::install()
 }
-use preparation::{Configuration, Plan};
+use preparation::{Configuration, FORCE_LOGOUT_OPERATION, Plan};
 
 #[cfg(test)]
 #[path = "../tests/internal/http_session.rs"]
@@ -56,6 +56,15 @@ pub(crate) struct Session {
     configuration: Configuration,
     cookies: BTreeMap<String, String>,
     access_token: Option<String>,
+}
+
+/// 仅记录本次 DELETE 的发送边界与服务端响应，不包含会话凭据或响应正文。
+#[derive(Debug)]
+pub(crate) struct ForceLogoutOutcome {
+    pub(crate) result: Result<(), SessionError>,
+    pub(crate) request_started: bool,
+    pub(crate) status: Option<u16>,
+    pub(crate) request_id: Option<String>,
 }
 
 impl Session {
@@ -101,8 +110,8 @@ impl Session {
         let csrf = self
             .configuration
             .prepare(&json!({"operation": "get_auth_csrf"}))?;
-        self.perform(csrf, hook).await?;
-        let result = self.perform(plan, hook).await?;
+        self.perform(csrf, hook, None).await?;
+        let result = self.perform(plan, hook, None).await?;
         self.access_token = Some(response::token(&result, "post_auth_login")?);
         Ok(())
     }
@@ -120,9 +129,54 @@ impl Session {
             let csrf = self
                 .configuration
                 .prepare(&json!({"operation": "get_auth_csrf"}))?;
-            self.perform(csrf, hook).await?;
+            self.perform(csrf, hook, None).await?;
         }
-        self.perform(plan, hook).await
+        self.perform(plan, hook, None).await
+    }
+
+    pub(crate) async fn force_logout_online_session(
+        &mut self,
+        sid: &str,
+        idempotency_key: &str,
+        hook: &mut dyn RequestHook,
+    ) -> ForceLogoutOutcome {
+        let mut outcome = ForceLogoutOutcome {
+            result: Ok(()),
+            request_started: false,
+            status: None,
+            request_id: None,
+        };
+        let result = async {
+            let plan = self
+                .configuration
+                .prepare_force_logout(sid, idempotency_key)?;
+            if self.access_token.is_none() {
+                return Err(SessionError::new(
+                    "missing_credentials",
+                    Some(FORCE_LOGOUT_OPERATION),
+                    None,
+                ));
+            }
+            let csrf = self
+                .configuration
+                .prepare(&json!({"operation": "get_auth_csrf"}))?;
+            self.perform(csrf, hook, None).await?;
+            let reply = self.perform(plan, hook, Some(&mut outcome)).await?;
+            if outcome.status != Some(200)
+                || outcome.request_id.is_none()
+                || reply["code"].as_u64() != Some(200)
+            {
+                return Err(SessionError::new(
+                    "invalid_response",
+                    Some(FORCE_LOGOUT_OPERATION),
+                    outcome.status,
+                ));
+            }
+            Ok(())
+        }
+        .await;
+        outcome.result = result;
+        outcome
     }
 
     pub(crate) fn token(&self) -> Option<&str> {
@@ -137,6 +191,7 @@ impl Session {
         &mut self,
         plan: Plan,
         hook: &mut dyn RequestHook,
+        observation: Option<&mut ForceLogoutOutcome>,
     ) -> Result<Value, SessionError> {
         let request = self.configuration.request(
             &self.client,
@@ -149,7 +204,7 @@ impl Session {
             .await
             .map_err(|error| SessionError::new("hook_before", Some(operation), error.status))?;
         let result = self
-            .exchange(request, operation, self.configuration.timeout)
+            .exchange(request, operation, self.configuration.timeout, observation)
             .await;
         let completion = hook
             .complete()
@@ -167,8 +222,12 @@ impl Session {
         request: Request,
         operation: &str,
         timeout: Duration,
+        mut observation: Option<&mut ForceLogoutOutcome>,
     ) -> Result<Value, SessionError> {
         tokio::time::timeout(timeout, async {
+            if let Some(observation) = observation.as_mut() {
+                observation.request_started = true;
+            }
             let reply = self.client.execute(request).await.map_err(|error| {
                 let category = if error.is_timeout() {
                     "request_timeout"
@@ -177,6 +236,10 @@ impl Session {
                 };
                 SessionError::new(category, Some(operation), None)
             })?;
+            if let Some(observation) = observation {
+                observation.status = Some(reply.status().as_u16());
+                observation.request_id = response::request_id(reply.headers());
+            }
             response::cookies(reply.headers(), &mut self.cookies, operation)?;
             let value = response::json(reply, operation).await?;
             if operation == "post_auth_refresh" {

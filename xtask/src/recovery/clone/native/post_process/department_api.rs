@@ -63,6 +63,7 @@ pub(in crate::recovery::clone::native) fn publication_for_identity_verification(
 enum ApiConsumer {
     Department,
     IdentityVerification,
+    IdentitySessionReconciliation,
 }
 
 impl ApiConsumer {
@@ -71,6 +72,9 @@ impl ApiConsumer {
             Self::Department => mode(row).is_some(),
             Self::IdentityVerification => {
                 row["stage"] == "seed-runtime" && row["mode"] == "identities-verify"
+            }
+            Self::IdentitySessionReconciliation => {
+                row["stage"] == "seed-runtime" && row["mode"] == "identities-reconcile"
             }
         }
     }
@@ -130,6 +134,21 @@ pub(crate) fn identity_verification_api_proof(
         attempt,
         environment,
         ApiConsumer::IdentityVerification,
+    )
+}
+
+pub(crate) fn identity_session_reconciliation_api_proof(
+    backend: &Path,
+    run: &Path,
+    attempt: u64,
+    environment: &Value,
+) -> Result<Option<Value>> {
+    controlled_api_proof(
+        backend,
+        run,
+        attempt,
+        environment,
+        ApiConsumer::IdentitySessionReconciliation,
     )
 }
 

@@ -5,10 +5,28 @@ use reqwest::{
     header::{CONTENT_TYPE, HeaderMap, HeaderValue, SET_COOKIE},
 };
 use serde_json::Value;
+use uuid::Uuid;
 
 use super::SessionError;
 
 pub(super) const JSON_LIMIT: usize = 16 * 1024 * 1024;
+
+pub(super) fn request_id(headers: &HeaderMap) -> Option<String> {
+    let ids = headers.get_all("x-request-id");
+    let mut values = ids.iter();
+    let candidate = values.next()?.to_str().ok()?;
+    if values.next().is_some() {
+        return None;
+    }
+    let id = Uuid::parse_str(candidate).ok()?;
+    (id.get_version_num() == 7
+        && id.to_string() == candidate
+        && matches!(
+            candidate.as_bytes().get(19),
+            Some(b'8' | b'9' | b'a' | b'b')
+        ))
+    .then(|| candidate.to_owned())
+}
 
 pub(super) fn cookies(
     headers: &HeaderMap,

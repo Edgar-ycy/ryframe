@@ -3,6 +3,55 @@ use serde_json::json;
 use super::{Hook, Reply, Server, assert_redacted, fixture, run, session};
 
 #[test]
+fn force_logout_sends_one_exact_authenticated_delete_with_stable_key() {
+    run(async {
+        let mut accepted = Reply::json(json!({"code": 200}));
+        accepted
+            .headers
+            .push(("X-Request-Id".into(), fixture::SERVER_REQUEST_ID.into()));
+        let server = Server::start(vec![
+            Reply::json(json!({"code": 200})).cookie("ryframe_csrf=anonymous"),
+            Reply::json(json!({"code": 200, "data": {"access_token": "access-secret"}}))
+                .cookie("ryframe_refresh_token=refresh-secret"),
+            Reply::json(json!({"code": 200})).cookie("ryframe_csrf=bound-force-logout"),
+            accepted,
+        ]);
+        let mut session = session(&server);
+        let mut hook = Hook::default();
+        session.login(&mut hook).await.unwrap();
+
+        let outcome = session
+            .force_logout_online_session(fixture::SESSION_ID, fixture::FORCE_LOGOUT_KEY, &mut hook)
+            .await;
+        assert!(outcome.result.is_ok());
+        assert!(outcome.request_started);
+        assert_eq!(outcome.status, Some(200));
+        assert_eq!(
+            outcome.request_id.as_deref(),
+            Some(fixture::SERVER_REQUEST_ID)
+        );
+        assert_eq!((hook.before, hook.complete), (4, 4));
+        assert_eq!(hook.metadata[3].0, "delete_system_online_by_sid");
+        let calls = server.seen.lock().unwrap();
+        assert_eq!(calls.len(), 4);
+        assert_eq!(calls[2].target, "/api/v1/auth/csrf");
+        let delete = &calls[3];
+        assert_eq!(delete.method, "DELETE");
+        assert_eq!(
+            delete.target,
+            format!("/api/v1/system/online/{}", fixture::SESSION_ID)
+        );
+        assert_eq!(delete.headers["x-tenant-id"], "tenant-a");
+        assert_eq!(delete.headers["origin"], "http://localhost:4174");
+        assert_eq!(delete.headers["x-csrf-token"], "bound-force-logout");
+        assert_eq!(delete.headers["authorization"], "Bearer access-secret");
+        assert_eq!(delete.headers["idempotency-key"], fixture::FORCE_LOGOUT_KEY);
+        assert!(!delete.headers.contains_key("x-request-id"));
+        assert!(delete.body.is_empty());
+    });
+}
+
+#[test]
 fn csrf_login_refresh_context_and_logout_use_fresh_challenges_and_cookies() {
     run(async {
         let server = Server::start(vec![

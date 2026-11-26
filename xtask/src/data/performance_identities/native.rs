@@ -19,6 +19,12 @@ use std::{
     time::Duration,
 };
 
+#[path = "native/force_logout.rs"]
+mod force_logout;
+pub(crate) use force_logout::{
+    AdminForceLogout, AdminForceLogoutOutcome, force_logout_as_system_admin,
+};
+
 pub(super) struct NativeContext {
     plan: Value,
     config: Value,
@@ -154,6 +160,12 @@ impl Context for NativeContext {
         .map_err(Into::into)
     }
     async fn session(&mut self, identity: &Value) -> Result<Box<dyn IdentitySession>> {
+        Ok(Box::new(self.bound_session(identity).await?))
+    }
+}
+
+impl NativeContext {
+    async fn bound_session(&self, identity: &Value) -> Result<NativeSession> {
         if self.baseline.is_none() {
             return Err("身份会话必须先通过资源 ownership 核验".into());
         }
@@ -198,7 +210,7 @@ impl Context for NativeContext {
             "test",
         )
         .await?;
-        Ok(Box::new(NativeSession {
+        Ok(NativeSession {
             session,
             hook,
             identity,
@@ -206,7 +218,7 @@ impl Context for NativeContext {
             catalog: self.catalog.clone(),
             login_attempted: false,
             closed: false,
-        }) as Box<dyn IdentitySession>)
+        })
     }
 }
 struct NativeSession {

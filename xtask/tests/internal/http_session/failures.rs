@@ -5,6 +5,60 @@ use serde_json::json;
 use super::{Hook, Reply, Server, Session, assert_redacted, fixture, run, session};
 
 #[test]
+fn force_logout_retains_safe_response_evidence_and_never_replays_uncertain_results() {
+    run(async {
+        for (case, status, has_id, category) in [
+            ("disconnect", None, false, "request_failed"),
+            ("invalid-body", Some(200), true, "invalid_response"),
+            ("duplicate-id", Some(200), false, "invalid_response"),
+            ("http-error", Some(503), true, "http_status"),
+        ] {
+            let mut reply = Reply::json(json!({"code": 200}));
+            reply
+                .headers
+                .push(("X-Request-Id".into(), fixture::SERVER_REQUEST_ID.into()));
+            match case {
+                "disconnect" => reply.disconnect = true,
+                "invalid-body" => reply.body = b"error-body-secret".to_vec(),
+                "duplicate-id" => reply
+                    .headers
+                    .push(("X-Request-Id".into(), "error-body-secret".into())),
+                "http-error" => reply.status = 503,
+                _ => unreachable!(),
+            }
+            let server = Server::start(vec![
+                Reply::json(json!({"code": 200})),
+                Reply::json(json!({"code": 200, "data": {"access_token": "access-secret"}})),
+                Reply::json(json!({"code": 200})),
+                reply,
+            ]);
+            let mut session = session(&server);
+            let mut hook = Hook::default();
+            session.login(&mut hook).await.unwrap();
+            let outcome = session
+                .force_logout_online_session(
+                    fixture::SESSION_ID,
+                    fixture::FORCE_LOGOUT_KEY,
+                    &mut hook,
+                )
+                .await;
+            assert!(outcome.request_started);
+            assert_eq!(outcome.status, status);
+            assert_eq!(
+                outcome.request_id.as_deref(),
+                has_id.then_some(fixture::SERVER_REQUEST_ID)
+            );
+            assert!(!format!("{outcome:?}").contains("error-body-secret"));
+            let error = outcome.result.unwrap_err();
+            assert_eq!(error.category, category);
+            assert_redacted(&error);
+            assert_eq!((hook.before, hook.complete), (4, 4));
+            assert_eq!(server.seen.lock().unwrap().len(), 4);
+        }
+    });
+}
+
+#[test]
 fn before_failure_sends_nothing_and_does_not_complete() {
     run(async {
         let server = Server::start(vec![]);

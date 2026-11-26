@@ -15,6 +15,9 @@ use serde_json::{Value, json};
 use super::Session;
 
 pub(super) const PASSWORD: &str = "Fixture!Password123";
+pub(super) const SESSION_ID: &str = "s-12345678-1234-4123-8123-123456789abc";
+pub(super) const FORCE_LOGOUT_KEY: &str = "a2345678-1234-4123-8123-123456789abc";
+pub(super) const SERVER_REQUEST_ID: &str = "01876543-1234-7123-8123-123456789abc";
 
 pub(super) struct Reply {
     pub status: u16,
@@ -209,6 +212,11 @@ pub(super) fn catalog() -> BTreeMap<String, Value> {
             "/api/v1/monitor/schedules/{id}/status",
         ),
         ("post_system_depts", "POST", "/api/v1/system/depts"),
+        (
+            "delete_system_online_by_sid",
+            "DELETE",
+            "/api/v1/system/online/{sid}",
+        ),
     ]
     .into_iter()
     .map(|(id, method, path)| (id.into(), json!({"method": method, "path": path})))

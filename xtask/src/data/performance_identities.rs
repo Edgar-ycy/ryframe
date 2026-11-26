@@ -40,6 +40,7 @@ mod inspection;
 mod ledger;
 #[path = "performance_identities/native.rs"]
 mod native;
+pub(crate) use native::{AdminForceLogout, AdminForceLogoutOutcome, force_logout_as_system_admin};
 #[path = "performance_identities/plan.rs"]
 pub(crate) mod plan;
 #[path = "performance_identities/producer.rs"]

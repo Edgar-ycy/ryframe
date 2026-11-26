@@ -78,7 +78,7 @@ post-copy 注册请求的 `source_admin` 仅包含 `subject_id`、`tenant_id`、
 cargo xtask check recovery clone seed-runtime --run-dir <run> --operation identities-reconcile --request <request.json> --write
 ```
 
-Rust 控制器在原运行锁下核对实际 API 代次和唯一 HTTP 200 记录，再只读核对同一 SQL 快照中的用户、首次改密、角色及成功审计。该阶段保留原账本前像与失败证据，按同一确认意图原子更新账本并追加后继工具登记。成功后由已登记的后继工具显式执行 `identities-apply`，从原已确认前缀接续。保持原 API 在线、Worker 关闭，并完成原身份、部门及正式恢复核验。
+Rust 控制器在原运行锁下核对实际 API 代次和唯一 HTTP 200 记录，再只读核对同一 SQL 快照中的用户、首次改密、角色及成功审计。该阶段保留原账本前像与失败证据，按同一确认意图原子更新账本并追加后继工具登记。成功后由已登记的后继工具显式执行 `identities-apply`，从原已确认前缀接续。保持原 API 在线、Worker 关闭，并完成原身份、部门及正式恢复核验。 若身份核验中断后已确认唯一遗留会话，先完成并确认同一运行的第二代 API 接续，再通过上面的 `identities-reconcile` 命令提交独立会话收口请求。请求类型为 `devex-clone-identity-verification-session-reconcile-request`，绑定原核验失败、已发布的第二代 API 和原 Redis 会话前像。控制器通过系统管理员发出一次强退，核对 Redis 后像、同一服务端请求的成功审计和管理员会话关闭。结果不明时只核对已登记的原请求。
 
 ### 采集和登记
 

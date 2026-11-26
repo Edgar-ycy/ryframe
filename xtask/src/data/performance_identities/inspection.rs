@@ -31,7 +31,7 @@ pub(super) struct VerifiedApi {
     read: ApiProofReader,
 }
 
-type ApiProofReader = fn(&Path, &Path, u64, &Value) -> Result<Option<Value>>;
+pub(crate) type ApiProofReader = fn(&Path, &Path, u64, &Value) -> Result<Option<Value>>;
 
 impl DepartmentApi {
     /// 只由已授权的部门子进程建立，保持身份计划和私有配置的原始绑定。
@@ -74,7 +74,7 @@ impl VerifiedApi {
         )
     }
 
-    fn select(
+    pub(super) fn select(
         coordinator: &Path,
         run: &Path,
         attempt: u64,
@@ -91,7 +91,7 @@ impl VerifiedApi {
         }))
     }
 
-    fn observe(&self, environment: &Value) -> Result<Value> {
+    pub(super) fn observe(&self, environment: &Value) -> Result<Value> {
         let observed = (self.read)(&self.coordinator, &self.run, self.attempt, environment)?;
         self.require_same(observed)
     }

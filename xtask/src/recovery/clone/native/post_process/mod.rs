@@ -10,6 +10,8 @@ pub(crate) mod diagnostic;
 pub(crate) mod entry;
 mod execution;
 pub(super) mod files;
+mod identity_session_reconcile;
+mod identity_session_redis;
 mod images;
 mod inspection;
 mod live;

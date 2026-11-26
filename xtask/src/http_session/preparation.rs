@@ -13,6 +13,9 @@ use super::{RequestMetadata, SessionError, error::valid_operation};
 #[path = "route.rs"]
 mod route;
 
+pub(super) const FORCE_LOGOUT_OPERATION: &str = "delete_system_online_by_sid";
+const FORCE_LOGOUT_ROUTE: &str = "/api/v1/system/online/{sid}";
+
 pub(super) struct Configuration {
     api: Url,
     origin: HeaderValue,
@@ -138,6 +141,40 @@ impl Configuration {
             url,
             idempotency,
             body: step.get("body").cloned(),
+        })
+    }
+
+    pub(super) fn prepare_force_logout(
+        &self,
+        sid: &str,
+        idempotency_key: &str,
+    ) -> Result<Plan, SessionError> {
+        let error = |category| SessionError::new(category, Some(FORCE_LOGOUT_OPERATION), None);
+        let entry = self
+            .catalog
+            .get(FORCE_LOGOUT_OPERATION)
+            .ok_or_else(|| error("invalid_operation"))?;
+        if entry["method"] != "DELETE" || entry["path"] != FORCE_LOGOUT_ROUTE {
+            return Err(error("unsupported_step"));
+        }
+        if !sid.strip_prefix("s-").is_some_and(canonical_uuid) || !canonical_uuid(idempotency_key) {
+            return Err(error("invalid_request"));
+        }
+        let path = route::expand(FORCE_LOGOUT_ROUTE, Some(&serde_json::json!({"sid":sid})))
+            .map_err(|_| error("invalid_request"))?;
+        let url = self.api.join(&path).map_err(|_| error("invalid_request"))?;
+        if url.origin() != self.api.origin() {
+            return Err(error("invalid_request"));
+        }
+        Ok(Plan {
+            metadata: RequestMetadata {
+                operation: FORCE_LOGOUT_OPERATION.into(),
+                method: "DELETE".into(),
+                route: FORCE_LOGOUT_ROUTE.into(),
+            },
+            url,
+            idempotency: idempotency_key.into(),
+            body: None,
         })
     }
 

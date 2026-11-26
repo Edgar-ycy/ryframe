@@ -29,6 +29,9 @@ pub(super) fn execute(
     let context = guard.live.context;
     let descriptor = common::binding(request)?;
     let request = common::read_bound(context.backend, &descriptor, "身份和解请求")?;
+    if request["kind"] == super::identity_session_reconcile::REQUEST_KIND {
+        return super::identity_session_reconcile::execute(guard, seed, &descriptor, &request);
+    }
     validate_request(&request, registration)?;
     let prior = prior_attempt(context.run, context.number, &request)?;
     let observed = original_producer(context, &prior, &request, seed)?;
