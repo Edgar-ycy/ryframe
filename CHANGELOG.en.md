@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Store the database UTC timestamp directly in export request snapshots, preserving the existing JSON timestamp format and worker consistency checks.
+
 - Use UTC time types for login and operation log filters. Pagination and exports retain inclusive bounds. Stored selections and request fingerprints retain their original format.
 
 - Use the database UTC clock in the profile password-change and avatar cleanup paths. Preserve the login timestamp format and five-minute avatar cleanup grace period.

@@ -141,7 +141,7 @@ impl ExportService {
                 request_version: EXPORT_REQUEST_VERSION,
                 selection: command.selection,
                 authorization_fingerprint,
-                snapshot_at: StoredExportRequest::persisted_timestamp(now)?,
+                snapshot_at: now,
                 upper_id: snapshot.upper_id,
                 matched_rows: snapshot.matched_rows,
             };

@@ -384,52 +384,49 @@ mod preflight {
 mod types {
     use super::*;
     use ryframe_application::system::operations::RoleExportFilter;
+    use serde::Serialize;
+    use time::{
+        Duration, OffsetDateTime, UtcOffset, format_description::well_known::Rfc3339,
+        macros::datetime,
+    };
 
     #[test]
     fn worker_accepts_only_current_strict_snapshot() {
-        let valid = serde_json::json!({
-            "request_version": EXPORT_REQUEST_VERSION,
-            "selection": {
-                "resource": "roles",
-                "filter": {"name": "ops", "code": null, "status": "0"}
-            },
-            "authorization_fingerprint": "fingerprint-at-request",
-            "snapshot_at": "2026-08-20T12:00:00.123456Z",
-            "upper_id": 88,
-            "matched_rows": 12
-        });
-        let request: StoredExportRequest =
-            serde_json::from_value(valid.clone()).expect("当前版本快照应可解析");
-        request.validate("roles").expect("资源应匹配");
-        assert_eq!(serde_json::to_value(&request).unwrap(), valid);
-        let persisted = PersistedExportSnapshot {
-            request_version: i32::from(EXPORT_REQUEST_VERSION),
-            authorization_fingerprint: "fingerprint-at-request",
-            snapshot_at: time::macros::datetime!(2026-08-20 13:00:00.123456 +01:00),
-            upper_id: 88,
-            matched_rows: 12,
-        };
-        let wrong_time = PersistedExportSnapshot {
-            snapshot_at: persisted.snapshot_at + time::Duration::microseconds(1),
-            ..persisted
-        };
-        assert!(matches!(
-            request.validate_persisted_snapshot(wrong_time),
-            Err(AppError::Validation(message)) if message.contains("快照时间")
-        ));
-        request.validate_persisted_snapshot(persisted).unwrap();
+        for fraction in ["", ".120", ".123400", ".123456700"] {
+            let input = format!("2026-08-20T13:00:00{fraction}+01:00");
+            let instant = OffsetDateTime::parse(&input, &Rfc3339).unwrap();
+            let request = snapshot_request(instant);
+            let legacy = legacy_snapshot_bytes(&request);
+            assert_eq!(serde_json::to_vec(&request).unwrap(), legacy);
+            let restored: StoredExportRequest = serde_json::from_slice(&legacy).unwrap();
+            assert_eq!(restored.snapshot_at.offset(), UtcOffset::UTC);
+            assert_eq!(
+                restored.snapshot_at.unix_timestamp_nanos(),
+                instant.unix_timestamp_nanos()
+            );
+            restored.validate("roles").expect("资源应匹配");
+            let persisted = PersistedExportSnapshot {
+                request_version: i32::from(request.request_version),
+                authorization_fingerprint: &request.authorization_fingerprint,
+                snapshot_at: instant,
+                upper_id: request.upper_id,
+                matched_rows: 12,
+            };
+            let wrong_time = PersistedExportSnapshot {
+                snapshot_at: persisted.snapshot_at + Duration::nanoseconds(1),
+                ..persisted
+            };
+            assert!(matches!(
+                restored.validate_persisted_snapshot(wrong_time),
+                Err(AppError::Validation(message)) if message == "导出请求快照时间与任务记录不一致"
+            ));
+            restored.validate_persisted_snapshot(persisted).unwrap();
+        }
 
-        let previous_version = serde_json::json!({
-            "request_version": EXPORT_REQUEST_VERSION - 1,
-            "selection": {
-                "resource": "roles",
-                "filter": {"name": "ops", "code": null, "status": "0"}
-            },
-            "authorization_fingerprint": "fingerprint-at-request",
-            "snapshot_at": "2026-08-20T12:00:00Z",
-            "upper_id": 88,
-            "matched_rows": 12
-        });
+        let valid =
+            serde_json::to_value(snapshot_request(datetime!(2026-08-20 12:00 UTC))).unwrap();
+        let mut previous_version = valid.clone();
+        previous_version["request_version"] = serde_json::json!(EXPORT_REQUEST_VERSION - 1);
         let previous: StoredExportRequest =
             serde_json::from_value(previous_version).expect("旧版本结构仍可被类型读取");
         assert!(matches!(
@@ -440,48 +437,64 @@ mod types {
         let old_shape = serde_json::json!({"request": {"name": "ops"}});
         assert!(serde_json::from_value::<StoredExportRequest>(old_shape).is_err());
 
-        let unknown = serde_json::json!({
-            "request_version": EXPORT_REQUEST_VERSION,
-            "selection": {
-                "resource": "roles",
-                "filter": {"name": null, "code": null, "status": null}
-            },
-            "authorization_fingerprint": "fingerprint-at-request",
-            "snapshot_at": "2026-08-20T12:00:00Z",
-            "upper_id": 88,
-            "matched_rows": 12,
-            "legacy": true
-        });
+        let mut unknown = valid;
+        unknown["legacy"] = serde_json::json!(true);
         assert!(serde_json::from_value::<StoredExportRequest>(unknown).is_err());
+    }
+
+    fn snapshot_request(snapshot_at: OffsetDateTime) -> StoredExportRequest {
+        StoredExportRequest {
+            request_version: EXPORT_REQUEST_VERSION,
+            selection: ExportSelection::Roles(RoleExportFilter::new(
+                Some("ops".into()),
+                None,
+                Some("0".into()),
+            )),
+            authorization_fingerprint: "fingerprint-at-request".into(),
+            snapshot_at,
+            upper_id: 88,
+            matched_rows: 12,
+        }
+    }
+
+    fn legacy_snapshot_bytes(request: &StoredExportRequest) -> Vec<u8> {
+        #[derive(Serialize)]
+        struct LegacySnapshot<'a> {
+            request_version: u16,
+            selection: &'a ExportSelection,
+            authorization_fingerprint: &'a str,
+            snapshot_at: DateTime<Utc>,
+            upper_id: i64,
+            matched_rows: u64,
+        }
+
+        serde_json::to_vec(&LegacySnapshot {
+            request_version: request.request_version,
+            selection: &request.selection,
+            authorization_fingerprint: &request.authorization_fingerprint,
+            snapshot_at: DateTime::from_timestamp(
+                request.snapshot_at.unix_timestamp(),
+                request.snapshot_at.nanosecond(),
+            )
+            .unwrap(),
+            upper_id: request.upper_id,
+            matched_rows: request.matched_rows,
+        })
+        .unwrap()
     }
 
     #[test]
     fn worker_rejects_version_or_resource_mismatch() {
-        let request = StoredExportRequest {
-            request_version: EXPORT_REQUEST_VERSION + 1,
-            selection: ExportSelection::Roles(RoleExportFilter::new(None, None, None)),
-            authorization_fingerprint: "fingerprint-at-request".into(),
-            snapshot_at: DateTime::parse_from_rfc3339("2026-08-20T12:00:00Z")
-                .expect("测试时间有效")
-                .with_timezone(&Utc),
-            upper_id: 88,
-            matched_rows: 12,
-        };
+        let mut request = snapshot_request(datetime!(2026-08-20 12:00 UTC));
+        request.request_version = EXPORT_REQUEST_VERSION + 1;
         assert!(matches!(
             request.validate("roles"),
             Err(AppError::Validation(_))
         ));
 
-        let current = StoredExportRequest {
-            request_version: EXPORT_REQUEST_VERSION,
-            selection: request.selection,
-            authorization_fingerprint: request.authorization_fingerprint,
-            snapshot_at: request.snapshot_at,
-            upper_id: request.upper_id,
-            matched_rows: request.matched_rows,
-        };
+        request.request_version = EXPORT_REQUEST_VERSION;
         assert!(matches!(
-            current.validate("users"),
+            request.validate("users"),
             Err(AppError::Validation(_))
         ));
     }
