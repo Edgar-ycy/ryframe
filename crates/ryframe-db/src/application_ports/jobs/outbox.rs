@@ -5,9 +5,9 @@ use crate::{
     BackgroundJobRepository, ControlDatabaseCluster, OutboxEventRepository,
     OutboxFailureDisposition, entities::outbox_event,
 };
-use chrono::{DateTime, Duration, Utc};
 use ryframe_kernel::AppResult;
 use sea_orm::{DatabaseTransaction, TransactionTrait};
+use time::{Duration, OffsetDateTime};
 
 use ryframe_application::{
     EnqueueJob,
@@ -33,15 +33,15 @@ struct DatabaseOutboxPersistence {
 
 #[async_trait::async_trait]
 impl OutboxPersistencePort for DatabaseOutboxPersistence {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>> {
-        crate::repositories::database_utc_now(self.database.write()).await
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime> {
+        crate::repositories::database_utc_now_time(self.database.write()).await
     }
 
     async fn claim_next<'a>(
         &'a self,
         worker_id: &'a str,
         lease_duration: Duration,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
         tenant_scope: &'a ExecutionTenantScope,
     ) -> ryframe_kernel::AppResult<Option<ClaimedOutboxEvent>> {
         self.repository
@@ -61,16 +61,12 @@ impl OutboxPersistencePort for DatabaseOutboxPersistence {
         event_id: i64,
         worker_id: &'a str,
         command: EnqueueJob,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         let transaction = begin(self.database.write()).await?;
         let result = async {
             BackgroundJobRepository
-                .enqueue_in_transaction(
-                    &transaction,
-                    database_enqueue(command),
-                    crate::repositories::utc_time_from_chrono(now).db_context("发件箱入队时间")?,
-                )
+                .enqueue_in_transaction(&transaction, database_enqueue(command), now)
                 .await?;
             self.repository
                 .mark_published_in_transaction(&transaction, event_id, worker_id, now)
@@ -86,7 +82,7 @@ impl OutboxPersistencePort for DatabaseOutboxPersistence {
         worker_id: &'a str,
         tenant_id: &'a str,
         record: OperLogRecord,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         let transaction = begin(self.database.write()).await?;
         let result = async {
@@ -105,7 +101,7 @@ impl OutboxPersistencePort for DatabaseOutboxPersistence {
         &'a self,
         event_id: i64,
         worker_id: &'a str,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         let transaction = begin(self.database.write()).await?;
         let marked = self
@@ -119,9 +115,9 @@ impl OutboxPersistencePort for DatabaseOutboxPersistence {
         &'a self,
         event_id: i64,
         worker_id: &'a str,
-        retry_at: DateTime<Utc>,
+        retry_at: OffsetDateTime,
         error_message: &'a str,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<OutboxFailureOutcome> {
         self.repository
             .fail(
@@ -138,7 +134,7 @@ impl OutboxPersistencePort for DatabaseOutboxPersistence {
 
     async fn recover_expired_leases<'a>(
         &'a self,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
         tenant_scope: &'a ExecutionTenantScope,
     ) -> ryframe_kernel::AppResult<()> {
         self.repository

@@ -1,13 +1,12 @@
 use std::{sync::Arc, time::Duration as StdDuration};
 
-use chrono::{DateTime, Duration, Utc};
+use ::time::{Duration, OffsetDateTime};
 use ryframe_kernel::{AppError, AppResult};
 use tokio::{sync::watch, task::JoinHandle, time};
 use tracing::Instrument;
 use uuid::Uuid;
 
 use super::backoff::{jittered_delay, next_idle_wait};
-use super::queue_time_from_database;
 use super::worker::{infrastructure_retry_delay, retry_delay_seconds};
 use super::{MESSAGE_PUBLISHED_OUTBOX_EVENT_TYPE, queue::JobQueue};
 use crate::system::operations::MESSAGE_DISPATCH_JOB_TYPE;
@@ -169,7 +168,9 @@ impl OutboxWorker {
             Ok(false) => Ok(OutboxRunResult::LeaseLost),
             Err(error) => {
                 let now = self.persistence.database_now().await?;
-                let retry_at = now + Duration::seconds(retry_delay_seconds(attempts));
+                let retry_at = now
+                    .checked_add(Duration::seconds(retry_delay_seconds(attempts)))
+                    .ok_or_else(|| AppError::Database("Outbox 重试时间超出 UTC 表示范围".into()))?;
                 match self
                     .persistence
                     .fail(event_id, worker_id, retry_at, &error.to_string(), now)
@@ -210,7 +211,7 @@ impl OutboxWorker {
         &self,
         event: ClaimedOutboxEvent,
         worker_id: &str,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<bool> {
         if event.event_type == AUTHORIZATION_MIRROR_OUTBOX_EVENT_TYPE {
             return self
@@ -234,7 +235,6 @@ impl OutboxWorker {
                 )));
             }
         };
-        let queue_now = queue_time_from_database(now)?;
         let published = self
             .persistence
             .publish_background_job(
@@ -243,12 +243,12 @@ impl OutboxWorker {
                 EnqueueJob {
                     tenant_id: event.tenant_id,
                     schedule_id: None,
-                    scheduled_for: Some(queue_now),
+                    scheduled_for: Some(now),
                     max_runtime_seconds: None,
                     job_type: job_type.to_owned(),
                     payload: event.payload,
                     priority: 10,
-                    available_at: queue_now,
+                    available_at: now,
                     max_attempts: event.max_attempts,
                     dedupe_key: event.dedupe_key,
                     traceparent: event.traceparent,
@@ -267,7 +267,7 @@ impl OutboxWorker {
         &self,
         event: ClaimedOutboxEvent,
         worker_id: &str,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<bool> {
         let payload: DataScopeProjectionEvent = serde_json::from_value(event.payload)
             .map_err(|error| AppError::Validation(format!("数据范围投影事件载荷无效: {error}")))?;
@@ -290,7 +290,7 @@ impl OutboxWorker {
         &self,
         event: ClaimedOutboxEvent,
         worker_id: &str,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<bool> {
         let payload: AuditOperationEvent =
             serde_json::from_value(event.payload).map_err(|error| {
@@ -319,7 +319,7 @@ impl OutboxWorker {
         &self,
         event: ClaimedOutboxEvent,
         worker_id: &str,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<bool> {
         let update: AuthorizationMirrorUpdate = serde_json::from_value(event.payload)
             .map_err(|error| AppError::Validation(format!("授权镜像事件负载无效: {error}")))?;

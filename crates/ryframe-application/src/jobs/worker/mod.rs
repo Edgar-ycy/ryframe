@@ -146,10 +146,7 @@ impl JobWorker {
             execution_tenant_scope,
             handlers: Arc::new(BTreeMap::new()),
             worker_prefix: policy.worker_prefix("ryframe-worker"),
-            lease_duration: Duration::new(
-                policy.lease_duration.num_seconds(),
-                policy.lease_duration.subsec_nanos(),
-            ),
+            lease_duration: policy.lease_duration,
             heartbeat_interval: policy.heartbeat_interval,
             poll_interval: policy.poll_interval,
             max_idle_poll_interval: policy.max_idle_poll_interval,

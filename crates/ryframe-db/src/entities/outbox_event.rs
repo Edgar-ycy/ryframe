@@ -1,6 +1,6 @@
-use chrono::{DateTime, Utc};
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 /// 与业务数据同事务提交的异步事件。
 ///
@@ -17,18 +17,31 @@ pub struct Model {
     pub aggregate_id: String,
     pub payload: Json,
     pub status: String,
-    pub available_at: DateTime<Utc>,
+    #[serde(with = "ryframe_application::ports::utc_timestamp")]
+    pub available_at: OffsetDateTime,
     pub attempts: i32,
     pub max_attempts: i32,
     pub lease_owner: Option<String>,
-    pub lease_until: Option<DateTime<Utc>>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub lease_until: Option<OffsetDateTime>,
     pub dedupe_key: Option<String>,
     pub traceparent: Option<String>,
     pub tracestate: Option<String>,
     pub last_error: Option<String>,
-    pub published_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub published_at: Option<OffsetDateTime>,
+    #[serde(with = "ryframe_application::ports::utc_timestamp")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "ryframe_application::ports::utc_timestamp")]
+    pub updated_at: OffsetDateTime,
 }
 
 impl Model {

@@ -1,5 +1,5 @@
-use chrono::{DateTime, Duration, Utc};
 use serde_json::Value;
+use time::{Duration, OffsetDateTime};
 
 use crate::{EnqueueJob, ports::system::OperLogRecord};
 
@@ -22,7 +22,7 @@ pub struct ClaimedOutboxEvent {
 /// Outbox 投递失败后的状态转换结果。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OutboxFailureOutcome {
-    Retried { available_at: DateTime<Utc> },
+    Retried { available_at: OffsetDateTime },
     Dead,
     LeaseLost,
 }
@@ -30,13 +30,13 @@ pub enum OutboxFailureOutcome {
 /// Outbox Worker 所需的控制库持久化端口。
 #[async_trait::async_trait]
 pub trait OutboxPersistencePort: Send + Sync {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime>;
 
     async fn claim_next<'a>(
         &'a self,
         worker_id: &'a str,
         lease_duration: Duration,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
         tenant_scope: &'a ExecutionTenantScope,
     ) -> ryframe_kernel::AppResult<Option<ClaimedOutboxEvent>>;
 
@@ -45,7 +45,7 @@ pub trait OutboxPersistencePort: Send + Sync {
         event_id: i64,
         worker_id: &'a str,
         command: EnqueueJob,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool>;
 
     async fn publish_audit<'a>(
@@ -54,28 +54,28 @@ pub trait OutboxPersistencePort: Send + Sync {
         worker_id: &'a str,
         tenant_id: &'a str,
         record: OperLogRecord,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool>;
 
     async fn mark_published<'a>(
         &'a self,
         event_id: i64,
         worker_id: &'a str,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool>;
 
     async fn fail<'a>(
         &'a self,
         event_id: i64,
         worker_id: &'a str,
-        retry_at: DateTime<Utc>,
+        retry_at: OffsetDateTime,
         error_message: &'a str,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<OutboxFailureOutcome>;
 
     async fn recover_expired_leases<'a>(
         &'a self,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
         tenant_scope: &'a ExecutionTenantScope,
     ) -> ryframe_kernel::AppResult<()>;
 }

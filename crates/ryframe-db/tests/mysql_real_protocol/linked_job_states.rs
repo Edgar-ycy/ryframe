@@ -5,6 +5,91 @@ use time::{Duration, OffsetDateTime};
 
 use super::mysql::{execute, require_count, run_mysql_test};
 
+#[cfg(feature = "migration")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn outbox_delivery_keeps_utc_lease_and_atomic_queue_boundaries() {
+    use ryframe_application::{
+        EnqueueJob, TransactionAuditMode,
+        ports::{jobs::OutboxFailureOutcome, system::MessageOutboxRecord},
+    };
+    use time::macros::datetime;
+
+    run_mysql_test("outbox-utc-boundary", |database| async move {
+        install_control_schema(&database).await?;
+        super::install_test_database_id_generator()?;
+        let now = datetime!(2026-11-26 01:00:00 +01:00);
+        let lease = Duration::seconds(5);
+        let retry_at = now + Duration::seconds(2);
+        let scope = ExecutionTenantScope::tenant_and_platform("tenant-outbox");
+        let cluster = ControlDatabaseCluster::single(database.clone());
+        let messages = application_ports::system::message(cluster.clone());
+        let transaction = messages.begin().await.map_err(|error| error.to_string())?;
+        transaction
+            .record_outbox(MessageOutboxRecord {
+                    tenant_id: "tenant-outbox".into(),
+                    event_type: "system.message.published".into(),
+                    aggregate_id: "42".into(),
+                    payload: serde_json::json!({"message_id":"42"}),
+                    available_at: chrono::DateTime::from_timestamp(now.unix_timestamp(), 0)
+                        .expect("固定的数据库时刻有效"),
+                    traceparent: None,
+                    tracestate: None,
+                })
+            .await
+            .map_err(|error| error.to_string())?;
+        transaction.commit(TransactionAuditMode::Skip).await.map_err(|error| error.to_string())?;
+        let outbox = application_ports::jobs::outbox(cluster);
+        assert!(outbox.claim_next("first", lease, now - Duration::SECOND, &scope).await.map_err(|error| error.to_string())?.is_none());
+        let first = outbox.claim_next("first", lease, now, &scope).await
+            .map_err(|error| error.to_string())?.expect("事件到期时应可以领取");
+        let event_id = first.id;
+        assert_eq!(first.attempts, 1);
+        assert_eq!(first.dedupe_key.as_deref(), Some("message:42"));
+        assert_eq!(
+            outbox.fail(event_id, "first", retry_at, "retry", now + Duration::SECOND)
+                .await.map_err(|error| error.to_string())?,
+            OutboxFailureOutcome::Retried { available_at: retry_at }
+        );
+        assert!(outbox.claim_next("second", lease, retry_at - Duration::SECOND, &scope).await.map_err(|error| error.to_string())?.is_none());
+        let second = outbox.claim_next("second", lease, retry_at, &scope).await
+            .map_err(|error| error.to_string())?.expect("重试时间到达时应可领取");
+        assert_eq!((second.id, second.attempts), (event_id, 2));
+
+        let expires_at = retry_at + lease;
+        let job = || EnqueueJob {
+            tenant_id: Some("tenant-outbox".into()),
+            schedule_id: None,
+            scheduled_for: Some(expires_at),
+            max_runtime_seconds: None,
+            job_type: "system.message.dispatch".into(),
+            payload: serde_json::json!({"message_id":"42"}),
+            priority: 10,
+            available_at: expires_at,
+            max_attempts: 3,
+            dedupe_key: Some("outbox-utc-42".into()),
+            traceparent: None,
+            tracestate: None,
+        };
+        let jobs = "SELECT COUNT(*) AS value FROM sys_background_job WHERE dedupe_key = 'outbox-utc-42'";
+        assert!(!outbox.publish_background_job(event_id, "second", job(), expires_at)
+            .await.map_err(|error| error.to_string())?);
+        require_count(&database, jobs, 0).await?;
+        outbox.recover_expired_leases(expires_at, &scope).await.map_err(|error| error.to_string())?;
+        let reclaimed = outbox.claim_next("third", lease, expires_at, &scope).await
+            .map_err(|error| error.to_string())?.expect("到期租约应归还领取");
+        assert_eq!((reclaimed.id, reclaimed.attempts), (event_id, 3));
+        assert!(outbox.publish_background_job(event_id, "third", job(), expires_at)
+            .await.map_err(|error| error.to_string())?);
+        require_count(&database, jobs, 1).await?;
+        require_count(&database,
+            "SELECT COUNT(*) AS value FROM sys_outbox_event WHERE dedupe_key = 'message:42' \
+             AND status = 'published' AND attempts = 3 AND lease_owner IS NULL AND lease_until IS NULL \
+             AND published_at = '2026-11-26 00:00:07' AND updated_at = '2026-11-26 00:00:07'",
+            1,
+        ).await
+    }).await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn expired_terminal_linked_jobs_do_not_requeue() {
     run_mysql_test("linked-terminal", |database| async move {

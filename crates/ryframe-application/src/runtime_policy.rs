@@ -2,6 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use chrono::Duration as ChronoDuration;
 use ryframe_kernel::{AppError, AppResult};
+use time::Duration as SignedDuration;
 
 /// 登录保护使用的固定运行策略。
 #[derive(Clone, Copy, Debug)]
@@ -42,7 +43,7 @@ impl CacheAvailabilityPolicy {
 #[derive(Clone, Debug)]
 pub struct JobWorkerPolicy {
     worker_prefix: Option<Arc<str>>,
-    pub(crate) lease_duration: ChronoDuration,
+    pub(crate) lease_duration: SignedDuration,
     pub(crate) heartbeat_interval: Duration,
     pub(crate) poll_interval: Duration,
     pub(crate) max_idle_poll_interval: Duration,
@@ -79,7 +80,7 @@ impl JobWorkerPolicy {
             .map(Arc::<str>::from);
         Ok(Self {
             worker_prefix,
-            lease_duration: ChronoDuration::seconds(lease_seconds),
+            lease_duration: SignedDuration::seconds(lease_seconds),
             heartbeat_interval: Duration::from_secs(heartbeat_seconds),
             poll_interval: Duration::from_millis(poll_interval_ms),
             max_idle_poll_interval: Duration::from_millis(max_idle_poll_interval_ms),

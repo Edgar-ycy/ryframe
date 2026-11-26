@@ -1,4 +1,4 @@
-use chrono::{Duration, TimeZone, Timelike, Utc};
+use chrono::{TimeZone, Timelike, Utc};
 use ryframe_application::{
     EnqueueJob,
     ports::{files::FileUploadRecord, jobs::JobScheduleRecord},
@@ -238,7 +238,6 @@ fn expired_attempt_json_preserves_unknown_worker_finish_and_exact_close_time() {
 
 #[test]
 fn claimed_event_mapping_keeps_worker_fields() {
-    let now = Utc.timestamp_opt(1_700_000_000, 0).unwrap();
     let event = outbox_event::Model {
         id: 41,
         tenant_id: Some("tenant-a".into()),
@@ -247,19 +246,31 @@ fn claimed_event_mapping_keeps_worker_fields() {
         aggregate_id: "99".into(),
         payload: json!({"message_id": 99}),
         status: outbox_event::Model::STATUS_RUNNING.into(),
-        available_at: now,
+        available_at: datetime!(2026-08-21 09:02:03.123456 +08:00),
         attempts: 2,
         max_attempts: 5,
         lease_owner: Some("worker-a".into()),
-        lease_until: Some(now + Duration::seconds(30)),
+        lease_until: Some(datetime!(2026-08-21 01:02:33.123 UTC)),
         dedupe_key: Some("message:99".into()),
         traceparent: Some("trace".into()),
         tracestate: Some("state".into()),
         last_error: None,
         published_at: None,
-        created_at: now,
-        updated_at: now,
+        created_at: datetime!(2026-08-21 01:02:03 UTC),
+        updated_at: datetime!(2026-08-21 01:02:03.123456789 UTC),
     };
+
+    let mut json = serde_json::to_value(&event).unwrap();
+    assert_eq!(json["available_at"], "2026-08-21T01:02:03.123456Z");
+    assert_eq!(json["lease_until"], "2026-08-21T01:02:33.123Z");
+    assert_eq!(json["created_at"], "2026-08-21T01:02:03Z");
+    assert_eq!(json["updated_at"], "2026-08-21T01:02:03.123456789Z");
+    let published_at = json.as_object_mut().unwrap().remove("published_at");
+    assert_eq!(published_at, Some(serde_json::Value::Null));
+    assert_eq!(
+        serde_json::from_value::<outbox_event::Model>(json).unwrap(),
+        event
+    );
 
     let claimed = to_claimed_event(event);
     assert_eq!(claimed.id, 41);

@@ -1,5 +1,4 @@
 use crate::DbResultExt;
-use chrono::{DateTime, Duration, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait,
@@ -9,6 +8,7 @@ use sea_orm::{
     sea_query::{Expr, LockBehavior, LockType},
 };
 use serde_json::Value;
+use time::{Duration, OffsetDateTime, UtcOffset};
 
 use crate::entities::outbox_event;
 
@@ -24,7 +24,7 @@ pub struct RecordOutboxEvent {
     pub aggregate_type: String,
     pub aggregate_id: String,
     pub payload: Value,
-    pub available_at: DateTime<Utc>,
+    pub available_at: OffsetDateTime,
     pub max_attempts: i32,
     pub dedupe_key: Option<String>,
     pub traceparent: Option<String>,
@@ -34,7 +34,7 @@ pub struct RecordOutboxEvent {
 /// Outbox 投递失败后的状态转换结果。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OutboxFailureDisposition {
-    Retried { available_at: DateTime<Utc> },
+    Retried { available_at: OffsetDateTime },
     Dead,
     LeaseLost,
 }
@@ -48,9 +48,11 @@ impl OutboxEventRepository {
         &self,
         transaction: &DatabaseTransaction,
         event: RecordOutboxEvent,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<outbox_event::Model> {
         validate_event(&event)?;
+        let available_at = utc_timestamp(event.available_at, "available_at")?;
+        let now = utc_timestamp(now, "now")?;
         let dedupe_identity = event
             .dedupe_key
             .as_ref()
@@ -71,7 +73,7 @@ impl OutboxEventRepository {
             aggregate_id: Set(event.aggregate_id),
             payload: Set(event.payload),
             status: Set(outbox_event::Model::STATUS_PENDING.to_owned()),
-            available_at: Set(event.available_at),
+            available_at: Set(available_at),
             attempts: Set(0),
             max_attempts: Set(event.max_attempts),
             lease_owner: Set(None),
@@ -103,10 +105,11 @@ impl OutboxEventRepository {
         db: &DatabaseConnection,
         worker_id: &str,
         lease_duration: Duration,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
         tenant_scope: &ExecutionTenantFilter,
     ) -> AppResult<Option<outbox_event::Model>> {
         validate_lease(worker_id, lease_duration)?;
+        let now = utc_timestamp(now, "now")?;
         let transaction = db.begin().await.db()?;
         let Some(event) = Self::claimable_query(now, tenant_scope)
             .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)
@@ -121,11 +124,14 @@ impl OutboxEventRepository {
             .attempts
             .checked_add(1)
             .ok_or_else(|| AppError::Database("Outbox 事件尝试次数溢出".into()))?;
+        let lease_until = now
+            .checked_add(lease_duration)
+            .ok_or_else(|| AppError::Validation("Outbox 租约截止时间超出 UTC 表示范围".into()))?;
         let mut active: outbox_event::ActiveModel = event.into();
         active.status = Set(outbox_event::Model::STATUS_RUNNING.to_owned());
         active.attempts = Set(attempts);
         active.lease_owner = Set(Some(worker_id.to_owned()));
-        active.lease_until = Set(Some(now + lease_duration));
+        active.lease_until = Set(Some(lease_until));
         active.updated_at = Set(now);
         let claimed = active.update(&transaction).await.db()?;
         transaction.commit().await.db()?;
@@ -138,8 +144,9 @@ impl OutboxEventRepository {
         transaction: &DatabaseTransaction,
         event_id: i64,
         worker_id: &str,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<bool> {
+        let now = utc_timestamp(now, "now")?;
         let result = outbox_event::Entity::update_many()
             .col_expr(
                 outbox_event::Column::Status,
@@ -151,7 +158,7 @@ impl OutboxEventRepository {
             )
             .col_expr(
                 outbox_event::Column::LeaseUntil,
-                Expr::value(Option::<DateTime<Utc>>::None),
+                Expr::value(Option::<OffsetDateTime>::None),
             )
             .col_expr(outbox_event::Column::PublishedAt, Expr::value(now))
             .col_expr(outbox_event::Column::UpdatedAt, Expr::value(now))
@@ -171,10 +178,11 @@ impl OutboxEventRepository {
         db: &DatabaseConnection,
         event_id: i64,
         worker_id: &str,
-        retry_at: DateTime<Utc>,
+        retry_at: OffsetDateTime,
         error_message: &str,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<OutboxFailureDisposition> {
+        let now = utc_timestamp(now, "now")?;
         let transaction = db.begin().await.db()?;
         let Some(event) = Self::owned_running_query(event_id, worker_id)
             .lock(LockType::Update)
@@ -193,6 +201,11 @@ impl OutboxEventRepository {
             return Ok(OutboxFailureDisposition::LeaseLost);
         }
         let dead = event.attempts >= event.max_attempts;
+        let available_at = if dead {
+            now
+        } else {
+            utc_timestamp(retry_at, "retry_at")?
+        };
         let mut active: outbox_event::ActiveModel = event.into();
         active.status = Set(if dead {
             outbox_event::Model::STATUS_DEAD
@@ -200,7 +213,7 @@ impl OutboxEventRepository {
             outbox_event::Model::STATUS_PENDING
         }
         .to_owned());
-        active.available_at = Set(if dead { now } else { retry_at });
+        active.available_at = Set(available_at);
         active.lease_owner = Set(None);
         active.lease_until = Set(None);
         active.last_error = Set(Some(truncate_error(error_message)));
@@ -210,14 +223,12 @@ impl OutboxEventRepository {
         Ok(if dead {
             OutboxFailureDisposition::Dead
         } else {
-            OutboxFailureDisposition::Retried {
-                available_at: retry_at,
-            }
+            OutboxFailureDisposition::Retried { available_at }
         })
     }
 
     fn claimable_query(
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
         tenant_scope: &ExecutionTenantFilter,
     ) -> sea_orm::Select<outbox_event::Entity> {
         let mut query = outbox_event::Entity::find()
@@ -268,16 +279,17 @@ impl OutboxEventRepository {
     pub(crate) async fn recover_expired_leases(
         &self,
         db: &DatabaseConnection,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
         tenant_scope: &ExecutionTenantFilter,
     ) -> AppResult<()> {
+        let now = utc_timestamp(now, "now")?;
         self.recover_expired_leases_on(db, now, tenant_scope).await
     }
 
     async fn recover_expired_leases_on<C>(
         &self,
         db: &C,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
         tenant_scope: &ExecutionTenantFilter,
     ) -> AppResult<()>
     where
@@ -294,7 +306,7 @@ impl OutboxEventRepository {
             )
             .col_expr(
                 outbox_event::Column::LeaseUntil,
-                Expr::value(Option::<DateTime<Utc>>::None),
+                Expr::value(Option::<OffsetDateTime>::None),
             )
             .col_expr(
                 outbox_event::Column::LastError,
@@ -322,7 +334,7 @@ impl OutboxEventRepository {
             )
             .col_expr(
                 outbox_event::Column::LeaseUntil,
-                Expr::value(Option::<DateTime<Utc>>::None),
+                Expr::value(Option::<OffsetDateTime>::None),
             )
             .col_expr(outbox_event::Column::AvailableAt, Expr::value(now))
             .col_expr(outbox_event::Column::UpdatedAt, Expr::value(now))
@@ -338,6 +350,12 @@ impl OutboxEventRepository {
         retryable.exec(db).await.db()?;
         Ok(())
     }
+}
+
+fn utc_timestamp(value: OffsetDateTime, field: &str) -> AppResult<OffsetDateTime> {
+    value
+        .checked_to_offset(UtcOffset::UTC)
+        .ok_or_else(|| AppError::Validation(format!("Outbox {field} 超出 UTC 表示范围")))
 }
 
 fn validate_event(event: &RecordOutboxEvent) -> AppResult<()> {
@@ -393,7 +411,7 @@ fn validate_lease(worker_id: &str, lease_duration: Duration) -> AppResult<()> {
             "Outbox Worker 标识长度必须介于 1 和 128 之间".into(),
         ));
     }
-    if lease_duration <= Duration::zero() {
+    if lease_duration <= Duration::ZERO {
         return Err(AppError::Validation("Outbox 租约必须大于零".into()));
     }
     Ok(())

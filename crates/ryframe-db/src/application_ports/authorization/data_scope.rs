@@ -12,7 +12,7 @@ impl DataScopeMutationTransaction for DatabasePortTransaction {
         let source_version = TenantRepository
             .increment_data_scope_version_in_txn(self, tenant_id)
             .await?;
-        let now = crate::repositories::database_utc_now(self).await?;
+        let now = crate::repositories::database_utc_now_time(self).await?;
         let payload = serde_json::to_value(DataScopeProjectionEvent {
             tenant_id: tenant_id.to_owned(),
             source_version,
