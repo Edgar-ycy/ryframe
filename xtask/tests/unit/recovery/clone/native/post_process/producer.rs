@@ -5,6 +5,29 @@ use std::{
 
 use super::*;
 
+#[test]
+fn existing_data_failure_keeps_primary_cause_and_independent_cleanup_receipt() -> Result<()> {
+    let root = tempfile::tempdir_in(crate::workspace::root_dir())?;
+    let output = root.path().join("attempt-0001");
+    std::fs::create_dir(&output)?;
+    let result: Result<Value> = protocol::retain_cleanup(
+        root.path(),
+        &output,
+        "session-cleanup",
+        "ProducerCleanupError",
+        Err("原业务读取结果未知".into()),
+        Err("精确生产者清理失败".into()),
+    );
+    let error = result.unwrap_err();
+    assert_eq!(error.source().unwrap().to_string(), "原业务读取结果未知");
+    assert_eq!(
+        document::read(&output.join("session-cleanup-error.json"))?,
+        json!({"error_type":"ProducerCleanupError"})
+    );
+    assert!(!output.join("business-result.json").exists());
+    Ok(())
+}
+
 struct AfterWrite {
     released: Option<mpsc::Receiver<()>>,
     bytes: Cursor<Vec<u8>>,

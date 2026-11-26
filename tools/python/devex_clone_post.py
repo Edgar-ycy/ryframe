@@ -3,7 +3,7 @@ from contextlib import contextmanager, nullcontext
 from pathlib import Path
 import subprocess
 
-from devex_clone_capture import read_bound_json, read_json, write_json
+from devex_clone_capture import read_bound_json, read_json
 from devex_clone_copy_locks import GUARDS
 from devex_clone_model import exact, linked, local_path
 from devex_clone_post_model import administrator, environment_delta, exact_directory, native_invoke, native_response
@@ -213,6 +213,9 @@ def target_lock(backend: Path, value: dict, current_run: Path | None = None):
 
 def execute_post(backend: Path, directory: Path, value: dict, mode: str, number: int,
                  producer_binding: dict | None = None) -> dict:
+    if mode == "verify":
+        raise ValueError("复制后业务核验必须使用 Rust 正式入口 post-copy --operation verify")
+
     from devex_clone_post_context import Context
     from devex_clone_post_actions import Bridge, execute_actions
     from devex_clone_post_process import require_quiet, recover_session, cleanup_failure
@@ -225,65 +228,22 @@ def execute_post(backend: Path, directory: Path, value: dict, mode: str, number:
         return recover_session(backend, directory, number, producer_binding)
     require_quiet(backend, directory, number)
     with target_lock(backend, value, current_run=directory) as owned_lock_identity:
-        if mode not in {"schedules", "reconcile", "verify"}:
+        if mode not in {"schedules", "reconcile"}:
             raise ValueError("登记、准备和环境修订必须使用原生持锁正式入口")
         context = Context(backend, directory, value, number, owned_lock_identity=owned_lock_identity)
         context.guard()
-        if mode in {"schedules", "reconcile"}:
-            bridge = Bridge(context)
-            try:
-                result = execute_actions(context, bridge, mode)
-            except BaseException as original:
-                try:
-                    bridge.close()
-                except Exception as cleanup_error:
-                    cleanup_failure(context, "session-cleanup", cleanup_error, original)
-                raise
-            else:
-                bridge.close()
-                return result
-        return verify_existing(context)
-
-
-def verify_existing(context) -> dict:
-    from devex_clone_post_actions import verify_confirmations
-    from devex_clone_post_process import Producer, cleanup_failure
-
-    confirmations = verify_confirmations(context)
-    require_schedule_stage(context, confirmations)
-    context.guard()
-    context.business_objects()
-    target = context.business_binding()
-    path = context.output / "business-target.json"
-    write_json(path, target)
-    request = context.request
-    producer = Producer(context, "existing")
-    try:
-        stdout = producer.communicate(timeout=1800)
-    except BaseException as original:
+        bridge = Bridge(context)
         try:
-            producer.close()
-        except Exception as cleanup_error:
-            cleanup_failure(context, "session-cleanup", cleanup_error, original)
-        raise
-    else:
-        producer.close()
-    import json
-    observed = json.loads(stdout)
-    if (observed.get("status") != "copy_existing_data_verified" or observed.get("target_binding_sha256") != plan_hash(target)
-            or observed.get("plan_sha256") != target["source_plan_sha256"] or observed.get("copy") != target["copy"]
-            or observed.get("scope_id") != target["target"]["scope_id"] or observed.get("source_scope_id") != target["source_scope_id"]
-            or observed.get("side") != "copy_target" or observed.get("clone_verified") is not False
-            or observed.get("restore_success") is not False
-            or observed.get("input_files") != {"plan_sha256": request["reference_plan"]["sha256"],
-                "dataset_sha256": request["dataset"]["sha256"], "target_binding_sha256": binding(path)["sha256"]}):
-        raise ValueError("业务读取结果未绑定原 plan 与当前目标")
-    write_json(context.output / "business-result.json", observed)
-    objects = context.business_objects(remaining=True)
-    require_schedule_stage(context, verify_confirmations(context))
-    context.guard()
-    return {"status": "post_copy_existing_data_verified", "evidence": binding(context.output / "business-result.json"),
-            "objects": objects, "registration": context.request_binding, "worker_must_remain_stopped": True, "restore_qualified": False}
+            result = execute_actions(context, bridge, mode)
+        except BaseException as original:
+            try:
+                bridge.close()
+            except Exception as cleanup_error:
+                cleanup_failure(context, "session-cleanup", cleanup_error, original)
+            raise
+        else:
+            bridge.close()
+            return result
 
 
 def require_schedule_stage(context, confirmations):

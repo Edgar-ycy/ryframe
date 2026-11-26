@@ -111,6 +111,26 @@ pub(super) fn record_cleanup_failure(request: &Value) -> Result<Value> {
     common::binding(&destination)
 }
 
+pub(super) fn retain_cleanup<T>(
+    backend: &Path,
+    output: &Path,
+    label: &str,
+    category: &str,
+    primary: Result<T>,
+    cleanup: Result<()>,
+) -> Result<T> {
+    let cleanup = cleanup.or_else(|error| {
+        super::files::combine(
+            Err(error),
+            record_cleanup_failure(&json!({
+                "backend":backend,"output":output,"label":label,"error_type":category,
+            }))
+            .map(|_| ()),
+        )
+    });
+    super::files::combine(primary, cleanup)
+}
+
 pub(super) fn record_process(request: &Value) -> Result<Value> {
     let root = json_io::exact(
         request,

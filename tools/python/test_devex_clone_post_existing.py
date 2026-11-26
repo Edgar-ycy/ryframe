@@ -1,5 +1,4 @@
-"""原业务数据集到当前复制目标的边界核验；Node 输出为纯 mock。"""
-import json
+"""原业务数据集到当前复制目标的共享对象与来源核验。"""
 import os
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
@@ -11,104 +10,29 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import devex_clone_post as post
 from devex_clone_post_context import Context
 from devex_clone_capture import write_json
 from process_environment import Environments
 from devex_clone_run_state import binding
-from restore_reference_plan import plan_hash
 from workspace_directory import WorkspaceDirectory
 
 
 class ExistingTests(unittest.TestCase):
     def setUp(self):
-        from rate_limit_tool import tool_binding, verified_tool
-        selected = tool_binding()
-        self.assertIsNotNone(selected, "必须显式绑定本次编译的原生工具")
-        with verified_tool(selected):
-            pass
         temporary = WorkspaceDirectory(Path(__file__).resolve().parents[2] / '.local-tests/tmp')
         self.addCleanup(temporary.cleanup)
-        backend = Path(temporary.name).resolve()
-        output = backend / '.local-tests/existing'
-        output.mkdir(parents=True)
-        self.plan = {'source': {'scope_id': 'source-one'}}
-        self.dataset = {'tenants': [{'files': [{'file_path': 'system/a.txt', 'bytes': 4, 'sha256': 'a' * 64}]}]}
-        self.files = {}
-        for key, value in (('reference_plan', self.plan), ('dataset', self.dataset)):
-            path = output / (key + '.json')
-            write_json(path, value)
-            self.files[key] = binding(path)
-        self.target = {'format_version': 1, 'kind': 'devex-copy-business-target', 'source_plan_sha256': plan_hash(self.plan),
-            'source_scope_id': 'source-one', 'target': {'scope_id': 'target-one', 'api_url': 'http://127.0.0.1:18210',
-            'frontend_url': 'http://127.0.0.1:4190'}, 'copy': {key: 'b' * 64 for key in
-            ('plan_sha256', 'generation_sha256', 'source_export_sha256', 'fresh_target_sha256', 'stage_receipt_sha256', 'ledger_head_sha256')}}
-        self.context = SimpleNamespace(backend=backend, output=output, request={**self.files, 'node': {'path': 'unit-node'}},
-            request_binding={'sha256': 'c' * 64}, environments=Environments({}, {}), guard=lambda **_: None,
-            business_binding=lambda: self.target, business_objects=lambda **_: {'business_objects': 1, 'additional_objects': 1})
-        self.response_change = {}
-        self.commands = []
-        def execute(command, **kwargs):
-            self.commands.append(command)
-            value = {'format_version': 1, 'status': 'copy_existing_data_verified', 'side': 'copy_target',
-                'scope_id': 'target-one', 'plan_sha256': plan_hash(self.plan), 'source_scope_id': 'source-one',
-                'target_binding_sha256': plan_hash(self.target), 'copy': self.target['copy'], 'clone_verified': False,
-                'restore_success': False, 'tenants': 11, 'posts': 33, 'files': 256,
-                'input_files': {'plan_sha256': self.files['reference_plan']['sha256'],
-                    'dataset_sha256': self.files['dataset']['sha256'], 'target_binding_sha256': binding(output / 'business-target.json')['sha256']}}
-            return SimpleNamespace(stdout=json.dumps({**value, **self.response_change}).encode())
-        self.context.run = execute
-        self.addCleanup(patch.stopall)
-        patch('devex_clone_post_actions.verify_confirmations', return_value=[]).start()
-        patch('devex_clone_post.require_schedule_stage').start()
-        producer = patch('devex_clone_post_process.Producer').start().return_value
-        producer.communicate.side_effect = lambda **_: execute(['--target-binding']).stdout
-        self.producer = producer
-
-    def test_node_receipt_keeps_original_plan_and_dataset_bytes(self):
-        old = {key: binding(Path(item['path'])) for key, item in self.files.items()}
-        result = post.verify_existing(self.context)
-        self.assertEqual(result['status'], 'post_copy_existing_data_verified')
-        self.assertEqual({key: binding(Path(item['path'])) for key, item in old.items()}, old)
-        self.assertIn('--target-binding', self.commands[0])
-        self.assertFalse(result['restore_qualified'])
-
-    def test_wrong_original_input_digest_is_rejected(self):
-        self.response_change = {'input_files': {'plan_sha256': '0' * 64}}
-        with self.assertRaises(ValueError): post.verify_existing(self.context)
-        self.assertFalse((self.context.output / 'business-result.json').exists())
-
-    def test_incomplete_schedule_blocks_before_node(self):
-        with patch('devex_clone_post_actions.verify_confirmations', side_effect=ValueError('未确认')):
-            with self.assertRaises(ValueError): post.verify_existing(self.context)
-        self.assertEqual(self.commands, [])
-
-    def test_changed_guard_after_business_reads_cannot_report_success(self):
-        calls = []
-        def guard(**_):
-            calls.append(True)
-            if len(calls) == 2: raise ValueError('现场变化')
-        self.context.guard = guard
-        with self.assertRaises(ValueError): post.verify_existing(self.context)
-        self.assertTrue((self.context.output / 'business-result.json').exists())
-
-    def test_node_failure_and_cleanup_failure_preserve_original_error(self):
-        self.producer.communicate.side_effect = TimeoutError('原请求未知')
-        self.producer.close.side_effect = ValueError('精确清理失败')
-        with self.assertRaisesRegex(TimeoutError, '原请求未知'):
-            post.verify_existing(self.context)
-        self.assertTrue((self.context.output / 'session-cleanup-error.json').exists())
-        self.assertFalse((self.context.output / 'business-result.json').exists())
-
-    def test_changed_published_schedule_binding_after_node_cannot_report_success(self):
-        with patch.object(post, 'require_schedule_stage', side_effect=[None, ValueError('确认来源变化')]) as require:
-            with self.assertRaises(ValueError): post.verify_existing(self.context)
-        self.assertEqual(require.call_count, 2)
-        self.assertTrue((self.context.output / 'business-result.json').exists())
+        self.backend = Path(temporary.name).resolve()
+        self.output = self.backend / '.local-tests/existing'
+        self.output.mkdir(parents=True)
+        dataset = self.output / 'dataset.json'
+        write_json(dataset, {'tenants': [{'files': [
+            {'file_path': 'system/a.txt', 'bytes': 4, 'sha256': 'a' * 64},
+        ]}]})
+        self.request = {'dataset': binding(dataset)}
 
     def object_context(self):
         context = Context.__new__(Context)
-        context.backend, context.output, context.request = self.context.backend, self.context.output, self.context.request
+        context.backend, context.output, context.request = self.backend, self.output, self.request
         context.target_config = {'scope_id': 'target-one'}
         entries = [dict(bucket='uploads', target_key='target-one/system/a.txt', artifact={'bytes': 4, 'sha256': 'a' * 64}),
                    dict(bucket='uploads', target_key='target-one/system/probe.txt', artifact={'bytes': 4, 'sha256': 'd' * 64})]
@@ -222,7 +146,7 @@ class ExistingTests(unittest.TestCase):
 
     def test_guard_verifies_source_outside_current_repo_window(self):
         context = Context.__new__(Context)
-        context.backend, context.output = self.context.backend, self.context.output
+        context.backend, context.output = self.backend, self.output
         context.bindings = lambda: None
         context.target_guard = lambda **_: None
         windows = []
@@ -245,7 +169,7 @@ class ExistingTests(unittest.TestCase):
 
     def test_source_guard_uses_the_registered_run_and_rejects_changed_generation(self):
         context = Context.__new__(Context)
-        context.backend, context.output = self.context.backend, self.context.output
+        context.backend, context.output = self.backend, self.output
         context.directory_root = context.backend / '.local-tests' / 'registered-run'
         context.environments = Environments({'APP_ENV': 'test'}, {'APP_ENV': 'prod'})
         context.source = {'generation': {'fixture': 'original'}}

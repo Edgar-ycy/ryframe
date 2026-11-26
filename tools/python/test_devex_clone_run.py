@@ -187,6 +187,25 @@ class RunTests(unittest.TestCase):
         guard.assert_not_called()
         self.assertEqual({path: path.read_bytes() for path in self.directory.iterdir() if path.is_file()}, original)
 
+    def test_retired_post_copy_verify_is_rejected_before_manifest_stage_or_lock(self):
+        from devex_clone_post import execute_post
+
+        original = {path: path.read_bytes() for path in self.directory.iterdir() if path.is_file()}
+        with patch.object(run, "read_manifest") as manifest, \
+                patch.object(run, "process_guard") as guard, \
+                patch.object(run, "begin") as begin, \
+                patch("devex_clone_post.target_lock") as target_lock:
+            with self.assertRaisesRegex(ValueError, "Rust 正式入口"):
+                run.execute(self.backend, self.directory, "post-copy", "verify")
+            with self.assertRaisesRegex(ValueError, "Rust 正式入口"):
+                execute_post(self.backend, self.directory, {}, "verify", 1)
+
+        manifest.assert_not_called()
+        guard.assert_not_called()
+        begin.assert_not_called()
+        target_lock.assert_not_called()
+        self.assertEqual({path: path.read_bytes() for path in self.directory.iterdir() if path.is_file()}, original)
+
     def test_session_recovery_uses_same_run_journal_without_source_or_environment(self):
         for field in ('source_export', 'source_environment', 'target_environment'):
             Path(self.value[field]['path']).unlink()

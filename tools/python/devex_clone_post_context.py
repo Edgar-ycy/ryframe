@@ -210,17 +210,6 @@ class Context:
         verify_listener(identity["pid"], self.selected["api_url"])
 
 
-    def business_binding(self):
-        reference = read_json(bound_file(self.backend, self.request["reference_plan"]))
-        result = self.copy["result"]
-        return {"format_version": 1, "kind": "devex-copy-business-target", "source_plan_sha256": plan_hash(reference),
-                "source_scope_id": reference["source"]["scope_id"],
-                "target": {"scope_id": self.target_config["scope_id"], "api_url": self.selected["api_url"],
-                           "frontend_url": self.selected["frontend_url"]},
-                "copy": {**{key: result[key] for key in ("plan_sha256", "generation_sha256", "source_export_sha256", "fresh_target_sha256")},
-                         "stage_receipt_sha256": self.request["copy_stage_receipt"]["sha256"],
-                         "ledger_head_sha256": self.request["ledger_head"]["sha256"]}}
-
     def business_objects(self, *, remaining=False):
         dataset = read_json(bound_file(self.backend, self.request["dataset"]))
         items = {(item["bucket"], item["target_key"]): item for item in self.copy["plan"]["objects"]}

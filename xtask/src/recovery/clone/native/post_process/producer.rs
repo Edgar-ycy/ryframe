@@ -497,15 +497,14 @@ fn retain_cleanup<T>(
     primary: Result<T>,
     cleanup: Result<()>,
 ) -> Result<T> {
-    let cleanup = cleanup.or_else(|error| {
-        files::combine(
-            Err(error),
-            protocol::record_cleanup_failure(&json!({
-                "backend":context.backend,"output":context.output,"label":label,"error_type":category,
-            })).map(|_| ()),
-        )
-    });
-    files::combine(primary, cleanup)
+    protocol::retain_cleanup(
+        context.backend,
+        &context.output,
+        label,
+        category,
+        primary,
+        cleanup,
+    )
 }
 
 fn sequenced(number: u64, operation: &str, mut values: Value) -> Result<Value> {

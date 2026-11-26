@@ -3,7 +3,7 @@
 use serde_json::{Value, json};
 
 use super::{
-    business_binding::{self, Completion, ObjectRead},
+    business_binding::{self, Business, Completion, ObjectRead},
     context::Context,
     live::Live,
     producer::{self, Session},
@@ -64,38 +64,60 @@ pub(super) fn verified_schedules(live: &Live<'_, '_>) -> Result<Vec<Value>> {
 
 fn verify(live: &Live<'_, '_>) -> Result<(Value, Completion)> {
     let context = live.context;
-    verified_schedules(live)?;
-    live.check()?;
-    let business = business_binding::prepare(
-        context.backend,
-        &context.output,
-        &context.post.request,
-        &context.plan,
-        &context.selected,
-    )?;
-    business.check()?;
-    let observed = producer::existing(context)?;
-    business.check()?;
-    live.check()?;
-    let public = app_configuration::public_configuration(&live.execution, &live.configuration)?;
-    let completion = business.finish(
-        &observed,
-        ObjectRead {
-            configuration_root: &live.execution,
-            configuration: &live.configuration,
-            endpoint: document::text(&public["endpoint"], "业务目标端点")?,
-            region: document::text(&public["region"], "业务目标区域")?,
+    let completion = verify_business(
+        || verified_schedules(live).map(|_| ()),
+        || live.check(),
+        || {
+            business_binding::prepare(
+                context.backend,
+                &context.output,
+                &context.post.request,
+                &context.plan,
+                &context.selected,
+            )
         },
-        &SystemTransport,
-        &|| live.checkpoint(),
+        |_| producer::existing(context),
+        |business, observed| {
+            let public =
+                app_configuration::public_configuration(&live.execution, &live.configuration)?;
+            business.finish(
+                observed,
+                ObjectRead {
+                    configuration_root: &live.execution,
+                    configuration: &live.configuration,
+                    endpoint: document::text(&public["endpoint"], "业务目标端点")?,
+                    region: document::text(&public["region"], "业务目标区域")?,
+                },
+                &SystemTransport,
+                &|| live.checkpoint(),
+            )
+        },
     )?;
-    verified_schedules(live)?;
-    business.check()?;
-    live.check()?;
     let result = json!({"status":"post_copy_existing_data_verified","evidence":completion.evidence,
         "objects":completion.objects,"registration":context.post.descriptor,
         "worker_must_remain_stopped":true,"restore_qualified":false});
     Ok((result, completion))
+}
+
+pub(super) fn verify_business<'a>(
+    mut check_schedules: impl FnMut() -> Result<()>,
+    mut check_live: impl FnMut() -> Result<()>,
+    prepare: impl FnOnce() -> Result<Business<'a>>,
+    read_existing: impl FnOnce(&Business<'a>) -> Result<Value>,
+    finish: impl FnOnce(&Business<'a>, &Value) -> Result<Completion>,
+) -> Result<Completion> {
+    check_schedules()?;
+    check_live()?;
+    let business = prepare()?;
+    business.check()?;
+    let observed = read_existing(&business)?;
+    business.check()?;
+    check_live()?;
+    let completion = finish(&business, &observed)?;
+    check_schedules()?;
+    business.check()?;
+    check_live()?;
+    Ok(completion)
 }
 
 pub(super) fn require_schedule_stage(context: &Context<'_>, confirmed: &[Value]) -> Result<()> {

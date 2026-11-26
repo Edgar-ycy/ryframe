@@ -522,6 +522,9 @@ def require_target_copy(backend: Path, directory: Path, value: dict, roles: tupl
 def execute(backend: Path, directory: Path, stage: str, mode: str,
             *, producer_binding: dict | None = None,
             seed_request: Path | None = None) -> dict:
+    if stage == "post-copy" and mode == "verify":
+        raise ValueError("复制后业务核验必须使用 Rust 正式入口 post-copy --operation verify")
+
     from source_fingerprints import artifact_sources, current_execution_source
 
     if stage == "post-copy" and mode in {"register", "prepare", "amend"}:

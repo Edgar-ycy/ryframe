@@ -1,4 +1,5 @@
 use std::{
+    cell::Cell,
     path::PathBuf,
     sync::{
         Mutex,
@@ -11,6 +12,7 @@ use sha2::{Digest, Sha256};
 use super::*;
 use crate::recovery::clone::native::{
     export::transport::{CommandOutput, CommandSpec},
+    post_process::execution::verify_business,
     s3::{Operation, Request},
 };
 
@@ -208,6 +210,8 @@ impl Transport for Mock {
 #[test]
 fn verified_producer_and_full_scope_download_only_the_object_complement() {
     let fixture = Fixture::new();
+    let originals = ["reference_plan", "dataset"].map(|name| fixture.originals(name));
+    let original_bytes = originals.each_ref().map(|path| fs::read(path).unwrap());
     let business = fixture.prepare().unwrap();
     assert_eq!(fixture.root.path(), fixture.backend.parent().unwrap());
     let target_path = fixture.output.join("business-target.json");
@@ -250,6 +254,79 @@ fn verified_producer_and_full_scope_download_only_the_object_complement() {
         ["avatar", "config-packages", "exports", "imports", "uploads"]
     );
     assert_eq!(*mock.downloads.lock().unwrap(), [EXPORT, EXTRA]);
+    assert_eq!(
+        originals.each_ref().map(|path| fs::read(path).unwrap()),
+        original_bytes
+    );
+}
+
+#[test]
+fn parent_rejects_unconfirmed_schedules_before_preparing_or_calling_producer() {
+    let fixture = Fixture::new();
+    let result = verify_business(
+        || Err("尚未确认调度".into()),
+        || Ok(()),
+        || fixture.prepare(),
+        |_| panic!("未确认调度时不能调用业务生产者"),
+        |_, _| panic!("未确认调度时不能发布业务证据"),
+    );
+    let error = result.err().expect("调度失败必须阻止父阶段");
+    assert_eq!(error.to_string(), "尚未确认调度");
+    assert!(!fixture.output.join("business-target.json").exists());
+    assert!(!fixture.output.join("business-result.json").exists());
+}
+
+#[test]
+fn parent_keeps_business_evidence_and_rejects_late_schedule_or_live_drift() -> Result<()> {
+    for fail_schedule in [true, false] {
+        let fixture = Fixture::new();
+        let originals = ["reference_plan", "dataset"].map(|name| fixture.originals(name));
+        let original_bytes = originals.each_ref().map(|path| fs::read(path).unwrap());
+        let producer_calls = Cell::new(0);
+        let evidence = fixture.output.join("business-result.json");
+        let published = Cell::new(None);
+        let mock = Mock::default();
+        let result = verify_business(
+            || {
+                if fail_schedule && evidence.is_file() {
+                    return Err("最新调度确认已变化".into());
+                }
+                Ok(())
+            },
+            || {
+                if !fail_schedule && evidence.is_file() {
+                    return Err("当前 API 或受管目标已变化".into());
+                }
+                Ok(())
+            },
+            || fixture.prepare(),
+            |business| {
+                producer_calls.set(producer_calls.get() + 1);
+                Ok(observed(business))
+            },
+            |business, observed| {
+                let completion = business.finish(observed, fixture.access(), &mock, &|| Ok(()))?;
+                published.set(Some(fs::read(&evidence)?));
+                Ok(completion)
+            },
+        );
+        let error = result.err().expect("尾部变化必须阻止父阶段成功");
+        assert_eq!(
+            error.to_string(),
+            if fail_schedule {
+                "最新调度确认已变化"
+            } else {
+                "当前 API 或受管目标已变化"
+            }
+        );
+        assert_eq!(producer_calls.get(), 1);
+        assert_eq!(fs::read(evidence)?, published.into_inner().unwrap());
+        assert_eq!(
+            originals.each_ref().map(|path| fs::read(path).unwrap()),
+            original_bytes
+        );
+    }
+    Ok(())
 }
 
 #[test]
