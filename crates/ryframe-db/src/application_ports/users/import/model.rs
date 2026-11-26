@@ -96,7 +96,10 @@ pub(super) fn legacy_identity_time(instant: OffsetDateTime) -> AppResult<DateTim
 }
 
 pub(super) fn user_model(user: NewImportedUser) -> AppResult<user::Model> {
-    let created_at = legacy_identity_time(user.created_at)?;
+    let created_at = user
+        .created_at
+        .checked_to_offset(UtcOffset::UTC)
+        .ok_or_else(|| AppError::Database("导入用户创建时间无法精确表示为 UTC".into()))?;
     Ok(user::Model {
         id: user.id,
         tenant_id: user.tenant_id,

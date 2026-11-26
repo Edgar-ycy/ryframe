@@ -1,5 +1,6 @@
 use super::*;
 use crate::DbResultExt;
+use time::OffsetDateTime;
 
 pub(crate) async fn ensure_rollback_references_safe(
     transaction: &sea_orm::DatabaseTransaction,
@@ -186,6 +187,8 @@ pub(crate) async fn restore_snapshot_in_transaction(
         })
         .collect::<Vec<_>>();
     apply_resources_in_transaction(transaction, tenant_id, snapshot, &plan_items, now).await?;
+    let utc_now =
+        crate::repositories::utc_time_from_chrono(now).db_context("配置迁移资源回滚时间")?;
     let created = load_created_item_keys(transaction, tenant_id, transfer_id).await?;
 
     let created_role_codes = created_keys(&created, "role").collect::<BTreeSet<_>>();
@@ -213,7 +216,7 @@ pub(crate) async fn restore_snapshot_in_transaction(
             .db()?;
         let mut model = item;
         model.del_flag = role::Model::DEL_FLAG_DELETED.to_owned();
-        model.updated_at = now;
+        model.updated_at = utc_now;
         role::ActiveModel::from(model)
             .reset_all()
             .update(transaction)
@@ -243,7 +246,7 @@ pub(crate) async fn restore_snapshot_in_transaction(
             .is_some_and(|key| created_menu_keys.contains(&normalize_stable_key(key)))
         {
             item.del_flag = menu::Model::DEL_FLAG_DELETED.to_owned();
-            item.updated_at = now;
+            item.updated_at = utc_now;
             menu::ActiveModel::from(item)
                 .reset_all()
                 .update(transaction)
@@ -287,7 +290,7 @@ pub(crate) async fn restore_snapshot_in_transaction(
     }
 
     soft_delete_simple_extras(transaction, tenant_id, &created, now).await?;
-    soft_delete_department_extras(transaction, tenant_id, &created, now).await
+    soft_delete_department_extras(transaction, tenant_id, &created, utc_now).await
 }
 
 async fn soft_delete_simple_extras(
@@ -379,7 +382,7 @@ async fn soft_delete_department_extras(
     transaction: &sea_orm::DatabaseTransaction,
     tenant_id: &str,
     created: &BTreeMap<String, BTreeSet<String>>,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<()> {
     let created_paths = created_keys(created, "department").collect::<BTreeSet<_>>();
     let models = dept::Entity::find()

@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use ryframe_application::ports::tenants::{ProvisionTenantRecord, TenantProvisioningIdentity};
 use ryframe_kernel::AppResult;
 use sea_orm::{ActiveModelTrait, ActiveValue, DatabaseTransaction};
+use time::OffsetDateTime;
 
 use super::TenantProvisioningRepository;
 use crate::{
@@ -33,8 +34,10 @@ impl TenantProvisioningRepository {
             )
             .await?;
         let ids = IdentityIds::allocate()?;
-        insert_default_roles(transaction, &record.tenant_id, &ids, now).await?;
-        insert_admin_user(transaction, record, &ids, now).await?;
+        let utc_now =
+            crate::repositories::utc_time_from_chrono(now).db_context("租户身份初始化时间")?;
+        insert_default_roles(transaction, &record.tenant_id, &ids, utc_now).await?;
+        insert_admin_user(transaction, record, &ids, utc_now).await?;
         Ok(TenantProvisioningIdentity {
             tenant_id: record.tenant_id.clone(),
             admin_role_id: ids.admin_role_id,
@@ -104,7 +107,7 @@ async fn insert_default_roles(
     transaction: &DatabaseTransaction,
     tenant_id: &str,
     ids: &IdentityIds,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<()> {
     default_role(
         tenant_id,
@@ -151,7 +154,7 @@ fn default_role(
     tenant_id: &str,
     id: i64,
     spec: DefaultRoleSpec,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> role::ActiveModel {
     role::ActiveModel {
         id: ActiveValue::Set(id),
@@ -173,7 +176,7 @@ async fn insert_admin_user(
     transaction: &DatabaseTransaction,
     record: &ProvisionTenantRecord,
     ids: &IdentityIds,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<()> {
     user::ActiveModel {
         password_change_required: sea_orm::ActiveValue::Set(true),

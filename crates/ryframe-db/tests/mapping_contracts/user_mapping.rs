@@ -1,5 +1,9 @@
 use ryframe_application::ports::users::USER_STATUS_PENDING_ACTIVATION;
 use ryframe_db::{application_ports::users::to_user_record, entities::user};
+use time::{
+    Date, OffsetDateTime, UtcOffset,
+    macros::{offset, time},
+};
 
 #[test]
 fn user_mapping_exposes_only_application_fields() {
@@ -25,23 +29,33 @@ fn user_mapping_exposes_only_application_fields() {
         created_at,
         updated_at: created_at,
     };
-    for nanos in [0, 120_000_000, 123_400_000, 123_456_700] {
-        let original = chrono::DateTime::from_timestamp(-1, nanos).unwrap();
-        let record = to_user_record(model(original)).unwrap();
+    for (nanos, serialized) in [
+        (0, "1969-12-31T23:59:59Z"),
+        (120_000_000, "1969-12-31T23:59:59.120Z"),
+        (123_400_000, "1969-12-31T23:59:59.123400Z"),
+        (123_456_700, "1969-12-31T23:59:59.123456700Z"),
+    ] {
+        let original = OffsetDateTime::from_unix_timestamp(-1)
+            .unwrap()
+            .replace_nanosecond(nanos)
+            .unwrap()
+            .to_offset(offset!(+05:30));
+        let model = model(original);
+        let encoded = serde_json::to_value(&model).unwrap();
+        assert_eq!(encoded["created_at"], serialized);
+        assert_eq!(encoded["updated_at"], serialized);
+        assert!(encoded.get("password_hash").is_none());
+        let record = to_user_record(model).unwrap();
         assert_eq!(record.id, 17);
         assert_eq!(record.username, "alice");
         assert_eq!(record.nickname, "Alice");
         assert_eq!(record.dept_id, Some(5));
-        assert_eq!(record.created_at.offset(), time::UtcOffset::UTC);
+        assert_eq!(record.created_at.offset(), UtcOffset::UTC);
         assert_eq!(record.created_at.unix_timestamp(), -1);
         assert_eq!(record.created_at.nanosecond(), nanos);
     }
-    for invalid in [
-        chrono::DateTime::from_timestamp(1_483_228_799, 1_123_456_000).unwrap(),
-        chrono::DateTime::from_timestamp(253_402_300_800, 0).unwrap(),
-    ] {
-        let error = to_user_record(model(invalid)).unwrap_err();
-        assert!(matches!(error, ryframe_kernel::AppError::Database(message)
-            if message.starts_with("读取用户创建时间:")));
-    }
+    let invalid = OffsetDateTime::new_in_offset(Date::MAX, time!(23:59:59), offset!(-01:00));
+    let error = to_user_record(model(invalid)).unwrap_err();
+    assert!(matches!(error, ryframe_kernel::AppError::Database(message)
+        if message.starts_with("读取用户创建时间:")));
 }

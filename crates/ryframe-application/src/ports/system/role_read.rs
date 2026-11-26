@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery};
 use time::OffsetDateTime;
 
@@ -14,7 +13,7 @@ pub struct RoleRecord {
     pub sort: i32,
     pub remark: Option<String>,
     pub created_at: OffsetDateTime,
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: OffsetDateTime,
 }
 
 #[derive(Clone, Copy, Debug, Default)]

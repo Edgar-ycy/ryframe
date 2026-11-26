@@ -11,6 +11,7 @@ use sea_orm::{
     ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, TransactionTrait,
     sea_query::LockType,
 };
+use time::UtcOffset;
 
 use ryframe_application::system::platform::ProductService;
 use ryframe_application::{
@@ -280,18 +281,21 @@ fn to_record(model: permission::Model) -> AppResult<PermissionRecord> {
         icon: model.icon,
         sort: model.sort,
         status: model.status,
-        created_at: crate::repositories::utc_time_from_chrono(model.created_at)
-            .db_context("读取权限创建时间")?,
+        created_at: model
+            .created_at
+            .checked_to_offset(UtcOffset::UTC)
+            .ok_or_else(|| {
+                ryframe_kernel::AppError::Database("读取权限创建时间: 时间超出 UTC 表示范围".into())
+            })?,
         updated_at: model.updated_at,
     })
 }
 
 fn to_entity(tenant_id: &str, record: PermissionRecord) -> AppResult<permission::Model> {
-    let created_at = chrono::DateTime::from_timestamp(
-        record.created_at.unix_timestamp(),
-        record.created_at.nanosecond(),
-    )
-    .ok_or_else(|| AppError::Database("权限创建时间超出 UTC 表示范围".into()))?;
+    let created_at = record
+        .created_at
+        .checked_to_offset(UtcOffset::UTC)
+        .ok_or_else(|| AppError::Database("权限创建时间超出 UTC 表示范围".into()))?;
     Ok(permission::Model {
         id: record.id,
         tenant_id: tenant_id.to_owned(),
@@ -319,8 +323,8 @@ fn permission_creation_timestamp_round_trips_with_untouched_update_time() {
         icon: None,
         sort: 0,
         status: "1".into(),
-        created_at: chrono::DateTime::from_timestamp(-1, 123_400_000).unwrap(),
-        updated_at: chrono::DateTime::from_timestamp(1, 0).unwrap(),
+        created_at: time::macros::datetime!(1969-12-31 23:59:59.123400 UTC),
+        updated_at: time::macros::datetime!(1970-01-01 00:00:01 UTC),
     };
     let record = to_record(entity.clone()).unwrap();
     assert_eq!(record.created_at.unix_timestamp(), -1);

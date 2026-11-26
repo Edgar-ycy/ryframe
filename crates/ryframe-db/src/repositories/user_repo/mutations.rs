@@ -52,7 +52,7 @@ impl UserRepository {
         id: i64,
         avatar_url: String,
         avatar_file_id: i64,
-        updated_at: chrono::DateTime<chrono::Utc>,
+        updated_at: time::OffsetDateTime,
     ) -> AppResult<()> {
         let result = user::Entity::update_many()
             .col_expr(user::Column::Avatar, Expr::value(Some(avatar_url)))
@@ -98,7 +98,10 @@ impl UserRepository {
                 user::Column::DelFlag,
                 Expr::value(user::Model::DEL_FLAG_DELETED),
             )
-            .col_expr(user::Column::UpdatedAt, Expr::value(chrono::Utc::now()))
+            .col_expr(
+                user::Column::UpdatedAt,
+                Expr::value(time::OffsetDateTime::now_utc()),
+            )
             .filter(user::Column::Id.is_in(ids.to_vec()))
             .filter(user::Column::TenantId.eq(tenant_id))
             .exec(db)
@@ -119,7 +122,10 @@ impl UserRepository {
     {
         let result = user::Entity::update_many()
             .col_expr(user::Column::Status, Expr::value(status))
-            .col_expr(user::Column::UpdatedAt, Expr::value(chrono::Utc::now()))
+            .col_expr(
+                user::Column::UpdatedAt,
+                Expr::value(time::OffsetDateTime::now_utc()),
+            )
             .filter(user::Column::Id.eq(id))
             .filter(user::Column::TenantId.eq(tenant_id))
             .exec(db)

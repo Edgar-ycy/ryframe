@@ -257,7 +257,7 @@ impl ProfileTransaction for DatabaseProfileTransaction {
                 user_id,
                 avatar_url,
                 avatar_file_id,
-                now,
+                crate::application_ports::files::utc_time_from_chrono(now)?,
             )
             .await
     }

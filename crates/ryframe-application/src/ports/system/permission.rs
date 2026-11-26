@@ -1,7 +1,6 @@
 use std::collections::BTreeSet;
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use ryframe_kernel::AppResult;
 use time::OffsetDateTime;
 
@@ -18,7 +17,7 @@ pub struct PermissionRecord {
     pub sort: i32,
     pub status: String,
     pub created_at: OffsetDateTime,
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: OffsetDateTime,
 }
 
 #[async_trait]

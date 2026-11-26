@@ -1,13 +1,9 @@
-use ryframe_application::ports::utc_timestamp::from_chrono;
 use ryframe_kernel::AppResult;
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
-use crate::{
-    DbResultExt,
-    auto_fill::{AutoFill, FillContext},
-};
+use crate::auto_fill::{AutoFill, FillContext};
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "sys_dict_data")]
@@ -42,15 +38,14 @@ pub enum Relation {}
 
 impl AutoFill for Model {
     fn fill_on_insert(&mut self, context: &FillContext) -> AppResult<()> {
-        let now = from_chrono(context.now).db_context("字典数据自动填充时间")?;
-        self.created_at = now;
-        self.updated_at = now;
+        self.created_at = context.now;
+        self.updated_at = context.now;
         self.id = crate::next_id()?;
         Ok(())
     }
 
     fn fill_on_update(&mut self, context: &FillContext) -> AppResult<()> {
-        self.updated_at = from_chrono(context.now).db_context("字典数据自动填充时间")?;
+        self.updated_at = context.now;
         Ok(())
     }
 }

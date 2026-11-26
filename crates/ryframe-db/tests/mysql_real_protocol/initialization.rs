@@ -1,13 +1,23 @@
-use super::{bootstrap_hashes, db_error, execute, require_count, run_mysql_test};
+use super::{
+    bootstrap_hashes, db_error, execute, install_test_database_id_generator, require_count,
+    run_mysql_test,
+};
 use ryframe_application::{
     TransactionAuditMode,
     ports::system::{DictDataRecord, DictTypeRecord},
 };
-use ryframe_db::{ControlDatabaseCluster, application_ports::system::dict, migration};
+use ryframe_db::{
+    AutoFill, ControlDatabaseCluster, FillContext,
+    application_ports::system::dict,
+    entities::{dept, menu, permission, role, user},
+    migration,
+};
 use ryframe_kernel::AppResult;
-use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
+use sea_orm::{
+    ActiveModelTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait, Statement,
+};
 use sea_orm_migration::MigratorTrait;
-use time::{OffsetDateTime, PrimitiveDateTime, macros::datetime};
+use time::{OffsetDateTime, PrimitiveDateTime, UtcOffset, macros::datetime};
 
 #[path = "initialization_data.rs"]
 mod data;
@@ -49,12 +59,85 @@ async fn sql_import_and_migrations_produce_equivalent_control_databases() {
             migration::verify(&migrated).await.map_err(db_error)?;
             assert_eq!(inventory(&imported).await?, inventory(&migrated).await?);
             data::compare(&imported, &migrated).await?;
-            verify_dictionary_utc_writes(&migrated).await
+            verify_dictionary_utc_writes(&migrated).await?;
+            verify_auto_fill_utc_writes(&migrated).await
         })
         .await;
         Ok(())
     })
     .await;
+}
+
+async fn verify_auto_fill_utc_writes(database: &DatabaseConnection) -> Result<(), String> {
+    install_test_database_id_generator()?;
+    let create = FillContext {
+        now: datetime!(2026-08-21 00:59:59.123456 +08:00),
+        user_id: None,
+        username: None,
+    };
+    let update = FillContext {
+        now: datetime!(2026-08-20 12:00:00.123456 -05:00),
+        user_id: None,
+        username: None,
+    };
+    let stored_created_at = datetime!(2026-08-20 16:59:59 UTC);
+    let stored_updated_at = datetime!(2026-08-20 17:00:00 UTC);
+    macro_rules! verify_model {
+        ($entity:ident, $seed_id:expr, $model:ident, $prepare:block $(, $verify:block)?) => {{
+            let mut $model = $entity::Entity::find_by_id($seed_id)
+                .one(database)
+                .await
+                .map_err(db_error)?
+                .ok_or(concat!("缺少初始实体 ", stringify!($entity)))?;
+            $prepare
+            $model.fill_on_insert(&create).map_err(|error| error.to_string())?;
+            let id = $model.id;
+            assert_ne!(id, $seed_id);
+            let mut $model = $entity::ActiveModel::from($model).insert(database).await.map_err(db_error)?;
+            assert_eq!($model.created_at, stored_created_at, stringify!($entity));
+            assert_eq!($model.updated_at, stored_created_at, stringify!($entity));
+            assert_eq!($model.created_at.offset(), UtcOffset::UTC);
+            $($verify)?
+            $model.fill_on_update(&update).map_err(|error| error.to_string())?;
+            assert_eq!($model.id, id);
+            let $model = $entity::ActiveModel::from($model)
+                .reset_all()
+                .update(database)
+                .await
+                .map_err(db_error)?;
+            assert_eq!($model.created_at, stored_created_at, stringify!($entity));
+            assert_eq!($model.updated_at, stored_updated_at, stringify!($entity));
+            assert_eq!($model.updated_at.offset(), UtcOffset::UTC);
+            $($verify)?
+        }};
+    }
+    verify_model!(dept, 1, model, {
+        model.name = "填充校验部门".into();
+    });
+    verify_model!(menu, 1, model, {
+        model.name = "填充校验菜单".into();
+        model.route_key = None;
+    });
+    verify_model!(permission, 1, model, {
+        model.code = "fill:probe".into();
+    });
+    verify_model!(role, 2, model, {
+        model.code = "fill_probe".into();
+    });
+    let login = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+    verify_model!(
+        user,
+        2,
+        model,
+        {
+            model.username = "fill_probe".into();
+            model.login_date = Some(login);
+        },
+        {
+            assert_eq!(model.login_date, Some(login));
+        }
+    );
+    Ok(())
 }
 
 async fn verify_dictionary_utc_writes(database: &DatabaseConnection) -> Result<(), String> {

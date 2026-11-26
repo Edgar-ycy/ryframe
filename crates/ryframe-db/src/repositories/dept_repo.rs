@@ -141,7 +141,10 @@ impl DeptRepository {
                 dept::Column::DelFlag,
                 Expr::value(dept::Model::DEL_FLAG_DELETED),
             )
-            .col_expr(dept::Column::UpdatedAt, Expr::value(chrono::Utc::now()))
+            .col_expr(
+                dept::Column::UpdatedAt,
+                Expr::value(time::OffsetDateTime::now_utc()),
+            )
             .filter(dept::Column::Id.eq(id))
             .filter(dept::Column::TenantId.eq(tenant_id))
             .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
@@ -483,7 +486,7 @@ mod tests {
     }
 
     fn row(id: i64, parent_id: Option<i64>) -> dept::Model {
-        let timestamp = chrono::DateTime::UNIX_EPOCH;
+        let timestamp = time::OffsetDateTime::UNIX_EPOCH;
         dept::Model {
             id,
             tenant_id: "tenant".into(),

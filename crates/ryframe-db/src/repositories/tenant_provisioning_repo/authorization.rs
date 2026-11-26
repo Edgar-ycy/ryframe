@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
-use chrono::{DateTime, Utc};
 use ryframe_application::ports::tenants::{
     TenantAuthorizationTemplate, TenantMenuTemplate, TenantPermissionTemplate,
     TenantProvisioningIdentity,
 };
 use ryframe_kernel::AppResult;
 use sea_orm::{ActiveModelTrait, ActiveValue, DatabaseTransaction, EntityTrait};
+use time::OffsetDateTime;
 
 use super::TenantProvisioningRepository;
 use crate::{
@@ -21,7 +21,8 @@ impl TenantProvisioningRepository {
         identity: &TenantProvisioningIdentity,
         template: TenantAuthorizationTemplate,
     ) -> AppResult<()> {
-        let now = identity.provisioned_at;
+        let now = crate::repositories::utc_time_from_chrono(identity.provisioned_at)
+            .db_context("租户授权初始化时间")?;
         let permission_ids =
             copy_permissions(transaction, identity, template.permissions, now).await?;
         copy_menus(
@@ -39,7 +40,7 @@ async fn copy_permissions(
     transaction: &DatabaseTransaction,
     identity: &TenantProvisioningIdentity,
     permissions: Vec<TenantPermissionTemplate>,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<HashMap<i64, i64>> {
     let mut permission_ids = HashMap::new();
     let mut grants = Vec::new();
@@ -94,7 +95,7 @@ async fn copy_menus(
     tenant_id: &str,
     menus: Vec<TenantMenuTemplate>,
     permission_ids: &HashMap<i64, i64>,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<()> {
     let mut menu_ids = HashMap::new();
     for source in menus {

@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use time::OffsetDateTime;
 
 use crate::PersistenceTransaction;
 
@@ -17,7 +18,7 @@ pub struct ProfileRecord {
     pub remark: Option<String>,
     pub login_ip: Option<String>,
     pub login_date: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: OffsetDateTime,
     pub roles: Vec<String>,
     pub permissions: Vec<String>,
 }

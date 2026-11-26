@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppResult, PageResult, ValidatedPageQuery};
 use time::OffsetDateTime;
 
@@ -15,7 +14,7 @@ pub struct DeptRecord {
     pub status: String,
     pub remark: Option<String>,
     pub created_at: OffsetDateTime,
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: OffsetDateTime,
 }
 
 #[derive(Debug)]

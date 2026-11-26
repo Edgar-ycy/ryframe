@@ -168,7 +168,10 @@ impl MenuRepository {
                 menu::Column::DelFlag,
                 Expr::value(menu::Model::DEL_FLAG_DELETED),
             )
-            .col_expr(menu::Column::UpdatedAt, Expr::value(chrono::Utc::now()))
+            .col_expr(
+                menu::Column::UpdatedAt,
+                Expr::value(time::OffsetDateTime::now_utc()),
+            )
             .filter(menu::Column::Id.eq(id))
             .filter(menu::Column::TenantId.eq(tenant_id))
             .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
@@ -497,7 +500,7 @@ mod tests {
     }
 
     fn row(id: i64, parent_id: Option<i64>, perm_id: Option<i64>) -> menu::Model {
-        let timestamp = chrono::DateTime::UNIX_EPOCH;
+        let timestamp = time::OffsetDateTime::UNIX_EPOCH;
         let menu_type = if perm_id.is_some() {
             menu::Model::MENU_TYPE_MENU
         } else {

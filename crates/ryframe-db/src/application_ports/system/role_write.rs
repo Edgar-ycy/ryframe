@@ -11,6 +11,7 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
     TransactionTrait, sea_query::LockType,
 };
+use time::UtcOffset;
 
 use ryframe_application::system::platform::ProductService;
 use ryframe_application::{
@@ -270,11 +271,12 @@ impl PersistenceTransaction for DatabaseRoleWriteTransaction {
 }
 
 fn to_entity(tenant_id: &str, record: RoleRecord) -> ryframe_kernel::AppResult<role::Model> {
-    let created_at = chrono::DateTime::from_timestamp(
-        record.created_at.unix_timestamp(),
-        record.created_at.nanosecond(),
-    )
-    .ok_or_else(|| ryframe_kernel::AppError::Database("角色创建时间超出 UTC 表示范围".into()))?;
+    let created_at = record
+        .created_at
+        .checked_to_offset(UtcOffset::UTC)
+        .ok_or_else(|| {
+            ryframe_kernel::AppError::Database("角色创建时间超出 UTC 表示范围".into())
+        })?;
     Ok(role::Model {
         id: record.id,
         tenant_id: tenant_id.to_owned(),
@@ -293,17 +295,19 @@ fn to_entity(tenant_id: &str, record: RoleRecord) -> ryframe_kernel::AppResult<r
 
 #[cfg(test)]
 mod tests {
-    use chrono::DateTime;
-    use time::UtcOffset;
+    use time::{OffsetDateTime, UtcOffset, macros::datetime};
 
     use super::{role, to_entity, to_record};
 
     #[test]
     fn role_created_at_round_trips_through_the_db_adapter() {
-        let updated_at = DateTime::from_timestamp(1, 456_000_000).unwrap();
+        let updated_at = datetime!(1970-01-01 00:00:01.456 UTC);
         let offset = UtcOffset::from_hms(8, 0, 0).unwrap();
         for (seconds, nanos) in [(0, 0), (-1, 123_456_700)] {
-            let created_at = DateTime::from_timestamp(seconds, nanos).unwrap();
+            let created_at = OffsetDateTime::from_unix_timestamp(seconds)
+                .unwrap()
+                .replace_nanosecond(nanos)
+                .unwrap();
             let entity = role::Model {
                 id: 1,
                 tenant_id: "tenant-a".into(),

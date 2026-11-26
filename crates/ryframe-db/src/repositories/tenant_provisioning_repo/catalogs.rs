@@ -170,6 +170,7 @@ async fn copy_departments(
     now: DateTime<Utc>,
 ) -> AppResult<()> {
     let departments = validate_and_order_departments(departments)?;
+    let now = crate::repositories::utc_time_from_chrono(now).db_context("部门初始化时间")?;
     let mut department_ids = HashMap::new();
     for source in departments {
         let id = crate::next_id()?;

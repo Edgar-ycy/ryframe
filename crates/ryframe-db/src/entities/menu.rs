@@ -1,7 +1,7 @@
-use chrono::{DateTime, Utc};
 use ryframe_macro::AutoFill;
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize, AutoFill)]
 #[sea_orm(table_name = "sys_menu")]
@@ -23,8 +23,10 @@ pub struct Model {
     pub status: String,
     pub remark: Option<String>,
     pub del_flag: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    #[serde(with = "ryframe_application::ports::utc_timestamp")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "ryframe_application::ports::utc_timestamp")]
+    pub updated_at: OffsetDateTime,
 }
 
 impl Model {

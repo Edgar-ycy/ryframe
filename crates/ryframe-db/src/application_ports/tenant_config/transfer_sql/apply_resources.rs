@@ -1,5 +1,6 @@
 use super::*;
 use crate::DbResultExt;
+use time::OffsetDateTime;
 
 mod roles;
 mod simple;
@@ -11,6 +12,8 @@ pub(crate) async fn apply_resources_in_transaction(
     plan_items: &[TenantConfigTransferItemRecord],
     now: DateTime<Utc>,
 ) -> AppResult<()> {
+    let utc_now =
+        crate::repositories::utc_time_from_chrono(now).db_context("配置迁移资源写入时间")?;
     let changed = plan_items
         .iter()
         .filter(|item| {
@@ -83,7 +86,7 @@ pub(crate) async fn apply_resources_in_transaction(
             model.status = item.status.clone();
             model.remark = item.remark.clone();
             model.del_flag = dept::Model::DEL_FLAG_NORMAL.to_owned();
-            model.updated_at = now;
+            model.updated_at = utc_now;
             dept::ActiveModel::from(model)
                 .reset_all()
                 .update(transaction)
@@ -102,8 +105,8 @@ pub(crate) async fn apply_resources_in_transaction(
                 status: item.status.clone(),
                 remark: item.remark.clone(),
                 del_flag: dept::Model::DEL_FLAG_NORMAL.to_owned(),
-                created_at: now,
-                updated_at: now,
+                created_at: utc_now,
+                updated_at: utc_now,
             })
             .insert(transaction)
             .await
@@ -122,17 +125,17 @@ pub(crate) async fn apply_resources_in_transaction(
         tenant_id,
         &resources.permissions,
         &changed,
-        now,
+        utc_now,
     )
     .await?;
-    upsert_menus(transaction, tenant_id, &resources.menus, &changed, now).await?;
+    upsert_menus(transaction, tenant_id, &resources.menus, &changed, utc_now).await?;
     roles::upsert_roles_and_relations(
         transaction,
         tenant_id,
         &resources.roles,
         &department_ids,
         &changed,
-        now,
+        utc_now,
     )
     .await
 }
@@ -160,7 +163,7 @@ async fn upsert_permissions(
     tenant_id: &str,
     resources: &[PortablePermission],
     changed: &BTreeSet<(String, String)>,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<()> {
     let existing = permission::Entity::find()
         .filter(permission::Column::TenantId.eq(tenant_id))
@@ -252,7 +255,7 @@ async fn upsert_menus(
     tenant_id: &str,
     resources: &[PortableMenu],
     changed: &BTreeSet<(String, String)>,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<()> {
     let MenuApplyCatalog {
         permission_ids,

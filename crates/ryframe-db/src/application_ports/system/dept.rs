@@ -13,6 +13,7 @@ use sea_orm::{
     ColumnTrait, Condition, EntityTrait, QueryFilter, QueryOrder, QuerySelect, TransactionTrait,
     sea_query::LockType,
 };
+use time::UtcOffset;
 
 use ryframe_application::{
     AuthorizationCache, DataScopeMutationTransaction, PersistenceTransaction, TransactionAuditMode,
@@ -291,18 +292,21 @@ pub(in crate::application_ports) fn to_record(model: dept::Model) -> AppResult<D
         sort: model.sort,
         status: model.status,
         remark: model.remark,
-        created_at: crate::repositories::utc_time_from_chrono(model.created_at)
-            .db_context("读取部门创建时间")?,
+        created_at: model
+            .created_at
+            .checked_to_offset(UtcOffset::UTC)
+            .ok_or_else(|| {
+                ryframe_kernel::AppError::Database("读取部门创建时间: 时间超出 UTC 表示范围".into())
+            })?,
         updated_at: model.updated_at,
     })
 }
 
 fn to_entity(tenant_id: &str, record: DeptRecord) -> AppResult<dept::Model> {
-    let created_at = chrono::DateTime::from_timestamp(
-        record.created_at.unix_timestamp(),
-        record.created_at.nanosecond(),
-    )
-    .ok_or_else(|| AppError::Database("部门创建时间超出 UTC 表示范围".into()))?;
+    let created_at = record
+        .created_at
+        .checked_to_offset(UtcOffset::UTC)
+        .ok_or_else(|| AppError::Database("部门创建时间超出 UTC 表示范围".into()))?;
     Ok(dept::Model {
         id: record.id,
         tenant_id: tenant_id.to_owned(),
@@ -344,15 +348,14 @@ fn to_tree_record(node: DatabaseDeptTreeNode) -> ryframe_kernel::AppResult<DeptT
 
 #[cfg(test)]
 mod tests {
-    use chrono::DateTime;
-    use time::UtcOffset;
+    use time::{UtcOffset, macros::datetime};
 
     use super::{dept, to_entity, to_record};
 
     #[test]
     fn department_created_at_round_trips_through_the_db_adapter() {
-        let created_at = DateTime::from_timestamp(-1, 123_456_700).unwrap();
-        let updated_at = DateTime::from_timestamp(1, 456_000_000).unwrap();
+        let created_at = datetime!(1969-12-31 23:59:59.123456700 UTC);
+        let updated_at = datetime!(1970-01-01 00:00:01.456 UTC);
         let entity = dept::Model {
             id: 1,
             tenant_id: "tenant-a".into(),

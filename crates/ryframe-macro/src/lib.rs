@@ -9,7 +9,7 @@
 //! # 用法
 //!
 //! ```text
-//! use chrono::{DateTime, Utc};
+//! use time::OffsetDateTime;
 //! use ryframe_db::{AutoFill as AutoFillModel, FillContext};
 //! use ryframe_macro::AutoFill;
 //!
@@ -18,9 +18,9 @@
 //! pub struct User {
 //!     #[auto_fill(snowflake)]
 //!     pub id: i64,
-//!     pub created_at: DateTime<Utc>,
+//!     pub created_at: OffsetDateTime,
 //!     #[auto_fill(skip)]
-//!     pub login_date: Option<DateTime<Utc>>,
+//!     pub login_date: Option<OffsetDateTime>,
 //! }
 //!
 //! // 使用 Snowflake 自动填充前，必须在进程启动边界完成一次初始化。
@@ -28,7 +28,7 @@
 //!
 //! let mut user = User {
 //!     id: 0,
-//!     created_at: Utc::now(),
+//!     created_at: OffsetDateTime::UNIX_EPOCH,
 //!     login_date: None,
 //! };
 //! AutoFillModel::fill_on_insert(&mut user, &FillContext::new()).expect("自动填充失败");
@@ -47,7 +47,7 @@ use syn::parse_macro_input;
 
 /// 自动填充 derive 宏
 ///
-/// 按 `DEFAULTS` 规则表自动填充实体字段（如 `created_at` → `Utc::now()`）。
+/// 按 `DEFAULTS` 规则表使用本次写入的统一 UTC 时间填充实体字段。
 /// 实体有对应字段则填充，没有则跳过。
 ///
 /// 仅支持字段级标注：
@@ -57,7 +57,7 @@ use syn::parse_macro_input;
 /// # 示例
 ///
 /// ```text
-/// use chrono::{DateTime, Utc};
+/// use time::OffsetDateTime;
 /// use ryframe_db::{AutoFill as AutoFillModel, FillContext};
 /// use ryframe_macro::AutoFill;
 ///
@@ -65,9 +65,9 @@ use syn::parse_macro_input;
 /// pub struct User {
 ///     #[auto_fill(snowflake)]
 ///     pub id: i64,
-///     pub created_at: DateTime<Utc>,
+///     pub created_at: OffsetDateTime,
 ///     #[auto_fill(skip)]
-///     pub login_date: Option<DateTime<Utc>>,
+///     pub login_date: Option<OffsetDateTime>,
 /// }
 ///
 /// // 使用 Snowflake 自动填充前，必须在进程启动边界完成一次初始化。
@@ -75,7 +75,7 @@ use syn::parse_macro_input;
 ///
 /// let mut user = User {
 ///     id: 0,
-///     created_at: Utc::now(),
+///     created_at: OffsetDateTime::UNIX_EPOCH,
 ///     login_date: None,
 /// };
 /// AutoFillModel::fill_on_insert(&mut user, &FillContext::new()).expect("自动填充失败");

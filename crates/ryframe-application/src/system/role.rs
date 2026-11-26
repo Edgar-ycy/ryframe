@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use chrono::Utc;
 use ryframe_kernel::{
     ActorContext, AppError, AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery,
 };
@@ -288,7 +287,7 @@ impl RoleService {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let data_scope = data_scope.unwrap_or_else(|| "1".to_string());
         Self::validate_data_scope(&data_scope)?;
-        let now = Utc::now();
+        let now = OffsetDateTime::now_utc();
         let record = RoleRecord {
             id: crate::next_id()?,
             name: name.to_owned(),
@@ -298,8 +297,7 @@ impl RoleService {
             status: "1".into(),
             sort,
             remark: None,
-            created_at: utc_timestamp::from_chrono(now)
-                .map_err(|_| AppError::Internal("角色创建时间无法精确表示为 UTC".into()))?,
+            created_at: now,
             updated_at: now,
         };
         let transaction = self.write.begin().await?;
@@ -353,7 +351,7 @@ impl RoleService {
             if let Some(data_scope) = data_scope {
                 role.data_scope = data_scope;
             }
-            role.updated_at = Utc::now();
+            role.updated_at = OffsetDateTime::now_utc();
             transaction.update(tenant_id, role).await
         }
         .await;

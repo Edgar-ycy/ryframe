@@ -7,6 +7,7 @@ use serde::Serialize;
 use crate::{
     AuthorizationCache, TransactionAuditMode,
     ports::users::{ProfileAvatarState, ProfilePersistencePort, ProfileTransaction},
+    ports::utc_timestamp,
 };
 
 const AVATAR_CLEANUP_GRACE_MINUTES: i64 = 5;
@@ -72,7 +73,9 @@ impl ProfileService {
             remark: profile.remark,
             login_ip: profile.login_ip,
             login_date: profile.login_date.map(|date| date.to_rfc3339()),
-            created_at: profile.created_at.to_rfc3339(),
+            created_at: utc_timestamp::format_with_offset(&profile.created_at).map_err(|_| {
+                AppError::Database("读取个人资料创建时间：时间无法精确表示为 UTC".into())
+            })?,
             roles: profile.roles,
             permissions: profile.permissions,
         })

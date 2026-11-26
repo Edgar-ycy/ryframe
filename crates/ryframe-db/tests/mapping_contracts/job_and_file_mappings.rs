@@ -1,4 +1,3 @@
-use chrono::{TimeZone, Timelike, Utc};
 use ryframe_application::{
     EnqueueJob,
     ports::{files::FileUploadRecord, jobs::JobScheduleRecord},
@@ -70,11 +69,7 @@ fn file_update_fill_uses_the_context_timestamp_and_preserves_other_fields() {
     let mut expected = model.clone();
     expected.updated_at = datetime!(2026-08-21 02:03:04.123456789);
     let context = FillContext {
-        now: Utc
-            .with_ymd_and_hms(2026, 8, 21, 2, 3, 4)
-            .unwrap()
-            .with_nanosecond(123_456_789)
-            .unwrap(),
+        now: datetime!(2026-08-21 04:03:04.123456789 +02:00),
         user_id: Some(7),
         username: Some("maintainer".into()),
     };

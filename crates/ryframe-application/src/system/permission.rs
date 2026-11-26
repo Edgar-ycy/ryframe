@@ -127,7 +127,7 @@ impl PermissionService {
                         sort: command.sort,
                         status: command.status,
                         created_at: OffsetDateTime::UNIX_EPOCH,
-                        updated_at: Default::default(),
+                        updated_at: OffsetDateTime::UNIX_EPOCH,
                     },
                 )
                 .await
@@ -253,7 +253,7 @@ impl PermissionService {
                             sort: 0,
                             status: "1".into(),
                             created_at: OffsetDateTime::UNIX_EPOCH,
-                            updated_at: Default::default(),
+                            updated_at: OffsetDateTime::UNIX_EPOCH,
                         },
                     )
                     .await?;

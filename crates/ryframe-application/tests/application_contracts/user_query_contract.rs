@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use ryframe_application::{
     ports::{
         system::DeptRecord,
@@ -39,7 +38,7 @@ fn department() -> DeptRecord {
         status: "1".into(),
         remark: Some("核心研发".into()),
         created_at: time::OffsetDateTime::UNIX_EPOCH,
-        updated_at: DateTime::<Utc>::UNIX_EPOCH,
+        updated_at: time::OffsetDateTime::UNIX_EPOCH,
     }
 }
 

@@ -1,8 +1,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{
-    ControlDatabaseCluster, DbResultExt, DeptRepository, ReadConsistency, Repository,
-    RoleRepository, UserFilter, UserRepository, application_ports::system::dept_record,
+    ControlDatabaseCluster, DeptRepository, ReadConsistency, Repository, RoleRepository,
+    UserFilter, UserRepository, application_ports::system::dept_record,
 };
 use ryframe_kernel::{DataScopeContextRef, ExportCursorWindow, PageResult, ValidatedPageQuery};
 use sea_orm::DatabaseConnection;
@@ -180,8 +180,12 @@ fn to_user(user: crate::entities::user::Model) -> ryframe_kernel::AppResult<User
         dept_id: user.dept_id,
         dept_name: None,
         remark: user.remark,
-        created_at: crate::repositories::utc_time_from_chrono(user.created_at)
-            .db_context("读取用户创建时间")?,
+        created_at: user
+            .created_at
+            .checked_to_offset(time::UtcOffset::UTC)
+            .ok_or_else(|| {
+                ryframe_kernel::AppError::Database("读取用户创建时间: 时间超出 UTC 表示范围".into())
+            })?,
     })
 }
 

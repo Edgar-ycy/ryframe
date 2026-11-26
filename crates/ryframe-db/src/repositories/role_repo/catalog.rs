@@ -100,7 +100,7 @@ impl RoleRepository {
             )
             .col_expr(
                 role::Column::UpdatedAt,
-                sea_orm::sea_query::Expr::value(chrono::Utc::now()),
+                sea_orm::sea_query::Expr::value(time::OffsetDateTime::now_utc()),
             )
             .filter(role::Column::Id.eq(role_id))
             .filter(role::Column::TenantId.eq(tenant_id))

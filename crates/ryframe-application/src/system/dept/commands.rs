@@ -33,7 +33,7 @@ impl DeptService {
                         status: DEPT_STATUS_NORMAL.into(),
                         remark: None,
                         created_at: OffsetDateTime::UNIX_EPOCH,
-                        updated_at: Default::default(),
+                        updated_at: OffsetDateTime::UNIX_EPOCH,
                     },
                 )
                 .await

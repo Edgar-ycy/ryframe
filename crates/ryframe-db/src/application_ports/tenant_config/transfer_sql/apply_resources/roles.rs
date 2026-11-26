@@ -7,7 +7,7 @@ pub(super) async fn upsert_roles_and_relations(
     resources: &[PortableRole],
     department_ids: &BTreeMap<Vec<String>, i64>,
     changed: &BTreeSet<(String, String)>,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<()> {
     let permission_ids = permission::Entity::find()
         .filter(permission::Column::TenantId.eq(tenant_id))

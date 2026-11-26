@@ -1,13 +1,13 @@
 use crate::DbResultExt;
 use std::collections::{HashMap, HashSet};
 
-use chrono::Utc;
 use ryframe_application::ports::product::ProvisioningCapabilityResources;
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, IntoActiveModel, QueryFilter,
     QueryOrder,
 };
+use time::OffsetDateTime;
 
 use crate::entities::{menu, permission, role, role_permission};
 
@@ -80,7 +80,7 @@ async fn sync_permissions(
         {
             if existing.status != desired_status {
                 existing.status = desired_status.into();
-                existing.updated_at = Utc::now();
+                existing.updated_at = OffsetDateTime::now_utc();
                 existing
                     .clone()
                     .into_active_model()
@@ -117,8 +117,8 @@ async fn sync_permissions(
             icon: Set(source.icon.clone()),
             sort: Set(source.sort),
             status: Set("1".into()),
-            created_at: Set(Utc::now()),
-            updated_at: Set(Utc::now()),
+            created_at: Set(OffsetDateTime::now_utc()),
+            updated_at: Set(OffsetDateTime::now_utc()),
         }
         .insert(transaction)
         .await
@@ -191,7 +191,7 @@ async fn sync_menus(
             if existing.status != desired_status || existing.visible != is_enabled {
                 existing.status = desired_status.into();
                 existing.visible = is_enabled;
-                existing.updated_at = Utc::now();
+                existing.updated_at = OffsetDateTime::now_utc();
                 existing
                     .clone()
                     .into_active_model()
@@ -331,7 +331,7 @@ fn capability_menu_model(
         status: Set(menu::Model::STATUS_NORMAL.into()),
         remark: Set(source.remark.clone()),
         del_flag: Set(menu::Model::DEL_FLAG_NORMAL.into()),
-        created_at: Set(Utc::now()),
-        updated_at: Set(Utc::now()),
+        created_at: Set(OffsetDateTime::now_utc()),
+        updated_at: Set(OffsetDateTime::now_utc()),
     }
 }

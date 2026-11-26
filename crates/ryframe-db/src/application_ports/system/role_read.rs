@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
 use crate::{
-    ControlDatabaseCluster, DbResultExt, PermissionRepository, ReadConsistency, Repository,
+    ControlDatabaseCluster, PermissionRepository, ReadConsistency, Repository,
     RoleFilter as DatabaseRoleFilter, RoleRepository, entities::role,
 };
 use async_trait::async_trait;
 use ryframe_kernel::{AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery};
+use time::UtcOffset;
 
 use ryframe_application::ports::system::{RoleFilter, RoleReadPort, RoleRecord};
 
@@ -143,8 +144,12 @@ pub(super) fn to_record(model: role::Model) -> AppResult<RoleRecord> {
         status: model.status,
         sort: model.sort,
         remark: model.remark,
-        created_at: crate::repositories::utc_time_from_chrono(model.created_at)
-            .db_context("读取角色创建时间")?,
+        created_at: model
+            .created_at
+            .checked_to_offset(UtcOffset::UTC)
+            .ok_or_else(|| {
+                ryframe_kernel::AppError::Database("读取角色创建时间: 时间超出 UTC 表示范围".into())
+            })?,
         updated_at: model.updated_at,
     })
 }

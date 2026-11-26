@@ -202,8 +202,8 @@ impl UserWriteTransaction for DatabaseUserWriteTransaction {
             login_ip: None,
             login_date: None,
             del_flag: user::Model::DEL_FLAG_NORMAL.to_owned(),
-            created_at: Default::default(),
-            updated_at: Default::default(),
+            created_at: time::OffsetDateTime::UNIX_EPOCH,
+            updated_at: time::OffsetDateTime::UNIX_EPOCH,
         };
         model.fill_on_insert(&FillContext::new())?;
         let saved = user::ActiveModel::from(model)
@@ -322,7 +322,11 @@ pub fn to_user_record(user: user::Model) -> ryframe_kernel::AppResult<UserWriteR
         status: user.status,
         dept_id: user.dept_id,
         remark: user.remark,
-        created_at: crate::repositories::utc_time_from_chrono(user.created_at)
-            .db_context("读取用户创建时间")?,
+        created_at: user
+            .created_at
+            .checked_to_offset(time::UtcOffset::UTC)
+            .ok_or_else(|| {
+                ryframe_kernel::AppError::Database("读取用户创建时间: 时间超出 UTC 表示范围".into())
+            })?,
     })
 }

@@ -48,7 +48,7 @@ fn navigation_created_at_preserves_utc_json_and_schema() {
             status: "1".into(),
             remark: None,
             created_at,
-            updated_at: Default::default(),
+            updated_at: OffsetDateTime::UNIX_EPOCH,
         });
         let permission = Permission::from(PermissionRecord {
             id: 2,
@@ -60,7 +60,7 @@ fn navigation_created_at_preserves_utc_json_and_schema() {
             sort: 0,
             status: "1".into(),
             created_at,
-            updated_at: Default::default(),
+            updated_at: OffsetDateTime::UNIX_EPOCH,
         });
         for response in [
             serde_json::to_value(&menu).unwrap(),
@@ -116,7 +116,7 @@ fn role_created_at_preserves_utc_json_and_schema() {
                 .replace_nanosecond(nanos)
                 .unwrap()
                 .to_offset(offset),
-            updated_at: Default::default(),
+            updated_at: OffsetDateTime::UNIX_EPOCH,
         });
         assert_eq!(serde_json::to_value(&role).unwrap()["created_at"], expected);
         assert_eq!(
@@ -168,7 +168,7 @@ fn department_created_at_preserves_utc_json_and_schema() {
                 .replace_nanosecond(nanos)
                 .unwrap()
                 .to_offset(offset),
-            updated_at: Default::default(),
+            updated_at: OffsetDateTime::UNIX_EPOCH,
         });
         assert_eq!(serde_json::to_value(&dept).unwrap()["created_at"], expected);
         let response = serde_json::to_value(DeptVo::from(dept)).unwrap();

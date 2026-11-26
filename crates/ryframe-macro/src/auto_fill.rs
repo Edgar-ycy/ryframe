@@ -1,6 +1,6 @@
 //! 自动填充 derive 宏
 //!
-//! 按 `DEFAULTS` 规则表自动填充实体字段（如 created_at → Utc::now()）。
+//! 按 `DEFAULTS` 规则表使用本次写入的统一 UTC 时间填充实体字段。
 //! 实体有对应字段则填充，没有则跳过。
 //!
 //! 仅支持字段级 `#[auto_fill(snowflake)]` / `#[auto_fill(skip)]`。
