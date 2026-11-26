@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 
 use crate::{JobQueue, ports::system::MessagePersistencePort};
@@ -38,6 +39,12 @@ impl MessageService {
             queue,
             config,
         }
+    }
+
+    async fn database_now(&self) -> AppResult<DateTime<Utc>> {
+        let now = self.queue.database_now().await?;
+        DateTime::from_timestamp(now.unix_timestamp(), now.nanosecond())
+            .ok_or_else(|| AppError::Database("消息持久化时间无法精确表示为 UTC".into()))
     }
 
     pub(super) fn ensure_enabled(&self) -> AppResult<()> {

@@ -1,6 +1,7 @@
 use ryframe_application::ports::jobs::{ExecutionTenantScope, FailJobCommand, JobFailureOutcome};
 use ryframe_db::{ControlDatabaseCluster, application_ports, migration};
 use sea_orm::DatabaseConnection;
+use time::{Duration, OffsetDateTime};
 
 use super::mysql::{execute, require_count, run_mysql_test};
 
@@ -12,7 +13,7 @@ async fn expired_terminal_linked_jobs_do_not_requeue() {
 
         let persistence =
             application_ports::jobs::queue(ControlDatabaseCluster::single(database.clone()));
-        let now = chrono::Utc::now();
+        let now = OffsetDateTime::now_utc();
         let recovered = persistence
             .recover_expired_leases(now, &ExecutionTenantScope::all())
             .await
@@ -89,7 +90,7 @@ async fn terminal_business_states_converge_across_failure_paths() {
                 job_id: 7301,
                 claim_sequence: 1,
                 worker_id: "active-worker",
-                retry_at: now + chrono::Duration::minutes(1),
+                retry_at: now + Duration::minutes(1),
                 error_message: "late failure",
                 force_dead: false,
                 now,
@@ -105,7 +106,7 @@ async fn terminal_business_states_converge_across_failure_paths() {
                 7303,
                 1,
                 "active-worker",
-                now + chrono::Duration::minutes(1),
+                now + Duration::minutes(1),
                 "busy",
                 now,
             )

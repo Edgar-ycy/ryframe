@@ -42,7 +42,7 @@ impl MessageService {
             }
             None => actor_tenant_id.to_owned(),
         };
-        let now = self.queue.database_now().await?;
+        let now = self.database_now().await?;
         let maximum_expiry = now + Duration::days(i64::from(self.config.retention_days));
         let expires_at = expires_at.unwrap_or(maximum_expiry);
         if expires_at > maximum_expiry {

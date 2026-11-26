@@ -1,5 +1,4 @@
 use crate::DbResultExt;
-use chrono::{DateTime, Duration, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait,
@@ -8,6 +7,7 @@ use sea_orm::{
     TransactionTrait,
     sea_query::{LockBehavior, LockType},
 };
+use time::{Duration, OffsetDateTime};
 
 use crate::{entities::background_job, repositories::ExecutionTenantFilter};
 
@@ -23,7 +23,7 @@ impl BackgroundJobRepository {
         db: &DatabaseConnection,
         worker_id: &str,
         lease_duration: Duration,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
         tenant_scope: &ExecutionTenantFilter,
     ) -> AppResult<Option<background_job::Model>> {
         validate_lease(worker_id, lease_duration)?;
@@ -60,7 +60,7 @@ impl BackgroundJobRepository {
     }
 
     fn claimable_query(
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
         tenant_scope: &ExecutionTenantFilter,
     ) -> sea_orm::Select<background_job::Entity> {
         let mut query = background_job::Entity::find()

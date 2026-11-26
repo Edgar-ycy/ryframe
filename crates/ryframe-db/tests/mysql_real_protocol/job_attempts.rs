@@ -1,5 +1,4 @@
 use super::{ControlDatabaseCluster, application_ports, execute, require_count, run_mysql_test};
-use chrono::{DateTime, Duration, Utc};
 use ryframe_application::ports::jobs::{
     BackgroundJobPersistencePort, ClaimedJobRecord, ExecutionTenantScope, FailJobCommand,
     JobFailureOutcome,
@@ -7,11 +6,12 @@ use ryframe_application::ports::jobs::{
 use ryframe_db::entities::{background_job, background_job_attempt};
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
 use std::sync::Arc;
+use time::{Duration, OffsetDateTime, macros::format_description};
 
 struct Fixture {
     database: DatabaseConnection,
     queue: Arc<dyn BackgroundJobPersistencePort>,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 }
 
 impl Fixture {
@@ -33,12 +33,10 @@ impl Fixture {
     }
 
     async fn job(&self, id: i64, kind: &str, maximum: i32) -> Result<(), String> {
+        let now = self.mysql_now()?;
         execute(&self.database, &format!(
             "INSERT INTO sys_background_job (id,tenant_id,job_type,payload,status,priority,available_at,max_attempts,created_at,updated_at) \
-             VALUES ({id},'attempt-tenant','{kind}','{{}}','pending',0,'{}',{maximum},'{}','{}')",
-            self.now.format("%Y-%m-%d %H:%M:%S%.6f"),
-            self.now.format("%Y-%m-%d %H:%M:%S%.6f"),
-            self.now.format("%Y-%m-%d %H:%M:%S%.6f")
+             VALUES ({id},'attempt-tenant','{kind}','{{}}','pending',0,'{now}',{maximum},'{now}','{now}')"
         ))
         .await
     }
@@ -56,8 +54,16 @@ impl Fixture {
             .ok_or_else(|| "领取任务为空".into())
     }
 
-    fn at(&self, second: i64) -> DateTime<Utc> {
+    fn at(&self, second: i64) -> OffsetDateTime {
         self.now + Duration::seconds(second)
+    }
+
+    fn mysql_now(&self) -> Result<String, String> {
+        self.now
+            .format(format_description!(
+                "[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:6]"
+            ))
+            .map_err(|error| error.to_string())
     }
 
     async fn attempts(&self, id: i64) -> Result<Vec<background_job_attempt::Model>, String> {
@@ -389,7 +395,7 @@ async fn expired_attempts_reject_stale_completion_and_reactivate_without_erasing
 async fn expired_attempt_recovery_drains_multiple_bounded_batches() {
     run_mysql_test("attempt_batches", |database| async move {
         let f = Fixture::new(database).await?;
-        let time = f.now.format("%Y-%m-%d %H:%M:%S%.6f");
+        let time = f.mysql_now()?;
         let values = (1000..1501)
             .map(|id| {
                 format!(

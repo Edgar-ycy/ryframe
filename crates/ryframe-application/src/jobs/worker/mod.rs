@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, future::Future, sync::Arc, time::Duration as StdDuration};
 
+use ::time::Duration;
 use async_trait::async_trait;
-use chrono::Duration;
 use ryframe_kernel::{AppError, AppResult};
 use tokio::{sync::watch, task::JoinHandle, time};
 use tracing::Instrument;
@@ -132,7 +132,7 @@ mod execution;
 mod lifecycle;
 mod support;
 
-pub(super) use support::{infrastructure_retry_delay, retry_delay};
+pub(super) use support::{infrastructure_retry_delay, retry_delay_seconds};
 
 impl JobWorker {
     /// 根据运行配置创建 Worker。处理器需要通过 `with_handler` 显式注册。
@@ -146,7 +146,10 @@ impl JobWorker {
             execution_tenant_scope,
             handlers: Arc::new(BTreeMap::new()),
             worker_prefix: policy.worker_prefix("ryframe-worker"),
-            lease_duration: policy.lease_duration,
+            lease_duration: Duration::new(
+                policy.lease_duration.num_seconds(),
+                policy.lease_duration.subsec_nanos(),
+            ),
             heartbeat_interval: policy.heartbeat_interval,
             poll_interval: policy.poll_interval,
             max_idle_poll_interval: policy.max_idle_poll_interval,

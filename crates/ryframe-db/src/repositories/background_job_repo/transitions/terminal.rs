@@ -1,6 +1,6 @@
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, ConnectionTrait};
+use time::OffsetDateTime;
 
 use crate::{DbResultExt, entities::background_job};
 
@@ -52,7 +52,7 @@ impl BackgroundJobRepository {
         job: &background_job::Model,
         sync_result: LinkedJobSyncResult,
         error_message: Option<&str>,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<Option<JobFailureDisposition>>
     where
         C: ConnectionTrait,

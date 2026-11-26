@@ -1,6 +1,6 @@
-use chrono::{DateTime, Utc};
 use ryframe_kernel::ValidatedPageQuery;
 use serde::Serialize;
+use time::OffsetDateTime;
 
 use super::public_job_error;
 use crate::ports::jobs::{BackgroundJobRecord, BackgroundJobStatsRecord};
@@ -9,12 +9,12 @@ use crate::ports::jobs::{BackgroundJobRecord, BackgroundJobStatsRecord};
 pub struct EnqueueJob {
     pub tenant_id: Option<String>,
     pub schedule_id: Option<i64>,
-    pub scheduled_for: Option<DateTime<Utc>>,
+    pub scheduled_for: Option<OffsetDateTime>,
     pub max_runtime_seconds: Option<i32>,
     pub job_type: String,
     pub payload: serde_json::Value,
     pub priority: i32,
-    pub available_at: DateTime<Utc>,
+    pub available_at: OffsetDateTime,
     pub max_attempts: i32,
     pub dedupe_key: Option<String>,
     pub traceparent: Option<String>,
@@ -42,21 +42,27 @@ pub struct BackgroundJobListParams {
 pub struct BackgroundJobVo {
     pub id: String,
     pub schedule_id: Option<String>,
-    pub scheduled_for: Option<DateTime<Utc>>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize_optional")]
+    pub scheduled_for: Option<OffsetDateTime>,
     pub max_runtime_seconds: Option<i32>,
     pub job_type: String,
     pub status: String,
     pub priority: i32,
-    pub available_at: DateTime<Utc>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize")]
+    pub available_at: OffsetDateTime,
     pub attempts: i32,
     pub max_attempts: i32,
     pub lease_owner: Option<String>,
-    pub lease_until: Option<DateTime<Utc>>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize_optional")]
+    pub lease_until: Option<OffsetDateTime>,
     pub dedupe_key: Option<String>,
     pub last_error: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub completed_at: Option<DateTime<Utc>>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize")]
+    pub created_at: OffsetDateTime,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize")]
+    pub updated_at: OffsetDateTime,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize_optional")]
+    pub completed_at: Option<OffsetDateTime>,
 }
 
 impl From<BackgroundJobRecord> for BackgroundJobVo {

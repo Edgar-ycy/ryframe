@@ -64,8 +64,9 @@ impl ExportExecutionPersistencePort for DatabaseExportExecutionPersistence {
     ) -> ryframe_kernel::AppResult<Option<ExportBackgroundLease>> {
         BackgroundJobRepository
             .find_by_id(self.database.write(), background_job_id)
-            .await
-            .map(|record| record.map(map_background_lease))
+            .await?
+            .map(map_background_lease)
+            .transpose()
     }
 
     async fn find_export_state(
@@ -142,12 +143,22 @@ fn map_execution_record(record: export_job::Model) -> ExportExecutionRecord {
     }
 }
 
-fn map_background_lease(record: background_job::Model) -> ExportBackgroundLease {
-    ExportBackgroundLease {
+fn map_background_lease(
+    record: background_job::Model,
+) -> ryframe_kernel::AppResult<ExportBackgroundLease> {
+    let lease_until = record
+        .lease_until
+        .map(|value| {
+            chrono::DateTime::from_timestamp(value.unix_timestamp(), value.nanosecond()).ok_or_else(
+                || ryframe_kernel::AppError::Internal("导出任务租约超出 UTC 表示范围".into()),
+            )
+        })
+        .transpose()?;
+    Ok(ExportBackgroundLease {
         status: record.status,
         lease_owner: record.lease_owner,
-        lease_until: record.lease_until,
-    }
+        lease_until,
+    })
 }
 
 pub fn map_start_decision(value: DatabaseStartDisposition) -> ExportStartDecision {

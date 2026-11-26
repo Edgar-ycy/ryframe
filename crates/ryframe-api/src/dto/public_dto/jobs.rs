@@ -1,7 +1,7 @@
 use ryframe_application::ports::utc_timestamp;
 use ryframe_kernel::{AppError, AppResult};
 use serde::Serialize;
-use time::OffsetDateTime;
+use time::{OffsetDateTime, UtcOffset};
 use utoipa::ToSchema;
 
 use ryframe_application::system::operations::ExportJobVo as ServiceExportJobVo;
@@ -67,8 +67,8 @@ impl TryFrom<ServiceBackgroundJobVo> for BackgroundJobVo {
             updated_at,
             completed_at,
         } = value;
-        let to_utc = |timestamp, field| {
-            utc_timestamp::from_chrono(timestamp).map_err(|_| {
+        let to_utc = |timestamp: OffsetDateTime, field| {
+            timestamp.checked_to_offset(UtcOffset::UTC).ok_or_else(|| {
                 AppError::Internal(format!("后台任务响应的 {field} 无法精确表示为 UTC"))
             })
         };

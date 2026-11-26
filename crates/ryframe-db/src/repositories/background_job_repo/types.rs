@@ -1,7 +1,7 @@
 use std::time::Duration as StdDuration;
 
-use chrono::{DateTime, Utc};
 use serde_json::Value;
+use time::OffsetDateTime;
 
 use crate::entities::background_job;
 
@@ -12,12 +12,12 @@ use crate::entities::background_job;
 pub struct EnqueueBackgroundJob {
     pub tenant_id: Option<String>,
     pub schedule_id: Option<i64>,
-    pub scheduled_for: Option<DateTime<Utc>>,
+    pub scheduled_for: Option<OffsetDateTime>,
     pub max_runtime_seconds: Option<i32>,
     pub job_type: String,
     pub payload: Value,
     pub priority: i32,
-    pub available_at: DateTime<Utc>,
+    pub available_at: OffsetDateTime,
     pub max_attempts: i32,
     pub dedupe_key: Option<String>,
     pub traceparent: Option<String>,
@@ -72,7 +72,7 @@ pub struct BackgroundJobTypeStats {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum JobFailureDisposition {
     /// 当前持有的租约已完成，任务会在指定时间重新变为可执行。
-    Retried { available_at: DateTime<Utc> },
+    Retried { available_at: OffsetDateTime },
     /// 已耗尽最大领取次数。
     Dead,
     /// 关联业务已经权威终结，后台任务已按成功完成收口。
@@ -86,10 +86,10 @@ pub struct FailBackgroundJob<'a> {
     pub job_id: i64,
     pub claim_sequence: i64,
     pub worker_id: &'a str,
-    pub retry_at: DateTime<Utc>,
+    pub retry_at: OffsetDateTime,
     pub error_message: &'a str,
     pub force_dead: bool,
-    pub now: DateTime<Utc>,
+    pub now: OffsetDateTime,
 }
 
 /// 当前租约内一次可重试冲突延后的完整输入。
@@ -97,9 +97,9 @@ pub struct DeferBackgroundJob<'a> {
     pub job_id: i64,
     pub claim_sequence: i64,
     pub worker_id: &'a str,
-    pub available_at: DateTime<Utc>,
+    pub available_at: OffsetDateTime,
     pub error_message: &'a str,
-    pub now: DateTime<Utc>,
+    pub now: OffsetDateTime,
 }
 
 /// 仅适用于 MySQL 的持久化任务队列仓储。

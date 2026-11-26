@@ -10,7 +10,7 @@ impl MessageService {
     /// 删除已到期的消息及其级联收件箱记录。
     pub async fn delete_expired(&self) -> AppResult<u64> {
         self.ensure_enabled()?;
-        let now = self.queue.database_now().await?;
+        let now = self.database_now().await?;
         let mut deleted = 0_u64;
         loop {
             let transaction = self.persistence.begin().await?;

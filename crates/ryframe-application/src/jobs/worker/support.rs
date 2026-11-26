@@ -1,10 +1,9 @@
 use super::*;
 
-/// 生成指数退避等待时间，最高五分钟。
-pub(in super::super) fn retry_delay(attempts: i32) -> Duration {
+/// 计算指数退避的秒数，最高五分钟。
+pub(in super::super) fn retry_delay_seconds(attempts: i32) -> i64 {
     let exponent = attempts.saturating_sub(1).clamp(0, 6) as u32;
-    let seconds = 5_i64.saturating_mul(1_i64 << exponent).min(300);
-    Duration::seconds(seconds)
+    5_i64.saturating_mul(1_i64 << exponent).min(300)
 }
 
 /// 计算基础设施调用连续失败后的本地退避时间，避免数据库故障时形成高频请求和日志。

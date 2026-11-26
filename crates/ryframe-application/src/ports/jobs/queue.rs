@@ -1,7 +1,7 @@
 use std::time::Duration as StdDuration;
 
-use chrono::{DateTime, Duration, Utc};
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
+use time::{Duration, OffsetDateTime};
 
 use crate::{EnqueueJob, EnqueueJobResult};
 
@@ -27,16 +27,16 @@ pub struct FailJobCommand<'a> {
     pub job_id: i64,
     pub claim_sequence: i64,
     pub worker_id: &'a str,
-    pub retry_at: DateTime<Utc>,
+    pub retry_at: OffsetDateTime,
     pub error_message: &'a str,
     pub force_dead: bool,
-    pub now: DateTime<Utc>,
+    pub now: OffsetDateTime,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum JobFailureOutcome {
     Retried {
-        available_at: DateTime<Utc>,
+        available_at: OffsetDateTime,
     },
     Dead,
     /// 关联业务已经权威终结，后台任务已按成功完成收口。
@@ -49,21 +49,21 @@ pub struct BackgroundJobRecord {
     pub id: i64,
     pub tenant_id: Option<String>,
     pub schedule_id: Option<i64>,
-    pub scheduled_for: Option<DateTime<Utc>>,
+    pub scheduled_for: Option<OffsetDateTime>,
     pub max_runtime_seconds: Option<i32>,
     pub job_type: String,
     pub status: String,
     pub priority: i32,
-    pub available_at: DateTime<Utc>,
+    pub available_at: OffsetDateTime,
     pub attempts: i32,
     pub max_attempts: i32,
     pub lease_owner: Option<String>,
-    pub lease_until: Option<DateTime<Utc>>,
+    pub lease_until: Option<OffsetDateTime>,
     pub dedupe_key: Option<String>,
     pub last_error: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub completed_at: Option<DateTime<Utc>>,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
+    pub completed_at: Option<OffsetDateTime>,
 }
 
 impl BackgroundJobRecord {
@@ -128,20 +128,20 @@ pub trait BackgroundJobTransaction: Send + Sync {
         expected_job_type: &'a str,
         payload_key: &'a str,
         expected_resource_id: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool>;
 }
 
 /// 后台任务队列使用的控制库持久化端口。
 #[async_trait::async_trait]
 pub trait BackgroundJobPersistencePort: Send + Sync {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime>;
 
     async fn claim_next<'a>(
         &'a self,
         worker_id: &'a str,
         lease_duration: Duration,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
         tenant_scope: &'a ExecutionTenantScope,
     ) -> ryframe_kernel::AppResult<Option<ClaimedJobRecord>>;
 
@@ -151,7 +151,7 @@ pub trait BackgroundJobPersistencePort: Send + Sync {
         claim_sequence: i64,
         worker_id: &'a str,
         error_message: &'a str,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<JobFailureOutcome>;
 
     async fn renew_lease<'a>(
@@ -160,7 +160,7 @@ pub trait BackgroundJobPersistencePort: Send + Sync {
         claim_sequence: i64,
         worker_id: &'a str,
         lease_duration: Duration,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool>;
 
     async fn complete<'a>(
@@ -168,7 +168,7 @@ pub trait BackgroundJobPersistencePort: Send + Sync {
         job_id: i64,
         claim_sequence: i64,
         worker_id: &'a str,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool>;
 
     async fn defer_retryable_conflict<'a>(
@@ -176,9 +176,9 @@ pub trait BackgroundJobPersistencePort: Send + Sync {
         job_id: i64,
         claim_sequence: i64,
         worker_id: &'a str,
-        available_at: DateTime<Utc>,
+        available_at: OffsetDateTime,
         error_message: &'a str,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<JobFailureOutcome>;
 
     async fn fail<'a>(
@@ -194,7 +194,7 @@ pub trait BackgroundJobPersistencePort: Send + Sync {
 
     async fn recover_expired_leases<'a>(
         &'a self,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
         tenant_scope: &'a ExecutionTenantScope,
     ) -> ryframe_kernel::AppResult<RecoveredJobLeases>;
 
@@ -209,7 +209,7 @@ pub trait BackgroundJobPersistencePort: Send + Sync {
     async fn stats<'a>(
         &'a self,
         filter: BackgroundJobReadFilter<'a>,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<BackgroundJobStatsRecord>;
 
     async fn find_for_tenant<'a>(
@@ -225,7 +225,7 @@ pub trait BackgroundJobPersistencePort: Send + Sync {
         include_platform: bool,
         job_id: i64,
         retried_by: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<JobFailureOutcome>;
 
     async fn tenant_config_job_owner<'a>(

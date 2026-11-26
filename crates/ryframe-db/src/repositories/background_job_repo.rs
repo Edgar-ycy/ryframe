@@ -11,8 +11,8 @@ pub use types::{
     FailBackgroundJob, JobFailureDisposition,
 };
 
-use chrono::Duration;
 use ryframe_kernel::{AppError, AppResult};
+use time::Duration;
 
 pub(super) fn validate_lease(worker_id: &str, lease_duration: Duration) -> AppResult<()> {
     if worker_id.trim().is_empty() || worker_id.len() > 128 {
@@ -20,7 +20,7 @@ pub(super) fn validate_lease(worker_id: &str, lease_duration: Duration) -> AppRe
             "background job worker_id must contain 1 to 128 bytes".into(),
         ));
     }
-    if lease_duration <= Duration::zero() {
+    if lease_duration <= Duration::ZERO {
         return Err(AppError::Validation(
             "background job lease duration must be positive".into(),
         ));

@@ -66,7 +66,11 @@ impl OutboxPersistencePort for DatabaseOutboxPersistence {
         let transaction = begin(self.database.write()).await?;
         let result = async {
             BackgroundJobRepository
-                .enqueue_in_transaction(&transaction, database_enqueue(command), now)
+                .enqueue_in_transaction(
+                    &transaction,
+                    database_enqueue(command),
+                    crate::repositories::utc_time_from_chrono(now).db_context("发件箱入队时间")?,
+                )
                 .await?;
             self.repository
                 .mark_published_in_transaction(&transaction, event_id, worker_id, now)

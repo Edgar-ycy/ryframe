@@ -80,7 +80,7 @@ impl TenantDataMigrationService {
                 TENANT_DATA_MIGRATION_JOB_TYPE,
                 "migration_id",
                 migration_id,
-                intent_now,
+                crate::jobs::queue_time_from_database(intent_now)?,
             )
             .await?
         {
@@ -197,7 +197,7 @@ impl TenantDataMigrationService {
                 TENANT_DATA_MIGRATION_JOB_TYPE,
                 "migration_id",
                 migration_id,
-                now,
+                crate::jobs::queue_time_from_database(now)?,
             )
             .await?
         {

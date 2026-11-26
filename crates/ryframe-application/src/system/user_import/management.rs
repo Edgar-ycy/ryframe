@@ -164,17 +164,18 @@ impl UserImportService {
                 "用户导入源文件已进入最终回收阶段".into(),
             ));
         }
+        let queue_now = crate::jobs::queue_time_from_database(now)?;
         let trace_context = crate::trace_context::current_trace_context();
         let queued = transaction
             .enqueue(EnqueueJob {
                 tenant_id: Some(tenant_id.to_owned()),
                 schedule_id: None,
-                scheduled_for: Some(now),
+                scheduled_for: Some(queue_now),
                 max_runtime_seconds: Some(USER_IMPORT_MAX_RUNTIME_SECONDS),
                 job_type: USER_IMPORT_JOB_TYPE.to_owned(),
                 payload: serde_json::json!({ "import_job_id": import_id.to_string() }),
                 priority: 0,
-                available_at: now,
+                available_at: queue_now,
                 max_attempts: USER_IMPORT_MAX_ATTEMPTS,
                 dedupe_key: Some(format!("{tenant_id}:{}", command.idempotency_key_hash)),
                 traceparent: trace_context.traceparent,

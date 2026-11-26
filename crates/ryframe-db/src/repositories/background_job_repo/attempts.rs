@@ -1,9 +1,9 @@
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
     sea_query::Expr,
 };
+use time::OffsetDateTime;
 
 use crate::{
     DbResultExt,
@@ -21,7 +21,7 @@ pub(super) async fn start<C: ConnectionTrait>(
     db: &C,
     job: &background_job::Model,
     sequence: i64,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<()> {
     if job.status != background_job::Model::STATUS_PENDING
         || job.lease_owner.is_some()
@@ -66,7 +66,7 @@ impl Outcome {
         }
     }
 
-    fn finished_at(self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    fn finished_at(self, now: OffsetDateTime) -> Option<OffsetDateTime> {
         (!matches!(self, Self::LeaseExpired)).then_some(now)
     }
 }
@@ -77,7 +77,7 @@ pub(super) async fn close<C: ConnectionTrait>(
     db: &C,
     job: &background_job::Model,
     outcome: Outcome,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<()> {
     let changed = background_job_attempt::Entity::update_many()
         .col_expr(
@@ -119,7 +119,10 @@ mod tests {
 
     #[test]
     fn expired_lease_closes_history_without_inventing_worker_finish() {
-        let now = DateTime::from_timestamp(1_800_000_000, 123_000).unwrap();
+        let now = OffsetDateTime::from_unix_timestamp(1_800_000_000)
+            .unwrap()
+            .replace_nanosecond(123_000)
+            .unwrap();
         assert_eq!(Outcome::LeaseExpired.finished_at(now), None);
         assert_eq!(Outcome::LeaseExpired.as_str(), "lease_expired");
         for outcome in [

@@ -1,6 +1,6 @@
-use chrono::{DateTime, Utc};
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 /// 可持久化的异步任务单元。
 ///
@@ -14,26 +14,44 @@ pub struct Model {
     pub id: i64,
     pub tenant_id: Option<String>,
     pub schedule_id: Option<i64>,
-    pub scheduled_for: Option<DateTime<Utc>>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub scheduled_for: Option<OffsetDateTime>,
     pub max_runtime_seconds: Option<i32>,
     pub job_type: String,
     pub payload: Json,
     pub status: String,
     pub priority: i32,
-    pub available_at: DateTime<Utc>,
+    #[serde(with = "ryframe_application::ports::utc_timestamp")]
+    pub available_at: OffsetDateTime,
     pub attempts: i32,
     /// 每次领取递增，不随重试预算或人工重试重置。
     pub claim_sequence: i64,
     pub max_attempts: i32,
     pub lease_owner: Option<String>,
-    pub lease_until: Option<DateTime<Utc>>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub lease_until: Option<OffsetDateTime>,
     pub dedupe_key: Option<String>,
     pub traceparent: Option<String>,
     pub tracestate: Option<String>,
     pub last_error: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub completed_at: Option<DateTime<Utc>>,
+    #[serde(with = "ryframe_application::ports::utc_timestamp")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "ryframe_application::ports::utc_timestamp")]
+    pub updated_at: OffsetDateTime,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub completed_at: Option<OffsetDateTime>,
 }
 
 impl Model {

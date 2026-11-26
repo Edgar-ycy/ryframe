@@ -1,5 +1,7 @@
 use super::*;
 use crate::DbResultExt;
+use chrono::{DateTime, Utc};
+use ryframe_kernel::AppError;
 
 impl BackgroundJobRepository {
     pub(super) async fn sync_linked_job_state<C>(
@@ -7,11 +9,13 @@ impl BackgroundJobRepository {
         job: &background_job::Model,
         disposition: LinkedJobDisposition,
         error_message: Option<&str>,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<LinkedJobSyncResult>
     where
         C: ConnectionTrait,
     {
+        let now = DateTime::from_timestamp(now.unix_timestamp(), now.nanosecond())
+            .ok_or_else(|| AppError::Internal("关联任务状态时间超出 UTC 表示范围".into()))?;
         let error = error_message.map(truncate_error);
         match job.job_type.as_str() {
             USER_IMPORT_JOB_TYPE => Self::sync_import_job(db, job, disposition, error, now).await,

@@ -1,10 +1,9 @@
-use chrono::{DateTime, Utc};
 use ryframe_application::{
     ScheduledJobContext, ScheduledJobTargetRegistry, ScheduledJobTargetScope,
     maintenance_schedule_targets, message_schedule_targets,
 };
 use serde_json::json;
-use time::macros::datetime;
+use time::{UtcOffset, macros::datetime};
 
 #[test]
 fn schedule_targets_are_registered_by_domain_groups() {
@@ -55,9 +54,24 @@ fn system_cleanup_targets_build_the_payload_required_by_copy() {
         .with_targets(message_schedule_targets(true))
         .unwrap();
     let schedule_id = 99_256_017_304_428_544;
-    let timestamp = "2026-09-01T00:00:00.123456Z";
-    let scheduled_for = datetime!(2026-09-01 08:00:00.123456 +08:00);
-    let expected_queue_time = timestamp.parse::<DateTime<Utc>>().unwrap();
+    let timestamps = [
+        (
+            datetime!(2026-09-01 08:00:00 +08:00),
+            "2026-09-01T00:00:00Z",
+        ),
+        (
+            datetime!(2026-09-01 08:00:00.123 +08:00),
+            "2026-09-01T00:00:00.123Z",
+        ),
+        (
+            datetime!(2026-09-01 08:00:00.123456 +08:00),
+            "2026-09-01T00:00:00.123456Z",
+        ),
+        (
+            datetime!(2026-09-01 08:00:00.123456789 +08:00),
+            "2026-09-01T00:00:00.123456789Z",
+        ),
+    ];
     for (handler, job_type) in [
         ("system.export_result_cleanup", "system.export.cleanup"),
         (
@@ -72,29 +86,34 @@ fn system_cleanup_targets_build_the_payload_required_by_copy() {
         let target = registry.get(handler).unwrap();
         assert_eq!(target.scope(), ScheduledJobTargetScope::System);
         for trigger_kind in ["scheduled", "manual", "misfire"] {
-            let job = target
-                .build_job(&ScheduledJobContext {
-                    tenant_id: "system",
-                    schedule_id,
-                    trigger_kind,
-                    scheduled_for,
-                    max_runtime_seconds: 900,
-                    fire_key: "fixture-fire",
-                })
-                .unwrap();
-            assert_eq!(job.job_type, job_type);
-            assert_eq!(job.tenant_id, None);
-            assert_eq!(job.schedule_id, Some(schedule_id));
-            assert_eq!(job.scheduled_for, Some(expected_queue_time));
-            assert_eq!(job.available_at, expected_queue_time);
-            assert_eq!(
-                job.payload,
-                json!({
-                    "schedule_id":schedule_id.to_string(),
-                    "trigger_kind":trigger_kind,
-                    "scheduled_for":timestamp,
-                })
-            );
+            for (scheduled_for, timestamp) in timestamps {
+                let expected_queue_time = scheduled_for.to_offset(UtcOffset::UTC);
+                let job = target
+                    .build_job(&ScheduledJobContext {
+                        tenant_id: "system",
+                        schedule_id,
+                        trigger_kind,
+                        scheduled_for,
+                        max_runtime_seconds: 900,
+                        fire_key: "fixture-fire",
+                    })
+                    .unwrap();
+                assert_eq!(job.job_type, job_type);
+                assert_eq!(job.tenant_id, None);
+                assert_eq!(job.schedule_id, Some(schedule_id));
+                assert_eq!(job.scheduled_for, Some(expected_queue_time));
+                assert_eq!(job.available_at, expected_queue_time);
+                assert_eq!(job.scheduled_for.unwrap().offset(), UtcOffset::UTC);
+                assert_eq!(job.available_at.offset(), UtcOffset::UTC);
+                assert_eq!(
+                    job.payload,
+                    json!({
+                        "schedule_id":schedule_id.to_string(),
+                        "trigger_kind":trigger_kind,
+                        "scheduled_for":timestamp,
+                    })
+                );
+            }
         }
     }
 }

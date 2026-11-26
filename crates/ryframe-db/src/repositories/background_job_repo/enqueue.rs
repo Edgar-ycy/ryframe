@@ -1,10 +1,10 @@
 use crate::DbResultExt;
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, ConnectionTrait,
     DatabaseConnection, DatabaseTransaction, EntityTrait, QueryFilter,
 };
+use time::{OffsetDateTime, UtcOffset};
 
 use crate::entities::background_job;
 
@@ -15,7 +15,7 @@ impl BackgroundJobRepository {
         &self,
         db: &DatabaseConnection,
         command: EnqueueBackgroundJob,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<EnqueueBackgroundJobResult> {
         self.enqueue_on(db, command, now).await
     }
@@ -25,7 +25,7 @@ impl BackgroundJobRepository {
         &self,
         transaction: &DatabaseTransaction,
         command: EnqueueBackgroundJob,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<EnqueueBackgroundJobResult> {
         self.enqueue_on(transaction, command, now).await
     }
@@ -33,13 +33,14 @@ impl BackgroundJobRepository {
     async fn enqueue_on<C>(
         &self,
         db: &C,
-        command: EnqueueBackgroundJob,
-        now: DateTime<Utc>,
+        mut command: EnqueueBackgroundJob,
+        now: OffsetDateTime,
     ) -> AppResult<EnqueueBackgroundJobResult>
     where
         C: ConnectionTrait,
     {
         validate_enqueue_command(&command)?;
+        let now = normalize_enqueue_times(&mut command, now)?;
         let dedupe_identity = command
             .dedupe_key
             .as_ref()
@@ -220,7 +221,96 @@ fn validate_enqueue_command(command: &EnqueueBackgroundJob) -> AppResult<()> {
     Ok(())
 }
 
+fn normalize_enqueue_times(
+    command: &mut EnqueueBackgroundJob,
+    now: OffsetDateTime,
+) -> AppResult<OffsetDateTime> {
+    let to_utc = |timestamp: OffsetDateTime, field| {
+        timestamp
+            .checked_to_offset(UtcOffset::UTC)
+            .ok_or_else(|| AppError::Validation(format!("后台任务 {field} 超出 UTC 表示范围")))
+    };
+    command.available_at = to_utc(command.available_at, "available_at")?;
+    command.scheduled_for = command
+        .scheduled_for
+        .map(|scheduled_for| to_utc(scheduled_for, "scheduled_for"))
+        .transpose()?;
+    to_utc(now, "now")
+}
+
 fn is_duplicate_key_error(error: &sea_orm::DbErr) -> bool {
     let text = error.to_string().to_ascii_lowercase();
     text.contains("duplicate") || text.contains("1062")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use time::{
+        Date,
+        macros::{datetime, offset},
+    };
+
+    fn enqueue_command(available_at: OffsetDateTime) -> EnqueueBackgroundJob {
+        EnqueueBackgroundJob {
+            tenant_id: None,
+            schedule_id: None,
+            scheduled_for: None,
+            max_runtime_seconds: None,
+            job_type: "test.queue".into(),
+            payload: serde_json::json!({}),
+            priority: 0,
+            available_at,
+            max_attempts: 1,
+            dedupe_key: Some("enqueue-time-test".into()),
+            traceparent: None,
+            tracestate: None,
+        }
+    }
+
+    #[test]
+    fn enqueue_times_normalize_offsets_without_losing_precision() {
+        let expected = datetime!(2026-09-01 00:05:00.123456789 UTC);
+        let mut command = enqueue_command(expected.to_offset(offset!(-08:00)));
+        command.scheduled_for = Some(expected.to_offset(offset!(+05:30)));
+        let now =
+            normalize_enqueue_times(&mut command, expected.to_offset(offset!(+01:00))).unwrap();
+        for value in [command.available_at, command.scheduled_for.unwrap(), now] {
+            assert_eq!(value, expected);
+            assert_eq!(value.offset(), UtcOffset::UTC);
+        }
+
+        command.scheduled_for = None;
+        normalize_enqueue_times(&mut command, expected).unwrap();
+        assert!(command.scheduled_for.is_none());
+    }
+
+    #[tokio::test]
+    async fn enqueue_rejects_out_of_range_utc_times_before_dedupe_lookup() {
+        let db = DatabaseConnection::default();
+        let valid = OffsetDateTime::UNIX_EPOCH;
+        let below = Date::MIN.midnight().assume_offset(offset!(+01:00));
+        let above = Date::MAX
+            .with_hms(23, 59, 59)
+            .unwrap()
+            .assume_offset(offset!(-01:00));
+        for invalid in [below, above] {
+            for (field, available_at, scheduled_for, now) in [
+                ("available_at", invalid, Some(valid), valid),
+                ("scheduled_for", valid, Some(invalid), valid),
+                ("now", valid, Some(valid), invalid),
+            ] {
+                let mut command = enqueue_command(available_at);
+                command.scheduled_for = scheduled_for;
+                let error = BackgroundJobRepository
+                    .enqueue(&db, command, now)
+                    .await
+                    .unwrap_err();
+                assert!(matches!(
+                    error,
+                    AppError::Validation(message) if message.contains(field)
+                ));
+            }
+        }
+    }
 }

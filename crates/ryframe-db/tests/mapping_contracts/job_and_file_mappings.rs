@@ -9,7 +9,7 @@ use ryframe_db::{
         files::{map_upload_model, map_upload_record},
         jobs::{database_enqueue, schedule_active, to_claimed_event, to_job_record},
     },
-    entities::{background_job, job_schedule, outbox_event},
+    entities::{background_job, background_job_attempt, job_schedule, outbox_event},
 };
 use sea_orm::{ActiveValue::Set, TryIntoModel};
 use serde_json::json;
@@ -130,7 +130,7 @@ fn schedule_mapping_preserves_state_and_deletion() {
 
 #[test]
 fn enqueue_mapping_moves_every_command_field() {
-    let now = Utc.with_ymd_and_hms(2026, 8, 21, 1, 2, 3).unwrap();
+    let now = datetime!(2026-08-21 01:02:03.123456 UTC);
     let command = database_enqueue(EnqueueJob {
         tenant_id: Some("tenant-a".into()),
         schedule_id: Some(8),
@@ -162,8 +162,8 @@ fn enqueue_mapping_moves_every_command_field() {
 
 #[test]
 fn persistence_mapping_keeps_job_fields() {
-    let now = Utc.with_ymd_and_hms(2026, 8, 21, 1, 2, 3).unwrap();
-    let record = to_job_record(background_job::Model {
+    let now = datetime!(2026-08-21 01:02:03.123456 UTC);
+    let model = background_job::Model {
         id: 9,
         tenant_id: Some("tenant-a".into()),
         schedule_id: Some(8),
@@ -178,16 +178,30 @@ fn persistence_mapping_keeps_job_fields() {
         claim_sequence: 3,
         max_attempts: 5,
         lease_owner: Some("worker-a".into()),
-        lease_until: Some(now),
+        lease_until: Some(datetime!(2026-08-21 01:02:04.123 UTC)),
         dedupe_key: Some("dedupe".into()),
         traceparent: Some("trace".into()),
         tracestate: Some("state".into()),
         last_error: Some("error".into()),
-        created_at: now,
-        updated_at: now,
+        created_at: datetime!(2026-08-21 01:02:03 UTC),
+        updated_at: datetime!(2026-08-21 01:02:03.123456789 UTC),
         completed_at: None,
-    });
+    };
 
+    let mut json = serde_json::to_value(&model).unwrap();
+    assert_eq!(json["created_at"], "2026-08-21T01:02:03Z");
+    assert_eq!(json["lease_until"], "2026-08-21T01:02:04.123Z");
+    assert_eq!(json["available_at"], "2026-08-21T01:02:03.123456Z");
+    assert_eq!(json["scheduled_for"], "2026-08-21T01:02:03.123456Z");
+    assert_eq!(json["updated_at"], "2026-08-21T01:02:03.123456789Z");
+    assert!(json["completed_at"].is_null());
+    json.as_object_mut().unwrap().remove("completed_at");
+    assert_eq!(
+        serde_json::from_value::<background_job::Model>(json).unwrap(),
+        model
+    );
+
+    let record = to_job_record(model);
     assert_eq!(record.id, 9);
     assert_eq!(record.tenant_id.as_deref(), Some("tenant-a"));
     assert_eq!(record.schedule_id, Some(8));
@@ -195,6 +209,31 @@ fn persistence_mapping_keeps_job_fields() {
     assert_eq!(record.attempts, 2);
     assert_eq!(record.max_attempts, 5);
     assert_eq!(record.last_error.as_deref(), Some("error"));
+    assert_eq!(record.scheduled_for, Some(now));
+    assert_eq!(record.available_at, now);
+}
+
+#[test]
+fn expired_attempt_json_preserves_unknown_worker_finish_and_exact_close_time() {
+    let attempt = background_job_attempt::Model {
+        job_id: 9,
+        sequence: 3,
+        available_at: datetime!(2026-08-21 01:02:03 UTC),
+        started_at: datetime!(2026-08-21 01:02:04.123 UTC),
+        finished_at: None,
+        closed_at: Some(datetime!(2026-08-21 01:02:05.123456 UTC)),
+        outcome: "lease_expired".to_owned(),
+    };
+    let mut json = serde_json::to_value(&attempt).unwrap();
+    assert_eq!(json["available_at"], "2026-08-21T01:02:03Z");
+    assert_eq!(json["started_at"], "2026-08-21T01:02:04.123Z");
+    assert_eq!(json["closed_at"], "2026-08-21T01:02:05.123456Z");
+    assert!(json["finished_at"].is_null());
+    json.as_object_mut().unwrap().remove("finished_at");
+    assert_eq!(
+        serde_json::from_value::<background_job_attempt::Model>(json).unwrap(),
+        attempt
+    );
 }
 
 #[test]

@@ -64,6 +64,7 @@ impl TenantDataMigrationService {
                 .await?;
             return Ok(false);
         }
+        let queue_now = crate::jobs::queue_time_from_database(now)?;
         if let Some(job_id) = migration.background_job_id
             && self
                 .queue
@@ -73,7 +74,7 @@ impl TenantDataMigrationService {
                     TENANT_DATA_MIGRATION_JOB_TYPE,
                     "migration_id",
                     migration.id,
-                    now,
+                    queue_now,
                 )
                 .await?
         {
@@ -97,7 +98,7 @@ impl TenantDataMigrationService {
                     job_type: TENANT_DATA_MIGRATION_JOB_TYPE.into(),
                     payload: json!({ "migration_id": migration.id.to_string() }),
                     priority: 20,
-                    available_at: now,
+                    available_at: queue_now,
                     max_attempts: 8,
                     dedupe_key: Some(format!(
                         "migration-recovery:{}:{recovery_generation}:{}",

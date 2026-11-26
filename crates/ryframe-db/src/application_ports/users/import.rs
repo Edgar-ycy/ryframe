@@ -194,7 +194,7 @@ impl BackgroundJobTransaction for DatabaseUserImportTransaction {
         expected_job_type: &'a str,
         payload_key: &'a str,
         expected_resource_id: i64,
-        now: chrono::DateTime<chrono::Utc>,
+        now: time::OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         <DatabasePortTransaction as BackgroundJobTransaction>::reactivate_linked(
             &self.transaction,

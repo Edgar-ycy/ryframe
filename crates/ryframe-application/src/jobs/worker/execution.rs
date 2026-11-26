@@ -273,7 +273,7 @@ impl JobWorker {
             }
             return Ok(job_run_result_for_failure(&outcome));
         }
-        let retry_at = now + retry_delay(job.attempts);
+        let retry_at = now + Duration::seconds(retry_delay_seconds(job.attempts));
         let force_dead = handler.should_dead_letter(&error);
         let error_message = error.to_string();
         let log_error = job_log_error(&job.job_type, &error);
@@ -333,7 +333,7 @@ mod tests {
 
     #[test]
     fn failure_outcomes_map_to_worker_results() {
-        let retry_at = chrono::Utc::now();
+        let retry_at = ::time::OffsetDateTime::now_utc();
         for (outcome, expected) in [
             (
                 JobFailureOutcome::Retried {

@@ -326,14 +326,17 @@ fn assert_required_date_time(schema: &serde_json::Value, field: &str) {
 
 #[test]
 fn background_job_response_preserves_utc_precision_nullability_and_schema() {
-    use chrono::{DateTime, Utc};
     use ryframe_api::dto::public_dto::BackgroundJobVo;
     use ryframe_application::BackgroundJobVo as ServiceJob;
     use ryframe_kernel::AppError;
     use serde_json::{Value, json};
+    use time::{
+        Date, OffsetDateTime,
+        macros::{datetime, offset},
+    };
     use utoipa::PartialSchema;
 
-    let epoch = DateTime::from_timestamp(0, 0).unwrap();
+    let epoch = OffsetDateTime::UNIX_EPOCH;
     let mut job = ServiceJob {
         id: "42".into(),
         schedule_id: Some("9".into()),
@@ -360,33 +363,41 @@ fn background_job_response_preserves_utc_precision_nullability_and_schema() {
         (123_400_000, ".123400"),
         (123_456_700, ".123456700"),
     ] {
-        job.scheduled_for = DateTime::from_timestamp(-2, nanos);
-        job.available_at = DateTime::from_timestamp(-1, nanos).unwrap();
-        job.lease_until = DateTime::from_timestamp(4, nanos);
-        job.created_at = DateTime::from_timestamp(-3, nanos).unwrap();
-        job.updated_at = DateTime::from_timestamp(1, nanos).unwrap();
-        job.completed_at = DateTime::from_timestamp(2, nanos);
+        let at = |seconds: i64| {
+            OffsetDateTime::from_unix_timestamp(seconds)
+                .unwrap()
+                .replace_nanosecond(nanos)
+                .unwrap()
+        };
+        job.scheduled_for = Some(at(-2));
+        job.available_at = at(-1);
+        job.lease_until = Some(at(4));
+        job.created_at = at(-3);
+        job.updated_at = at(1);
+        job.completed_at = Some(at(2));
         let expected = serde_json::to_value(&job).unwrap();
         let encoded =
             serde_json::to_string(&BackgroundJobVo::try_from(job.clone()).unwrap()).unwrap();
         let response: Value = serde_json::from_str(&encoded).unwrap();
         assert_eq!(response, expected);
-        assert_eq!(
-            response["available_at"],
-            format!("1969-12-31T23:59:59{fraction}Z")
-        );
+        for (field, base) in [
+            ("scheduled_for", "1969-12-31T23:59:58"),
+            ("available_at", "1969-12-31T23:59:59"),
+            ("lease_until", "1970-01-01T00:00:04"),
+            ("created_at", "1969-12-31T23:59:57"),
+            ("updated_at", "1970-01-01T00:00:01"),
+            ("completed_at", "1970-01-01T00:00:02"),
+        ] {
+            assert_eq!(response[field], format!("{base}{fraction}Z"));
+        }
         assert!(response.get("payload").is_none());
     }
 
     job.scheduled_for = None;
     job.lease_until = None;
     job.completed_at = None;
-    job.created_at = DateTime::parse_from_rfc3339("1000-01-01T00:00:00Z")
-        .unwrap()
-        .with_timezone(&Utc);
-    job.updated_at = DateTime::parse_from_rfc3339("9999-12-31T23:59:59.499999Z")
-        .unwrap()
-        .with_timezone(&Utc);
+    job.created_at = datetime!(1000-01-01 0:00 UTC);
+    job.updated_at = datetime!(9999-12-31 23:59:59.499999 UTC);
     let response = serde_json::to_value(BackgroundJobVo::try_from(job.clone()).unwrap()).unwrap();
     assert_eq!(response, serde_json::to_value(&job).unwrap());
     for field in ["scheduled_for", "lease_until", "completed_at"] {
@@ -411,7 +422,12 @@ fn background_job_response_preserves_utc_precision_nullability_and_schema() {
     }
     assert!(schema["properties"].get("payload").is_none());
 
-    job.lease_until = DateTime::from_timestamp(-1, 1_123_456_000);
+    job.lease_until = Some(
+        Date::MAX
+            .with_hms(23, 59, 59)
+            .unwrap()
+            .assume_offset(offset!(-01:00)),
+    );
     assert!(matches!(
         BackgroundJobVo::try_from(job),
         Err(AppError::Internal(message)) if message.contains("lease_until")

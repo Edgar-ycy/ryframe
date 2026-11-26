@@ -15,6 +15,7 @@ pub use handlers::{
 };
 pub use metrics::{CallbackJobMetricsObserver, JobMetricsObserver};
 pub use outbox::{OutboxRunResult, OutboxWorker};
+pub(crate) use queue::queue_time_from_database;
 pub use queue::{
     BackgroundJobListParams, BackgroundJobQueueStats, BackgroundJobVo, EnqueueJob,
     EnqueueJobResult, JobQueue, normalize_job_status_filter, public_job_error,

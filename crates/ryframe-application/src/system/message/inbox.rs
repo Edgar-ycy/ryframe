@@ -25,7 +25,7 @@ impl MessageService {
                 limit,
                 unread_only,
                 unacknowledged_only: false,
-                now: self.queue.database_now().await?,
+                now: self.database_now().await?,
             })
             .await
             .map(MessageInbox::from_page)
@@ -48,7 +48,7 @@ impl MessageService {
                 limit,
                 unread_only: false,
                 unacknowledged_only: true,
-                now: self.queue.database_now().await?,
+                now: self.database_now().await?,
             })
             .await
             .map(MessageInbox::from_page)
@@ -73,7 +73,7 @@ impl MessageService {
     ) -> AppResult<Vec<MessageDelivery>> {
         self.ensure_enabled()?;
         self.persistence
-            .unacknowledged_recipients(message_id, None, self.queue.database_now().await?)
+            .unacknowledged_recipients(message_id, None, self.database_now().await?)
             .await
             .map(|records| {
                 records
@@ -91,7 +91,7 @@ impl MessageService {
     ) -> AppResult<Vec<MessageDelivery>> {
         self.ensure_enabled()?;
         self.persistence
-            .unacknowledged_recipients(message_id, Some(user_ids), self.queue.database_now().await?)
+            .unacknowledged_recipients(message_id, Some(user_ids), self.database_now().await?)
             .await
             .map(|records| {
                 records
@@ -108,7 +108,7 @@ impl MessageService {
             .unread_count(
                 crate::validated_tenant_id(actor)?,
                 actor.user_id,
-                self.queue.database_now().await?,
+                self.database_now().await?,
             )
             .await
     }
@@ -130,7 +130,7 @@ impl MessageService {
         user_id: i64,
         message_ids: &[i64],
     ) -> AppResult<u64> {
-        let now = self.queue.database_now().await?;
+        let now = self.database_now().await?;
         let transaction = self.persistence.begin().await?;
         let updated = transaction
             .acknowledge(tenant_id, user_id, message_ids, now)
@@ -145,7 +145,7 @@ impl MessageService {
     pub async fn mark_read(&self, actor: &ActorContext, message_id: i64) -> AppResult<()> {
         self.ensure_enabled()?;
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let now = self.queue.database_now().await?;
+        let now = self.database_now().await?;
         let transaction = self.persistence.begin().await?;
         if transaction
             .mark_read(tenant_id, actor.user_id, message_id, now)
@@ -164,7 +164,7 @@ impl MessageService {
     pub async fn mark_all_read(&self, actor: &ActorContext) -> AppResult<u64> {
         self.ensure_enabled()?;
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let now = self.queue.database_now().await?;
+        let now = self.database_now().await?;
         let transaction = self.persistence.begin().await?;
         let updated = transaction
             .mark_all_read(tenant_id, actor.user_id, now)
@@ -185,7 +185,7 @@ impl MessageService {
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
-        let now = self.queue.database_now().await?;
+        let now = self.database_now().await?;
         let transaction = self.persistence.begin().await?;
         let deleted = transaction
             .soft_delete(tenant_id, actor.user_id, &message_ids, now)
@@ -199,7 +199,7 @@ impl MessageService {
     /// 完成投递任务的持久化阶段。
     pub async fn dispatch(&self, message_id: i64) -> AppResult<()> {
         self.ensure_enabled()?;
-        let now = self.queue.database_now().await?;
+        let now = self.database_now().await?;
         let message = self
             .persistence
             .find_message(message_id)

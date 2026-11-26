@@ -12,6 +12,7 @@ use ryframe_db::{
 use ryframe_kernel::AppError;
 use sea_orm::{DatabaseBackend, QueryTrait};
 use serde_json::json;
+use time::{Duration, OffsetDateTime};
 
 fn export(status: &str, tenant_id: &str, requester_id: i64) -> export_job::Model {
     let now = Utc::now();
@@ -46,8 +47,8 @@ fn export(status: &str, tenant_id: &str, requester_id: i64) -> export_job::Model
     }
 }
 
-fn background(status: &str, lease_until: Option<DateTime<Utc>>) -> background_job::Model {
-    let now = Utc::now();
+fn background(status: &str, lease_until: Option<OffsetDateTime>) -> background_job::Model {
+    let now = OffsetDateTime::now_utc();
     background_job::Model {
         id: 21,
         tenant_id: Some("tenant-a".into()),
@@ -125,14 +126,15 @@ fn only_terminal_states_are_deletable() {
 
 #[test]
 fn active_lease_rejects_whole_batch_but_expired_lease_does_not() {
-    let now = Utc::now();
+    let queue_now = OffsetDateTime::now_utc();
+    let now = DateTime::from_timestamp(queue_now.unix_timestamp(), queue_now.nanosecond()).unwrap();
     let exports = [
         export(export_job::Model::STATUS_SUCCEEDED, "tenant-a", 7),
         export(export_job::Model::STATUS_FAILED, "tenant-a", 7),
     ];
     let active = background(
         background_job::Model::STATUS_SUCCEEDED,
-        Some(now + chrono::Duration::seconds(1)),
+        Some(queue_now + Duration::seconds(1)),
     );
     assert!(matches!(
         validate_deletion_candidates(&exports, &[active], now),
@@ -141,7 +143,7 @@ fn active_lease_rejects_whole_batch_but_expired_lease_does_not() {
 
     let expired = background(
         background_job::Model::STATUS_RUNNING,
-        Some(now - chrono::Duration::seconds(1)),
+        Some(queue_now - Duration::seconds(1)),
     );
     validate_deletion_candidates(&exports, &[expired], now).expect("过期租约不能永久阻止终态清理");
 }

@@ -171,7 +171,7 @@ impl ExportRequestTransaction for DatabaseExportRequestTransaction {
             .enqueue_in_transaction(
                 &self.transaction,
                 super::super::jobs::database_enqueue(command),
-                now,
+                crate::repositories::utc_time_from_chrono(now).db_context("导出任务入队时间")?,
             )
             .await
             .map(|result| result.job.id)

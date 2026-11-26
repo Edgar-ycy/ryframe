@@ -128,6 +128,7 @@ pub fn validate_deletion_candidates(
             "排队或执行中的导出任务必须先取消".into(),
         ));
     }
+    let now = crate::repositories::utc_time_from_chrono(now).db_context("导出任务租约校验时间")?;
     let has_active_lease = background_jobs.iter().any(|job| {
         job.lease_owner.is_some() && job.lease_until.is_some_and(|lease_until| lease_until > now)
     });

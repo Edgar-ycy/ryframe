@@ -1,12 +1,12 @@
 use crate::DbResultExt;
 use std::time::Duration as StdDuration;
 
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, EntityTrait, ExprTrait,
     QueryFilter, QueryOrder, QueryResult, Statement, Value, sea_query::Expr,
 };
+use time::OffsetDateTime;
 
 use crate::{entities::background_job, repositories::ExecutionTenantFilter};
 
@@ -102,7 +102,7 @@ impl BackgroundJobRepository {
     pub async fn stats(
         &self,
         db: &DatabaseConnection,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<BackgroundJobStats> {
         self.stats_filtered(db, BackgroundJobFilter::default(), now)
             .await
@@ -113,7 +113,7 @@ impl BackgroundJobRepository {
         &self,
         db: &DatabaseConnection,
         filter: BackgroundJobFilter<'_>,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<BackgroundJobStats> {
         let (filter_sql, filter_values) = queue_stats_filter(filter);
         let mut sql = QUEUE_STATS_SQL.to_owned();
@@ -235,7 +235,7 @@ impl BackgroundJobRepository {
         &self,
         db: &DatabaseConnection,
         filter: BackgroundJobFilter<'_>,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<Option<StdDuration>> {
         let job = Self::filtered_query(filter)
             .filter(background_job::Column::Status.eq(background_job::Model::STATUS_PENDING))
@@ -249,11 +249,8 @@ impl BackgroundJobRepository {
             .one(db)
             .await
             .db()?;
-        Ok(job.map(|job| {
-            (now - job.available_at)
-                .to_std()
-                .unwrap_or(StdDuration::ZERO)
-        }))
+        Ok(job
+            .map(|job| StdDuration::try_from(now - job.available_at).unwrap_or(StdDuration::ZERO)))
     }
 
     fn filtered_query(filter: BackgroundJobFilter<'_>) -> sea_orm::Select<background_job::Entity> {

@@ -198,6 +198,7 @@ impl DataRetentionService {
         let result = async {
             let now = transaction.database_now().await?;
             let proposed_run_id = crate::next_id()?;
+            let queue_now = crate::jobs::queue_time_from_database(now)?;
             let trace_context = crate::trace_context::current_trace_context();
             let enqueue = self
                 .queue
@@ -206,7 +207,7 @@ impl DataRetentionService {
                     EnqueueJob {
                         tenant_id: None,
                         schedule_id: None,
-                        scheduled_for: Some(now),
+                        scheduled_for: Some(queue_now),
                         max_runtime_seconds: Some(900),
                         job_type: DATA_RETENTION_JOB_TYPE.to_owned(),
                         payload: json!({
@@ -215,7 +216,7 @@ impl DataRetentionService {
                             "requested_by": actor.user_id.to_string(),
                         }),
                         priority: -20,
-                        available_at: now,
+                        available_at: queue_now,
                         max_attempts: 20,
                         dedupe_key: Some(format!("manual:{idempotency_key_hash}")),
                         traceparent: trace_context.traceparent,

@@ -7,7 +7,8 @@ use tracing::Instrument;
 use uuid::Uuid;
 
 use super::backoff::{jittered_delay, next_idle_wait};
-use super::worker::{infrastructure_retry_delay, retry_delay};
+use super::queue_time_from_database;
+use super::worker::{infrastructure_retry_delay, retry_delay_seconds};
 use super::{MESSAGE_PUBLISHED_OUTBOX_EVENT_TYPE, queue::JobQueue};
 use crate::system::operations::MESSAGE_DISPATCH_JOB_TYPE;
 use crate::{
@@ -168,7 +169,7 @@ impl OutboxWorker {
             Ok(false) => Ok(OutboxRunResult::LeaseLost),
             Err(error) => {
                 let now = self.persistence.database_now().await?;
-                let retry_at = now + retry_delay(attempts);
+                let retry_at = now + Duration::seconds(retry_delay_seconds(attempts));
                 match self
                     .persistence
                     .fail(event_id, worker_id, retry_at, &error.to_string(), now)
@@ -233,6 +234,7 @@ impl OutboxWorker {
                 )));
             }
         };
+        let queue_now = queue_time_from_database(now)?;
         let published = self
             .persistence
             .publish_background_job(
@@ -241,12 +243,12 @@ impl OutboxWorker {
                 EnqueueJob {
                     tenant_id: event.tenant_id,
                     schedule_id: None,
-                    scheduled_for: Some(now),
+                    scheduled_for: Some(queue_now),
                     max_runtime_seconds: None,
                     job_type: job_type.to_owned(),
                     payload: event.payload,
                     priority: 10,
-                    available_at: now,
+                    available_at: queue_now,
                     max_attempts: event.max_attempts,
                     dedupe_key: event.dedupe_key,
                     traceparent: event.traceparent,

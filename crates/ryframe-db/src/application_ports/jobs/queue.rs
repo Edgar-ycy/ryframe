@@ -14,9 +14,9 @@ use crate::{
         },
     },
 };
-use chrono::{DateTime, Duration, Utc};
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use time::{Duration, OffsetDateTime};
 
 use super::super::transaction::DatabasePortTransaction;
 
@@ -46,15 +46,15 @@ struct DatabaseJobQueuePersistence {
 
 #[async_trait::async_trait]
 impl BackgroundJobPersistencePort for DatabaseJobQueuePersistence {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>> {
-        crate::repositories::database_utc_now(self.database.write()).await
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime> {
+        crate::repositories::database_utc_now_time(self.database.write()).await
     }
 
     async fn claim_next<'a>(
         &'a self,
         worker_id: &'a str,
         lease_duration: Duration,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
         tenant_scope: &'a ExecutionTenantScope,
     ) -> ryframe_kernel::AppResult<Option<ClaimedJobRecord>> {
         self.repository
@@ -75,7 +75,7 @@ impl BackgroundJobPersistencePort for DatabaseJobQueuePersistence {
         claim_sequence: i64,
         worker_id: &'a str,
         error_message: &'a str,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<JobFailureOutcome> {
         self.repository
             .dead_letter(
@@ -96,7 +96,7 @@ impl BackgroundJobPersistencePort for DatabaseJobQueuePersistence {
         claim_sequence: i64,
         worker_id: &'a str,
         lease_duration: Duration,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         self.repository
             .renew_lease(
@@ -115,7 +115,7 @@ impl BackgroundJobPersistencePort for DatabaseJobQueuePersistence {
         job_id: i64,
         claim_sequence: i64,
         worker_id: &'a str,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         self.repository
             .complete(
@@ -133,9 +133,9 @@ impl BackgroundJobPersistencePort for DatabaseJobQueuePersistence {
         job_id: i64,
         claim_sequence: i64,
         worker_id: &'a str,
-        available_at: DateTime<Utc>,
+        available_at: OffsetDateTime,
         error_message: &'a str,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<JobFailureOutcome> {
         self.repository
             .defer_retryable_conflict(
@@ -191,7 +191,7 @@ impl BackgroundJobPersistencePort for DatabaseJobQueuePersistence {
 
     async fn recover_expired_leases<'a>(
         &'a self,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
         tenant_scope: &'a ExecutionTenantScope,
     ) -> ryframe_kernel::AppResult<RecoveredJobLeases> {
         self.repository
@@ -205,7 +205,7 @@ impl BackgroundJobPersistencePort for DatabaseJobQueuePersistence {
     }
 
     async fn enqueue(&self, command: EnqueueJob) -> ryframe_kernel::AppResult<EnqueueJobResult> {
-        let now = crate::repositories::database_utc_now(self.database.write()).await?;
+        let now = crate::repositories::database_utc_now_time(self.database.write()).await?;
         self.repository
             .enqueue(self.database.write(), database_enqueue(command), now)
             .await
@@ -231,7 +231,7 @@ impl BackgroundJobPersistencePort for DatabaseJobQueuePersistence {
     async fn stats<'a>(
         &'a self,
         filter: BackgroundJobReadFilter<'a>,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<BackgroundJobStatsRecord> {
         self.repository
             .stats_filtered(self.database.write(), database_filter(filter), now)
@@ -257,7 +257,7 @@ impl BackgroundJobPersistencePort for DatabaseJobQueuePersistence {
         include_platform: bool,
         job_id: i64,
         retried_by: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<JobFailureOutcome> {
         self.repository
             .retry_dead(
@@ -298,7 +298,7 @@ impl BackgroundJobPersistencePort for DatabaseJobQueuePersistence {
 #[async_trait::async_trait]
 impl BackgroundJobTransaction for DatabasePortTransaction {
     async fn enqueue(&self, command: EnqueueJob) -> ryframe_kernel::AppResult<EnqueueJobResult> {
-        let now = crate::repositories::database_utc_now(self).await?;
+        let now = crate::repositories::database_utc_now_time(self).await?;
         BackgroundJobRepository
             .enqueue_in_transaction(self, database_enqueue(command), now)
             .await
@@ -311,7 +311,7 @@ impl BackgroundJobTransaction for DatabasePortTransaction {
         expected_job_type: &'a str,
         payload_key: &'a str,
         expected_resource_id: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         BackgroundJobRepository
             .reactivate_linked_in_txn(
@@ -465,7 +465,7 @@ mod tests {
 
     #[test]
     fn database_failure_outcomes_keep_terminal_meaning() {
-        let retry_at = Utc::now();
+        let retry_at = OffsetDateTime::now_utc();
         for (database, application) in [
             (
                 DatabaseFailureOutcome::Retried {

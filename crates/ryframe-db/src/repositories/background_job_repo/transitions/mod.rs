@@ -1,5 +1,4 @@
 use crate::DbResultExt;
-use chrono::{DateTime, Duration, Utc};
 use ryframe_kernel::AppResult;
 use sea_orm::{
     ActiveModelTrait,
@@ -8,6 +7,7 @@ use sea_orm::{
     QueryFilter, QueryOrder, QuerySelect, TransactionTrait,
     sea_query::{Expr, LockType},
 };
+use time::{Duration, OffsetDateTime};
 
 use crate::{
     entities::{
@@ -81,7 +81,7 @@ impl BackgroundJobRepository {
         expected_job_type: &str,
         payload_key: &str,
         expected_resource_id: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<bool>
     where
         C: ConnectionTrait,
@@ -127,7 +127,7 @@ impl BackgroundJobRepository {
     pub(crate) async fn recover_expired_leases(
         &self,
         db: &DatabaseConnection,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
         tenant_scope: &ExecutionTenantFilter,
     ) -> AppResult<ExpiredLeaseRecovery> {
         let transaction = db.begin().await.db()?;
@@ -220,7 +220,7 @@ impl BackgroundJobRepository {
         job_id: i64,
         claim_sequence: i64,
         worker_id: &str,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<bool> {
         let transaction = db.begin().await.db()?;
         let Some(job) = Self::owned_running_query(job_id, claim_sequence, worker_id)
@@ -256,7 +256,7 @@ impl BackgroundJobRepository {
         claim_sequence: i64,
         worker_id: &str,
         lease_duration: Duration,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<bool> {
         validate_lease(worker_id, lease_duration)?;
         let result = background_job::Entity::update_many()
@@ -430,7 +430,7 @@ impl BackgroundJobRepository {
         claim_sequence: i64,
         worker_id: &str,
         error_message: &str,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<JobFailureDisposition> {
         let transaction = db.begin().await.db()?;
         let Some(job) = Self::owned_running_query(job_id, claim_sequence, worker_id)
@@ -490,7 +490,7 @@ impl BackgroundJobRepository {
         include_platform: bool,
         job_id: i64,
         retry_requested_by: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<JobFailureDisposition> {
         let transaction = db.begin().await.db()?;
         let tenant_scope = if include_platform {

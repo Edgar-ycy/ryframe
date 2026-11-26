@@ -274,7 +274,7 @@ impl JobScheduleTransaction for DatabaseJobScheduleTransaction {
     }
 
     async fn enqueue(&self, command: EnqueueJob) -> ryframe_kernel::AppResult<EnqueueJobResult> {
-        let now = crate::repositories::database_utc_now(&self.transaction).await?;
+        let now = crate::repositories::database_utc_now_time(&self.transaction).await?;
         let result = self
             .job_repository
             .enqueue_in_transaction(&self.transaction, database_enqueue(command), now)

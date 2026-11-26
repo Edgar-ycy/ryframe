@@ -64,7 +64,7 @@ impl ExportDeletionTransaction for DatabaseExportDeletionTransaction {
             .enqueue_in_transaction(
                 &self.transaction,
                 super::super::jobs::database_enqueue(command),
-                now,
+                crate::repositories::utc_time_from_chrono(now).db_context("导出清理入队时间")?,
             )
             .await
             .map(|_| ())

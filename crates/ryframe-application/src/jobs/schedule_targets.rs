@@ -1,9 +1,8 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use serde::Serialize;
-use time::OffsetDateTime;
+use time::{OffsetDateTime, UtcOffset};
 
 use crate::EnqueueJob;
 use crate::system::operations::{
@@ -251,11 +250,13 @@ fn build_system_cleanup_job(
             "当前配置下调度目标不可用".into(),
         ));
     }
-    let scheduled_for = DateTime::<Utc>::from_timestamp(
-        context.scheduled_for.unix_timestamp(),
-        context.scheduled_for.nanosecond(),
-    )
-    .ok_or_else(|| AppError::Internal("调度触发时间无法写入后台任务".into()))?;
+    let scheduled_for = context
+        .scheduled_for
+        .checked_to_offset(UtcOffset::UTC)
+        .ok_or_else(|| AppError::Internal("调度触发时间无法写入后台任务".into()))?;
+    let scheduled_for_payload =
+        crate::ports::utc_timestamp::serialize(&scheduled_for, serde_json::value::Serializer)
+            .map_err(|error| AppError::Internal(format!("序列化调度触发时间失败：{error}")))?;
     let trace_context = crate::trace_context::current_trace_context();
     Ok(EnqueueJob {
         tenant_id: None,
@@ -266,7 +267,7 @@ fn build_system_cleanup_job(
         payload: serde_json::json!({
             "schedule_id": context.schedule_id.to_string(),
             "trigger_kind": context.trigger_kind,
-            "scheduled_for": scheduled_for,
+            "scheduled_for": scheduled_for_payload,
         }),
         priority: target.priority(),
         available_at: scheduled_for,

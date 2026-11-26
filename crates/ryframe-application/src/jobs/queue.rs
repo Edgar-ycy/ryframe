@@ -3,9 +3,9 @@ use std::{
     time::Duration as StdDuration,
 };
 
-use chrono::{DateTime, Utc};
 use ryframe_auth::RequestPrincipal;
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult};
+use time::{Duration, OffsetDateTime};
 use tokio::{sync::watch, task::JoinHandle};
 
 use super::{
@@ -24,6 +24,13 @@ mod model;
 use filters::{manual_retry_permission, normalize_job_type_filter, normalize_schedule_id_filter};
 pub use filters::{normalize_job_status_filter, public_job_error};
 pub use model::*;
+
+pub(crate) fn queue_time_from_database(
+    now: chrono::DateTime<chrono::Utc>,
+) -> AppResult<OffsetDateTime> {
+    crate::ports::utc_timestamp::from_chrono(now)
+        .map_err(|_| AppError::Database("后台任务数据库时间无法精确表示为 UTC".into()))
+}
 
 /// 持久化任务的业务层入口。
 #[derive(Clone)]
@@ -53,8 +60,8 @@ impl JobQueue {
     pub(super) async fn claim_next(
         &self,
         worker_id: &str,
-        lease_duration: chrono::Duration,
-        now: DateTime<Utc>,
+        lease_duration: Duration,
+        now: OffsetDateTime,
         tenant_scope: &ExecutionTenantScope,
     ) -> AppResult<Option<ClaimedJobRecord>> {
         self.persistence
@@ -68,7 +75,7 @@ impl JobQueue {
         claim_sequence: i64,
         worker_id: &str,
         error_message: &str,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<JobFailureOutcome> {
         self.persistence
             .dead_letter(job_id, claim_sequence, worker_id, error_message, now)
@@ -80,8 +87,8 @@ impl JobQueue {
         job_id: i64,
         claim_sequence: i64,
         worker_id: &str,
-        lease_duration: chrono::Duration,
-        now: DateTime<Utc>,
+        lease_duration: Duration,
+        now: OffsetDateTime,
     ) -> AppResult<bool> {
         self.persistence
             .renew_lease(job_id, claim_sequence, worker_id, lease_duration, now)
@@ -93,7 +100,7 @@ impl JobQueue {
         job_id: i64,
         claim_sequence: i64,
         worker_id: &str,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<bool> {
         self.persistence
             .complete(job_id, claim_sequence, worker_id, now)
@@ -105,9 +112,9 @@ impl JobQueue {
         job_id: i64,
         claim_sequence: i64,
         worker_id: &str,
-        available_at: DateTime<Utc>,
+        available_at: OffsetDateTime,
         error_message: &str,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<JobFailureOutcome> {
         self.persistence
             .defer_retryable_conflict(
@@ -133,7 +140,7 @@ impl JobQueue {
         expected_job_type: &str,
         payload_key: &str,
         expected_resource_id: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<bool> {
         transaction
             .reactivate_linked(
@@ -186,7 +193,7 @@ impl JobQueue {
     }
 
     /// 获取数据库当前 UTC 时间，避免多个 Worker 依赖不同机器时钟。
-    pub async fn database_now(&self) -> AppResult<DateTime<Utc>> {
+    pub async fn database_now(&self) -> AppResult<OffsetDateTime> {
         self.persistence.database_now().await
     }
 

@@ -535,7 +535,7 @@ impl TenantDataMigrationService {
                     job_type: TENANT_DATA_MIGRATION_JOB_TYPE.into(),
                     payload: json!({ "migration_id": migration_id.to_string() }),
                     priority: 10,
-                    available_at: now,
+                    available_at: crate::jobs::queue_time_from_database(now)?,
                     max_attempts: 8,
                     dedupe_key: Some(migration_id.to_string()),
                     traceparent: None,
