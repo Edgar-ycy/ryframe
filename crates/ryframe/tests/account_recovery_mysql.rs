@@ -36,6 +36,8 @@ mod role_assignment;
 mod scope_coherence;
 #[path = "account_recovery_mysql/sql_initialization.rs"]
 mod sql_initialization;
+#[path = "account_recovery_mysql/tenant_expiry.rs"]
+mod tenant_expiry;
 
 const OLD_PASSWORD: &str = "AbandonedRandom123!";
 const NEW_PASSWORD: &str = "RecoveredUser123!";

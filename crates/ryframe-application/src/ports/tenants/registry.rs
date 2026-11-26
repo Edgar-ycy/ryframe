@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use time::OffsetDateTime;
 
 use crate::{
     ports::authorization::AuthorizationMirrorTransaction, ports::product::ProductTransactionPort,
@@ -22,7 +23,7 @@ pub struct TenantRecord {
     pub name: String,
     pub domain: Option<String>,
     pub status: String,
-    pub expire_at: Option<DateTime<Utc>>,
+    pub expire_at: Option<OffsetDateTime>,
     pub max_users: i32,
     pub max_roles: i32,
     pub max_storage_mb: i64,
@@ -58,7 +59,7 @@ pub struct ProvisionTenantRecord {
     pub tenant_id: String,
     pub name: String,
     pub domain: Option<String>,
-    pub expire_at: Option<DateTime<Utc>>,
+    pub expire_at: Option<OffsetDateTime>,
     pub max_users: i32,
     pub max_roles: i32,
     pub max_storage_mb: i64,

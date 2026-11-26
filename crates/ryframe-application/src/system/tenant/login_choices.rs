@@ -1,5 +1,5 @@
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
+use time::OffsetDateTime;
 
 use super::{TENANT_STATUS_ENABLED, TenantService};
 
@@ -32,7 +32,7 @@ impl TenantService {
             .checked_mul(page_size)
             .ok_or_else(|| AppError::Validation("租户选项页码超出范围".into()))?;
         let search = search.trim().to_lowercase();
-        let now = Utc::now();
+        let now = OffsetDateTime::now_utc();
         let mut choices = self
             .persistence
             .list()
@@ -60,7 +60,7 @@ impl TenantService {
     }
 }
 
-fn login_available(status: &str, expires: Option<DateTime<Utc>>, now: DateTime<Utc>) -> bool {
+fn login_available(status: &str, expires: Option<OffsetDateTime>, now: OffsetDateTime) -> bool {
     status == TENANT_STATUS_ENABLED && expires.is_none_or(|value| value > now)
 }
 
@@ -70,16 +70,21 @@ mod tests {
 
     #[test]
     fn disabled_provisioning_and_expired_tenants_are_not_public() {
-        let now = Utc::now();
+        let now = OffsetDateTime::UNIX_EPOCH;
         assert!(login_available("enabled", None, now));
         assert!(login_available(
             "enabled",
-            Some(now + chrono::Duration::seconds(1)),
+            Some(now + time::Duration::nanoseconds(1)),
             now
         ));
         for status in ["disabled", "provisioning", "provisioning_failed"] {
             assert!(!login_available(status, None, now));
         }
         assert!(!login_available("enabled", Some(now), now));
+        assert!(!login_available(
+            "enabled",
+            Some(now - time::Duration::nanoseconds(1)),
+            now
+        ));
     }
 }

@@ -1,4 +1,3 @@
-use ryframe_kernel::AppError;
 use serde::Serialize;
 use time::OffsetDateTime;
 use utoipa::ToSchema;
@@ -302,10 +301,8 @@ pub struct TenantVo {
     pub max_requests_per_min: i32,
 }
 
-impl TryFrom<ServiceTenantVo> for TenantVo {
-    type Error = AppError;
-
-    fn try_from(value: ServiceTenantVo) -> Result<Self, Self::Error> {
+impl From<ServiceTenantVo> for TenantVo {
+    fn from(value: ServiceTenantVo) -> Self {
         let ServiceTenantVo {
             tenant_id,
             name,
@@ -317,11 +314,7 @@ impl TryFrom<ServiceTenantVo> for TenantVo {
             max_storage_mb,
             max_requests_per_min,
         } = value;
-        let expire_at = expire_at
-            .map(utc_timestamp::from_chrono)
-            .transpose()
-            .map_err(|_| AppError::Internal("租户响应的 expire_at 无法精确表示为 UTC".into()))?;
-        Ok(Self {
+        Self {
             tenant_id,
             name,
             domain,
@@ -331,6 +324,6 @@ impl TryFrom<ServiceTenantVo> for TenantVo {
             max_roles,
             max_storage_mb,
             max_requests_per_min,
-        })
+        }
     }
 }

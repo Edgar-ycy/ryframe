@@ -1,8 +1,8 @@
 use crate::http::HttpResult;
-use chrono::{DateTime, Utc};
-use ryframe_application::system::platform::TenantUsagePageParams;
+use ryframe_application::{ports::utc_timestamp, system::platform::TenantUsagePageParams};
 use ryframe_kernel::{PaginationPolicy, ValidatedPageQuery};
 use serde::Deserialize;
+use time::OffsetDateTime;
 use utoipa::{IntoParams, ToSchema};
 use validator::Validate;
 
@@ -145,8 +145,9 @@ pub struct CreateTenantDto {
     #[validate(length(min = 1, max = 128))]
     pub name: String,
     pub domain: Option<String>,
+    #[serde(default, deserialize_with = "utc_timestamp::deserialize_optional")]
     #[schema(value_type = Option<String>, format = DateTime)]
-    pub expire_at: Option<DateTime<Utc>>,
+    pub expire_at: Option<OffsetDateTime>,
     pub max_users: Option<i32>,
     pub max_roles: Option<i32>,
     pub max_storage_mb: Option<i64>,
@@ -175,8 +176,9 @@ pub struct UpdateTenantDto {
     #[validate(length(min = 1, max = 128))]
     pub name: String,
     pub domain: Option<String>,
+    #[serde(default, deserialize_with = "utc_timestamp::deserialize_optional")]
     #[schema(value_type = Option<String>, format = DateTime)]
-    pub expire_at: Option<DateTime<Utc>>,
+    pub expire_at: Option<OffsetDateTime>,
     pub max_users: i32,
     pub max_roles: i32,
     pub max_storage_mb: i64,
@@ -187,4 +189,71 @@ pub struct UpdateTenantDto {
 #[serde(deny_unknown_fields)]
 pub struct UpdateTenantStatusDto {
     pub status: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CreateTenantDto, UpdateTenantDto};
+    use serde_json::{Value, json};
+    use time::{OffsetDateTime, UtcOffset};
+
+    #[test]
+    fn tenant_expiry_requests_accept_omitted_null_and_rfc3339() {
+        for expiry in [None, Some(Value::Null)] {
+            for parsed in parse_expiry_requests(expiry) {
+                assert_eq!(parsed.unwrap(), None);
+            }
+        }
+
+        for input in [
+            "1970-01-01T07:59:59.123456789+08:00",
+            "1969-12-31T23:59:59.123456789Z",
+        ] {
+            for parsed in parse_expiry_requests(Some(json!(input))) {
+                let expiry = parsed.unwrap().unwrap();
+                assert_eq!(expiry.unix_timestamp_nanos(), -876_543_211);
+                assert_eq!(expiry.offset(), UtcOffset::UTC);
+            }
+        }
+
+        for invalid in [
+            json!(42),
+            json!("1970-01-01 00:00:00UTC"),
+            json!("1970-01-01T00:00:00"),
+            json!("2016-12-31T23:59:60.123456Z"),
+        ] {
+            assert!(
+                parse_expiry_requests(Some(invalid.clone()))
+                    .into_iter()
+                    .all(|parsed| parsed.is_err()),
+                "{invalid}"
+            );
+        }
+    }
+
+    fn parse_expiry_requests(
+        expire_at: Option<Value>,
+    ) -> [serde_json::Result<Option<OffsetDateTime>>; 2] {
+        let mut update = json!({
+            "name": "Tenant A",
+            "max_users": 100,
+            "max_roles": 20,
+            "max_storage_mb": 1024,
+            "max_requests_per_min": 1000
+        });
+        if let Some(expire_at) = expire_at {
+            update["expire_at"] = expire_at;
+        }
+        let mut create = update.clone();
+        create["tenant_id"] = json!("tenant-a");
+        create["admin_username"] = json!("admin");
+        create["admin_password"] = json!("Fixture-A1!");
+        create["plan_version_id"] = json!("42");
+        create["data_target_key"] = json!("primary");
+
+        [
+            serde_json::from_value::<CreateTenantDto>(create).map(|dto| dto.expire_at),
+            serde_json::from_value::<UpdateTenantDto>(update).map(|dto| dto.expire_at),
+        ]
+    }
 }

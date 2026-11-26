@@ -11,6 +11,7 @@ use ryframe_application::ports::{
         TenantProvisionRequestRecord, TenantProvisioningIdentity, TenantProvisioningPlacement,
         TenantProvisioningTemplate, TenantRecord, TenantTransaction,
     },
+    utc_timestamp,
 };
 use ryframe_db::{
     ControlDatabaseCluster, ReadConsistency,
@@ -18,7 +19,7 @@ use ryframe_db::{
     entities::tenant,
     repositories::{ProductRepository, TenantProvisioningRepository, TenantRepository},
 };
-use sea_orm::{ActiveModelTrait, IntoActiveModel, TransactionTrait};
+use sea_orm::{ActiveModelTrait, IntoActiveModel, TransactionTrait, entity::prelude::DateTimeUtc};
 
 use crate::TenantDataPlacementRepository;
 
@@ -44,10 +45,8 @@ impl TenantPersistencePort for TenantPersistence {
             .database
             .select_read(ReadConsistency::Eventual)
             .connection;
-        TenantRepository
-            .list_all(&database)
-            .await
-            .map(|records| records.into_iter().map(map_tenant).collect())
+        let records = TenantRepository.list_all(&database).await?;
+        records.into_iter().map(map_tenant).collect()
     }
 
     async fn find<'a>(
@@ -56,8 +55,9 @@ impl TenantPersistencePort for TenantPersistence {
     ) -> ryframe_kernel::AppResult<Option<TenantRecord>> {
         TenantRepository
             .find_by_tenant_id(self.database.write(), tenant_id)
-            .await
-            .map(|record| record.map(map_tenant))
+            .await?
+            .map(map_tenant)
+            .transpose()
     }
 
     async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn TenantTransaction>> {
@@ -84,8 +84,9 @@ impl TenantTransaction for TenantWorkUnit {
     ) -> ryframe_kernel::AppResult<Option<TenantRecord>> {
         TenantRepository
             .lock_optional_tenant_in_txn(&self.transaction, tenant_id)
-            .await
-            .map(|record| record.map(map_tenant))
+            .await?
+            .map(map_tenant)
+            .transpose()
     }
 
     async fn lock_tenant<'a>(
@@ -95,7 +96,7 @@ impl TenantTransaction for TenantWorkUnit {
         TenantRepository
             .lock_tenant_in_txn(&self.transaction, tenant_id)
             .await
-            .map(map_tenant)
+            .and_then(map_tenant)
     }
 
     async fn lock_tenant_with_limits<'a>(
@@ -114,7 +115,7 @@ impl TenantTransaction for TenantWorkUnit {
                 max_storage_mb,
             )
             .await
-            .map(map_tenant)
+            .and_then(map_tenant)
     }
 
     async fn lock_provision_request<'a>(
@@ -211,13 +212,13 @@ impl TenantTransaction for TenantWorkUnit {
     }
 
     async fn save_tenant(&self, tenant: TenantRecord) -> ryframe_kernel::AppResult<TenantRecord> {
-        map_tenant_model(tenant)
+        let saved = map_tenant_model(tenant)?
             .into_active_model()
             .reset_all()
             .update(&self.transaction)
             .await
-            .map(map_tenant)
-            .db()
+            .db()?;
+        map_tenant(saved)
     }
 
     async fn update_status<'a>(
@@ -297,14 +298,21 @@ impl ryframe_application::PersistenceTransaction for TenantWorkUnit {
     }
 }
 
-pub fn map_tenant(tenant: tenant::Model) -> TenantRecord {
-    TenantRecord {
+pub fn map_tenant(tenant: tenant::Model) -> ryframe_kernel::AppResult<TenantRecord> {
+    let expire_at = tenant
+        .expire_at
+        .map(utc_timestamp::from_chrono)
+        .transpose()
+        .map_err(|_| {
+            ryframe_kernel::AppError::Internal("租户响应的 expire_at 无法精确表示为 UTC".into())
+        })?;
+    Ok(TenantRecord {
         id: tenant.id,
         tenant_id: tenant.tenant_id,
         name: tenant.name,
         domain: tenant.domain,
         status: tenant.status,
-        expire_at: tenant.expire_at,
+        expire_at,
         max_users: tenant.max_users,
         max_roles: tenant.max_roles,
         max_storage_mb: tenant.max_storage_mb,
@@ -316,17 +324,25 @@ pub fn map_tenant(tenant: tenant::Model) -> TenantRecord {
         configuration_version: tenant.configuration_version,
         created_at: tenant.created_at,
         updated_at: tenant.updated_at,
-    }
+    })
 }
 
-pub fn map_tenant_model(tenant: TenantRecord) -> tenant::Model {
-    tenant::Model {
+pub fn map_tenant_model(tenant: TenantRecord) -> ryframe_kernel::AppResult<tenant::Model> {
+    let expire_at = tenant
+        .expire_at
+        .map(|value| {
+            DateTimeUtc::from_timestamp(value.unix_timestamp(), value.nanosecond()).ok_or_else(
+                || ryframe_kernel::AppError::Database("租户到期时间无法精确表示为 UTC".into()),
+            )
+        })
+        .transpose()?;
+    Ok(tenant::Model {
         id: tenant.id,
         tenant_id: tenant.tenant_id,
         name: tenant.name,
         domain: tenant.domain,
         status: tenant.status,
-        expire_at: tenant.expire_at,
+        expire_at,
         max_users: tenant.max_users,
         max_roles: tenant.max_roles,
         max_storage_mb: tenant.max_storage_mb,
@@ -338,5 +354,5 @@ pub fn map_tenant_model(tenant: TenantRecord) -> tenant::Model {
         configuration_version: tenant.configuration_version,
         created_at: tenant.created_at,
         updated_at: tenant.updated_at,
-    }
+    })
 }

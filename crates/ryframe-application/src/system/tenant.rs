@@ -11,9 +11,10 @@ pub use login_choices::{LoginTenantChoice, LoginTenantPage};
 
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use serde::Serialize;
+use time::OffsetDateTime;
 
 use validation::*;
 
@@ -34,7 +35,8 @@ pub struct TenantVo {
     pub name: String,
     pub domain: Option<String>,
     pub status: String,
-    pub expire_at: Option<DateTime<Utc>>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize_optional")]
+    pub expire_at: Option<OffsetDateTime>,
     pub max_users: i32,
     pub max_roles: i32,
     pub max_storage_mb: i64,
@@ -64,7 +66,7 @@ pub struct CreateTenantParams {
     pub tenant_id: String,
     pub name: String,
     pub domain: Option<String>,
-    pub expire_at: Option<DateTime<Utc>>,
+    pub expire_at: Option<OffsetDateTime>,
     pub max_users: Option<i32>,
     pub max_roles: Option<i32>,
     pub max_storage_mb: Option<i64>,
@@ -79,7 +81,7 @@ pub struct CreateTenantParams {
 pub struct UpdateTenantParams {
     pub name: String,
     pub domain: Option<String>,
-    pub expire_at: Option<DateTime<Utc>>,
+    pub expire_at: Option<OffsetDateTime>,
     pub max_users: i32,
     pub max_roles: i32,
     pub max_storage_mb: i64,

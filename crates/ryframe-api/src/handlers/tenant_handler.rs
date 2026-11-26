@@ -70,8 +70,8 @@ async fn page(
     let records = result
         .records
         .into_iter()
-        .map(TenantCapacityVo::try_from)
-        .collect::<Result<Vec<_>, _>>()?;
+        .map(TenantCapacityVo::from)
+        .collect();
     Ok(Json(ApiPageResponse::page(
         records,
         result.total,
@@ -108,9 +108,8 @@ async fn detail(
         .platform
         .tenant_usage
         .detail(&current_user, &tenant_id, can_view_usage(&current_user))
-        .await
-        .and_then(TenantCapacityVo::try_from)?;
-    Ok(Json(ApiResponse::success(tenant)))
+        .await?;
+    Ok(Json(ApiResponse::success(TenantCapacityVo::from(tenant))))
 }
 
 #[get("/{tenant_id}/usage")]
@@ -165,10 +164,7 @@ async fn list(
     current_user: RequestPrincipal,
 ) -> HttpResult<Json<ApiResponse<Vec<TenantVo>>>> {
     let tenants = state.services.platform.tenant.list(&current_user).await?;
-    let tenants = tenants
-        .into_iter()
-        .map(TenantVo::try_from)
-        .collect::<Result<Vec<_>, _>>()?;
+    let tenants = tenants.into_iter().map(TenantVo::from).collect();
     Ok(Json(ApiResponse::success(tenants)))
 }
 
@@ -224,7 +220,7 @@ async fn create(
             },
         )
         .await?;
-    Ok(Json(ApiResponse::success(TenantVo::try_from(model)?)))
+    Ok(Json(ApiResponse::success(TenantVo::from(model))))
 }
 
 #[put("/{tenant_id}")]
@@ -258,7 +254,7 @@ async fn update(
             },
         )
         .await?;
-    Ok(Json(ApiResponse::success(TenantVo::try_from(updated)?)))
+    Ok(Json(ApiResponse::success(TenantVo::from(updated))))
 }
 
 #[put("/{tenant_id}/status")]

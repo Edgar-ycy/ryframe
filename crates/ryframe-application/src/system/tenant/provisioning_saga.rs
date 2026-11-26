@@ -88,7 +88,7 @@ impl TenantService {
             quota.max_roles,
             quota.max_storage_mb,
             quota.max_requests_per_minute,
-        );
+        )?;
         let pending = self.tenant_provisioning.prepare(
             tenant_id.clone(),
             params.data_target_key.clone(),

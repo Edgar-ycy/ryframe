@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Use UTC time types for tenant expiration across the API, application, and database adapters. Equivalent time-zone values preserve the session version. Clearing or changing expiration continues to invalidate older tenant sessions.
+
 - Continue identity verification in the same recovery ledger when the registration was published and the producer never launched. Retain the original failure and frozen tool and protect the recorded launch inputs.
 
 - Use the database UTC clock and time types for message publishing, inbox reads, read markers, and expiry checks. The optional publish expiry field continues to use RFC3339.

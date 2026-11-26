@@ -1,7 +1,6 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;
-use chrono::DateTime;
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use serde::Serialize;
 use time::{Duration, OffsetDateTime};
@@ -154,7 +153,7 @@ impl TenantUsageService {
                 let tenant_usage = usage.remove(&tenant.tenant_id);
                 tenant_capacity_vo(tenant, tenant_usage, calculated_at)
             })
-            .collect::<AppResult<Vec<_>>>()?;
+            .collect();
         Ok(PageResult::new(records, result.total, page))
     }
 
@@ -178,7 +177,7 @@ impl TenantUsageService {
         } else {
             None
         };
-        tenant_capacity_vo(tenant, usage, OffsetDateTime::now_utc())
+        Ok(tenant_capacity_vo(tenant, usage, OffsetDateTime::now_utc()))
     }
 
     pub async fn usage(&self, actor: &ActorContext, tenant_id: &str) -> AppResult<TenantUsageVo> {
@@ -308,35 +307,24 @@ fn tenant_capacity_vo(
     tenant: TenantCapacityRecord,
     usage: Option<TenantUsageVo>,
     now: OffsetDateTime,
-) -> AppResult<TenantCapacityVo> {
+) -> TenantCapacityVo {
     let capacity_status = usage.as_ref().map(capacity_status);
-    Ok(TenantCapacityVo {
+    TenantCapacityVo {
         expiration_status: expiration_status(&tenant, now).to_owned(),
         capacity_status,
-        tenant: tenant_vo(tenant)?,
+        tenant: TenantVo {
+            tenant_id: tenant.tenant_id,
+            name: tenant.name,
+            domain: tenant.domain,
+            status: tenant.status,
+            expire_at: tenant.expire_at,
+            max_users: tenant.max_users,
+            max_roles: tenant.max_roles,
+            max_storage_mb: tenant.max_storage_mb,
+            max_requests_per_min: tenant.max_requests_per_min,
+        },
         usage,
-    })
-}
-
-fn tenant_vo(tenant: TenantCapacityRecord) -> AppResult<TenantVo> {
-    let expire_at = tenant
-        .expire_at
-        .map(|value| {
-            DateTime::from_timestamp(value.unix_timestamp(), value.nanosecond())
-                .ok_or_else(|| AppError::Database("租户到期时间无法精确表示为 UTC".into()))
-        })
-        .transpose()?;
-    Ok(TenantVo {
-        tenant_id: tenant.tenant_id,
-        name: tenant.name,
-        domain: tenant.domain,
-        status: tenant.status,
-        expire_at,
-        max_users: tenant.max_users,
-        max_roles: tenant.max_roles,
-        max_storage_mb: tenant.max_storage_mb,
-        max_requests_per_min: tenant.max_requests_per_min,
-    })
+    }
 }
 
 fn tenant_usage_vo(

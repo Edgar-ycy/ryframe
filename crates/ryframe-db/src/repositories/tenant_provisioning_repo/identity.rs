@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use ryframe_application::ports::tenants::{ProvisionTenantRecord, TenantProvisioningIdentity};
-use ryframe_kernel::AppResult;
+use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{ActiveModelTrait, ActiveValue, DatabaseTransaction};
 use time::OffsetDateTime;
 
@@ -68,13 +68,20 @@ async fn insert_tenant_and_request(
     record: &ProvisionTenantRecord,
     now: DateTime<Utc>,
 ) -> AppResult<()> {
+    let expire_at = record
+        .expire_at
+        .map(|value| {
+            DateTime::from_timestamp(value.unix_timestamp(), value.nanosecond())
+                .ok_or_else(|| AppError::Database("租户到期时间无法精确表示为 UTC".into()))
+        })
+        .transpose()?;
     tenant::ActiveModel {
         id: ActiveValue::Set(crate::next_id()?),
         tenant_id: ActiveValue::Set(record.tenant_id.clone()),
         name: ActiveValue::Set(record.name.clone()),
         domain: ActiveValue::Set(record.domain.clone()),
         status: ActiveValue::Set(tenant::Model::STATUS_PROVISIONING.to_owned()),
-        expire_at: ActiveValue::Set(record.expire_at),
+        expire_at: ActiveValue::Set(expire_at),
         max_users: ActiveValue::Set(record.max_users),
         max_roles: ActiveValue::Set(record.max_roles),
         max_storage_mb: ActiveValue::Set(record.max_storage_mb),

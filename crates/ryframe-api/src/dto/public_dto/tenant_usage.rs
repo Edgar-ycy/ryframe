@@ -4,7 +4,6 @@ use ryframe_application::system::platform::{
     TenantAuxiliaryUsage as ServiceTenantAuxiliaryUsage,
     TenantCapacityVo as ServiceTenantCapacityVo, TenantUsageVo as ServiceTenantUsageVo,
 };
-use ryframe_kernel::AppError;
 use serde::Serialize;
 use time::OffsetDateTime;
 use utoipa::ToSchema;
@@ -132,12 +131,10 @@ pub struct TenantCapacityVo {
     pub usage: Option<TenantUsageVo>,
 }
 
-impl TryFrom<ServiceTenantCapacityVo> for TenantCapacityVo {
-    type Error = AppError;
-
-    fn try_from(value: ServiceTenantCapacityVo) -> Result<Self, Self::Error> {
-        let tenant = TenantVo::try_from(value.tenant)?;
-        Ok(Self {
+impl From<ServiceTenantCapacityVo> for TenantCapacityVo {
+    fn from(value: ServiceTenantCapacityVo) -> Self {
+        let tenant = TenantVo::from(value.tenant);
+        Self {
             tenant_id: tenant.tenant_id,
             name: tenant.name,
             domain: tenant.domain,
@@ -150,7 +147,7 @@ impl TryFrom<ServiceTenantCapacityVo> for TenantCapacityVo {
             expiration_status: value.expiration_status,
             capacity_status: value.capacity_status,
             usage: value.usage.map(Into::into),
-        })
+        }
     }
 }
 
@@ -171,7 +168,7 @@ mod tests {
         ] {
             let tenant = tenant_fixture(Some(expiration));
             let encoded = serde_json::to_string(&tenant).unwrap();
-            let response = serde_json::to_string(&TenantVo::try_from(tenant).unwrap()).unwrap();
+            let response = serde_json::to_string(&TenantVo::from(tenant)).unwrap();
             assert_eq!(response, encoded);
             let response: Value = serde_json::from_str(&response).unwrap();
             assert_eq!(response["expire_at"], expiration);
@@ -185,7 +182,7 @@ mod tests {
 
         let tenant = tenant_fixture(None);
         let expected = serde_json::to_value(&tenant).unwrap();
-        let response = serde_json::to_value(TenantVo::try_from(tenant).unwrap()).unwrap();
+        let response = serde_json::to_value(TenantVo::from(tenant)).unwrap();
         assert_eq!(response, expected);
         assert_eq!(response.get("expire_at"), Some(&Value::Null));
 
@@ -195,19 +192,15 @@ mod tests {
             assert_eq!(response.get(field), Some(&Value::Null), "{field}");
         }
 
-        let leap_second = Some("2016-12-31T23:59:60.123456Z");
-        let message = "租户响应的 expire_at 无法精确表示为 UTC";
-        assert!(matches!(TenantVo::try_from(tenant_fixture(leap_second)),
-            Err(AppError::Internal(error)) if error == message));
-        assert!(
-            matches!(TenantCapacityVo::try_from(capacity_fixture(leap_second, false)),
-            Err(AppError::Internal(error)) if error == message)
-        );
-
         let snapshot: Value =
             serde_json::from_str(include_str!("../../../../../openapi/openapi.json")).unwrap();
         let generated = serde_json::to_value(crate::openapi::ApiDoc::openapi()).unwrap();
-        for name in ["TenantVo", "TenantCapacityVo"] {
+        for name in [
+            "CreateTenantDto",
+            "UpdateTenantDto",
+            "TenantVo",
+            "TenantCapacityVo",
+        ] {
             let path = format!("/components/schemas/{name}");
             assert_eq!(
                 generated.pointer(&path),
@@ -223,7 +216,7 @@ mod tests {
             panic!("租户容量视图应包含租户对象");
         };
         fields.extend(tenant);
-        let response = serde_json::to_value(TenantCapacityVo::try_from(capacity).unwrap()).unwrap();
+        let response = serde_json::to_value(TenantCapacityVo::from(capacity)).unwrap();
         assert_eq!(response, expected);
         response
     }
@@ -234,7 +227,10 @@ mod tests {
             name: "测试租户".into(),
             domain: Some("tenant.example.test".into()),
             status: "enabled".into(),
-            expire_at: expire_at.map(|value| value.parse().unwrap()),
+            expire_at: expire_at.map(|value| {
+                OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339)
+                    .unwrap()
+            }),
             max_users: 100,
             max_roles: 20,
             max_storage_mb: 1024,
