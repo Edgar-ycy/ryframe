@@ -5,7 +5,7 @@ use super::{
 use chrono::{DateTime, Duration, Utc};
 use ryframe_application::ports::backup::*;
 use sea_orm::{IsolationLevel, TransactionTrait};
-use time::OffsetDateTime;
+use time::{OffsetDateTime, macros::offset};
 
 #[path = "backup/restore_safety.rs"]
 mod restore_safety;
@@ -16,6 +16,12 @@ fn check(condition: bool, message: &str) -> Result<(), String> {
     } else {
         Err(message.into())
     }
+}
+
+fn health_observation(value: DateTime<Utc>) -> OffsetDateTime {
+    ryframe_application::ports::utc_timestamp::from_chrono(value)
+        .expect("备份健康测试时刻必须可表示为 UTC")
+        .to_offset(offset!(+05:30))
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -85,7 +91,7 @@ async fn check_health(
         .and_then(|time| time.replace_nanosecond(captured.timestamp_subsec_nanos()))
         .map_err(|error| error.to_string())?;
     let health = repository
-        .health(scope, &required, now)
+        .health(scope, &required, health_observation(now))
         .await
         .map_err(|error| error.to_string())?;
     check(
@@ -93,7 +99,7 @@ async fn check_health(
         "备份健康时间必须保留实际采集时间和六位微秒",
     )?;
     let unrelated = repository
-        .health("another-scope", &required, now)
+        .health("another-scope", &required, health_observation(now))
         .await
         .map_err(|error| error.to_string())?;
     check(
@@ -118,7 +124,11 @@ async fn check_health(
     .await?;
     let expires_at = record.manifest.retention_until;
     let health = repository
-        .health(scope, &required, expires_at - Duration::microseconds(1))
+        .health(
+            scope,
+            &required,
+            health_observation(expires_at - Duration::microseconds(1)),
+        )
         .await
         .map_err(|error| error.to_string())?;
     check(
@@ -126,7 +136,7 @@ async fn check_health(
         "较新的失败备份不能掩盖有效备份年龄",
     )?;
     let expired = repository
-        .health(scope, &required, expires_at)
+        .health(scope, &required, health_observation(expires_at))
         .await
         .map_err(|error| error.to_string())?;
     check(
@@ -166,7 +176,7 @@ async fn check_overdue_restore(
     );
     persist_create(repository, &overdue).await?;
     let health = repository
-        .health(&backup.manifest.scope_id, required, now)
+        .health(&backup.manifest.scope_id, required, health_observation(now))
         .await
         .map_err(|error| error.to_string())?;
     check(
@@ -388,7 +398,7 @@ async fn check_failed_restore_and_health(
         .health(
             &backup.manifest.scope_id,
             required,
-            now + Duration::seconds(1),
+            health_observation(now + Duration::seconds(1)),
         )
         .await
         .map_err(|error| error.to_string())?;
@@ -400,7 +410,11 @@ async fn check_failed_restore_and_health(
         "来源 scope 的最新恢复结果或时间统计错误",
     )?;
     let target_health = repository
-        .health("isolated-restored", required, now + Duration::seconds(1))
+        .health(
+            "isolated-restored",
+            required,
+            health_observation(now + Duration::seconds(1)),
+        )
         .await
         .map_err(|error| error.to_string())?;
     check(
@@ -780,7 +794,7 @@ async fn check_projection_corruption(
             .health(
                 &health_candidate.manifest.scope_id,
                 &health_candidate.manifest.resource_keys(),
-                now,
+                health_observation(now),
             )
             .await
             .is_err(),

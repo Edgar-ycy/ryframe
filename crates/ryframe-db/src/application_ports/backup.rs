@@ -5,6 +5,7 @@ use ryframe_application::ports::backup::*;
 use ryframe_kernel::AppResult;
 use sea_orm::TransactionTrait;
 use std::sync::Arc;
+use time::OffsetDateTime;
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn BackupRepository> {
     Arc::new(DatabaseBackups { database })
@@ -44,7 +45,7 @@ impl BackupRepository for DatabaseBackups {
         &self,
         scope_id: &str,
         resources: &[String],
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<BackupHealth> {
         backup_repo::backup_health(self.database.write(), scope_id, resources, now).await
     }

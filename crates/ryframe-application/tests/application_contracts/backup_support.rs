@@ -54,7 +54,12 @@ impl BackupRepository for Repository {
     async fn restore(&self, id: &str) -> AppResult<Option<RestoreRecord>> {
         Ok(self.records.lock().await.restores.get(id).cloned())
     }
-    async fn health(&self, _: &str, _: &[String], _: DateTime<Utc>) -> AppResult<BackupHealth> {
+    async fn health(
+        &self,
+        _: &str,
+        _: &[String],
+        _: time::OffsetDateTime,
+    ) -> AppResult<BackupHealth> {
         Ok(BackupHealth::default())
     }
 }

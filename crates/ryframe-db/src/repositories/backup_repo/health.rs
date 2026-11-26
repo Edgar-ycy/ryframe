@@ -4,7 +4,7 @@ use ryframe_application::ports::backup::{BackupHealth, RestoreStatus};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{ConnectionTrait, DbBackend, FromQueryResult, Statement};
 use std::collections::BTreeMap;
-use time::{OffsetDateTime, PrimitiveDateTime};
+use time::{OffsetDateTime, PrimitiveDateTime, UtcOffset};
 
 const CANDIDATE_BATCH_SIZE: usize = 64;
 
@@ -37,8 +37,11 @@ pub async fn backup_health<C: ConnectionTrait>(
     db: &C,
     scope_id: &str,
     required: &[String],
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<BackupHealth> {
+    let now = now
+        .checked_to_offset(UtcOffset::UTC)
+        .ok_or_else(|| AppError::Database("备份健康时间超出 UTC 表示范围".into()))?;
     let rows = ResourceHealth::find_by_statement(Statement::from_sql_and_values(DbBackend::MySql,
         "SELECT r.resource_key, \
          SUBSTRING_INDEX(GROUP_CONCAT(CASE WHEN b.valid = 1 AND b.retention_until > ? THEN b.id END \
@@ -64,8 +67,6 @@ pub async fn backup_health<C: ConnectionTrait>(
         let oldest = health
             .oldest_capture
             .ok_or_else(|| AppError::Validation("健康备份缺少实际采集时间".into()))?;
-        let oldest = DateTime::from_timestamp(oldest.unix_timestamp(), oldest.nanosecond())
-            .ok_or_else(|| AppError::Database("备份健康时间超出 UTC 表示范围".into()))?;
         validate_healthy_candidates(db, scope_id, now, oldest, &valid_ids).await?;
     }
     let last = RestoreId::find_by_statement(Statement::from_sql_and_values(DbBackend::MySql,
@@ -103,8 +104,8 @@ pub async fn backup_health<C: ConnectionTrait>(
 async fn validate_healthy_candidates<C: ConnectionTrait>(
     db: &C,
     scope_id: &str,
-    now: DateTime<Utc>,
-    oldest: DateTime<Utc>,
+    now: OffsetDateTime,
+    oldest: OffsetDateTime,
     valid_ids: &std::collections::BTreeSet<String>,
 ) -> AppResult<()> {
     let recent = BackupId::find_by_statement(Statement::from_sql_and_values(
@@ -128,8 +129,8 @@ async fn validate_healthy_candidates<C: ConnectionTrait>(
         let records = super::validated_backups(db, &batch).await?;
         for (id, record) in records {
             if record.manifest.scope_id != scope_id
-                || record.manifest.retention_until <= now
-                || record.manifest.captured_at < oldest
+                || health_timestamp(record.manifest.retention_until)? <= now
+                || health_timestamp(record.manifest.captured_at)? < oldest
                 || valid_ids.contains(&id) && !record.valid
             {
                 return Err(AppError::Validation("健康候选备份状态已变化".into()));
@@ -181,8 +182,7 @@ fn health_timestamp(value: DateTime<Utc>) -> AppResult<OffsetDateTime> {
             "备份健康时间包含 MySQL 不支持的闰秒".into(),
         ));
     }
-    let epoch_nanos = i128::from(value.timestamp()) * 1_000_000_000 + i128::from(nanos);
-    OffsetDateTime::from_unix_timestamp_nanos(epoch_nanos)
+    ryframe_application::ports::utc_timestamp::from_chrono(value)
         .map_err(|_| AppError::Database("备份健康时间超出 UTC 表示范围".into()))
 }
 

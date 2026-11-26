@@ -3,6 +3,7 @@
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 mod health;
 mod manifest;
@@ -68,7 +69,7 @@ pub trait BackupRepository: Send + Sync {
         &self,
         scope_id: &str,
         resources: &[String],
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<BackupHealth>;
 }
 
