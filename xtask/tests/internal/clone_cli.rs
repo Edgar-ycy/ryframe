@@ -624,7 +624,7 @@ fn seed_runtime_build_requests_are_limited_to_department_plan_and_identity_verif
 }
 
 #[test]
-fn seed_runtime_held_originals_are_limited_to_selected_windows_quota_and_department_modes() {
+fn seed_runtime_held_originals_require_supported_modes_on_windows() {
     let fixture = Fixture::new();
     let run = Fixture::value(&fixture.run);
     for (mode, originals, supported) in [
@@ -639,10 +639,14 @@ fn seed_runtime_held_originals_are_limited_to_selected_windows_quota_and_departm
         ("departments-plan", "full", false),
         ("departments-reconcile", "held", false),
         ("identities-apply", "held", false),
-        ("identities-verify", "held", false),
+        ("identities-reconcile", "held", false),
+        ("identities-verify", "held", true),
+        ("identities-verify", "full", false),
         ("recover", "held", false),
     ] {
-        let parsed = fixture.parse(&[
+        let request = matches!(mode, "identities-reconcile" | "identities-verify")
+            .then_some(fixture.first.as_path());
+        let mut args = vec![
             "seed-runtime",
             "--run-dir",
             run,
@@ -651,13 +655,18 @@ fn seed_runtime_held_originals_are_limited_to_selected_windows_quota_and_departm
             "--originals",
             originals,
             "--write",
-        ]);
+        ];
+        if let Some(path) = request {
+            args.extend(["--request", Fixture::value(path)]);
+        }
+        let parsed = fixture.parse(&args);
         if cfg!(windows) && supported {
             assert!(
                 matches!(
                     parsed,
                     Ok(CloneCommand::SeedRuntime(options))
                         if options.operation.as_str() == mode && options.hold_originals
+                            && options.request.as_deref() == request
                 ),
                 "{mode} {originals}"
             );
