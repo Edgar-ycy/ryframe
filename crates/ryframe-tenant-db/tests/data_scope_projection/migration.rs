@@ -19,6 +19,7 @@ pub(super) async fn exercise(
         .ok_or("缺少测试目标")?
         .key;
     prepare_activation(control, target, &target_key).await?;
+    verify_renewed_lease_time(control).await?;
     let publisher = ryframe_tenant_db::application_ports::data_scope_projection::publisher(
         ControlDatabaseCluster::single(control.clone()),
         router.clone(),
@@ -54,6 +55,48 @@ pub(super) async fn exercise(
     reject_target_drift(target, &*publisher, fence, target_key == TARGET).await?;
     verify_before_commit(control, target, &*publisher, fence).await?;
     require_maintenance(control).await
+}
+
+async fn verify_renewed_lease_time(control: &DatabaseConnection) -> Result<(), String> {
+    use ryframe_application::{AuthorizationCache, TransactionAuditMode};
+    use time::{Duration, OffsetDateTime, UtcOffset};
+
+    #[derive(FromQueryResult)]
+    struct LeaseTime {
+        expires_at: OffsetDateTime,
+    }
+
+    let store = ryframe_tenant_db::application_ports::tenant_data::tracking(
+        ControlDatabaseCluster::single(control.clone()),
+        AuthorizationCache::disabled(),
+    );
+    let now = store.database_now().await.map_err(message)?;
+    assert_eq!(now.offset(), UtcOffset::UTC);
+    let expires_at = (now + Duration::hours(24))
+        .to_offset(UtcOffset::from_hms(5, 30, 0).expect("固定测试偏移有效"));
+    let transaction = store.begin().await.map_err(message)?;
+    assert!(
+        transaction
+            .renew_lease("system", TOKEN, expires_at)
+            .await
+            .map_err(message)?
+    );
+    transaction
+        .commit(TransactionAuditMode::Skip)
+        .await
+        .map_err(message)?;
+    let stored = LeaseTime::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::MySql,
+        "SELECT expires_at FROM sys_tenant_operation_lease WHERE tenant_id='system' AND owner_token=?",
+        [TOKEN.into()],
+    ))
+    .one(control)
+    .await
+    .map_err(message)?
+    .ok_or("找不到已续期的迁移租约")?;
+    assert_eq!(stored.expires_at.offset(), UtcOffset::UTC);
+    assert_eq!(stored.expires_at, expires_at);
+    Ok(())
 }
 
 fn request(target_key: &str) -> TenantDataFence<'_> {

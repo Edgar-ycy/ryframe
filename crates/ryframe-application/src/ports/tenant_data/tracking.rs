@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
+use time::OffsetDateTime;
 
 use crate::ports::jobs::BackgroundJobTransaction;
 
@@ -231,7 +232,7 @@ pub trait TenantDataMigrationTransaction:
 {
     fn background_jobs(&self) -> &dyn BackgroundJobTransaction;
 
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime>;
 
     async fn acquire_lease(
         &self,
@@ -242,7 +243,7 @@ pub trait TenantDataMigrationTransaction:
         &'a self,
         tenant_id: &'a str,
         owner_token: &'a str,
-        expires_at: DateTime<Utc>,
+        expires_at: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool>;
 
     async fn release_lease<'a>(
@@ -305,15 +306,15 @@ pub trait TenantDataMigrationTransaction:
     async fn has_validated_backup<'a>(
         &'a self,
         migration: &'a TenantDataMigrationRecord,
-        not_before: DateTime<Utc>,
-        now: DateTime<Utc>,
+        not_before: OffsetDateTime,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool>;
 }
 
 /// 租户数据迁移状态机所需的控制库持久化端口。
 #[async_trait::async_trait]
 pub trait TenantDataMigrationPersistencePort: Send + Sync {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime>;
 
     async fn occupied_target_keys<'a>(
         &'a self,
@@ -377,8 +378,8 @@ pub trait TenantDataMigrationPersistencePort: Send + Sync {
     async fn has_validated_backup<'a>(
         &'a self,
         migration: &'a TenantDataMigrationRecord,
-        not_before: DateTime<Utc>,
-        now: DateTime<Utc>,
+        not_before: OffsetDateTime,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool>;
 
     async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn TenantDataMigrationTransaction>>;

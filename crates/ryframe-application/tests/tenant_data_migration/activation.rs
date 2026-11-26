@@ -329,8 +329,8 @@ impl TenantDataMigrationTransaction for Work {
     fn background_jobs(&self) -> &dyn BackgroundJobTransaction {
         unreachable!()
     }
-    async fn database_now(&self) -> AppResult<chrono::DateTime<Utc>> {
-        Ok(self.pending.lock().unwrap().migration.updated_at)
+    async fn database_now(&self) -> AppResult<OffsetDateTime> {
+        AuthorizationMirrorTransaction::database_now(self).await
     }
     async fn lock_tenant<'a>(
         &'a self,
@@ -393,11 +393,14 @@ impl TenantDataMigrationTransaction for Work {
         &'a self,
         tenant_id: &'a str,
         owner: &'a str,
-        _: chrono::DateTime<Utc>,
+        expires_at: OffsetDateTime,
     ) -> AppResult<bool> {
         let state = self.pending.lock().unwrap();
         assert_eq!(tenant_id, state.migration.tenant_id);
         assert_eq!(owner, state.migration.switch_token);
+        let now = crate::ports::utc_timestamp::from_chrono(state.migration.updated_at).unwrap();
+        assert_eq!(expires_at, now + time::Duration::hours(24));
+        assert_eq!(expires_at.offset(), time::UtcOffset::UTC);
         self.shared.events.lock().unwrap().push("renew".into());
         Ok(true)
     }
@@ -428,8 +431,8 @@ impl TenantDataMigrationTransaction for Work {
     async fn has_validated_backup<'a>(
         &'a self,
         _: &'a TenantDataMigrationRecord,
-        _: chrono::DateTime<Utc>,
-        _: chrono::DateTime<Utc>,
+        _: OffsetDateTime,
+        _: OffsetDateTime,
     ) -> AppResult<bool> {
         unreachable!()
     }

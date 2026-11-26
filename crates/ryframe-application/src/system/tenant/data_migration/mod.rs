@@ -11,6 +11,7 @@ use std::sync::Arc;
 use chrono::Duration;
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use serde_json::json;
+use time::OffsetDateTime;
 
 use crate::{
     AuthorizationCache, DataScopeProjectionPublisher, EnqueueJob, JobQueue,
@@ -26,9 +27,9 @@ pub use models::*;
 pub use workflow::TenantDataMigrationJobHandler;
 
 use support::{
-    MigrationPlanHashInput, create_blocker_error, ensure_platform_actor,
-    ensure_same_create_request, migration_plan_hash, sha256_hex, target_summary,
-    validate_idempotency_key, validate_migration_tenant,
+    MigrationPlanHashInput, backup_window_start, create_blocker_error, ensure_platform_actor,
+    ensure_same_create_request, migration_plan_hash, migration_record_time, sha256_hex,
+    target_summary, validate_idempotency_key, validate_migration_tenant,
 };
 
 pub const TENANT_DATA_MIGRATION_JOB_TYPE: &str = "tenant_data_migration";
@@ -372,6 +373,7 @@ impl TenantDataMigrationService {
 
         let migration_id = crate::next_id()?;
         let now = self.persistence.database_now().await?;
+        let record_now = migration_record_time(now)?;
         let target_generation = command
             .expected_placement_generation
             .checked_add(1)
@@ -404,9 +406,9 @@ impl TenantDataMigrationService {
                 operation: "tenant_data.migration".into(),
                 resource_type: "tenant_data_migration".into(),
                 resource_id: migration_id.to_string(),
-                expires_at: now + Duration::hours(OPERATION_LEASE_HOURS),
-                created_at: now,
-                updated_at: now,
+                expires_at: record_now + Duration::hours(OPERATION_LEASE_HOURS),
+                created_at: record_now,
+                updated_at: record_now,
             })
             .await
         {
@@ -453,7 +455,7 @@ impl TenantDataMigrationService {
                 switch_token: switch_token.clone(),
                 operator_id: actor.user_id,
                 retention_hours: RETENTION_HOURS,
-                now,
+                now: record_now,
             })
             .await;
         let mut migration = match inserted {
@@ -482,7 +484,7 @@ impl TenantDataMigrationService {
             }
         };
         migration.background_job_id = Some(queued);
-        migration.updated_at = now;
+        migration.updated_at = record_now;
         migration = transaction.save_migration(migration).await?;
         transaction
             .commit(crate::TransactionAuditMode::CurrentRequest)
@@ -522,7 +524,7 @@ impl TenantDataMigrationService {
         transaction: &dyn crate::ports::tenant_data::TenantDataMigrationTransaction,
         tenant_id: &str,
         migration_id: i64,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<i64> {
         self.queue
             .enqueue_in_transaction(
@@ -535,7 +537,7 @@ impl TenantDataMigrationService {
                     job_type: TENANT_DATA_MIGRATION_JOB_TYPE.into(),
                     payload: json!({ "migration_id": migration_id.to_string() }),
                     priority: 10,
-                    available_at: crate::jobs::queue_time_from_database(now)?,
+                    available_at: now,
                     max_attempts: 8,
                     dedupe_key: Some(migration_id.to_string()),
                     traceparent: None,

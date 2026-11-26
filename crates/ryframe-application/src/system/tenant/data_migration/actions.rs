@@ -64,8 +64,9 @@ impl TenantDataMigrationService {
             None => {
                 intent.cancel_idempotency_key_hash = Some(key_hash.clone());
                 intent.cancelled_by = Some(actor.user_id);
-                intent.cancel_requested_at = Some(intent_now);
-                intent.updated_at = intent_now;
+                let record_now = migration_record_time(intent_now)?;
+                intent.cancel_requested_at = Some(record_now);
+                intent.updated_at = record_now;
                 intent = intent_transaction.save_migration(intent).await?;
             }
         }
@@ -80,7 +81,7 @@ impl TenantDataMigrationService {
                 TENANT_DATA_MIGRATION_JOB_TYPE,
                 "migration_id",
                 migration_id,
-                crate::jobs::queue_time_from_database(intent_now)?,
+                intent_now,
             )
             .await?
         {
@@ -121,7 +122,11 @@ impl TenantDataMigrationService {
             return Err(AppError::Conflict("迁移尚未进入保留期清理阶段".into()));
         }
         let now = self.persistence.database_now().await?;
-        if snapshot.retention_until.is_none_or(|until| until > now) {
+        let record_now = migration_record_time(now)?;
+        if snapshot
+            .retention_until
+            .is_none_or(|until| until > record_now)
+        {
             return Err(AppError::Conflict("源数据保留期尚未结束".into()));
         }
         let not_before = snapshot
@@ -130,7 +135,7 @@ impl TenantDataMigrationService {
             .ok_or_else(|| AppError::Conflict("迁移缺少激活时间".into()))?;
         if !self
             .persistence
-            .has_validated_backup(&snapshot, not_before, now)
+            .has_validated_backup(&snapshot, backup_window_start(not_before)?, now)
             .await?
         {
             return Err(AppError::Conflict(
@@ -164,7 +169,10 @@ impl TenantDataMigrationService {
             }
             _ => {}
         }
-        if intent.retention_until.is_none_or(|until| until > now) {
+        if intent
+            .retention_until
+            .is_none_or(|until| until > record_now)
+        {
             return Err(AppError::Conflict("源数据保留期尚未结束".into()));
         }
         let intent_not_before = intent
@@ -172,7 +180,7 @@ impl TenantDataMigrationService {
             .or(intent.succeeded_at)
             .ok_or_else(|| AppError::Conflict("迁移缺少激活时间".into()))?;
         if !intent_transaction
-            .has_validated_backup(&intent, intent_not_before, now)
+            .has_validated_backup(&intent, backup_window_start(intent_not_before)?, now)
             .await?
         {
             return Err(AppError::Conflict(
@@ -182,8 +190,8 @@ impl TenantDataMigrationService {
         if intent.finalize_idempotency_key_hash.is_none() {
             intent.finalize_idempotency_key_hash = Some(key_hash.clone());
             intent.finalized_by = Some(actor.user_id);
-            intent.finalize_requested_at = Some(now);
-            intent.updated_at = now;
+            intent.finalize_requested_at = Some(record_now);
+            intent.updated_at = record_now;
             intent = intent_transaction.save_migration(intent).await?;
         }
         let background_job_id = intent
@@ -197,7 +205,7 @@ impl TenantDataMigrationService {
                 TENANT_DATA_MIGRATION_JOB_TYPE,
                 "migration_id",
                 migration_id,
-                crate::jobs::queue_time_from_database(now)?,
+                now,
             )
             .await?
         {

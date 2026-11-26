@@ -30,7 +30,6 @@ repositories = [
     "ryframe-db/repositories",
     "dep:ryframe-kernel",
     "dep:async-trait",
-    "dep:chrono",
     "dep:time",
 ]
 
@@ -41,7 +40,6 @@ ryframe-kernel = { path = "../ryframe-kernel", optional = true }
 ryframe-db = { path = "../ryframe-db", default-features = false, optional = true }
 ryframe-application = { path = "../ryframe-application", default-features = false, optional = true }
 async-trait = { workspace = true, optional = true }
-chrono = { workspace = true, optional = true }
 hex = { workspace = true, optional = true }
 sea-orm = { workspace = true, optional = true }
 sea-orm-migration = { workspace = true, optional = true }

@@ -1,5 +1,7 @@
+use chrono::{DateTime, Utc};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sha2::{Digest, Sha256};
+use time::OffsetDateTime;
 
 use crate::ports::tenant_data::{
     TenantDataBackupPointRecord, TenantDataMigrationItemRecord, TenantDataMigrationRecord,
@@ -11,6 +13,16 @@ use super::{
     BackupPointView, CreateMigrationCommand, DataPlacementView, DataTargetSummary,
     MigrationItemView, MigrationView, RETENTION_HOURS,
 };
+
+pub(super) fn migration_record_time(now: OffsetDateTime) -> AppResult<DateTime<Utc>> {
+    DateTime::from_timestamp(now.unix_timestamp(), now.nanosecond())
+        .ok_or_else(|| AppError::Database("迁移记录时间无法精确表示为 UTC".into()))
+}
+
+pub(super) fn backup_window_start(timestamp: DateTime<Utc>) -> AppResult<OffsetDateTime> {
+    utc_timestamp::from_chrono(timestamp)
+        .map_err(|_| AppError::Database("迁移备份窗口起点无法精确表示为 UTC".into()))
+}
 
 pub(super) fn ensure_platform_actor(actor: &ActorContext) -> AppResult<()> {
     if actor.tenant_id != "system" {

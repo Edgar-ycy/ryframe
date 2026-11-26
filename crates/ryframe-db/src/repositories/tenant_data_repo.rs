@@ -7,6 +7,7 @@ use sea_orm::{
     QuerySelect,
     sea_query::{Condition, LockType},
 };
+use time::UtcOffset;
 
 use crate::entities::tenant::{
     data_backup_point as tenant_data_backup_point, data_migration as tenant_data_migration,
@@ -410,6 +411,14 @@ impl TenantDataRepository {
     where
         C: ConnectionTrait,
     {
+        let not_before = query
+            .not_before
+            .checked_to_offset(UtcOffset::UTC)
+            .ok_or_else(|| AppError::Validation("备份时效下限超出 UTC 表示范围".into()))?;
+        let now = query
+            .now
+            .checked_to_offset(UtcOffset::UTC)
+            .ok_or_else(|| AppError::Validation("备份时效校验时间超出 UTC 表示范围".into()))?;
         let scope = if query.target_mode == "shared" {
             Condition::all()
                 .add(
@@ -442,12 +451,12 @@ impl TenantDataRepository {
             )
             .filter(tenant_data_backup_point::Column::Checksum.is_not_null())
             .filter(tenant_data_backup_point::Column::Checksum.ne(""))
-            .filter(tenant_data_backup_point::Column::CapturedAt.gte(query.not_before))
-            .filter(tenant_data_backup_point::Column::RetentionUntil.gte(query.now))
+            .filter(tenant_data_backup_point::Column::CapturedAt.gte(not_before))
+            .filter(tenant_data_backup_point::Column::RetentionUntil.gte(now))
             .filter(
                 Condition::any()
                     .add(tenant_data_backup_point::Column::ExpiresAt.is_null())
-                    .add(tenant_data_backup_point::Column::ExpiresAt.gt(query.now)),
+                    .add(tenant_data_backup_point::Column::ExpiresAt.gt(now)),
             )
             .filter(scope)
             .order_by_desc(tenant_data_backup_point::Column::CapturedAt)

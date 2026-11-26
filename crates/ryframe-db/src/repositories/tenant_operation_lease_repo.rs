@@ -1,10 +1,10 @@
 use crate::DbResultExt;
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, QuerySelect,
     sea_query::{Condition, Expr, LockType},
 };
+use time::{OffsetDateTime, UtcOffset};
 
 use crate::entities::tenant::{
     self, config_transfer as tenant_config_transfer, data_migration as tenant_data_migration,
@@ -192,10 +192,13 @@ impl TenantOperationLeaseRepository {
         transaction: &DatabaseTransaction,
         tenant_id: &str,
         owner_token: &str,
-        expires_at: DateTime<Utc>,
+        expires_at: OffsetDateTime,
     ) -> AppResult<bool> {
         self.lock_tenant_and_validate_in_txn(transaction, tenant_id, Some(owner_token))
             .await?;
+        let expires_at = expires_at
+            .checked_to_offset(UtcOffset::UTC)
+            .ok_or_else(|| AppError::Validation("续租截止时间超出 UTC 表示范围".into()))?;
         tenant_operation_lease::Entity::update_many()
             .col_expr(
                 tenant_operation_lease::Column::ExpiresAt,

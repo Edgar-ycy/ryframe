@@ -89,6 +89,8 @@ impl TenantConfigTransferRepository {
         owner_token: &str,
         expires_at: DateTime<Utc>,
     ) -> AppResult<bool> {
+        let expires_at =
+            super::utc_time_from_chrono(expires_at).db_context("租户配置迁移续租截止时间")?;
         TenantOperationLeaseRepository
             .renew_in_txn(transaction, tenant_id, owner_token, expires_at)
             .await

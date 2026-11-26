@@ -15,10 +15,12 @@ use ryframe_db::{
     ControlDatabaseCluster,
     application_ports::transaction::DatabasePortTransaction,
     repositories::{
-        TenantDataRepository, TenantOperationLeaseRepository, TenantRepository, database_utc_now,
+        TenantDataRepository, TenantOperationLeaseRepository, TenantRepository,
+        database_utc_now_time,
     },
 };
 use sea_orm::TransactionTrait;
+use time::OffsetDateTime;
 
 mod mappers;
 
@@ -50,8 +52,8 @@ pub fn port(
 
 #[async_trait::async_trait]
 impl TenantDataMigrationPersistencePort for TenantDataMigrationPersistence {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
-        database_utc_now(self.database.write()).await
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime> {
+        database_utc_now_time(self.database.write()).await
     }
 
     async fn occupied_target_keys<'a>(
@@ -170,8 +172,8 @@ impl TenantDataMigrationPersistencePort for TenantDataMigrationPersistence {
     async fn has_validated_backup<'a>(
         &'a self,
         migration: &'a TenantDataMigrationRecord,
-        not_before: chrono::DateTime<chrono::Utc>,
-        now: chrono::DateTime<chrono::Utc>,
+        not_before: OffsetDateTime,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         TenantDataRepository
             .validated_backup_for_destination(
@@ -206,8 +208,8 @@ impl TenantDataMigrationTransaction for TenantDataMigrationWorkUnit {
         &self.transaction
     }
 
-    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
-        database_utc_now(&self.transaction).await
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime> {
+        database_utc_now_time(&self.transaction).await
     }
 
     async fn acquire_lease(
@@ -224,7 +226,7 @@ impl TenantDataMigrationTransaction for TenantDataMigrationWorkUnit {
         &'a self,
         tenant_id: &'a str,
         owner_token: &'a str,
-        expires_at: chrono::DateTime<chrono::Utc>,
+        expires_at: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         TenantOperationLeaseRepository
             .renew_in_txn(&self.transaction, tenant_id, owner_token, expires_at)
@@ -344,8 +346,8 @@ impl TenantDataMigrationTransaction for TenantDataMigrationWorkUnit {
     async fn has_validated_backup<'a>(
         &'a self,
         migration: &'a TenantDataMigrationRecord,
-        not_before: chrono::DateTime<chrono::Utc>,
-        now: chrono::DateTime<chrono::Utc>,
+        not_before: OffsetDateTime,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         TenantDataRepository
             .validated_backup_for_destination(
