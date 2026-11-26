@@ -13,6 +13,7 @@ pub(super) fn generate(
     frontend: &CandidateWorkspace,
     frontend_source: &Path,
     target: &Path,
+    build_dir: &Path,
     catalog_target: &Path,
 ) -> Result<BTreeSet<PathBuf>, String> {
     println!("→ 从候选后端导出 OpenAPI 并生成 typed caller");
@@ -25,7 +26,9 @@ pub(super) fn generate(
         .args(["--", "generate", "api", "--write", "--frontend-dir"])
         .arg(&frontend.path)
         .current_dir(backend)
-        .env("CARGO_TARGET_DIR", target);
+        // 子 xtask 用同一独占目录构建并运行 OpenAPI 导出程序。
+        .env("CARGO_TARGET_DIR", target)
+        .env("CARGO_BUILD_BUILD_DIR", build_dir);
     run("候选契约生成", &mut command)?;
     println!("→ 生成业务列表、表单、路由和按钮权限");
     let report = generate_business_frontend(backend, &frontend.path, catalog_target)

@@ -1,5 +1,6 @@
 use std::{
     collections::BTreeSet,
+    fs,
     path::{Path, PathBuf},
 };
 
@@ -35,34 +36,30 @@ pub(super) fn execute(plan: &GenerationPlan, tables: Option<&[TableInfo]>) -> Re
     let backend = CandidateWorkspace::create(&plan.workspace_root, true)?;
     let cache = plan.target_dir.join("ryframe-generate");
     let catalog_target = cache.join("catalog-target");
-    let pipeline_target = safe_target_directory(&plan.target_dir.join("gen"))?;
+    let pipeline_build_dir = safe_target_directory(&plan.target_dir.join("gen"))?;
     println!("→ 编译候选模型并生成整批 CRUD 与迁移");
     let mut backend_allowed = match backend::generate(plan, &backend.path, tables, &catalog_target)
     {
         Ok(allowed) => allowed,
         Err(error) => return Err(backend.retain(error)),
     };
-    let mut frontend_allowed = BTreeSet::new();
-    let frontend = if let Some(root) = &frontend_root {
-        let frontend = CandidateWorkspace::create(root, false)?;
-        frontend_allowed = match frontend::generate(
-            &backend.path,
-            &frontend,
-            root,
-            &pipeline_target,
-            &catalog_target,
-        ) {
-            Ok(allowed) => allowed,
-            Err(error) => return Err(backend.retain(frontend.retain(error))),
-        };
-        backend_allowed.insert("openapi/openapi.json".into());
-        Some(frontend)
-    } else {
-        if let Err(error) = preflight::validate(&backend.path, &pipeline_target) {
-            return Err(backend.retain(error));
-        }
-        None
+    let pipeline_target = match create_pipeline_target(&pipeline_build_dir) {
+        Ok(target) => target,
+        Err(error) => return Err(backend.retain(error)),
     };
+    let (frontend, frontend_allowed) = match validate_candidate(
+        &backend.path,
+        frontend_root.as_deref(),
+        pipeline_target.path(),
+        &pipeline_build_dir,
+        &catalog_target,
+    ) {
+        Ok(checked) => checked,
+        Err(error) => return Err(backend.retain(error)),
+    };
+    if frontend.is_some() {
+        backend_allowed.insert("openapi/openapi.json".into());
+    }
     let backend_changes = backend.changes(&backend_allowed)?;
     let frontend_changes = frontend
         .as_ref()
@@ -95,7 +92,46 @@ pub(super) fn execute(plan: &GenerationPlan, tables: Option<&[TableInfo]>) -> Re
     if let Some(frontend_lock) = frontend_lock {
         frontend_lock.release()?;
     }
+    let target_path = pipeline_target.path().to_owned();
+    if let Err(error) = pipeline_target.close() {
+        eprintln!("候选产物目录 {} 清理失败：{error}", target_path.display());
+    }
     backend_lock.release()
+}
+
+fn create_pipeline_target(build_dir: &Path) -> Result<tempfile::TempDir, String> {
+    // 保留共享编译缓存，每次候选只运行自己目录里的最终产物。
+    fs::create_dir_all(build_dir)
+        .and_then(|()| {
+            tempfile::Builder::new()
+                .prefix("run-")
+                .tempdir_in(build_dir)
+        })
+        .map_err(|error| {
+            format!(
+                "无法创建候选产物目录 {}：{error}；本批未安装",
+                build_dir.display()
+            )
+        })
+}
+
+fn validate_candidate(
+    backend: &Path,
+    frontend_root: Option<&Path>,
+    target: &Path,
+    build_dir: &Path,
+    catalog_target: &Path,
+) -> Result<(Option<CandidateWorkspace>, BTreeSet<PathBuf>), String> {
+    if let Some(root) = frontend_root {
+        let frontend = CandidateWorkspace::create(root, false)?;
+        match frontend::generate(backend, &frontend, root, target, build_dir, catalog_target) {
+            Ok(allowed) => Ok((Some(frontend), allowed)),
+            Err(error) => Err(frontend.retain(error)),
+        }
+    } else {
+        preflight::validate(backend, target, build_dir)?;
+        Ok((None, BTreeSet::new()))
+    }
 }
 
 pub(super) fn safe_target_directory(target: &Path) -> Result<PathBuf, String> {
