@@ -518,13 +518,12 @@ fn export_job_response_preserves_utc_precision_nullability_and_schema() {
 
 #[test]
 fn schedule_execution_response_preserves_utc_precision_and_schema() {
-    use chrono::{DateTime, Utc};
     use ryframe_api::dto::public_dto::JobScheduleExecutionVo;
     use ryframe_application::{
         JobScheduleExecutionVo as ServiceExecution, ports::jobs::JobScheduleExecutionRecord,
     };
-    use ryframe_kernel::AppError;
     use serde_json::{Value, json};
+    use time::macros::datetime;
     use utoipa::OpenApi;
 
     let mut execution = ServiceExecution::from(JobScheduleExecutionRecord {
@@ -535,16 +534,14 @@ fn schedule_execution_response_preserves_utc_precision_and_schema() {
         handler_key: "fixture.job".into(),
         fire_key: "manual:fixture".into(),
         trigger_kind: "manual".into(),
-        scheduled_for: DateTime::from_timestamp(-1, 123_400_000).unwrap(),
+        scheduled_for: datetime!(1969-12-31 23:59:59.123400 UTC),
         outcome: "enqueued".into(),
         background_job_id: Some(7),
         background_job_status: Some("pending".into()),
         detail: None,
-        created_at: DateTime::from_timestamp(0, 120_000_000).unwrap(),
+        created_at: datetime!(1970-01-01 00:00:00.120 UTC),
     });
-    let encoded =
-        serde_json::to_string(&JobScheduleExecutionVo::try_from(execution.clone()).unwrap())
-            .unwrap();
+    let encoded = serde_json::to_string(&JobScheduleExecutionVo::from(execution.clone())).unwrap();
     assert_eq!(encoded, serde_json::to_string(&execution).unwrap());
     let response: Value = serde_json::from_str(&encoded).unwrap();
     assert_eq!(response["id"], "42");
@@ -581,23 +578,12 @@ fn schedule_execution_response_preserves_utc_precision_and_schema() {
         })
     );
 
-    execution.scheduled_for = DateTime::parse_from_rfc3339("1000-01-01T00:00:00Z")
-        .unwrap()
-        .with_timezone(&Utc);
-    execution.created_at = DateTime::parse_from_rfc3339("9999-12-31T23:59:59.499999Z")
-        .unwrap()
-        .with_timezone(&Utc);
-    let response =
-        serde_json::to_value(JobScheduleExecutionVo::try_from(execution.clone()).unwrap()).unwrap();
+    execution.scheduled_for = datetime!(1000-01-01 00:00:00 UTC);
+    execution.created_at = datetime!(9999-12-31 23:59:59.499999 UTC);
+    let response = serde_json::to_value(JobScheduleExecutionVo::from(execution.clone())).unwrap();
     assert_eq!(response, serde_json::to_value(&execution).unwrap());
     assert_eq!(response["scheduled_for"], "1000-01-01T00:00:00Z");
     assert_eq!(response["created_at"], "9999-12-31T23:59:59.499999Z");
-
-    execution.scheduled_for = DateTime::from_timestamp(-1, 1_123_456_000).unwrap();
-    assert!(matches!(
-        JobScheduleExecutionVo::try_from(execution),
-        Err(AppError::Internal(message)) if message.contains("scheduled_for")
-    ));
 }
 
 #[test]

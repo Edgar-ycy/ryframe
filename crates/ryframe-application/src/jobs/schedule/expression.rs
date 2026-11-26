@@ -1,17 +1,16 @@
-use ::time::OffsetDateTime;
 use jiff_cron::Schedule;
 
 use super::calendar::{Calendar, next_local_second, resolve_timezone};
 use super::*;
 
 pub(super) fn validate_persisted_schedule(
-    next_run_at: Option<DateTime<Utc>>,
+    next_run_at: Option<OffsetDateTime>,
     misfire_policy: &str,
     concurrency_policy: &str,
     max_runtime_seconds: i32,
     cron_expression: &str,
     timezone: &str,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> Result<ParsedSchedule, String> {
     if next_run_at.is_none() {
         return Err("已启用计划缺少 next_run_at".into());
@@ -91,15 +90,15 @@ impl ParsedSchedule {
         self.calendar.name
     }
 
-    pub(super) fn next_after(&self, after: DateTime<Utc>) -> AppResult<DateTime<Utc>> {
-        let cutoff = after.timestamp();
+    pub(super) fn next_after(&self, after: OffsetDateTime) -> AppResult<OffsetDateTime> {
+        let cutoff = after.unix_timestamp();
         if let Some(mut start) = self.calendar.start_after(cutoff) {
             while let Some(occurrence) = self.calendar.first_from(start)? {
                 if let Some(utc) = std::iter::once(occurrence.first)
                     .chain(occurrence.repeated)
                     .find(|utc| utc.unix_timestamp() > cutoff)
                 {
-                    return app_utc(utc);
+                    return Ok(utc);
                 }
                 start = next_local_second(occurrence.local)?;
             }
@@ -109,10 +108,10 @@ impl ParsedSchedule {
 
     pub(super) fn future_occurrences(
         &self,
-        after: DateTime<Utc>,
+        after: OffsetDateTime,
         count: usize,
     ) -> AppResult<Vec<JobScheduleOccurrence>> {
-        let mut previous = after.timestamp();
+        let mut previous = after.unix_timestamp();
         let mut repeated = None;
         let mut occurrences = Vec::with_capacity(count);
         for _ in 0..count {
@@ -134,9 +133,4 @@ impl ParsedSchedule {
         }
         Ok(occurrences)
     }
-}
-
-fn app_utc(utc: OffsetDateTime) -> AppResult<DateTime<Utc>> {
-    DateTime::from_timestamp(utc.unix_timestamp(), 0)
-        .ok_or_else(|| AppError::Validation("Cron 执行时间超出 UTC 日期范围".into()))
 }

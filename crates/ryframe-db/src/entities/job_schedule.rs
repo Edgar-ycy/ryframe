@@ -1,6 +1,6 @@
-use chrono::{DateTime, Utc};
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 /// 租户隔离的后台任务调度计划。
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
@@ -17,12 +17,24 @@ pub struct Model {
     pub misfire_policy: String,
     pub concurrency_policy: String,
     pub max_runtime_seconds: i32,
-    pub next_run_at: Option<DateTime<Utc>>,
-    pub last_run_at: Option<DateTime<Utc>>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub next_run_at: Option<OffsetDateTime>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub last_run_at: Option<OffsetDateTime>,
     pub version: i64,
     pub del_flag: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    #[serde(with = "ryframe_application::ports::utc_timestamp")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "ryframe_application::ports::utc_timestamp")]
+    pub updated_at: OffsetDateTime,
 }
 
 impl Model {

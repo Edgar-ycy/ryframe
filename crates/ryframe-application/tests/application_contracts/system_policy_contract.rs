@@ -135,10 +135,10 @@ fn job_status_and_public_error_rules_are_application_owned() {
 
 #[test]
 fn schedule_record_maps_every_public_field() {
-    let created_at = Utc.with_ymd_and_hms(2026, 8, 21, 1, 2, 3).unwrap();
-    let updated_at = Utc.with_ymd_and_hms(2026, 8, 21, 2, 3, 4).unwrap();
-    let next_run_at = Utc.with_ymd_and_hms(2026, 8, 22, 0, 0, 0).unwrap();
-    let last_run_at = Utc.with_ymd_and_hms(2026, 8, 20, 0, 0, 0).unwrap();
+    let created_at = datetime!(2026-08-21 01:02:03 UTC);
+    let updated_at = datetime!(2026-08-21 02:03:04 UTC);
+    let next_run_at = datetime!(2026-08-22 00:00:00 UTC);
+    let last_run_at = datetime!(2026-08-20 00:00:00 UTC);
     let schedule = ryframe_application::JobScheduleVo::from(JobScheduleRecord {
         id: 7,
         tenant_id: "tenant-a".to_owned(),

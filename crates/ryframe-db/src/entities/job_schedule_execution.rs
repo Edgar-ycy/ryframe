@@ -1,6 +1,6 @@
-use chrono::{DateTime, Utc};
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 /// 调度计划每次触发或跳过的不可变历史记录。
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
@@ -14,11 +14,13 @@ pub struct Model {
     pub handler_key_snapshot: String,
     pub fire_key: String,
     pub trigger_kind: String,
-    pub scheduled_for: DateTime<Utc>,
+    #[serde(with = "ryframe_application::ports::utc_timestamp")]
+    pub scheduled_for: OffsetDateTime,
     pub outcome: String,
     pub background_job_id: Option<i64>,
     pub detail: Option<String>,
-    pub created_at: DateTime<Utc>,
+    #[serde(with = "ryframe_application::ports::utc_timestamp")]
+    pub created_at: OffsetDateTime,
 }
 
 impl Model {

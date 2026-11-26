@@ -11,7 +11,7 @@ use ryframe_db::{
     },
     entities::{background_job, job_schedule, outbox_event},
 };
-use sea_orm::ActiveValue::Set;
+use sea_orm::{ActiveValue::Set, TryIntoModel};
 use serde_json::json;
 use time::{Duration as TimeDuration, UtcOffset, macros::datetime};
 
@@ -86,7 +86,7 @@ fn file_update_fill_uses_the_context_timestamp_and_preserves_other_fields() {
 
 #[test]
 fn schedule_mapping_preserves_state_and_deletion() {
-    let now = Utc.with_ymd_and_hms(2026, 8, 21, 1, 2, 3).unwrap();
+    let now = datetime!(2026-08-21 01:02:03.123456 UTC);
     let active = schedule_active(JobScheduleRecord {
         id: 42,
         tenant_id: "tenant-a".to_owned(),
@@ -114,6 +114,18 @@ fn schedule_mapping_preserves_state_and_deletion() {
         Set(job_schedule::Model::DEL_FLAG_DELETED.to_owned())
     );
     assert_eq!(active.last_run_at, Set(Some(now)));
+    assert_eq!(active.next_run_at, Set(None));
+    assert_eq!(active.created_at, Set(now));
+    assert_eq!(active.updated_at, Set(now));
+
+    let model = active.try_into_model().unwrap();
+    let mut serialized = serde_json::to_value(&model).unwrap();
+    assert_eq!(serialized["last_run_at"], "2026-08-21T01:02:03.123456Z");
+    assert_eq!(serialized["next_run_at"], serde_json::Value::Null);
+    let restored: job_schedule::Model = serde_json::from_value(serialized.clone()).unwrap();
+    assert_eq!(restored, model);
+    serialized["last_run_at"] = json!("2016-12-31T23:59:60.123456Z");
+    assert!(serde_json::from_value::<job_schedule::Model>(serialized).is_err());
 }
 
 #[test]

@@ -1,4 +1,3 @@
-use chrono::{TimeZone, Utc};
 use ryframe_application::{
     JobWorkerPolicy, PersistedTraceContext, has_super_admin_role,
     infrastructure::current_trace_context, install_id_generator, is_valid_tenant_target_key,
@@ -9,6 +8,7 @@ use ryframe_application::{
     system::{identity::RoleOptionPurpose, operations::parse_log_time_range},
 };
 use ryframe_kernel::AppError;
+use time::macros::datetime;
 
 fn role(code: &str, is_super: bool) -> IdentityRoleRecord {
     IdentityRoleRecord {
@@ -86,8 +86,8 @@ fn cache_namespace_rejects_unsafe_fragments() {
 
 #[test]
 fn persisted_schedule_validation_uses_application_values() {
-    let now = Utc.with_ymd_and_hms(2026, 8, 21, 0, 0, 0).unwrap();
-    let next_run_at = Utc.with_ymd_and_hms(2026, 8, 22, 0, 0, 0).unwrap();
+    let now = datetime!(2026-08-21 00:00:00 UTC);
+    let next_run_at = datetime!(2026-08-22 00:00:00 UTC);
     let valid = validate_persisted_schedule_configuration(
         Some(next_run_at),
         "skip",

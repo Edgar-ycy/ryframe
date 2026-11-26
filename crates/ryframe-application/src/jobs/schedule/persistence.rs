@@ -3,10 +3,10 @@ use super::*;
 pub(super) struct NewExecution<'a> {
     pub(super) fire_key: &'a str,
     pub(super) trigger_kind: &'a str,
-    pub(super) scheduled_for: DateTime<Utc>,
+    pub(super) scheduled_for: OffsetDateTime,
     pub(super) outcome: &'a str,
     pub(super) detail: Option<String>,
-    pub(super) created_at: DateTime<Utc>,
+    pub(super) created_at: OffsetDateTime,
 }
 
 pub(super) async fn insert_execution(
@@ -43,9 +43,9 @@ pub(super) async fn attach_background_job(
 pub(super) async fn advance_schedule(
     transaction: &dyn JobScheduleTransaction,
     mut schedule: JobScheduleRecord,
-    next_run_at: DateTime<Utc>,
-    last_run_at: DateTime<Utc>,
-    now: DateTime<Utc>,
+    next_run_at: OffsetDateTime,
+    last_run_at: OffsetDateTime,
+    now: OffsetDateTime,
 ) -> AppResult<()> {
     schedule.next_run_at = Some(next_run_at);
     schedule.last_run_at = Some(last_run_at);
@@ -57,7 +57,7 @@ pub(super) async fn advance_schedule(
 pub(super) async fn quarantine_invalid_schedule(
     transaction: &dyn JobScheduleTransaction,
     mut schedule: JobScheduleRecord,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
     detail: &str,
 ) -> AppResult<()> {
     let scheduled_for = schedule.next_run_at.unwrap_or(now);
@@ -171,8 +171,9 @@ pub(super) fn manual_fire_key(idempotency_key: &str) -> String {
     )
 }
 
-pub(super) fn automatic_fire_key(scheduled_for: DateTime<Utc>) -> String {
-    format!("auto:{}", scheduled_for.timestamp_micros())
+pub(super) fn automatic_fire_key(scheduled_for: OffsetDateTime) -> String {
+    let micros = scheduled_for.unix_timestamp_nanos().div_euclid(1_000);
+    format!("auto:{micros}")
 }
 
 pub(super) fn validate_id(id: i64) -> AppResult<()> {
@@ -214,6 +215,14 @@ pub(super) async fn rollback_with<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automatic_fire_key_keeps_unix_microseconds_before_and_after_the_epoch() {
+        for (nanos, expected) in [(-1, "auto:-1"), (0, "auto:0"), (1_234_567, "auto:1234")] {
+            let scheduled_for = OffsetDateTime::from_unix_timestamp_nanos(nanos).unwrap();
+            assert_eq!(automatic_fire_key(scheduled_for), expected);
+        }
+    }
 
     #[test]
     fn schedule_trigger_contract_preserves_the_three_recorded_kinds() {

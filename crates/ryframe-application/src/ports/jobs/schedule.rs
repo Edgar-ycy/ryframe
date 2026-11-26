@@ -1,5 +1,5 @@
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
+use time::OffsetDateTime;
 
 use crate::{EnqueueJob, EnqueueJobResult};
 
@@ -31,11 +31,11 @@ pub struct JobScheduleRecord {
     pub misfire_policy: String,
     pub concurrency_policy: String,
     pub max_runtime_seconds: i32,
-    pub next_run_at: Option<DateTime<Utc>>,
-    pub last_run_at: Option<DateTime<Utc>>,
+    pub next_run_at: Option<OffsetDateTime>,
+    pub last_run_at: Option<OffsetDateTime>,
     pub version: i64,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
     pub deleted: bool,
 }
 
@@ -48,12 +48,12 @@ pub struct JobScheduleExecutionRecord {
     pub handler_key: String,
     pub fire_key: String,
     pub trigger_kind: String,
-    pub scheduled_for: DateTime<Utc>,
+    pub scheduled_for: OffsetDateTime,
     pub outcome: String,
     pub background_job_id: Option<i64>,
     pub background_job_status: Option<String>,
     pub detail: Option<String>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: OffsetDateTime,
 }
 
 #[derive(Debug)]
@@ -61,10 +61,10 @@ pub struct NewJobScheduleExecution {
     pub id: i64,
     pub fire_key: String,
     pub trigger_kind: String,
-    pub scheduled_for: DateTime<Utc>,
+    pub scheduled_for: OffsetDateTime,
     pub outcome: String,
     pub detail: Option<String>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: OffsetDateTime,
 }
 
 #[async_trait::async_trait]
@@ -95,7 +95,7 @@ pub trait JobScheduleReadPort: Send + Sync {
 pub trait JobScheduleTransaction: crate::PersistenceTransaction + Send + Sync {
     async fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()>;
 
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime>;
 
     async fn count_enabled<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<u64>;
 
@@ -107,7 +107,7 @@ pub trait JobScheduleTransaction: crate::PersistenceTransaction + Send + Sync {
 
     async fn lock_next_due<'a>(
         &'a self,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
         tenant_scope: &'a ExecutionTenantScope,
     ) -> ryframe_kernel::AppResult<Option<JobScheduleRecord>>;
 
@@ -146,7 +146,7 @@ pub trait JobScheduleTransaction: crate::PersistenceTransaction + Send + Sync {
 
 #[async_trait::async_trait]
 pub trait JobSchedulePersistencePort: JobScheduleReadPort {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime>;
 
     async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn JobScheduleTransaction>>;
 }

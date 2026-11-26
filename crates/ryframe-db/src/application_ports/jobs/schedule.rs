@@ -11,6 +11,7 @@ use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ConnectionTrait, DatabaseTransaction, EntityTrait,
     TransactionTrait,
 };
+use time::OffsetDateTime;
 
 use ryframe_application::{
     EnqueueJob, EnqueueJobResult,
@@ -121,8 +122,8 @@ impl JobScheduleReadPort for DatabaseJobSchedulePersistence {
 
 #[async_trait::async_trait]
 impl JobSchedulePersistencePort for DatabaseJobSchedulePersistence {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
-        crate::repositories::database_utc_now(self.database.write()).await
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime> {
+        crate::repositories::database_utc_now_time(self.database.write()).await
     }
 
     async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn JobScheduleTransaction>> {
@@ -159,8 +160,8 @@ impl JobScheduleTransaction for DatabaseJobScheduleTransaction {
         Ok(())
     }
 
-    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
-        crate::repositories::database_utc_now(&self.transaction).await
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime> {
+        crate::repositories::database_utc_now_time(&self.transaction).await
     }
 
     async fn count_enabled<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<u64> {
@@ -183,7 +184,7 @@ impl JobScheduleTransaction for DatabaseJobScheduleTransaction {
 
     async fn lock_next_due<'a>(
         &'a self,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
         tenant_scope: &'a ExecutionTenantScope,
     ) -> ryframe_kernel::AppResult<Option<JobScheduleRecord>> {
         let tenant_scope = database_scope(tenant_scope);

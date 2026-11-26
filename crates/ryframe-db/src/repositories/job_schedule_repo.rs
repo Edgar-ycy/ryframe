@@ -1,11 +1,11 @@
 use crate::DbResultExt;
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, DatabaseTransaction, EntityTrait,
     PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
     sea_query::{LikeExpr, LockBehavior, LockType},
 };
+use time::OffsetDateTime;
 
 use crate::entities::{background_job, job_schedule, job_schedule_execution};
 
@@ -96,7 +96,7 @@ impl JobScheduleRepository {
     pub(crate) async fn lock_next_due(
         &self,
         transaction: &DatabaseTransaction,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
         tenant_scope: &ExecutionTenantFilter,
     ) -> AppResult<Option<job_schedule::Model>> {
         let mut query = job_schedule::Entity::find()

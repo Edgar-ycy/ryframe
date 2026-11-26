@@ -66,17 +66,13 @@ impl JobScheduleService {
         &self,
         transaction: &dyn JobScheduleTransaction,
         schedule: JobScheduleRecord,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
         parsed: ParsedSchedule,
     ) -> AppResult<DueScheduleResult> {
         let due = schedule
             .next_run_at
             .ok_or_else(|| AppError::Database("已领取计划缺少 next_run_at".into()))?;
-        self.observe_lag(
-            (now - due)
-                .to_std()
-                .unwrap_or_else(|_| StdDuration::from_secs(0)),
-        );
+        self.observe_lag(StdDuration::try_from(now - due).unwrap_or_default());
         let following = parsed.next_after(due)?;
         let misfired = following <= now;
         let next_run_at = if misfired {
@@ -215,7 +211,7 @@ impl JobScheduleService {
     fn validate_persisted_schedule(
         &self,
         schedule: &JobScheduleRecord,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> Result<ParsedSchedule, String> {
         let target = self
             .targets
@@ -242,9 +238,9 @@ struct NonEnqueuedDueExecution<'a> {
     schedule: JobScheduleRecord,
     fire_key: &'a str,
     trigger_kind: &'a str,
-    scheduled_for: DateTime<Utc>,
-    next_run_at: DateTime<Utc>,
-    now: DateTime<Utc>,
+    scheduled_for: OffsetDateTime,
+    next_run_at: OffsetDateTime,
+    now: OffsetDateTime,
     outcome: &'static str,
     detail: Option<String>,
 }

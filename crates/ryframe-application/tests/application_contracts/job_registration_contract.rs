@@ -4,6 +4,7 @@ use ryframe_application::{
     maintenance_schedule_targets, message_schedule_targets,
 };
 use serde_json::json;
+use time::macros::datetime;
 
 #[test]
 fn schedule_targets_are_registered_by_domain_groups() {
@@ -55,7 +56,8 @@ fn system_cleanup_targets_build_the_payload_required_by_copy() {
         .unwrap();
     let schedule_id = 99_256_017_304_428_544;
     let timestamp = "2026-09-01T00:00:00.123456Z";
-    let scheduled_for = timestamp.parse::<DateTime<Utc>>().unwrap();
+    let scheduled_for = datetime!(2026-09-01 08:00:00.123456 +08:00);
+    let expected_queue_time = timestamp.parse::<DateTime<Utc>>().unwrap();
     for (handler, job_type) in [
         ("system.export_result_cleanup", "system.export.cleanup"),
         (
@@ -83,7 +85,8 @@ fn system_cleanup_targets_build_the_payload_required_by_copy() {
             assert_eq!(job.job_type, job_type);
             assert_eq!(job.tenant_id, None);
             assert_eq!(job.schedule_id, Some(schedule_id));
-            assert_eq!(job.scheduled_for, Some(scheduled_for));
+            assert_eq!(job.scheduled_for, Some(expected_queue_time));
+            assert_eq!(job.available_at, expected_queue_time);
             assert_eq!(
                 job.payload,
                 json!({

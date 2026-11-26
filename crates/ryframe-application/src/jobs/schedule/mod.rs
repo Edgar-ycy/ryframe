@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration as StdDuration};
 
-use chrono::{DateTime, Utc};
+use ::time::OffsetDateTime;
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -85,11 +85,15 @@ pub struct JobScheduleVo {
     pub misfire_policy: String,
     pub concurrency_policy: String,
     pub max_runtime_seconds: i32,
-    pub next_run_at: Option<DateTime<Utc>>,
-    pub last_run_at: Option<DateTime<Utc>>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize_optional")]
+    pub next_run_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize_optional")]
+    pub last_run_at: Option<OffsetDateTime>,
     pub version: i64,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize")]
+    pub created_at: OffsetDateTime,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize")]
+    pub updated_at: OffsetDateTime,
 }
 
 impl From<JobScheduleRecord> for JobScheduleVo {
@@ -120,12 +124,14 @@ pub struct JobScheduleExecutionVo {
     pub schedule_name: String,
     pub handler_key: String,
     pub trigger_kind: String,
-    pub scheduled_for: DateTime<Utc>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize")]
+    pub scheduled_for: OffsetDateTime,
     pub outcome: String,
     pub background_job_id: Option<String>,
     pub background_job_status: Option<String>,
     pub detail: Option<String>,
-    pub created_at: DateTime<Utc>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize")]
+    pub created_at: OffsetDateTime,
 }
 
 impl From<JobScheduleExecutionRecord> for JobScheduleExecutionVo {
@@ -149,14 +155,14 @@ impl From<JobScheduleExecutionRecord> for JobScheduleExecutionVo {
 #[derive(Clone, Debug, Serialize)]
 pub struct JobScheduleOccurrence {
     #[serde(serialize_with = "crate::ports::utc_timestamp::serialize")]
-    pub utc: ::time::OffsetDateTime,
+    pub utc: OffsetDateTime,
     pub schedule_time: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct JobSchedulePreview {
     #[serde(serialize_with = "crate::ports::utc_timestamp::serialize")]
-    pub calculated_at: ::time::OffsetDateTime,
+    pub calculated_at: OffsetDateTime,
     pub timezone: String,
     pub occurrences: Vec<JobScheduleOccurrence>,
 }
@@ -188,13 +194,13 @@ use persistence::*;
 
 /// 校验数据库中已启用计划的完整配置，不向调用方暴露解析器实现。
 pub fn validate_persisted_schedule_configuration(
-    next_run_at: Option<DateTime<Utc>>,
+    next_run_at: Option<OffsetDateTime>,
     misfire_policy: &str,
     concurrency_policy: &str,
     max_runtime_seconds: i32,
     cron_expression: &str,
     timezone: &str,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> Result<(), String> {
     validate_persisted_schedule(
         next_run_at,

@@ -111,11 +111,7 @@ async fn list(
             query.into_service_params(state.settings.pagination)?,
         )
         .await?;
-    let records = page
-        .records
-        .into_iter()
-        .map(JobScheduleVo::try_from)
-        .collect::<Result<Vec<_>, _>>()?;
+    let records = page.records.into_iter().map(JobScheduleVo::from).collect();
     Ok(Json(ApiPageResponse::page(
         records,
         page.total,
@@ -147,7 +143,7 @@ async fn detail(
     schedule_service(&state)?
         .get(&current_user, parse_positive_id(&id, INVALID_SCHEDULE_ID)?)
         .await
-        .and_then(JobScheduleVo::try_from)
+        .map(JobScheduleVo::from)
         .map_err(crate::http::HttpAppError::from)
         .map(ApiResponse::success)
         .map(Json)
@@ -177,7 +173,7 @@ async fn create(
     schedule_service(&state)?
         .create(&current_user, request.into())
         .await
-        .and_then(JobScheduleVo::try_from)
+        .map(JobScheduleVo::from)
         .map_err(crate::http::HttpAppError::from)
         .map(ApiResponse::success)
         .map(Json)
@@ -212,7 +208,7 @@ async fn update(
             request.into(),
         )
         .await
-        .and_then(JobScheduleVo::try_from)
+        .map(JobScheduleVo::from)
         .map_err(crate::http::HttpAppError::from)
         .map(ApiResponse::success)
         .map(Json)
@@ -247,7 +243,7 @@ async fn update_status(
             request.enabled,
         )
         .await
-        .and_then(JobScheduleVo::try_from)
+        .map(JobScheduleVo::from)
         .map_err(crate::http::HttpAppError::from)
         .map(ApiResponse::success)
         .map(Json)
@@ -289,9 +285,9 @@ async fn run_now(
         .await?;
     Ok((
         StatusCode::ACCEPTED,
-        Json(ApiResponse::success(JobScheduleExecutionVo::try_from(
+        Json(ApiResponse::success(JobScheduleExecutionVo::from(
             execution,
-        )?)),
+        ))),
     ))
 }
 
@@ -356,8 +352,8 @@ async fn executions(
     let records = page
         .records
         .into_iter()
-        .map(JobScheduleExecutionVo::try_from)
-        .collect::<Result<Vec<_>, _>>()?;
+        .map(JobScheduleExecutionVo::from)
+        .collect();
     Ok(Json(ApiPageResponse::page(
         records,
         page.total,
