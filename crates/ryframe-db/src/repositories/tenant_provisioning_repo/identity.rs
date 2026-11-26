@@ -25,17 +25,17 @@ impl TenantProvisioningRepository {
     ) -> AppResult<TenantProvisioningIdentity> {
         let now = Utc::now();
         insert_tenant_and_request(transaction, record, now).await?;
+        let utc_now =
+            crate::repositories::utc_time_from_chrono(now).db_context("租户身份初始化时间")?;
         CacheNamespaceVersionRepository
             .insert_initial_in_transaction(
                 transaction,
                 &record.tenant_id,
                 CONFIG_CACHE_NAMESPACE,
-                now,
+                utc_now,
             )
             .await?;
         let ids = IdentityIds::allocate()?;
-        let utc_now =
-            crate::repositories::utc_time_from_chrono(now).db_context("租户身份初始化时间")?;
         insert_default_roles(transaction, &record.tenant_id, &ids, utc_now).await?;
         insert_admin_user(transaction, record, &ids, utc_now).await?;
         Ok(TenantProvisioningIdentity {

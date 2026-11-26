@@ -4,6 +4,7 @@ use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, DatabaseTransaction,
     EntityTrait, ExprTrait, QueryFilter, sea_query::Expr,
 };
+use time::OffsetDateTime;
 
 use crate::entities::cache_namespace_version;
 
@@ -55,7 +56,7 @@ impl CacheNamespaceVersionRepository {
             )
             .col_expr(
                 cache_namespace_version::Column::UpdatedAt,
-                Expr::value(chrono::Utc::now()),
+                Expr::value(OffsetDateTime::now_utc()),
             )
             .filter(cache_namespace_version::Column::TenantId.eq(tenant_id))
             .filter(cache_namespace_version::Column::Namespace.eq(namespace))
@@ -83,7 +84,7 @@ impl CacheNamespaceVersionRepository {
         transaction: &DatabaseTransaction,
         tenant_id: &str,
         namespace: &str,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<()> {
         validate_cache_namespace(namespace)?;
         cache_namespace_version::ActiveModel {

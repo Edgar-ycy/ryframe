@@ -4,17 +4,23 @@ use super::{
 };
 use ryframe_application::{
     TransactionAuditMode,
-    ports::system::{DictDataRecord, DictTypeRecord},
+    ports::{
+        authorization::AuthorizationMirrorTransaction,
+        system::{DictDataRecord, DictTypeRecord},
+        tenants::ProvisionTenantRecord,
+    },
 };
 use ryframe_db::{
     AutoFill, ControlDatabaseCluster, FillContext,
-    application_ports::system::dict,
-    entities::{dept, menu, permission, role, user},
+    application_ports::{system::dict, transaction::DatabasePortTransaction},
+    entities::{cache_namespace_version, dept, menu, permission, role, user},
     migration,
+    repositories::{CONFIG_CACHE_NAMESPACE, TenantProvisioningRepository},
 };
 use ryframe_kernel::AppResult;
 use sea_orm::{
-    ActiveModelTrait, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait, Statement,
+    ActiveModelTrait, ActiveValue, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait,
+    Statement, TransactionTrait,
 };
 use sea_orm_migration::MigratorTrait;
 use time::{OffsetDateTime, PrimitiveDateTime, UtcOffset, macros::datetime};
@@ -60,12 +66,110 @@ async fn sql_import_and_migrations_produce_equivalent_control_databases() {
             assert_eq!(inventory(&imported).await?, inventory(&migrated).await?);
             data::compare(&imported, &migrated).await?;
             verify_dictionary_utc_writes(&migrated).await?;
+            verify_cache_namespace_utc_writes(&migrated).await?;
             verify_auto_fill_utc_writes(&migrated).await
         })
         .await;
         Ok(())
     })
     .await;
+}
+
+async fn verify_cache_namespace_utc_writes(database: &DatabaseConnection) -> Result<(), String> {
+    const TENANT: &str = "tenant-cache-utc";
+    install_test_database_id_generator()?;
+    let transaction = DatabasePortTransaction::from(database.begin().await.map_err(db_error)?);
+    verify_cache_namespace_offset(&transaction).await?;
+    let record = ProvisionTenantRecord {
+        provisioning_request_token: "a".repeat(64),
+        tenant_id: TENANT.into(),
+        name: "缓存时钟校验租户".into(),
+        domain: None,
+        expire_at: None,
+        max_users: 100,
+        max_roles: 20,
+        max_storage_mb: 1024,
+        max_requests_per_minute: 1000,
+        admin_username: "cache_utc_admin".into(),
+        admin_password_hash: "cache-utc-fixture-hash".into(),
+        enabled_capability_route_keys: Vec::new(),
+        enabled_capability_permission_codes: Vec::new(),
+        managed_capability_route_keys: Vec::new(),
+        managed_capability_permission_codes: Vec::new(),
+        default_admin_permission_codes: Vec::new(),
+    };
+    let provisioned = TenantProvisioningRepository
+        .initialize_identity_in_transaction(&transaction, &record)
+        .await
+        .map_err(|error| error.to_string())?;
+    let key = (TENANT.to_owned(), CONFIG_CACHE_NAMESPACE.to_owned());
+    let initial = cache_namespace_version::Entity::find_by_id(key.clone())
+        .one(&transaction)
+        .await
+        .map_err(db_error)?
+        .ok_or("租户开通未写入缓存命名空间初始版本")?;
+    assert_eq!(initial.version, 0);
+    assert_eq!(initial.created_at, initial.updated_at);
+    assert_eq!(initial.created_at.offset(), UtcOffset::UTC);
+    let provisioned_second = provisioned.provisioned_at.timestamp();
+    assert!(
+        (provisioned_second..=provisioned_second + 1)
+            .contains(&initial.created_at.unix_timestamp())
+    );
+
+    let before = OffsetDateTime::now_utc().unix_timestamp();
+    let version = transaction
+        .increment_namespace_version(TENANT, CONFIG_CACHE_NAMESPACE)
+        .await
+        .map_err(|error| error.to_string())?;
+    let after = OffsetDateTime::now_utc().unix_timestamp();
+    assert_eq!(version, 1);
+    transaction.commit().await.map_err(db_error)?;
+    let updated = cache_namespace_version::Entity::find_by_id(key)
+        .one(database)
+        .await
+        .map_err(db_error)?
+        .ok_or("未找到已递增的缓存命名空间")?;
+    assert_eq!(updated.version, 1);
+    assert_eq!(updated.created_at, initial.created_at);
+    assert_eq!(updated.updated_at.offset(), UtcOffset::UTC);
+    assert!((before..=after + 1).contains(&updated.updated_at.unix_timestamp()));
+    Ok(())
+}
+
+async fn verify_cache_namespace_offset(
+    transaction: &DatabasePortTransaction,
+) -> Result<(), String> {
+    let now = datetime!(2026-08-21 00:59:59.500000001 +08:00);
+    cache_namespace_version::ActiveModel {
+        tenant_id: ActiveValue::Set("system".into()),
+        namespace: ActiveValue::Set("cache-utc-probe".into()),
+        version: ActiveValue::Set(0),
+        created_at: ActiveValue::Set(now),
+        updated_at: ActiveValue::Set(now),
+    }
+    .insert(transaction)
+    .await
+    .map_err(db_error)?;
+    // 用同一 DATETIME(0) 列核对驱动传入 UTC 微秒后由 MySQL 应用的秒精度。
+    execute(
+        transaction,
+        "INSERT INTO sys_cache_namespace_version (tenant_id, namespace, version, created_at, updated_at) \
+         VALUES ('system', 'cache-utc-reference', 0, \
+                 '2026-08-20 16:59:59.500000', '2026-08-20 16:59:59.500000')",
+    )
+    .await?;
+    require_count(
+        transaction,
+        "SELECT COUNT(*) AS value FROM sys_cache_namespace_version probe \
+         JOIN sys_cache_namespace_version baseline \
+           ON baseline.tenant_id = probe.tenant_id AND baseline.namespace = 'cache-utc-reference' \
+         WHERE probe.tenant_id = 'system' AND probe.namespace = 'cache-utc-probe' \
+           AND probe.version = 0 AND probe.created_at = baseline.created_at \
+           AND probe.updated_at = baseline.updated_at",
+        1,
+    )
+    .await
 }
 
 async fn verify_auto_fill_utc_writes(database: &DatabaseConnection) -> Result<(), String> {
