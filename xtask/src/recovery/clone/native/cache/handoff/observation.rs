@@ -54,7 +54,8 @@ impl StageRunner for Runner<'_> {
         }
         if self.options.operation == CloneRuntimeOperation::Status {
             let post = seed::history::post(request.backend, request.run_dir, None, None, true)?;
-            if api_successor::load(request.backend, request.run_dir, &post.descriptor)?.is_some() {
+            if api_successor::select(request.backend, request.run_dir, &post.descriptor)?.is_some()
+            {
                 return Ok(());
             }
         }
@@ -100,7 +101,7 @@ pub(super) struct Frame {
     pub post: seed::history::Post,
     pub directory: PathBuf,
     pub runtime: Value,
-    successor: Option<Value>,
+    successor: Option<api_successor::Selected>,
     environment: Value,
     state: Value,
     cleanup: bool,
@@ -128,7 +129,7 @@ impl Frame {
         let post = seed::history::post(request.backend, request.run_dir, None, None, true)?;
         common::local_directory(request.backend, &post.runtime, "已发布API运行目录")?;
         let environment = post.request["api_environment"].clone();
-        let successor = api_successor::load(request.backend, request.run_dir, &post.descriptor)?;
+        let successor = api_successor::select(request.backend, request.run_dir, &post.descriptor)?;
         let mut files = stage_files(request, &post, number, &environment)?;
         let directory = active_directory(request.backend, &post, successor.as_ref(), &mut files)?;
         let roles = role_files(request.backend, &directory)?;
@@ -190,7 +191,7 @@ impl Frame {
             || post.descriptor != self.post.descriptor
             || post.runtime != self.post.runtime
             || registration::cleanup_runtime(&self.backend, &self.run, &post)? != self.runtime
-            || api_successor::load(&self.backend, &self.run, &post.descriptor)? != self.successor
+            || api_successor::select(&self.backend, &self.run, &post.descriptor)? != self.successor
         {
             return Err("API控制活动登记或准备合同在操作期间变化".into());
         }
@@ -315,16 +316,17 @@ fn stage_files(
 fn active_directory(
     backend: &Path,
     post: &seed::history::Post,
-    successor: Option<&Value>,
+    successor: Option<&api_successor::Selected>,
     files: &mut Vec<PathBuf>,
 ) -> Result<PathBuf> {
     let Some(successor) = successor else {
         return Ok(post.runtime.clone());
     };
+    let publication = &successor.publication;
     let directory = common::local_directory(
         backend,
         Path::new(document::text(
-            &successor["runtime_directory"],
+            &publication["runtime_directory"],
             "API后继目录",
         )?),
         "API后继运行目录",
@@ -334,7 +336,12 @@ fn active_directory(
     }
     files.push(common::bound_file(
         backend,
-        &successor["intent"],
+        &successor.binding,
+        "API后继发布",
+    )?);
+    files.push(common::bound_file(
+        backend,
+        &publication["intent"],
         "API后继意图",
     )?);
     for name in ["runtime.json", "binaries.json"] {
@@ -464,8 +471,9 @@ fn stopped_result(frame: &Frame, observed: &Value, has_history: bool) -> Value {
     if let Some(retirement) = &frame.retirement {
         let mut evidence = retirement.evidence();
         if let Some(successor) = &frame.successor {
-            evidence["successor"] = json!({"intent":successor["intent"],
-                "api_process":successor["api"],"api_tree":successor["api_tree"]});
+            let publication = &successor.publication;
+            evidence["successor"] = json!({"intent":publication["intent"],
+                "api_process":publication["api"],"api_tree":publication["api_tree"]});
         }
         result["seed_retirement"] = evidence;
     }

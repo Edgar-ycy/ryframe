@@ -10,7 +10,7 @@ use super::{
         lifecycle::{identity, state},
         resources::common,
         seed::history,
-        target_verify::{authority::require_closed, storage::protocol},
+        target_verify::{authority::require_closed, guard::Inputs, storage::protocol},
     },
     api_successor, command, runtime,
 };
@@ -44,7 +44,7 @@ pub(in crate::recovery::clone::native) fn publication_for_stage(
     backend: &Path,
     run: &Path,
     attempt: u64,
-) -> Result<Option<Value>> {
+) -> Result<Option<api_successor::Selected>> {
     controlled_publication(backend, run, attempt, ApiConsumer::Department)
 }
 
@@ -53,7 +53,10 @@ pub(in crate::recovery::clone::native) fn publication_for_identity_verification(
     run: &Path,
     attempt: u64,
 ) -> Result<Option<Value>> {
-    controlled_publication(backend, run, attempt, ApiConsumer::IdentityVerification)
+    Ok(
+        controlled_publication(backend, run, attempt, ApiConsumer::IdentityVerification)?
+            .map(|selected| selected.publication),
+    )
 }
 
 #[derive(Clone, Copy)]
@@ -78,7 +81,7 @@ fn controlled_publication(
     run: &Path,
     attempt: u64,
     consumer: ApiConsumer,
-) -> Result<Option<Value>> {
+) -> Result<Option<api_successor::Selected>> {
     let saved = state::load(run, true)?;
     let row = state::running_attempt(&saved)?.ok_or("后继 API 核验缺少受管运行阶段")?;
     if row["number"].as_u64() != Some(attempt) || !consumer.matches(row) {
@@ -99,7 +102,7 @@ fn controlled_publication(
         return Err("部门规划原控制器已退出或创建身份变化".into());
     }
     let post = history::post(backend, run, None, None, false)?;
-    let publication = api_successor::load(backend, run, &post.descriptor)?;
+    let publication = api_successor::select(backend, run, &post.descriptor)?;
     if state::load(run, true)? != saved || document::read(&path)? != owner {
         return Err("部门规划控制权在读取 API 后继期间变化".into());
     }
@@ -137,9 +140,16 @@ fn controlled_api_proof(
     environment: &Value,
     consumer: ApiConsumer,
 ) -> Result<Option<Value>> {
-    let Some(publication) = controlled_publication(backend, run, attempt, consumer)? else {
+    let Some(selected) = controlled_publication(backend, run, attempt, consumer)? else {
         return Ok(None);
     };
+    let publication = &selected.publication;
+    let published = common::bound_file(backend, &selected.binding, "实际使用的 API 后继发布")?;
+    let protected = Inputs::open([published])?;
+    if common::read_bound(backend, &selected.binding, "实际使用的 API 后继发布")? != *publication
+    {
+        return Err("API 后继发布在取得保护前变化".into());
+    }
     let post = history::post(
         backend,
         run,
@@ -169,15 +179,16 @@ fn controlled_api_proof(
         return Err("部门规划的实际 API 不属于原运行后继".into());
     }
     let product = runtime::product_root(backend, &frozen)?;
-    check_live(backend, &product, directory, &publication, &proof)?;
+    check_live(backend, &product, directory, publication, &proof)?;
     require_closed(document::text(
         &frozen["worker_ready_url"],
         "原 Worker 地址",
     )?)?;
     require_closed(document::text(&environment["frontend_url"], "原前端地址")?)?;
-    if controlled_publication(backend, run, attempt, consumer)?.as_ref() != Some(&publication) {
+    if controlled_publication(backend, run, attempt, consumer)?.as_ref() != Some(&selected) {
         return Err("部门计划实际来源在运行核对期间变化".into());
     }
+    protected.check()?;
     Ok(Some(proof))
 }
 

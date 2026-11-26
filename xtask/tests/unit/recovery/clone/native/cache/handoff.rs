@@ -180,6 +180,7 @@ impl Fixture {
             side: CloneSide::Target,
             operation: CloneRuntimeOperation::Start,
             roles: vec![CloneRole::Api],
+            request: None,
         }
     }
 

@@ -35,7 +35,7 @@ pub(crate) fn launch_path(backend: &Path, run: &Path, number: u64) -> Result<Opt
     let saved = state::load(run, false)?;
     let attempts = state::attempts(&saved)?;
     let attempt = stage_attempt(attempts, number)?;
-    if department_api::mode(attempt).is_none() || predecessor(attempts, number)?.is_none() {
+    if department_api::mode(attempt).is_none() || predecessor(attempts, number).is_none() {
         return Ok(None);
     }
     for filename in [
@@ -70,13 +70,22 @@ pub(crate) fn select(
     let attempts = state::attempts(&saved)?;
     let mode = stage_mode(attempts, number)?;
     let original = original(backend, run, original_descriptor)?;
-    let api = predecessor(attempts, number)?.ok_or("部门规划缺少通过的 API 后继")?;
+    let api = predecessor(attempts, number)
+        .filter(|row| row["number"] == current.passed_attempt)
+        .ok_or("部门规划缺少与当前阶段相符的 API 后继")?;
     let registered = RegisteredPlan {
         descriptor: original_descriptor,
         request: &original,
     };
     let correction = correction::present(&correction_path(run))?;
-    let scope = correction::Scope::new(backend, run, attempts, api, &registered, &current);
+    let scope = correction::Scope::new(
+        backend,
+        run,
+        attempts,
+        api,
+        &registered,
+        &current.publication,
+    );
     let (receipt, binding) = if correction::present(&runtime_correction_path(run))?
         || (correction && producer_build.is_some())
     {
@@ -84,7 +93,15 @@ pub(crate) fn select(
     } else if producer_build.is_some() || correction {
         scope.select(number, producer_build, correction::Generation::Bridge)?
     } else {
-        select_initial(backend, run, attempts, number, api, &registered, &current)?
+        select_initial(
+            backend,
+            run,
+            attempts,
+            number,
+            api,
+            &registered,
+            &current.publication,
+        )?
     };
     let first = number_field(&receipt, "first_attempt")?;
     if first > number {
@@ -166,19 +183,22 @@ pub(crate) fn resolve(
     }
     let receipt = common::read_bound(backend, descriptor, "部门规划后继登记")?;
     let first = number_field(&receipt, "first_attempt")?;
-    let api = predecessor(attempts, number)?.ok_or("历史规划未使用已通过的 API 后继")?;
     if first > number {
         return Err("不能将后继的部门规划工具用于原历史阶段".into());
     }
     let original_descriptor = &receipt["original_registration"];
     let original = original(backend, run, original_descriptor)?;
-    let publication = api_successor::load(backend, run, &original["post_copy"])?
+    let registered_api = api_successor::select_before(backend, run, &original["post_copy"], first)?
         .ok_or("缺少原部门规划实际使用的 API 后继发布")?;
+    let api = predecessor(attempts, number)
+        .filter(|row| row["number"] == registered_api.passed_attempt)
+        .ok_or("部门会话所用 API 后继不同于原工具登记")?;
+    let publication = &registered_api.publication;
     let registered = RegisteredPlan {
         descriptor: original_descriptor,
         request: &original,
     };
-    let scope = correction::Scope::new(backend, run, attempts, api, &registered, &publication);
+    let scope = correction::Scope::new(backend, run, attempts, api, &registered, publication);
     if filename == runtime_correction_path(run) {
         scope.validate(&receipt, correction::Generation::Runtime)?;
     } else if filename == correction_path(run) {
@@ -186,16 +206,7 @@ pub(crate) fn resolve(
             scope.require_launch_generation(correction::Generation::Bridge, first, number)?;
         }
         scope.validate(&receipt, correction::Generation::Bridge)?;
-    } else if build(
-        backend,
-        run,
-        attempts,
-        first,
-        api,
-        &registered,
-        &publication,
-    )? != receipt
-    {
+    } else if build(backend, run, attempts, first, api, &registered, publication)? != receipt {
         return Err("部门规划后继与正式发布或绑定历史不匹配".into());
     }
     let projected = project(original, &receipt);
@@ -219,7 +230,7 @@ pub(crate) fn require_original(run: &Path, number: Option<u64>, cleanup: bool) -
     if attempts
         .iter()
         .any(|row| row["number"] == number && department_api::mode(row).is_some())
-        && predecessor(attempts, number)?.is_some()
+        && predecessor(attempts, number).is_some()
     {
         if cleanup {
             let launch = output(run, number).join("session-launch.json");
@@ -255,18 +266,13 @@ fn output(run: &Path, number: u64) -> PathBuf {
         .join(format!("attempt-{number:04}"))
 }
 
-fn predecessor(attempts: &[Value], number: u64) -> Result<Option<&Value>> {
-    let mut rows = attempts.iter().filter(|row| {
+fn predecessor(attempts: &[Value], number: u64) -> Option<&Value> {
+    attempts.iter().rfind(|row| {
         row["stage"] == "runtime-target"
             && matches!(row["mode"].as_str(), Some("restart-api" | "reconcile-api"))
             && row["status"] == "passed"
             && row["number"].as_u64().is_some_and(|prior| prior < number)
-    });
-    let row = rows.next();
-    if rows.next().is_some() {
-        return Err("部门规划缺少唯一已通过的 API 后继".into());
-    }
-    Ok(row)
+    })
 }
 
 fn original(backend: &Path, run: &Path, descriptor: &Value) -> Result<Value> {
@@ -313,15 +319,16 @@ fn build(
     {
         return Err("部门规划后继未绑定原 seed、身份计划和 API 发布顺序".into());
     }
+    let registered_api =
+        api_successor::select_before(backend, run, &original.request["post_copy"], first)?
+            .ok_or("部门规划工具缺少首次授权时的 API 后继发布")?;
     let outer = common::read_bound(backend, &api["result"], "部门规划之前的 API 后继结果")?;
     let binding = &outer["publication"];
     if outer["status"] != "api_successor_ready"
         || outer["restore_qualified"] != false
-        || common::bound_file(backend, binding, "原 API 后继发布")?
-            != run
-                .join("post-copy")
-                .join("api-successors")
-                .join("published.json")
+        || registered_api.passed_attempt != api_number
+        || registered_api.publication != *publication
+        || binding != &registered_api.binding
         || common::read_bound(backend, binding, "原 API 后继发布")? != *publication
     {
         return Err("部门规划工具没有绑定同一 API 后继正式发布结果".into());
@@ -504,21 +511,20 @@ fn number_field(value: &Value, name: &str) -> Result<u64> {
 
 #[cfg(test)]
 #[test]
-fn only_later_department_plan_selects_the_published_api_tool() -> Result<()> {
+fn only_later_department_plan_selects_the_published_api_tool() {
     let attempts = [
         json!({"number":51,"stage":"seed-runtime","mode":"departments-plan","status":"failed"}),
         json!({"number":53,"stage":"runtime-target","mode":"restart-api","status":"failed"}),
         json!({"number":54,"stage":"runtime-target","mode":"reconcile-api","status":"passed"}),
         json!({"number":55,"stage":"seed-runtime","mode":"departments-apply","status":"running"}),
         json!({"number":56,"stage":"seed-runtime","mode":"departments-plan","status":"running"}),
+        json!({"number":66,"stage":"runtime-target","mode":"restart-api","status":"passed"}),
     ];
-    assert!(predecessor(&attempts, 51)?.is_none());
-    assert!(predecessor(&attempts, 54)?.is_none());
-    assert_eq!(predecessor(&attempts, 56)?, Some(&attempts[2]));
+    assert!(predecessor(&attempts, 51).is_none());
+    assert!(predecessor(&attempts, 54).is_none());
+    assert_eq!(predecessor(&attempts, 56), Some(&attempts[2]));
+    assert_eq!(predecessor(&attempts, 66), Some(&attempts[2]));
+    assert_eq!(predecessor(&attempts, 67), Some(&attempts[5]));
     assert!(!is_plan(&attempts[3]));
     assert!(is_plan(&attempts[4]));
-    let mut ambiguous = attempts.to_vec();
-    ambiguous[1]["status"] = json!("passed");
-    assert!(predecessor(&ambiguous, 56).is_err());
-    Ok(())
 }

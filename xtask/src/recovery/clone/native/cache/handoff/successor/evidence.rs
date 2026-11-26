@@ -39,6 +39,23 @@ pub(super) struct Markers {
 impl Markers {
     pub(super) fn load(request: &StageRequest<'_>, saved: &Value) -> Result<Self> {
         let attempts = state::attempts(saved)?;
+        Self::load_from(request, attempts)
+    }
+
+    pub(super) fn before(
+        request: &StageRequest<'_>,
+        saved: &Value,
+        exclusive: u64,
+    ) -> Result<Self> {
+        let attempts = state::attempts(saved)?;
+        let end = attempts
+            .iter()
+            .position(|row| row["number"] == exclusive)
+            .ok_or("原 API 启动缺少标记历史截止")?;
+        Self::load_from(request, &attempts[..end])
+    }
+
+    fn load_from(request: &StageRequest<'_>, attempts: &[Value]) -> Result<Self> {
         let index = attempts
             .iter()
             .rposition(|row| row["stage"] == "target-cache-markers")
@@ -116,51 +133,39 @@ pub(super) struct Intent {
     pub(super) value: Value,
     binding: Value,
     controller: Value,
+    receipt_directory: PathBuf,
     pub(super) directory: PathBuf,
     pub(super) token: String,
     pub(super) identity: Value,
 }
 
 impl Intent {
-    pub(super) fn load(request: &StageRequest<'_>, saved: &Value) -> Result<Self> {
+    pub(super) fn load(
+        request: &StageRequest<'_>,
+        saved: &Value,
+        second: Option<(&Second, u64)>,
+    ) -> Result<Self> {
         let (backend, run) = (request.backend, request.run_dir);
+        let receipt_directory = second.map_or_else(
+            || directory(run),
+            |(_, restart)| attempt_directory(run, restart),
+        );
         let path = common::common_file(
             backend,
-            &directory(run).join("intent.json"),
+            &receipt_directory.join("intent.json"),
             "API 后继原意图",
         )?;
         let binding = common::binding(&path)?;
         let value = common::read_bound(backend, &binding, "API 后继原意图")?;
-        document::exact(
-            &value,
-            &[
-                "format_version",
-                "kind",
-                "attempt",
-                "registration",
-                "marker",
-                "runtime_directory",
-                "token",
-                "executor",
-                "incident",
-            ],
-            "API 后继意图",
-        )?;
+        validate_intent(&value, second)?;
         let number = value["attempt"]
             .as_u64()
             .filter(|n| *n > 0)
             .ok_or("API 后继意图缺少启动序号")?;
-        let token = document::text(&value["token"], "API 后继原预留 ID")?;
+        let token = token(&value["token"])?;
         let directory = attempt_directory(run, number);
-        if value["format_version"] != 1
-            || value["kind"] != "devex-clone-api-successor-intent"
-            || value["runtime_directory"] != json!(directory)
-            || token.len() != 32
-            || !token
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-        {
-            return Err("API 后继意图的原目录、版本或预留 ID 无效".into());
+        if value["runtime_directory"] != json!(directory) {
+            return Err("API 后继意图的原目录无效".into());
         }
         let row = state::attempts(saved)?
             .iter()
@@ -183,6 +188,7 @@ impl Intent {
             value,
             binding,
             controller,
+            receipt_directory,
             directory,
             identity: owner["identity"].clone(),
         })
@@ -199,6 +205,50 @@ impl Intent {
     }
 }
 
+fn validate_intent(value: &Value, second: Option<(&Second, u64)>) -> Result<()> {
+    let mut fields = vec![
+        "format_version",
+        "kind",
+        "attempt",
+        "registration",
+        "marker",
+        "runtime_directory",
+        "token",
+        "executor",
+        "incident",
+    ];
+    if second.is_some() {
+        fields.extend(["predecessor", "request"]);
+    }
+    document::exact(value, &fields, "API 后继意图")?;
+    let version = if second.is_some() { 2 } else { 1 };
+    if value["format_version"] != version || value["kind"] != "devex-clone-api-successor-intent" {
+        return Err("API 后继意图的版本或类型无效".into());
+    }
+    if let Some((plan, number)) = second {
+        if value["attempt"] != number
+            || value["predecessor"] != plan.predecessor
+            || value["request"] != plan.request
+        {
+            return Err("API 后继原意图不同于本次显式请求、前代结果或启动序号".into());
+        }
+        plan.check_incident(&value["incident"])?;
+    }
+    Ok(())
+}
+
+pub(super) fn token(value: &Value) -> Result<&str> {
+    let token = document::text(value, "API 后继原预留 ID")?;
+    if token.len() != 32
+        || !token
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err("API 后继原预留 ID 无效".into());
+    }
+    Ok(token)
+}
+
 fn original_attempt(row: &Value, current: bool) -> Result<Value> {
     if row["stage"] != "runtime-target"
         || row["mode"] != "restart-api"
@@ -210,12 +260,16 @@ fn original_attempt(row: &Value, current: bool) -> Result<Value> {
     {
         return Err("API 后继只能核对当前启动意图或原失败启动".into());
     }
+    Ok(running(row))
+}
+
+pub(super) fn running(row: &Value) -> Value {
     let mut original = row.clone();
     original["status"] = json!("running");
     for key in ["finished_at", "result", "error_type"] {
         original[key] = Value::Null;
     }
-    Ok(original)
+    original
 }
 
 pub(super) fn executor(identity: &Value) -> Result<Value> {
@@ -234,7 +288,7 @@ pub(super) fn publish(
     identity: &Value,
     check: &dyn Fn() -> Result<()>,
 ) -> Result<Value> {
-    let (backend, run) = (request.backend, request.run_dir);
+    let backend = request.backend;
     let runtime = common::binding(&intent.directory.join("runtime.json"))?;
     let binaries = common::binding(&intent.directory.join("binaries.json"))?;
     let api = common::binding(&intent.directory.join("api.json"))?;
@@ -250,7 +304,7 @@ pub(super) fn publish(
     }
     let value = json!({"format_version":1,"kind":"devex-clone-api-successor","registration":registration,
         "intent":intent.binding,"runtime_directory":intent.directory,"runtime":runtime,"binaries":binaries,"api":api,"api_tree":tree});
-    let path = directory(run).join("published.json");
+    let path = intent.receipt_directory.join("published.json");
     check()?;
     intent.check(backend)?;
     if path.try_exists()? {

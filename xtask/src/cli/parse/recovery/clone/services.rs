@@ -6,7 +6,11 @@ use super::super::super::super::model::{
 use super::{optional_path, parse_options, require_write, required, run_dir, side};
 
 pub(super) fn parse_runtime(args: &[String]) -> Result<CloneCommand, CliError> {
-    let options = parse_options(args, &["--run-dir", "--side", "--operation"], true)?;
+    let options = parse_options(
+        args,
+        &["--run-dir", "--side", "--operation", "--request"],
+        true,
+    )?;
     let operation = match required(&options, "--operation")? {
         "start" => CloneRuntimeOperation::Start,
         "stop" => CloneRuntimeOperation::Stop,
@@ -17,6 +21,12 @@ pub(super) fn parse_runtime(args: &[String]) -> Result<CloneCommand, CliError> {
         value => return Err(CliError::new(format!("runtime --operation 无效：{value}"))),
     };
     require_write("runtime", &options, operation.effect().requires_write())?;
+    let request = optional_path(&options, "--request")?;
+    if request.is_some() && !operation.is_api_successor() {
+        return Err(CliError::new(
+            "只有 runtime restart-api 和 reconcile-api 可以提供 --request",
+        ));
+    }
     let run_dir = run_dir(&options)?;
     let side = side(required(&options, "--side")?)?;
     let roles = if operation.is_api_successor() {
@@ -41,6 +51,7 @@ pub(super) fn parse_runtime(args: &[String]) -> Result<CloneCommand, CliError> {
         side,
         operation,
         roles,
+        request,
     }))
 }
 

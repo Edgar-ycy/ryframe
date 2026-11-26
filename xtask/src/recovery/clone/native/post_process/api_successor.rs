@@ -1,13 +1,15 @@
 //! 新代运行合同的准备及已发布 API 代次的历史核验。
 use std::{
     fs,
-    io::{ErrorKind, Read, Write},
+    io::{Read, Write},
     path::Path,
 };
 
 use serde_json::{Value, json};
 
 use super::runtime;
+#[path = "api_successor/publication.rs"]
+mod publication;
 use crate::{
     Result,
     local_test_path::{LocalTestPathKind, validate_absolute_path},
@@ -29,6 +31,8 @@ use crate::{
 
 const RECEIPTS: [&str; 2] = ["binaries.json", "runtime.json"];
 const MAX_RECEIPT_BYTES: u64 = 64 * 1024;
+
+pub(in crate::recovery::clone::native) use publication::{Selected, select, select_before};
 
 pub(in crate::recovery::clone::native) fn prepare_frozen_runtime(
     backend: &Path,
@@ -100,81 +104,7 @@ pub(in crate::recovery::clone::native) fn load(
     run: &Path,
     registration: &Value,
 ) -> Result<Option<Value>> {
-    let saved = state::load(run, false)?;
-    let attempts = state::attempts(&saved)?;
-    let parent = run.join("post-copy").join("api-successors");
-    let path = parent.join("published.json");
-    let present = match fs::symlink_metadata(&path) {
-        Ok(_) => true,
-        Err(error) if error.kind() == ErrorKind::NotFound => false,
-        Err(error) => return Err(error.into()),
-    };
-    let Some(completed) = completed(attempts, present)? else {
-        return Ok(None);
-    };
-    let post = history::post(backend, run, Some(registration), None, false)?;
-    let result = common::read_bound(backend, &completed["result"], "API 后继阶段结果")?;
-    document::exact(
-        &result,
-        &["status", "publication", "restore_qualified"],
-        "API 后继阶段结果",
-    )?;
-    if result["status"] != "api_successor_ready" || result["restore_qualified"] != false {
-        return Err("API 后继阶段未发布受管启动结果".into());
-    }
-    let publication = read_at(backend, &result["publication"], &path)?;
-    document::exact(
-        &publication,
-        &[
-            "format_version",
-            "kind",
-            "registration",
-            "intent",
-            "runtime_directory",
-            "runtime",
-            "binaries",
-            "api",
-            "api_tree",
-        ],
-        "API 后继发布",
-    )?;
-    if publication["format_version"] != 1
-        || publication["kind"] != "devex-clone-api-successor"
-        || publication["registration"] != post.descriptor
-    {
-        return Err("API 后继发布不属于当前登记".into());
-    }
-    let intent = read_at(backend, &publication["intent"], &parent.join("intent.json"))?;
-    let (number, executor) = original_executor(run, attempts, completed, &post, &intent)?;
-    let directory = parent.join(format!("attempt-{number:04}"));
-    if publication["runtime_directory"] != json!(directory)
-        || intent["runtime_directory"] != publication["runtime_directory"]
-        || common::local_directory(backend, &directory, "API 后继运行目录")? != directory
-    {
-        return Err("API 后继运行目录不属于原启动意图".into());
-    }
-    verify_incident(backend, attempts, number, &post, &intent)?;
-    verify_generation(backend, &post, &directory, &publication, &intent, &executor)?;
-    if read_at(backend, &result["publication"], &path)? != publication
-        || read_at(backend, &publication["intent"], &parent.join("intent.json"))? != intent
-        || state::load(run, false)? != saved
-    {
-        return Err("API 后继发布在读取期间发生变化".into());
-    }
-    Ok(Some(publication))
-}
-
-fn completed(attempts: &[Value], published: bool) -> Result<Option<&Value>> {
-    let mut passed = attempts.iter().filter(|row| {
-        row["stage"] == "runtime-target"
-            && matches!(row["mode"].as_str(), Some("restart-api" | "reconcile-api"))
-            && row["status"] == "passed"
-    });
-    let result = passed.next();
-    if result.is_some() != published || passed.next().is_some() {
-        return Err("API 后继缺少唯一且完整的账本发布；保留现有证据".into());
-    }
-    Ok(result)
+    Ok(select(backend, run, registration)?.map(|selected| selected.publication))
 }
 
 fn original_executor(
@@ -183,24 +113,26 @@ fn original_executor(
     completed: &Value,
     post: &Post,
     intent: &Value,
+    second: bool,
 ) -> Result<(u64, Value)> {
-    document::exact(
-        intent,
-        &[
-            "format_version",
-            "kind",
-            "attempt",
-            "registration",
-            "marker",
-            "runtime_directory",
-            "token",
-            "executor",
-            "incident",
-        ],
-        "API 后继启动意图",
-    )?;
+    let mut fields = vec![
+        "format_version",
+        "kind",
+        "attempt",
+        "registration",
+        "marker",
+        "runtime_directory",
+        "token",
+        "executor",
+        "incident",
+    ];
+    if second {
+        fields.extend(["predecessor", "request"]);
+    }
+    document::exact(intent, &fields, "API 后继启动意图")?;
     let number = attempt_number(intent, "attempt")?;
-    if intent["format_version"] != 1
+    let format_version = if second { 2 } else { 1 };
+    if intent["format_version"] != format_version
         || intent["kind"] != "devex-clone-api-successor-intent"
         || intent["registration"] != post.descriptor
     {
@@ -523,21 +455,5 @@ fn api_successor_preparation_resumes_only_exact_receipts() -> Result<()> {
     fs::write(directory.join("api.json"), b"{}")?;
     assert!(prepare_receipts(directory, raw).is_err());
     assert_eq!(fs::read(&runtime)?.as_slice(), raw[1]);
-    Ok(())
-}
-
-#[cfg(test)]
-#[test]
-fn api_successor_requires_unique_completed_publication() -> Result<()> {
-    let attempted = json!({"stage":"runtime-target","mode":"restart-api","status":"failed"});
-    let unrelated = json!({"stage":"runtime-target","mode":"status","status":"passed"});
-    let reconciled = json!({"stage":"runtime-target","mode":"reconcile-api","status":"passed"});
-    let pending = [attempted.clone(), unrelated];
-    assert!(completed(&pending, false)?.is_none());
-    assert!(completed(&pending, true).is_err());
-    assert!(completed(std::slice::from_ref(&reconciled), false).is_err());
-    let resolved = [attempted, reconciled];
-    assert_eq!(completed(&resolved, true)?, Some(&resolved[1]));
-    assert!(completed(&[resolved[1].clone(), resolved[1].clone()], true).is_err());
     Ok(())
 }

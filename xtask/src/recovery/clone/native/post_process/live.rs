@@ -243,21 +243,18 @@ struct ActiveSuccessor {
 impl ActiveSuccessor {
     fn load(context: &Context<'_>) -> Result<Option<Self>> {
         let backend = context.backend;
-        let Some(publication) =
-            api_successor::load(backend, context.run, &context.post.descriptor)?
+        let Some(selected) = api_successor::select(backend, context.run, &context.post.descriptor)?
         else {
             return Ok(None);
         };
-        let published = context
-            .run
-            .join("post-copy")
-            .join("api-successors")
-            .join("published.json");
-        let mut paths = BTreeSet::from([published.clone()]);
-        files::bindings(backend, &publication, &mut paths)?;
+        let publication = &selected.publication;
+        let published = common::bound_file(backend, &selected.binding, "活动 API 后继发布")?;
+        let mut paths = BTreeSet::from([published]);
+        files::bindings(backend, publication, &mut paths)?;
         let protected = Inputs::open(paths)?;
-        files::bindings(backend, &publication, &mut BTreeSet::new())?;
-        if document::read(&published)? != publication {
+        files::bindings(backend, publication, &mut BTreeSet::new())?;
+        if common::read_bound(backend, &selected.binding, "活动 API 后继发布")? != *publication
+        {
             return Err("活动 API 后继发布在取得保护前变化".into());
         }
         let directory = PathBuf::from(document::text(

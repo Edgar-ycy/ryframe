@@ -329,17 +329,36 @@ fn api_successor_requires_target_api_and_explicit_write() {
         assert_eq!(parsed.operation.as_str(), name);
         assert_eq!(parsed.operation.effect(), effect);
         assert_eq!(parsed.roles, [CloneRole::Api]);
+        assert_eq!(parsed.request, None);
 
         assert!(parse("target", &["--write", "--roles", "api"]).is_ok());
         assert!(parse("target", &["--write", "--roles", "api", "worker"]).is_err());
         assert!(parse("source", &["--write"]).is_err());
-        assert!(
-            parse(
-                "target",
-                &["--write", "--request", Fixture::value(&fixture.first)]
-            )
-            .is_err()
-        );
+        let CloneCommand::Runtime(requested) = parse(
+            "target",
+            &["--write", "--request", Fixture::value(&fixture.first)],
+        )
+        .unwrap() else {
+            panic!("runtime 类型错误");
+        };
+        assert_eq!(requested.request.as_deref(), Some(fixture.first.as_path()));
+    }
+    for operation in ["start", "stop", "status", "recover"] {
+        let mut args = vec![
+            "runtime",
+            "--run-dir",
+            Fixture::value(&fixture.run),
+            "--side",
+            "target",
+            "--operation",
+            operation,
+            "--request",
+            Fixture::value(&fixture.first),
+        ];
+        if operation != "status" {
+            args.push("--write");
+        }
+        assert!(fixture.parse(&args).is_err());
     }
 }
 
