@@ -1,6 +1,5 @@
 use super::*;
 use ryframe_application::ports::tenant_data::TenantDataFence;
-use ryframe_application::ports::utc_timestamp::from_chrono;
 use ryframe_db::{
     entities::tenant::{data_migration, data_placement, operation_lease},
     repositories::database_utc_now_time,
@@ -121,13 +120,12 @@ async fn lock_migration_context(
         .db()?
         .ok_or_else(|| AppError::NotFound("迁移投影缺少权威迁移记录".into()))?;
     validate_migration_context(fence, &placement, &migration, &lease)?;
-    let expires_at = from_chrono(lease.expires_at).db_context("读取迁移投影租约截止时间")?;
-    if expires_at <= database_utc_now_time(control).await? {
+    if lease.expires_at <= database_utc_now_time(control).await? {
         return Err(AppError::TenantOperationConflict(
             "迁移投影操作租约已过期".into(),
         ));
     }
-    Ok((tenant.data_scope_version, expires_at))
+    Ok((tenant.data_scope_version, lease.expires_at))
 }
 
 fn validate_migration_context(

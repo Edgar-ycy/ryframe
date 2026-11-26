@@ -1,8 +1,8 @@
 //! 租户长操作租约实体。
 
-use chrono::{DateTime, Utc};
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 /// 所有会改变租户运行时或配置状态的长操作共享的单租户租约。
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
@@ -14,9 +14,12 @@ pub struct Model {
     pub operation: String,
     pub resource_type: String,
     pub resource_id: String,
-    pub expires_at: DateTime<Utc>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    #[serde(with = "ryframe_application::ports::utc_timestamp")]
+    pub expires_at: OffsetDateTime,
+    #[serde(with = "ryframe_application::ports::utc_timestamp")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "ryframe_application::ports::utc_timestamp")]
+    pub updated_at: OffsetDateTime,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

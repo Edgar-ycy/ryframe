@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::Duration;
 use ryframe_kernel::{AppError, AppResult};
 use serde_json::Value as JsonValue;
 use time::OffsetDateTime;
@@ -16,7 +15,8 @@ use crate::{
 
 use super::recovery::RecoveryIntent;
 use super::{
-    OPERATION_LEASE_HOURS, TenantDataMigrationService, checked_generation, migration_record_time,
+    TenantDataMigrationService, checked_generation, migration_record_time,
+    operation_lease_expires_at,
 };
 
 mod lifecycle;
@@ -267,7 +267,6 @@ impl TenantDataMigrationService {
         migration: &TenantDataMigrationRecord,
         now: OffsetDateTime,
     ) -> AppResult<()> {
-        let now = migration_record_time(now)?;
         transaction
             .acquire_lease(TenantOperationLeaseRecord {
                 tenant_id: migration.tenant_id.clone(),
@@ -275,7 +274,7 @@ impl TenantDataMigrationService {
                 operation: "tenant_data.migration".into(),
                 resource_type: "tenant_data_migration".into(),
                 resource_id: migration.id.to_string(),
-                expires_at: now + Duration::hours(OPERATION_LEASE_HOURS),
+                expires_at: operation_lease_expires_at(now)?,
                 created_at: now,
                 updated_at: now,
             })
@@ -388,9 +387,7 @@ impl TenantDataMigrationService {
         migration: &TenantDataMigrationRecord,
         now: OffsetDateTime,
     ) -> AppResult<()> {
-        let expires_at = now
-            .checked_add(time::Duration::hours(OPERATION_LEASE_HOURS))
-            .ok_or_else(|| AppError::Database("迁移租约到期时间无法精确表示为 UTC".into()))?;
+        let expires_at = operation_lease_expires_at(now)?;
         if transaction
             .renew_lease(&migration.tenant_id, &migration.switch_token, expires_at)
             .await?

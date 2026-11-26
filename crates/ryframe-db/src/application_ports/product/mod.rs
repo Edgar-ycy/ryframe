@@ -8,7 +8,6 @@ use crate::{
     ControlDatabaseCluster, ProductRepository, ReadConsistency, TenantOperationLeaseRepository,
     entities::tenant::operation_lease as tenant_operation_lease,
 };
-use chrono::{DateTime, Utc};
 use ryframe_kernel::AppError;
 use sea_orm::TransactionTrait;
 use time::OffsetDateTime;
@@ -186,8 +185,6 @@ impl ProductWriteTransaction for DatabaseProductWriteTransaction {
         acquired_at: OffsetDateTime,
         expires_at: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<()> {
-        let acquired_at = shared_lease_time(acquired_at, "获取")?;
-        let expires_at = shared_lease_time(expires_at, "截止")?;
         TenantOperationLeaseRepository
             .acquire_in_txn(
                 &self.transaction,
@@ -449,14 +446,6 @@ impl ProductWriteTransaction for DatabaseProductWriteTransaction {
             .await
             .map(version_state)
     }
-}
-
-fn shared_lease_time(
-    value: OffsetDateTime,
-    field: &str,
-) -> ryframe_kernel::AppResult<DateTime<Utc>> {
-    DateTime::from_timestamp(value.unix_timestamp(), value.nanosecond())
-        .ok_or_else(|| AppError::Database(format!("产品变更租约{field}时间无法精确表示为 UTC")))
 }
 
 #[async_trait::async_trait]

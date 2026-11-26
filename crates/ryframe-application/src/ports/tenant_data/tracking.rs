@@ -214,9 +214,9 @@ pub struct TenantOperationLeaseRecord {
     pub operation: String,
     pub resource_type: String,
     pub resource_id: String,
-    pub expires_at: DateTime<Utc>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub expires_at: OffsetDateTime,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

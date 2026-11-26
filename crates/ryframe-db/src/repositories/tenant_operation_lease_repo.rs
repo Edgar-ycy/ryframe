@@ -32,7 +32,7 @@ impl TenantOperationLeaseRepository {
             .await
             .db()?
             .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
-        let now = super::database_utc_now(transaction).await?;
+        let now = super::database_utc_now_time(transaction).await?;
         let lease = tenant_operation_lease::Entity::find_by_id(tenant_id.to_owned())
             .lock(LockType::Update)
             .one(transaction)
@@ -75,7 +75,7 @@ impl TenantOperationLeaseRepository {
             .await
             .db()?
             .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
-        let now = super::database_utc_now(transaction).await?;
+        let now = super::database_utc_now_time(transaction).await?;
         let existing = tenant_operation_lease::Entity::find_by_id(lease.tenant_id.clone())
             .lock(LockType::Update)
             .one(transaction)

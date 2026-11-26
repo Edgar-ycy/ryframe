@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
 use serde_json::Value as JsonValue;
 use std::collections::BTreeSet;
+use time::OffsetDateTime;
 
 use crate::{
     ports::authorization::AuthorizationMirrorTransaction,
@@ -126,9 +127,9 @@ pub struct TenantConfigOperationLeaseRecord {
     pub operation: String,
     pub resource_type: String,
     pub resource_id: String,
-    pub expires_at: DateTime<Utc>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub expires_at: OffsetDateTime,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -151,6 +152,8 @@ pub trait TenantConfigTransferTransaction:
     fn authorization_mirror(&self) -> &dyn AuthorizationMirrorTransaction;
 
     async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
+    /// 在同一控制库事务中读取操作租约使用的 UTC 时间。
+    async fn lease_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime>;
 
     async fn lock_tenant_configuration<'a>(
         &'a self,
@@ -172,7 +175,7 @@ pub trait TenantConfigTransferTransaction:
         &'a self,
         tenant_id: &'a str,
         owner_token: &'a str,
-        expires_at: DateTime<Utc>,
+        expires_at: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool>;
 
     async fn release_lease<'a>(

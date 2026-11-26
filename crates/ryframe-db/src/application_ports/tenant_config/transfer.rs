@@ -17,6 +17,7 @@ use sea_orm::{
     ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
     TransactionTrait, sea_query::LockType,
 };
+use time::OffsetDateTime;
 
 use super::super::transaction::DatabasePortTransaction;
 
@@ -62,6 +63,10 @@ impl TenantConfigTransferTransaction for DatabaseTenantConfigTransferTransaction
         crate::repositories::database_utc_now(&self.transaction).await
     }
 
+    async fn lease_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime> {
+        crate::repositories::database_utc_now_time(&self.transaction).await
+    }
+
     async fn lock_tenant_configuration<'a>(
         &'a self,
         tenant_id: &'a str,
@@ -96,7 +101,7 @@ impl TenantConfigTransferTransaction for DatabaseTenantConfigTransferTransaction
         &'a self,
         tenant_id: &'a str,
         owner_token: &'a str,
-        expires_at: chrono::DateTime<chrono::Utc>,
+        expires_at: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         TenantConfigTransferRepository
             .renew_lease_in_txn(&self.transaction, tenant_id, owner_token, expires_at)

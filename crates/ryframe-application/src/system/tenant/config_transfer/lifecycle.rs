@@ -1,4 +1,5 @@
 use super::*;
+use time::OffsetDateTime;
 
 /// 配置迁移租约必须显式完成或释放；析构仅在异常退出时安排尽力补偿。
 pub(super) struct OperationLease {
@@ -243,7 +244,7 @@ impl TenantConfigTransferService {
         operation: &str,
     ) -> AppResult<OperationLease> {
         let transaction = self.persistence.begin().await?;
-        let now = transaction.database_now().await?;
+        let now = transaction.lease_now().await?;
         transaction
             .acquire_lease(TenantConfigOperationLeaseRecord {
                 tenant_id: tenant_id.to_owned(),
@@ -251,8 +252,7 @@ impl TenantConfigTransferService {
                 operation: operation.to_owned(),
                 resource_type: "tenant_config_transfer".to_owned(),
                 resource_id: transfer_id.to_string(),
-                expires_at: now
-                    + Duration::seconds(i64::try_from(self.config.lease_seconds).unwrap_or(300)),
+                expires_at: self.operation_lease_expires_at(now)?,
                 created_at: now,
                 updated_at: now,
             })
@@ -285,14 +285,12 @@ impl TenantConfigTransferService {
     ) -> AppResult<()> {
         let transaction = self.persistence.begin().await?;
         let operation = async {
-            let now = transaction.database_now().await?;
+            let now = transaction.lease_now().await?;
             let renewed = transaction
                 .renew_lease(
                     tenant_id,
                     owner_token,
-                    now + Duration::seconds(
-                        i64::try_from(self.config.lease_seconds).unwrap_or(300),
-                    ),
+                    self.operation_lease_expires_at(now)?,
                 )
                 .await?;
             if !renewed {
@@ -308,6 +306,12 @@ impl TenantConfigTransferService {
                 Err(error)
             }
         }
+    }
+
+    fn operation_lease_expires_at(&self, now: OffsetDateTime) -> AppResult<OffsetDateTime> {
+        let seconds = i64::try_from(self.config.lease_seconds).unwrap_or(300);
+        now.checked_add(time::Duration::seconds(seconds))
+            .ok_or_else(|| AppError::Database("配置迁移租约到期时间无法精确表示为 UTC".into()))
     }
 
     pub(super) async fn sync_committed_cache_state(

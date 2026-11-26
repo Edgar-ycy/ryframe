@@ -8,7 +8,6 @@ mod workflow;
 
 use std::sync::Arc;
 
-use chrono::Duration;
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use serde_json::json;
 use time::OffsetDateTime;
@@ -35,6 +34,11 @@ use support::{
 pub const TENANT_DATA_MIGRATION_JOB_TYPE: &str = "tenant_data_migration";
 const RETENTION_HOURS: i32 = 168;
 const OPERATION_LEASE_HOURS: i64 = 24;
+
+fn operation_lease_expires_at(now: OffsetDateTime) -> AppResult<OffsetDateTime> {
+    now.checked_add(time::Duration::hours(OPERATION_LEASE_HOURS))
+        .ok_or_else(|| AppError::Database("迁移租约到期时间无法精确表示为 UTC".into()))
+}
 
 pub(super) fn checked_generation(value: i64, field: &str) -> AppResult<i64> {
     (value > 0)
@@ -406,9 +410,9 @@ impl TenantDataMigrationService {
                 operation: "tenant_data.migration".into(),
                 resource_type: "tenant_data_migration".into(),
                 resource_id: migration_id.to_string(),
-                expires_at: record_now + Duration::hours(OPERATION_LEASE_HOURS),
-                created_at: record_now,
-                updated_at: record_now,
+                expires_at: operation_lease_expires_at(now)?,
+                created_at: now,
+                updated_at: now,
             })
             .await
         {

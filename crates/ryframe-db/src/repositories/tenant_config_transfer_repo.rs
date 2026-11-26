@@ -1,11 +1,11 @@
 use crate::DbResultExt;
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
     EntityTrait, ExprTrait, QueryFilter, QueryOrder, QuerySelect,
     sea_query::{Expr, LockType},
 };
+use time::OffsetDateTime;
 
 use crate::{
     entities::tenant::{
@@ -87,10 +87,8 @@ impl TenantConfigTransferRepository {
         transaction: &DatabaseTransaction,
         tenant_id: &str,
         owner_token: &str,
-        expires_at: DateTime<Utc>,
+        expires_at: OffsetDateTime,
     ) -> AppResult<bool> {
-        let expires_at =
-            super::utc_time_from_chrono(expires_at).db_context("租户配置迁移续租截止时间")?;
         TenantOperationLeaseRepository
             .renew_in_txn(transaction, tenant_id, owner_token, expires_at)
             .await
