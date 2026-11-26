@@ -3217,7 +3217,6 @@ version = "0.13.1"
 dependencies = [
  "async-trait",
  "axum",
- "chrono",
  "futures-util",
  "hex",
  "opentelemetry",

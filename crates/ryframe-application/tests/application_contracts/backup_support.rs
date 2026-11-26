@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration};
 use ryframe_application::{
     ports::backup::*,
     system::operations::{
@@ -13,6 +13,7 @@ use std::{
         atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
     },
 };
+use time::OffsetDateTime;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 #[derive(Default)]
@@ -34,8 +35,8 @@ struct Transaction {
 
 #[async_trait::async_trait]
 impl BackupRepository for Repository {
-    async fn database_now(&self) -> AppResult<DateTime<Utc>> {
-        Ok(DateTime::from_timestamp(self.clock.load(Ordering::SeqCst), 0).unwrap())
+    async fn database_now(&self) -> AppResult<OffsetDateTime> {
+        Ok(OffsetDateTime::from_unix_timestamp(self.clock.load(Ordering::SeqCst)).unwrap())
     }
     async fn required_resources(&self) -> AppResult<Vec<String>> {
         Ok(manifest().resource_keys())

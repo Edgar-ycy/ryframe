@@ -40,7 +40,6 @@ zip = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 
 [dev-dependencies]
-chrono.workspace = true
 same-file.workspace = true
 futures-util.workspace = true
 tempfile.workspace = true

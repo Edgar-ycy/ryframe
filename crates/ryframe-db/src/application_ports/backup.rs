@@ -1,6 +1,5 @@
 use super::transaction::DatabasePortTransaction;
 use crate::{ControlDatabaseCluster, DbResultExt, repositories::backup_repo};
-use chrono::{DateTime, Utc};
 use ryframe_application::ports::backup::*;
 use ryframe_kernel::AppResult;
 use sea_orm::TransactionTrait;
@@ -23,8 +22,8 @@ impl BackupRepository for DatabaseBackups {
     async fn required_resources(&self) -> AppResult<Vec<String>> {
         backup_repo::required_resources(self.database.write()).await
     }
-    async fn database_now(&self) -> AppResult<DateTime<Utc>> {
-        crate::repositories::database_utc_now(self.database.write()).await
+    async fn database_now(&self) -> AppResult<OffsetDateTime> {
+        crate::repositories::database_utc_now_time(self.database.write()).await
     }
 
     async fn begin(&self) -> AppResult<Box<dyn BackupTransaction>> {

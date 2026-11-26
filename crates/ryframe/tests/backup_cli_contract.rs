@@ -20,6 +20,7 @@ use inventory_timestamp::InventoryTimestamp;
 use ryframe_kernel::AppError;
 use serde_json::json;
 use std::fs;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 fn arguments(value: &str) -> Result<Command, String> {
     let arguments = ryframe_config::ConfigurationArgs::parse(
@@ -402,18 +403,12 @@ fn inventory_requires_one_observation_kind_and_serializes_only_that_fact() {
 
 #[test]
 fn backup_inventory_preserves_legacy_capture_bytes() {
-    use chrono::{DateTime, Utc};
-    use ryframe_application::ports::utc_timestamp;
-
     let temporary = configuration_directory();
     let input = "2026-11-25T18:05:00.400000+08:00";
     let started_at = InventoryTimestamp::parse(input).unwrap();
-    let legacy_start = DateTime::parse_from_rfc3339(input)
-        .unwrap()
-        .with_timezone(&Utc);
     assert_eq!(
         serde_json::to_string(&started_at).unwrap(),
-        serde_json::to_string(&legacy_start).unwrap()
+        r#""2026-11-25T10:05:00.400Z""#
     );
     for (index, (input, legacy_capture)) in [
         ("2026-11-25T10:06:00.000000Z", "2026-11-25T10:06:00Z"),
@@ -423,13 +418,7 @@ fn backup_inventory_preserves_legacy_capture_bytes() {
     .into_iter()
     .enumerate()
     {
-        let captured_at = DateTime::parse_from_rfc3339(input)
-            .unwrap()
-            .with_timezone(&Utc);
-        assert_eq!(
-            serde_json::to_string(&captured_at).unwrap(),
-            format!("\"{legacy_capture}\"")
-        );
+        let captured_at = OffsetDateTime::parse(input, &Rfc3339).unwrap();
         for (key, observation) in [
             ("quiesced_at", InventoryTime::QuiescedAt(started_at)),
             ("observed_at", InventoryTime::ObservedAt(started_at)),
@@ -438,7 +427,7 @@ fn backup_inventory_preserves_legacy_capture_bytes() {
                 scope_id: "fixture".into(),
                 source_sha: "0123456789abcdef0123456789abcdef01234567".into(),
                 observation,
-                captured_at: utc_timestamp::from_chrono(captured_at).unwrap(),
+                captured_at,
                 control_schema_fingerprint: "control".into(),
                 tenant_schema_fingerprint: "tenant".into(),
                 databases: vec![],
@@ -467,32 +456,48 @@ fn backup_inventory_preserves_legacy_capture_bytes() {
 
 #[test]
 fn backup_inventory_observation_matches_legacy_rfc3339() {
-    use chrono::{DateTime, Utc};
-
-    for input in [
-        "2026-11-25T10:05:00Z",
-        "2026-11-25T10:05:00.4Z",
-        "2026-11-25T10:05:00.123400+00:00",
-        "2026-11-25T10:05:00.123456700-00:00",
-        "2026-11-25T10:05:00.123456789987Z",
-        "2026-11-25t10:05:00z",
-        "2026-11-25 10:05:00.123456789−08:30",
-        "2026-11-25T10:05:00+23:59",
-        "2026-11-25T10:05:00-23:59",
-        "2016-12-31T23:59:60Z",
-        "2017-01-01T05:29:60.123456789987+05:30",
-        "2020-04-07 12:34:60.123400−00:30",
-        "0000-01-01T00:00:00+00:01",
-        "0000-01-01T00:00:60.4+00:01",
-        "9999-12-31T23:59:59.999999+00:00",
+    for (input, expected) in [
+        ("2026-11-25T10:05:00Z", "2026-11-25T10:05:00Z"),
+        ("2026-11-25T10:05:00.4Z", "2026-11-25T10:05:00.400Z"),
+        (
+            "2026-11-25T10:05:00.123400+00:00",
+            "2026-11-25T10:05:00.123400Z",
+        ),
+        (
+            "2026-11-25T10:05:00.123456700-00:00",
+            "2026-11-25T10:05:00.123456700Z",
+        ),
+        (
+            "2026-11-25T10:05:00.123456789987Z",
+            "2026-11-25T10:05:00.123456789Z",
+        ),
+        ("2026-11-25t10:05:00z", "2026-11-25T10:05:00Z"),
+        (
+            "2026-11-25 10:05:00.123456789−08:30",
+            "2026-11-25T18:35:00.123456789Z",
+        ),
+        ("2026-11-25T10:05:00+23:59", "2026-11-24T10:06:00Z"),
+        ("2026-11-25T10:05:00-23:59", "2026-11-26T10:04:00Z"),
+        ("2016-12-31T23:59:60Z", "2016-12-31T23:59:60Z"),
+        (
+            "2017-01-01T05:29:60.123456789987+05:30",
+            "2016-12-31T23:59:60.123456789Z",
+        ),
+        (
+            "2020-04-07 12:34:60.123400−00:30",
+            "2020-04-07T13:04:60.123400Z",
+        ),
+        ("0000-01-01T00:00:00+00:01", "-0001-12-31T23:59:00Z"),
+        ("0000-01-01T00:00:60.4+00:01", "-0001-12-31T23:59:60.400Z"),
+        (
+            "9999-12-31T23:59:59.999999+00:00",
+            "9999-12-31T23:59:59.999999Z",
+        ),
     ] {
-        let legacy = DateTime::parse_from_rfc3339(input)
-            .unwrap()
-            .with_timezone(&Utc);
         let actual = InventoryTimestamp::parse(input).unwrap();
         assert_eq!(
             serde_json::to_string(&actual).unwrap(),
-            serde_json::to_string(&legacy).unwrap(),
+            format!("\"{expected}\""),
             "{input}"
         );
     }
@@ -522,7 +527,6 @@ fn backup_inventory_observation_matches_legacy_rfc3339() {
         "+10000-01-01T00:00:00Z",
         "-0001-12-31T23:59:00Z",
     ] {
-        assert!(DateTime::parse_from_rfc3339(input).is_err(), "{input}");
         assert!(
             matches!(
                 InventoryTimestamp::parse(input),
@@ -535,33 +539,34 @@ fn backup_inventory_observation_matches_legacy_rfc3339() {
 
 #[test]
 fn backup_inventory_compares_observation_to_database_clock_like_legacy() {
-    use chrono::{DateTime, Utc};
-    use ryframe_application::ports::utc_timestamp;
-
-    for (input, capture) in [
-        ("2017-01-01T05:29:60.4+05:30", "2016-12-31T23:59:59.999999Z"),
-        ("2017-01-01T05:29:60.4+05:30", "2017-01-01T00:00:00Z"),
+    for (input, capture, allowed) in [
+        (
+            "2017-01-01T05:29:60.4+05:30",
+            "2016-12-31T23:59:59.999999Z",
+            false,
+        ),
+        ("2017-01-01T05:29:60.4+05:30", "2017-01-01T00:00:00Z", true),
         (
             "2026-11-25T18:05:00.40000000099+08:00",
             "2026-11-25T10:05:00.4Z",
+            true,
         ),
         (
             "2026-11-25T10:05:00.400001001Z",
             "2026-11-25T10:05:00.400001Z",
+            false,
         ),
-        ("0000-01-01T00:00:00+00:01", "1000-01-01T00:00:00Z"),
-        ("9999-12-31T23:59:59-00:01", "9999-12-31T23:59:59.999999Z"),
+        ("0000-01-01T00:00:00+00:01", "1000-01-01T00:00:00Z", true),
+        (
+            "9999-12-31T23:59:59-00:01",
+            "9999-12-31T23:59:59.999999Z",
+            false,
+        ),
     ] {
-        let legacy = |value| {
-            DateTime::parse_from_rfc3339(value)
-                .unwrap()
-                .with_timezone(&Utc)
-        };
-        let captured_at = legacy(capture);
+        let captured_at = OffsetDateTime::parse(capture, &Rfc3339).unwrap();
         let observation = InventoryTimestamp::parse(input).unwrap();
-        let result =
-            observation.validate_not_after(utc_timestamp::from_chrono(captured_at).unwrap());
-        if legacy(input) <= captured_at {
+        let result = observation.validate_not_after(captured_at);
+        if allowed {
             assert!(result.is_ok(), "{input} <= {capture}");
         } else {
             assert!(

@@ -1,5 +1,5 @@
 use super::backup_support::*;
-use chrono::Duration;
+use chrono::{DateTime, Duration};
 use ryframe_application::{
     ports::backup::*,
     system::operations::{validate_backup_manifest, validate_backup_record, validate_restore_plan},
@@ -839,6 +839,7 @@ fn backup_restore_and_scope_identifiers_follow_the_formal_contract() {
 async fn ranges_timestamps_and_source_resource_reuse_fail_closed() {
     let (_, repository, _) = fixture();
     let now = repository.database_now().await.unwrap();
+    let now = DateTime::from_timestamp(now.unix_timestamp(), now.nanosecond()).unwrap();
     let original = manifest();
     for case in 0..6 {
         let mut manifest = original.clone();

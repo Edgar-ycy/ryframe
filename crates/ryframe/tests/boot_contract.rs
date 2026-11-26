@@ -220,7 +220,7 @@ mod refresh_sessions {
     async fn memory_store_preserves_refresh_family_semantics() {
         let sessions = store(None);
         let sid = ryframe_auth::jwt::new_sid();
-        let now = chrono::Utc::now().timestamp();
+        let now = time::OffsetDateTime::now_utc().unix_timestamp();
         sessions
             .register(RefreshSessionFamily {
                 sid: sid.clone(),

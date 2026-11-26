@@ -60,7 +60,7 @@ pub trait BackupTransaction: Send + Sync {
 
 #[async_trait::async_trait]
 pub trait BackupRepository: Send + Sync {
-    async fn database_now(&self) -> AppResult<DateTime<Utc>>;
+    async fn database_now(&self) -> AppResult<OffsetDateTime>;
     async fn required_resources(&self) -> AppResult<Vec<String>>;
     async fn begin(&self) -> AppResult<Box<dyn BackupTransaction>>;
     async fn backup(&self, id: &str) -> AppResult<Option<BackupRecord>>;

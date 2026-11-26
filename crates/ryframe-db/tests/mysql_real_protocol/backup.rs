@@ -5,7 +5,7 @@ use super::{
 use chrono::{DateTime, Duration, Utc};
 use ryframe_application::ports::backup::*;
 use sea_orm::{IsolationLevel, TransactionTrait};
-use time::{OffsetDateTime, macros::offset};
+use time::{OffsetDateTime, UtcOffset, macros::offset};
 
 #[path = "backup/restore_safety.rs"]
 mod restore_safety;
@@ -30,7 +30,7 @@ async fn backup_transactions_health_and_restore_states_use_real_mysql() {
         install_test_database_id_generator()?;
         ryframe_db::migration::up(&database, Some(&super::bootstrap_hashes())).await.map_err(|error| error.to_string())?;
         let repository = application_ports::backup::port(ControlDatabaseCluster::single(database.clone()));
-        let now = repository.database_now().await.map_err(|error| error.to_string())?;
+        let now = verify_database_clock(repository.as_ref(), &database).await?;
         let now = DateTime::from_timestamp(now.timestamp(), 123_456_000).ok_or("数据库时间无效")?;
         let record = record(now);
         let transaction = repository.begin().await.map_err(|error| error.to_string())?;
@@ -54,6 +54,31 @@ async fn backup_transactions_health_and_restore_states_use_real_mysql() {
         require_count(&database, "SELECT COUNT(*) AS value FROM sys_tenant_data_backup_point WHERE last_restore_drill_at IS NOT NULL", 1).await?;
         check_projection_corruption(repository.as_ref(), &database, now).await
     }).await;
+}
+
+async fn verify_database_clock(
+    repository: &dyn BackupRepository,
+    database: &sea_orm::DatabaseConnection,
+) -> Result<DateTime<Utc>, String> {
+    let before = ryframe_db::repositories::database_utc_now(database)
+        .await
+        .map_err(|error| error.to_string())?;
+    let now = repository
+        .database_now()
+        .await
+        .map_err(|error| error.to_string())?;
+    let after = ryframe_db::repositories::database_utc_now(database)
+        .await
+        .map_err(|error| error.to_string())?;
+    let value =
+        DateTime::from_timestamp(now.unix_timestamp(), now.nanosecond()).ok_or("数据库时间无效")?;
+    check(
+        now.offset() == UtcOffset::UTC
+            && now.nanosecond().is_multiple_of(1_000)
+            && (before..=after).contains(&value),
+        "备份仓储时钟必须落在数据库 UTC 微秒读数之间",
+    )?;
+    Ok(value)
 }
 
 async fn save(repository: &dyn BackupRepository, record: &BackupRecord) -> Result<(), String> {

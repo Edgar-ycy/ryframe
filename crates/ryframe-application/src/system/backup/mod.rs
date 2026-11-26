@@ -1,6 +1,7 @@
 //! 外部备份与恢复演练用例。恢复计时从登记开始，包含外部恢复及业务验收。
 
 use crate::ports::backup::*;
+use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use std::sync::Arc;
 
@@ -47,7 +48,7 @@ impl BackupService {
         manifest: BackupManifest,
         required: &[String],
     ) -> AppResult<BackupRecord> {
-        let now = self.repository.database_now().await?;
+        let now = self.database_record_time().await?;
         validate_backup_manifest(&manifest, required, now)?;
         let manifest_hash = backup_content_hash(&manifest)?;
         let verification = self.artifacts.artifacts(&manifest).await;
@@ -55,7 +56,7 @@ impl BackupService {
             manifest,
             manifest_hash,
             valid: verification.is_ok(),
-            checked_at: self.repository.database_now().await?,
+            checked_at: self.database_record_time().await?,
             failure: verification.as_ref().err().map(failure_detail),
         };
         validate_backup_manifest(&record.manifest, required, record.checked_at)?;
@@ -80,7 +81,7 @@ impl BackupService {
         plan: RestorePlan,
         preimage: &RestoreTargetPreimage,
     ) -> AppResult<RestoreRecord> {
-        let now = self.repository.database_now().await?;
+        let now = self.database_record_time().await?;
         let backup = self.require_backup(&plan.backup_id).await?;
         validate_restore_plan(&backup, &plan, now)?;
         let plan_hash = backup_content_hash(&plan)?;
@@ -144,7 +145,7 @@ impl BackupService {
             ));
         }
         let backup = self.require_backup(&record.plan.backup_id).await?;
-        let now = self.repository.database_now().await?;
+        let now = self.database_record_time().await?;
         let result = match validate_restore_proof(&backup, &record, proof, now) {
             Ok(()) => self.runtime.restored_runtime(&record, proof).await,
             Err(error) => Err(error),
@@ -159,7 +160,7 @@ impl BackupService {
         next: RestoreStatus,
         result: AppResult<()>,
     ) -> AppResult<RestoreRecord> {
-        let now = self.repository.database_now().await?;
+        let now = self.database_record_time().await?;
         let timing = if now < previous.data_verified_at.unwrap_or(previous.started_at)
             || now - previous.started_at > chrono::Duration::hours(1)
         {
@@ -188,6 +189,12 @@ impl BackupService {
         transaction.commit().await?;
         result?;
         Ok(record)
+    }
+
+    async fn database_record_time(&self) -> AppResult<DateTime<Utc>> {
+        let now = self.repository.database_now().await?;
+        DateTime::from_timestamp(now.unix_timestamp(), now.nanosecond())
+            .ok_or_else(|| AppError::Database("备份与恢复记录时间无法精确表示为 UTC".into()))
     }
 
     async fn require_backup(&self, id: &str) -> AppResult<BackupRecord> {

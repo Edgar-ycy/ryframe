@@ -1,9 +1,6 @@
-use ryframe_application::ports::{
-    backup::{BackupHealth, BackupHealthCache, BackupRepository},
-    utc_timestamp,
-};
+use ryframe_application::ports::backup::{BackupHealth, BackupHealthCache, BackupRepository};
 use ryframe_db::ControlDatabaseCluster;
-use ryframe_kernel::{AppError, AppResult};
+use ryframe_kernel::AppResult;
 use std::{sync::Arc, time::Duration};
 use time::OffsetDateTime;
 use tokio::sync::watch;
@@ -52,8 +49,7 @@ async fn collect(
     scope_id: &str,
 ) -> AppResult<BackupHealth> {
     let resources = repository.required_resources().await?;
-    let now = utc_timestamp::from_chrono(repository.database_now().await?)
-        .map_err(|_| AppError::Database("备份健康时间超出 UTC 表示范围".into()))?;
+    let now = repository.database_now().await?;
     repository.health(scope_id, &resources, now).await
 }
 
@@ -89,7 +85,6 @@ async fn refresh(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{DateTime, Utc};
     use ryframe_application::ports::backup::{BackupRecord, BackupTransaction, RestoreRecord};
     use tokio::sync::Notify;
 
@@ -99,7 +94,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl BackupRepository for HangingRepository {
-        async fn database_now(&self) -> AppResult<DateTime<Utc>> {
+        async fn database_now(&self) -> AppResult<OffsetDateTime> {
             unreachable!()
         }
 

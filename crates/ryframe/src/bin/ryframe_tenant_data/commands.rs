@@ -5,7 +5,7 @@ use super::{
     output::{self, Inventory, write_inventory},
     preimage,
 };
-use ryframe_application::ports::{backup::*, utc_timestamp};
+use ryframe_application::ports::backup::*;
 use ryframe_config::AppConfig;
 use ryframe_kernel::{AppError, AppResult};
 use serde::{Serialize, de::DeserializeOwned};
@@ -125,8 +125,7 @@ pub async fn execute(
 
 pub async fn status(config: &AppConfig, repository: &dyn BackupRepository) -> AppResult<()> {
     let resources = repository.required_resources().await?;
-    let now = utc_timestamp::from_chrono(repository.database_now().await?)
-        .map_err(|_| AppError::Database("备份健康时间超出 UTC 表示范围".into()))?;
+    let now = repository.database_now().await?;
     print_json(
         &repository
             .health(config.scope_id.as_str(), &resources, now)
@@ -152,8 +151,7 @@ async fn inventory(
         InventoryTime::QuiescedAt(value) | InventoryTime::ObservedAt(value) => value,
     };
     let started_at = InventoryTimestamp::parse(value)?;
-    let captured_at = utc_timestamp::from_chrono(context.repository.database_now().await?)
-        .map_err(|_| AppError::Internal("库存采集时间超出 UTC 表示范围".into()))?;
+    let captured_at = context.repository.database_now().await?;
     started_at.validate_not_after(captured_at)?;
     let inventory = Inventory {
         scope_id: config.scope_id.as_str().into(),
