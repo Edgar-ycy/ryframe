@@ -6,6 +6,11 @@ use crate::Result;
 #[derive(Clone, Copy, Debug)]
 pub(in crate::recovery::clone::native) enum MarkerCheckpoint {
     RunBinding,
+    ApiIncidentHistory,
+    ApiIncidentRuntime,
+    ApiIncidentObservation,
+    ApiIncidentFiles,
+    PreparationHistory,
     StorageLock,
     TargetOwner,
     CopyLedgerLock,
@@ -23,6 +28,11 @@ impl MarkerCheckpoint {
     fn label(self) -> &'static str {
         match self {
             Self::RunBinding => "MarkerRecoveryRunBinding",
+            Self::ApiIncidentHistory => "MarkerRecoveryApiIncidentHistory",
+            Self::ApiIncidentRuntime => "MarkerRecoveryApiIncidentRuntime",
+            Self::ApiIncidentObservation => "MarkerRecoveryApiIncidentObservation",
+            Self::ApiIncidentFiles => "MarkerRecoveryApiIncidentFiles",
+            Self::PreparationHistory => "MarkerRecoveryPreparationHistory",
             Self::StorageLock => "MarkerRecoveryStorageLock",
             Self::TargetOwner => "MarkerRecoveryTargetOwner",
             Self::CopyLedgerLock => "MarkerRecoveryCopyLedgerLock",

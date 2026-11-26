@@ -26,19 +26,32 @@ pub(super) fn load(
 }
 
 fn ancestor_count(binding: &Value) -> Result<usize> {
-    match (
-        binding["completed_copy"].get("prepared_before_api"),
-        binding["fixture"]["lineage"].get("prepared_redis_failure"),
+    let completed = &binding["completed_copy"];
+    let lineage = &binding["fixture"]["lineage"];
+    let prior = match (
+        completed.get("prepared_before_api"),
+        lineage.get("prepared_redis_failure"),
     ) {
-        (None, None) => Ok(2),
-        (Some(prepared), Some(incident))
-            if prepared.as_object().is_some_and(|proof| !proof.is_empty())
-                && incident.is_object() =>
+        (None, None) => 2,
+        (Some(prepared), Some(incident)) if nonempty_object(prepared) && incident.is_object() => 3,
+        _ => return Err("第六代原标记确认要求同时绑定 API 准备证明及后继 Redis 事故".into()),
+    };
+    match (
+        completed.get("after_api_incident"),
+        lineage.get("runtime_incident_redis_failure"),
+    ) {
+        (None, None) => Ok(prior),
+        (Some(incident), Some(redis))
+            if prior == 3 && nonempty_object(incident) && nonempty_object(redis) =>
         {
-            Ok(3)
+            Ok(4)
         }
-        _ => Err("第六代原标记确认要求同时绑定 API 准备证明及后继 Redis 事故".into()),
+        _ => Err("第七代原标记确认要求同时绑定 API 运行事故及后继 Redis 事故".into()),
     }
+}
+
+fn nonempty_object(value: &Value) -> bool {
+    value.as_object().is_some_and(|proof| !proof.is_empty())
 }
 
 fn load_one(
@@ -132,7 +145,18 @@ fn load_one(
 }
 
 fn ancestor_link(binding: &Value, remaining: usize) -> Result<Option<&'static str>> {
+    if binding["completed_copy"]
+        .get("after_api_incident")
+        .is_some()
+        || binding["fixture"]["lineage"]
+            .get("runtime_incident_redis_failure")
+            .is_some()
+    {
+        return Err("API 运行事故后的标记不得作为更早代次的原标记".into());
+    }
     match remaining {
+        4 if ancestor_count(binding)? == 3 => Ok(Some("prepared_redis_failure")),
+        4 => Err("第七代的直接标记前驱必须是原 API 准备窗口的第六代".into()),
         3 if binding["completed_copy"].is_object()
             && binding["completed_copy"]
                 .get("prepared_before_api")
@@ -175,6 +199,29 @@ mod tests {
         assert_eq!(ancestor_count(&binding).unwrap(), 3);
         assert!(ancestor_link(&binding, 3).is_err());
         binding["completed_copy"]["prepared_before_api"] = json!({});
+        assert!(ancestor_count(&binding).is_err());
+    }
+
+    #[test]
+    fn fourth_marker_ancestor_requires_both_incident_bindings_and_an_original_sixth_marker() {
+        let mut binding = json!({
+            "completed_copy":{"prepared_before_api":{"request":{}}},
+            "fixture":{"lineage":{"prepared_redis_failure":{"previous_fixture_sha256":"original"}}}
+        });
+        assert_eq!(
+            ancestor_link(&binding, 4).unwrap(),
+            Some("prepared_redis_failure")
+        );
+        assert!(ancestor_link(&json!({}), 4).is_err());
+        binding["completed_copy"]["after_api_incident"] = json!({"api_failure":{}});
+        assert!(ancestor_count(&binding).is_err());
+        binding["fixture"]["lineage"]["runtime_incident_redis_failure"] = json!({});
+        assert!(ancestor_count(&binding).is_err());
+        binding["fixture"]["lineage"]["runtime_incident_redis_failure"] =
+            json!({"previous_fixture_sha256":"original"});
+        assert_eq!(ancestor_count(&binding).unwrap(), 4);
+        assert!(ancestor_link(&binding, 4).is_err());
+        binding["completed_copy"]["after_api_incident"] = Value::Null;
         assert!(ancestor_count(&binding).is_err());
     }
 }

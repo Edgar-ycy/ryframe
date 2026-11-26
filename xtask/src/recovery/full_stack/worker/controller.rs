@@ -22,6 +22,9 @@ use result::finish;
 mod observation;
 pub(crate) use observation::observe;
 use observation::verify_running;
+#[path = "controller/api_incident.rs"]
+mod api_incident;
+pub(crate) use api_incident::observe_windows_api_incident;
 #[path = "controller/bound.rs"]
 mod bound;
 pub(crate) use bound::{

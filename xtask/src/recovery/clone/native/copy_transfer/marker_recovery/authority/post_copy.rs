@@ -1,6 +1,7 @@
-//! 已完成复制且没有启动产品的窄范围标记接续。
+//! 已完成复制后的受管 Redis 标记接续。
 use super::*;
 use crate::recovery::clone::native::seed;
+mod after_api_incident;
 mod failed_prepare;
 mod prepared_before_api;
 
@@ -12,6 +13,7 @@ pub(super) struct Completed {
     files: Inputs,
     failures: failed_prepare::Evidence,
     prepared: Option<prepared_before_api::Evidence>,
+    api_incident: Option<after_api_incident::Evidence>,
     pub(super) binding: Value,
 }
 
@@ -41,10 +43,12 @@ pub(super) fn load(
     if !path.try_exists()? {
         return Ok(None);
     }
-    let prepared_rows = eligibility(
-        state::attempts(saved)?,
-        request.attempt.ok_or("缺少标记阶段")?,
-    )?;
+    let attempts = state::attempts(saved)?;
+    let current = request.attempt.ok_or("缺少标记阶段")?;
+    let window =
+        Checkpoint::ApiIncidentHistory.check(after_api_incident::window(attempts, current))?;
+    let original_attempts = window.as_ref().map_or(attempts, |value| value.before_start);
+    let prepared_rows = eligibility(original_attempts, current)?;
     let descriptor = common::binding(&protected_file(request.backend, &path)?)?;
     let post = seed::history::post(
         request.backend,
@@ -56,39 +60,33 @@ pub(super) fn load(
     if post.request["format_version"] != 1 || post.request["kind"] != "devex-clone-post-copy" {
         return Err("完整复制标记接续只接受原 v1 post-copy 登记".into());
     }
-    let prepared = match prepared_rows {
-        Some(rows) => Some(prepared_before_api::Evidence::load(
-            request, manifest, &post, rows,
-        )?),
-        None => {
+    let (prepared, api_incident) = match (prepared_rows, window) {
+        (Some(rows), Some(window)) => (
+            None,
+            Some(after_api_incident::Evidence::load(
+                request, &post, window, rows,
+            )?),
+        ),
+        (Some(rows), None) => (
+            Some(prepared_before_api::Evidence::load(
+                request, manifest, &post, rows,
+            )?),
+            None,
+        ),
+        (None, None) => {
             no_runtime(request.run_dir)?;
-            None
+            (None, None)
         }
+        (None, Some(_)) => return Err("原 API 事故缺少可核验的启动前准备".into()),
     };
-    let failures = failed_prepare::Evidence::load(
+    let failures = Checkpoint::PreparationHistory.check(failed_prepare::Evidence::load(
         request.backend,
         request.run_dir,
         manifest,
         saved,
         &descriptor,
-    )?;
-    let copy = Path::new(document::text(&manifest["copy_directory"], "原复制目录")?);
-    let mut paths = vec![path];
-    paths.extend(["result.json", "session.json", "input.json", "plan.json"].map(|n| copy.join(n)));
-    paths.extend(["head.json", "events.ndjson"].map(|n| copy.join("ledger").join(n)));
-    for row in state::attempts(saved)? {
-        if row["stage"] == "post-copy" || row["stage"] == "copy" && row["status"] == "passed" {
-            let number = row["number"].as_u64().ok_or("原完成阶段序号无效")?;
-            paths.push(state::controller_path(request.run_dir, number));
-            if !row["result"].is_null() {
-                paths.push(common::bound_file(
-                    request.backend,
-                    &row["result"],
-                    "原完成阶段结果",
-                )?);
-            }
-        }
-    }
+    ))?;
+    let paths = completed_files(request, manifest, attempts, path)?;
     let files = hold(request.backend, &paths)?;
     let plan = Checkpoint::CopyProof.check(seed::source_registration::copied::require(
         request.backend,
@@ -100,6 +98,10 @@ pub(super) fn load(
     if let Some(prepared) = &prepared {
         binding["prepared_before_api"] = prepared.binding.clone();
     }
+    if let Some(incident) = &api_incident {
+        binding["prepared_before_api"] = incident.prepared.clone();
+        binding["after_api_incident"] = incident.binding.clone();
+    }
     let complete = Completed {
         backend: request.backend.to_owned(),
         run: request.run_dir.to_owned(),
@@ -108,21 +110,54 @@ pub(super) fn load(
         files,
         failures,
         prepared,
+        api_incident,
         binding,
     };
     complete.check()?;
     Ok(Some(complete))
 }
 
+fn completed_files(
+    request: &StageRequest<'_>,
+    manifest: &Value,
+    attempts: &[Value],
+    registration: PathBuf,
+) -> Result<Vec<PathBuf>> {
+    let copy = Path::new(document::text(&manifest["copy_directory"], "原复制目录")?);
+    let mut paths = vec![registration];
+    paths.extend(["result.json", "session.json", "input.json", "plan.json"].map(|n| copy.join(n)));
+    paths.extend(["head.json", "events.ndjson"].map(|n| copy.join("ledger").join(n)));
+    for row in attempts.iter().filter(|row| {
+        row["stage"] == "post-copy" || row["stage"] == "copy" && row["status"] == "passed"
+    }) {
+        let number = row["number"].as_u64().ok_or("原完成阶段序号无效")?;
+        paths.push(state::controller_path(request.run_dir, number));
+        if !row["result"].is_null() {
+            paths.push(common::bound_file(
+                request.backend,
+                &row["result"],
+                "原完成阶段结果",
+            )?);
+        }
+    }
+    Ok(paths)
+}
+
 impl Completed {
     pub(super) fn prepared_before_api(&self) -> bool {
-        self.prepared.is_some()
+        self.prepared.is_some() || self.api_incident.is_some()
+    }
+
+    pub(super) fn after_api_incident(&self) -> bool {
+        self.api_incident.is_some()
     }
 
     pub(super) fn check(&self) -> Result<()> {
         self.files.check()?;
         self.failures.check()?;
-        if let Some(prepared) = &self.prepared {
+        if let Some(incident) = &self.api_incident {
+            incident.check()?;
+        } else if let Some(prepared) = &self.prepared {
             prepared.check()?;
         } else {
             no_runtime(&self.run)?;

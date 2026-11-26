@@ -164,7 +164,7 @@ impl Evidence {
     }
 }
 
-fn hold_artifacts(backend: &Path, contract: &Value) -> Result<Inputs> {
+pub(super) fn hold_artifacts(backend: &Path, contract: &Value) -> Result<Inputs> {
     let paths = ["api", "worker"]
         .into_iter()
         .map(|role| {
@@ -201,7 +201,7 @@ fn number(row: &Value) -> Result<u64> {
         .ok_or_else(|| "原准备或启动阶段缺少序号".into())
 }
 
-fn closed_controller(run: &Path, row: &Value) -> Result<Value> {
+pub(super) fn closed_controller(run: &Path, row: &Value) -> Result<Value> {
     let (binding, owner) =
         state::controller_record(run, number(row)?, &failed_prepare::running(row))?;
     identity::validate(&owner, run)?;

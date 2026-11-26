@@ -152,15 +152,9 @@ fn platform(pid: u32) -> Result<Option<Value>> {
 
 #[cfg(windows)]
 pub(crate) fn windows_snapshot(handle: &winsafe::HPROCESS, pid: u32) -> Result<Value> {
-    use winsafe::{FILETIME, co, prelude::kernel_Hprocess};
+    use winsafe::{co, prelude::kernel_Hprocess};
 
-    let mut creation = FILETIME::default();
-    let mut exit = FILETIME::default();
-    let mut kernel = FILETIME::default();
-    let mut user = FILETIME::default();
-    handle
-        .GetProcessTimes(&mut creation, &mut exit, &mut kernel, &mut user)
-        .map_err(|error| windows_error(pid, "读取创建时间", error))?;
+    let (started, _) = windows_lifetime(handle, pid)?;
     let executable = handle
         .QueryFullProcessImageName(co::PROCESS_NAME::WIN32)
         .map_err(|error| windows_error(pid, "读取映像", error))?;
@@ -169,12 +163,27 @@ pub(crate) fn windows_snapshot(handle: &winsafe::HPROCESS, pid: u32) -> Result<V
         .map(|value| format!(r"\\{value}"))
         .or_else(|| executable.strip_prefix(r"\\?\").map(ToOwned::to_owned))
         .unwrap_or(executable);
-    let started = (u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime);
     Ok(json!({
         "pid": pid,
         "started": started.to_string(),
         "executable": executable.replace('/', "\\"),
     }))
+}
+
+#[cfg(windows)]
+pub(crate) fn windows_lifetime(handle: &winsafe::HPROCESS, pid: u32) -> Result<(u64, u64)> {
+    use winsafe::{FILETIME, prelude::kernel_Hprocess};
+
+    let mut creation = FILETIME::default();
+    let mut exit = FILETIME::default();
+    let mut kernel = FILETIME::default();
+    let mut user = FILETIME::default();
+    handle
+        .GetProcessTimes(&mut creation, &mut exit, &mut kernel, &mut user)
+        .map_err(|error| windows_error(pid, "读取创建时间", error))?;
+    let ticks =
+        |value: FILETIME| (u64::from(value.dwHighDateTime) << 32) | u64::from(value.dwLowDateTime);
+    Ok((ticks(creation), ticks(exit)))
 }
 
 #[cfg(windows)]

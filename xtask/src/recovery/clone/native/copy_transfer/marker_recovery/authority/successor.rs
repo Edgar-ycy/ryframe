@@ -65,13 +65,20 @@ pub(super) fn load(
     target: &Target,
     completed: bool,
     prepared_before_api: bool,
+    after_api_incident: bool,
 ) -> Result<Fixture> {
     let manifest = common::binding(&run.join("manifest.json"))?;
     history::validate_manifest(&common::read_bound(backend, &manifest, "原夹具服务清单")?)?;
     let saved = state::load(run, true)?;
     let ledger = history::validate(run, &saved, true, true)?;
     let all_attempts = state::attempts(&saved)?;
-    let continuation = continued::split(&ledger, all_attempts, completed, prepared_before_api)?;
+    let continuation = continued::split(
+        &ledger,
+        all_attempts,
+        completed,
+        prepared_before_api,
+        after_api_incident,
+    )?;
     if completed && continuation.fifth.is_none() {
         return Err("完整复制后的标记恢复只接受原第四代的第五代后继".into());
     }
@@ -117,6 +124,7 @@ pub(super) fn load(
     for (key, row) in [
         ("post_copy_redis_failure", continuation.fifth),
         ("prepared_redis_failure", continuation.sixth),
+        ("runtime_incident_redis_failure", continuation.seventh),
     ] {
         if let Some(row) = row {
             let next = Restart::read(&mut evidence, row)?;

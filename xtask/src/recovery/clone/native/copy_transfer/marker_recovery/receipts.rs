@@ -41,6 +41,7 @@ impl Receipts {
             || lineage.get("accepted_redis_failure").is_some()
             || lineage.get("post_copy_redis_failure").is_some()
             || lineage.get("prepared_redis_failure").is_some()
+            || lineage.get("runtime_incident_redis_failure").is_some()
         {
             Some(Inputs::directory(&root)?)
         } else {
@@ -61,7 +62,8 @@ impl Receipts {
             prior: None,
         };
         if let Some(incident) = lineage
-            .get("prepared_redis_failure")
+            .get("runtime_incident_redis_failure")
+            .or_else(|| lineage.get("prepared_redis_failure"))
             .or_else(|| lineage.get("post_copy_redis_failure"))
             .or_else(|| lineage.get("accepted_redis_failure"))
         {

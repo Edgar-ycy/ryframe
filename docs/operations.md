@@ -229,7 +229,7 @@ Windows 本地夹具在首次审阅前，通过工具配置的 `[verification.wi
 cargo xtask check recovery fixture services restart-redis --review <review-receipt> --environment <bootstrap.json> --owner-binding <state.json> --write
 ```
 
-每次接续只创建一个 Redis 后继。原 RustFS 进程、数据目录、数据库和对象数据继续沿用。随后用原复制账本的 `target-cache-markers` 核对此前已确认的标记结果及新代的完整初始像。已完成复制并登记复制后准备时，接续须核对原复制完成收据和此前确认的标记链。准备失败的场景须确认运行配置未发布、产品从未启动。若准备已经成功，仅在 API 启动前被拒绝、API 与 Worker 原端口均关闭且无启动意图或进程记录时接续，同时保留原失败准备的回收证据、运行配置、二进制及交接收据。仅在新代的两个标记和受管 namespace 均为空时执行原子写入。写入结果未知时，用 `target-cache-markers` 的 `reconcile` 模式读取确认。
+每次接续只创建一个 Redis 后继。原 RustFS 进程、数据目录、数据库和对象数据继续沿用。随后用原复制账本的 `target-cache-markers` 核对此前已确认的标记结果及新代的完整初始像。已完成复制并登记复制后准备时，接续须核对原复制完成收据和此前确认的标记链。准备失败的场景须确认运行配置未发布、产品从未启动。准备通过而 API 尚未启动的，接续须有启动前拒绝的结果，API 与 Worker 原端口均已关闭且现场不存在启动意图或进程记录，同时保留原失败准备的回收证据、运行配置、二进制及交接收据。复制后业务中的 Windows API 监督清理事故，须以失败的部门规划、已关闭的原生产者、原 API 失败收据和此前的标记链绑定同一次接续。原 API 与 Worker 端口均须关闭。若历史 PID 仍可打开，工具使用同一 Windows 进程句柄核对创建、退出刻度及退出状态，同代进程还须吻合原映像。仅在新代的两个标记和受管 namespace 均为空时执行原子写入。写入结果未知时，用 `target-cache-markers` 的 `reconcile` 模式读取确认。
 
 记录时间线、影响租户、请求或任务 ID、根因、处置和验证结果。配置字段以配置结构为准，指标和告警以部署资产为准，不在本文维护重复清单。
 
