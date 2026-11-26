@@ -11,12 +11,22 @@ use percent_encoding::percent_decode_str;
 
 use super::content::{Asset, RECEIPT, Site};
 
-pub(super) fn router(site: Site) -> Router {
-    Router::new().fallback(respond).with_state(Arc::new(site))
+struct StaticSite {
+    site: Site,
+    production_asset_cache: bool,
+}
+
+pub(super) fn router(site: Site, production_asset_cache: bool) -> Router {
+    Router::new()
+        .fallback(respond)
+        .with_state(Arc::new(StaticSite {
+            site,
+            production_asset_cache,
+        }))
 }
 
 async fn respond(
-    State(site): State<Arc<Site>>,
+    State(site): State<Arc<StaticSite>>,
     method: Method,
     uri: Uri,
     headers: HeaderMap,
@@ -34,7 +44,9 @@ async fn respond(
         }
     };
     let headers = response.headers_mut();
-    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers
+        .entry(header::CACHE_CONTROL)
+        .or_insert(HeaderValue::from_static("no-store"));
     headers.insert(
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
@@ -42,7 +54,12 @@ async fn respond(
     response
 }
 
-fn serve_asset(site: &Site, method: &Method, relative: &str, headers: &HeaderMap) -> Response {
+fn serve_asset(
+    site: &StaticSite,
+    method: &Method,
+    relative: &str,
+    headers: &HeaderMap,
+) -> Response {
     if relative == RECEIPT {
         return empty(StatusCode::NOT_FOUND);
     }
@@ -51,17 +68,43 @@ fn serve_asset(site: &Site, method: &Method, relative: &str, headers: &HeaderMap
     } else {
         relative
     };
-    let asset = site.assets.get(requested).or_else(|| {
+    let direct = site.site.assets.get(requested);
+    let asset = direct.or_else(|| {
         let leaf = requested.rsplit('/').next().unwrap_or(requested);
         if Path::new(leaf).extension().is_none() && accepts_html(headers) {
-            return site.assets.get("index.html");
+            return site.site.assets.get("index.html");
         }
         None
     });
     match asset {
-        Some(asset) => success(asset, method == Method::HEAD),
+        Some(asset) => {
+            let mut response = success(asset, method == Method::HEAD);
+            if site.production_asset_cache && direct.is_some() && production_asset(requested) {
+                response.headers_mut().insert(
+                    header::CACHE_CONTROL,
+                    HeaderValue::from_static("public, max-age=31536000, immutable"),
+                );
+            }
+            response
+        }
         None => empty(StatusCode::NOT_FOUND),
     }
+}
+
+fn production_asset(relative: &str) -> bool {
+    const EXTENSIONS: &[&str] = &[
+        "js", "css", "woff", "woff2", "ttf", "svg", "png", "jpg", "jpeg", "webp", "ico",
+    ];
+    // 与 deploy/nginx/ryframe.conf 的生产资源扩展名一致。
+    relative.starts_with("assets/")
+        && Path::new(relative)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                EXTENSIONS
+                    .iter()
+                    .any(|expected| extension.eq_ignore_ascii_case(expected))
+            })
 }
 
 fn decode_path(uri: &Uri) -> std::result::Result<Cow<'_, str>, ()> {

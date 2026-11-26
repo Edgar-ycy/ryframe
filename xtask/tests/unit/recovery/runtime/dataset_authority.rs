@@ -267,7 +267,7 @@ fn native_frontend_argv_binds_receipt_and_only_allows_the_exact_b0_contract() {
         "roots":{"frontend":directory.path()},"paths":{"frontend_build":directory.path().join("build.json")},
         "digests":{"frontend_build":"c".repeat(64)}});
     let executable = json!(expected);
-    let frontend = commands::frontend_command(&request, &executable).unwrap();
+    let frontend = commands::frontend_command(&request, &executable, false).unwrap();
     assert_eq!(
         frontend,
         json!([
@@ -296,23 +296,24 @@ fn native_frontend_argv_binds_receipt_and_only_allows_the_exact_b0_contract() {
     actual["frontend"][0] = json!(different);
     assert!(commands::recorded_spelling(expected, &actual).is_err());
     request["authority"]["frontend_sha"] = json!(crate::recovery::frontend_build::b0::HEAD);
-    assert!(commands::frontend_command(&request, &executable).is_err());
+    assert!(commands::frontend_command(&request, &executable, false).is_err());
     request["authority"]["backend_product_sha"] = json!(crate::recovery::b0::BACKEND);
     request["authority"]["backend_execution_sha"] = json!(crate::recovery::b0::COMMIT);
     request["authority"]["backend_adapter_contract"] = json!("legacy-stable-readiness-b0-v1");
-    let b0 = commands::frontend_command(&request, &executable).unwrap();
+    let b0 = commands::frontend_command(&request, &executable, false).unwrap();
     assert_eq!(b0[9], request["authority"]["frontend_sha"]);
     assert_eq!(b0[18], "--b0");
+    assert!(commands::frontend_command(&request, &executable, true).is_err());
     let mut changed = request.clone();
     changed["authority"]["backend_execution_sha"] = json!("e".repeat(40));
-    assert!(commands::frontend_command(&changed, &executable).is_err());
+    assert!(commands::frontend_command(&changed, &executable, false).is_err());
     for endpoint in ["http://[::1]:18180/readyz", "http://127.0.0.1:15174/readyz"] {
         let mut changed = request.clone();
         changed["authority"]["api_endpoint"] = json!(endpoint);
-        assert!(commands::frontend_command(&changed, &executable).is_err());
+        assert!(commands::frontend_command(&changed, &executable, false).is_err());
     }
     request["authority"]["frontend_endpoint"] = json!("http://[::1]:15174");
-    assert!(commands::frontend_command(&request, &executable).is_err());
+    assert!(commands::frontend_command(&request, &executable, false).is_err());
 }
 
 #[test]

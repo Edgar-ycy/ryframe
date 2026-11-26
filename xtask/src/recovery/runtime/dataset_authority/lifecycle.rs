@@ -25,7 +25,8 @@ pub(super) fn verify(
             "恢复代理没有绑定同一登记运行目录",
         )?;
         let recorded = json!({"api":generation["roles"]["api"]["command"],"worker":generation["roles"]["worker"]["command"],"frontend":generation["roles"]["frontend"]["command"]});
-        let command = commands::recorded_spelling(commands::expected(request, tools)?, &recorded)?;
+        let command =
+            commands::recorded_spelling(commands::expected(request, tools, inputs)?, &recorded)?;
         protect_receipts(inputs, generation)?;
         expected.push(command);
     }
@@ -54,7 +55,7 @@ pub(super) fn verify(
     )?;
     let recorded = json!({"api":launch.value["processes"]["api"]["command"],"worker":launch.value["processes"]["worker"]["command"],"frontend":launch.value["processes"]["frontend"]["command"]});
     let command = commands::recorded_spelling(
-        commands::expected(&launch.value["request"], tools)?,
+        commands::expected(&launch.value["request"], tools, inputs)?,
         &recorded,
     )?;
     super::super::generation::request(

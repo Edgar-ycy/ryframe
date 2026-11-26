@@ -7,6 +7,8 @@ use std::{
 
 use crate::{Result, recovery::frontend_build};
 
+use super::dataset_authority::commands::PRODUCTION_ASSET_CACHE_FLAG;
+
 #[path = "frontend_site/content.rs"]
 mod content;
 #[path = "frontend_site/http.rs"]
@@ -31,6 +33,7 @@ struct Options {
     runtime_directory: PathBuf,
     api_port: u16,
     b0: bool,
+    production_asset_cache: bool,
 }
 
 impl Options {
@@ -57,9 +60,10 @@ impl Options {
         else {
             return Err("前端静态服务必须提供完整的固定顺序参数".into());
         };
-        let b0 = match rest {
-            [] => false,
-            [flag] if flag == "--b0" => true,
+        let (b0, production_asset_cache) = match rest {
+            [] => (false, false),
+            [flag] if flag == "--b0" => (true, false),
+            [flag] if flag == PRODUCTION_ASSET_CACHE_FLAG => (false, true),
             _ => return Err("前端静态服务参数未知、重复或顺序无效".into()),
         };
         if frontend != "--frontend"
@@ -79,6 +83,9 @@ impl Options {
         if b0 && expected_head != frontend_build::b0::HEAD {
             return Err("B0 静态前端必须绑定固定旧前端 HEAD".into());
         }
+        if production_asset_cache && expected_head == frontend_build::b0::HEAD {
+            return Err("B0 静态前端不支持生产资源缓存".into());
+        }
         let port = exact_port(number)?;
         let api_port = exact_port(upstream)?;
         if api_port == port {
@@ -93,6 +100,7 @@ impl Options {
             runtime_directory: PathBuf::from(directory),
             api_port,
             b0,
+            production_asset_cache,
         })
     }
 }
@@ -155,7 +163,7 @@ fn serve(options: Options, args: &[OsString]) -> Result<()> {
         let upstream = Arc::clone(&upstream);
         async move { upstream.forward(request).await }
     });
-    let app = http::router(site)
+    let app = http::router(site, options.production_asset_cache)
         .route("/api/v1", route.clone())
         .route("/api/v1/{*path}", route);
     let runtime = tokio::runtime::Builder::new_current_thread()

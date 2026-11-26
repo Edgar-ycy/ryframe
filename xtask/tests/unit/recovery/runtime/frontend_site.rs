@@ -15,10 +15,17 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_assets(&[])
+    }
+
+    fn with_assets(extra: &[&str]) -> Self {
         let directory = fixture::fixture();
         let root = directory.path();
         fs::create_dir(root.join("dist/assets")).unwrap();
         fs::write(root.join("dist/assets/中文 空格.js"), ASSET).unwrap();
+        for relative in extra {
+            fs::write(root.join("dist").join(relative), ASSET).unwrap();
+        }
         let inventory = source::inventory_value(&source::capture(root).unwrap());
         let head = inventory["source"]["snapshot"]["head"].as_str().unwrap();
         fixture::write_receipt(root, head, &inventory);
@@ -33,6 +40,7 @@ impl Fixture {
             runtime_directory: root.to_owned(),
             api_port: 18180,
             b0: false,
+            production_asset_cache: false,
         };
         Self {
             _directory: directory,
@@ -75,8 +83,11 @@ async fn loopback_serves_assets_head_and_spa_and_rejects_unsafe_requests() {
     let (listener, site) = prepare(&fixture.options).unwrap();
     let address = listener.local_addr().unwrap();
     let listener = tokio::net::TcpListener::from_std(listener).unwrap();
-    let server =
-        tokio::spawn(async move { axum::serve(listener, http::router(site)).await.unwrap() });
+    let server = tokio::spawn(async move {
+        axum::serve(listener, http::router(site, false))
+            .await
+            .unwrap()
+    });
     let dist = fixture.options.frontend.join("dist");
     fs::write(dist.join("assets/中文 空格.js"), "changed on disk").unwrap();
     fs::write(dist.join("new.js"), "unknown on disk").unwrap();
@@ -143,6 +154,52 @@ async fn loopback_serves_assets_head_and_spa_and_rejects_unsafe_requests() {
     assert!(server.await.unwrap_err().is_cancelled());
 }
 
+#[tokio::test]
+async fn production_cache_only_applies_to_registered_static_get_and_head() {
+    let mut fixture = Fixture::with_assets(&["assets/theme.CSS", "assets/data.json", "root.js"]);
+    fixture.options.production_asset_cache = true;
+    let (listener, site) = prepare(&fixture.options).unwrap();
+    let address = listener.local_addr().unwrap();
+    let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+    let app = http::router(site, fixture.options.production_asset_cache);
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    for (method, target) in [
+        (
+            "GET",
+            "/assets/%E4%B8%AD%E6%96%87%20%E7%A9%BA%E6%A0%BC.js?v=1",
+        ),
+        ("HEAD", "/assets/theme.CSS"),
+    ] {
+        let (header, body) = request(address, method, target, "*/*").await;
+        assert_eq!(status(&header), 200);
+        assert!(header.contains("\r\ncache-control: public, max-age=31536000, immutable\r\n"));
+        assert!(header.contains(&format!("\r\ncontent-length: {}", ASSET.len())));
+        assert_eq!(body.as_slice(), if method == "GET" { ASSET } else { b"" });
+    }
+
+    for (method, target, expected) in [
+        ("GET", "/", 200),
+        ("HEAD", "/index.html", 200),
+        ("GET", "/assets/spa-route", 200),
+        ("GET", "/assets/data.json", 200),
+        ("GET", "/root.js", 200),
+        ("GET", "/assets/missing.js", 404),
+        ("GET", "/.vite/restore-build.json", 404),
+        ("GET", "/assets/%2e%2e/secret.js", 400),
+        ("POST", "/assets/theme.CSS", 405),
+    ] {
+        let (header, _) = request(address, method, target, "text/html").await;
+        assert_eq!(status(&header), expected, "{method} {target}");
+        assert!(
+            header.contains("\r\ncache-control: no-store\r\n"),
+            "{method} {target}"
+        );
+    }
+    server.abort();
+    assert!(server.await.unwrap_err().is_cancelled());
+}
+
 #[test]
 fn invalid_bindings_and_drift_are_rejected_before_listening() {
     let fixture = Fixture::new();
@@ -168,7 +225,14 @@ fn invalid_bindings_and_drift_are_rejected_before_listening() {
     .into_iter()
     .map(OsString::from)
     .collect::<Vec<_>>();
-    assert!(Options::parse(&args).is_ok());
+    let unmodified = Options::parse(&args).unwrap();
+    assert!(!unmodified.b0 && !unmodified.production_asset_cache);
+    let mut cached = args.clone();
+    cached.push(PRODUCTION_ASSET_CACHE_FLAG.into());
+    let parsed = Options::parse(&cached).unwrap();
+    assert!(!parsed.b0 && parsed.production_asset_cache);
+    cached.push(PRODUCTION_ASSET_CACHE_FLAG.into());
+    assert!(Options::parse(&cached).is_err());
     for (index, value) in [
         (2, "--frontend"),
         (5, "short"),
@@ -190,7 +254,15 @@ fn invalid_bindings_and_drift_are_rejected_before_listening() {
     args[16] = "--b0".into();
     assert!(Options::parse(&args).is_err());
     args[7] = frontend_build::b0::HEAD.into();
-    assert!(Options::parse(&args).unwrap().b0);
+    let historical = Options::parse(&args).unwrap();
+    assert!(historical.b0 && !historical.production_asset_cache);
+    args.push(PRODUCTION_ASSET_CACHE_FLAG.into());
+    assert!(Options::parse(&args).is_err());
+    args.swap(16, 17);
+    assert!(Options::parse(&args).is_err());
+    args.pop();
+    assert!(Options::parse(&args).is_err());
+    args[16] = "--b0".into();
     args.push("--b0".into());
     assert!(Options::parse(&args).is_err());
 

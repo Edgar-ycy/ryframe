@@ -147,7 +147,8 @@ fn configure_with_artifact(
     });
     fixture.request["environment"] =
         environment::capture(&mut Inputs::new(&fixture.backend), &fixture.request)?;
-    fixture.commands = commands::expected(&fixture.request, &tools)?;
+    fixture.commands =
+        commands::expected(&fixture.request, &tools, &mut Inputs::new(&fixture.backend))?;
     Ok(listeners)
 }
 

@@ -47,7 +47,8 @@ impl Prepared {
         inputs: &mut Inputs,
     ) -> Result<Self> {
         let bound = Bound::read(backend, &options.control, inputs)?;
-        let (projection, bindings) = verified_target(backend, &bound, &options.bindings, inputs)?;
+        let (projection, bindings, independent_b1) =
+            verified_target(backend, &bound, &options.bindings, inputs)?;
         let execution = &projection.target["product_execution"];
         let backend_build = registered_build(
             inputs,
@@ -86,7 +87,10 @@ impl Prepared {
             "digests":{"bindings":bindings.sha256(),"backend_build":backend_build.sha256(),"frontend_build":frontend_build.sha256()},
         });
         request["environment"] = environment::capture(inputs, &request)?;
-        let commands = commands::expected(&request, &request["tools"])?;
+        if independent_b1 {
+            request["frontend_asset_cache"] = json!(commands::PRODUCTION_ASSET_CACHE_MODE);
+        }
+        let commands = commands::expected(&request, &request["tools"], inputs)?;
         let frontend_files = frontend_build::artifact_snapshot(&frontend_root)?;
         pin_execution(&request, inputs)?;
         Ok(Self {
@@ -120,7 +124,7 @@ fn verified_target(
     bound: &Bound,
     bindings_path: &Path,
     inputs: &mut Inputs,
-) -> Result<(TargetProjection, Document)> {
+) -> Result<(TargetProjection, Document, bool)> {
     let registered = inputs.bound(&bound.binding["registration"])?;
     let target = inputs.bound(&bound.binding["target_plan"])?;
     let reference = registration::read_binding(inputs, &bound.binding, &target, &registered)?;
@@ -134,7 +138,7 @@ fn verified_target(
             &bindings.value,
             inputs,
         )?;
-        return Ok((projection, bindings));
+        return Ok((projection, bindings, true));
     }
     let (chain, verified, _) = target_plan::verify(backend, reference, &target.path)?;
     check(verified == target.value, "启动目标计划与原登记不同")?;
@@ -149,6 +153,7 @@ fn verified_target(
             backend_environment,
         },
         bindings,
+        false,
     ))
 }
 

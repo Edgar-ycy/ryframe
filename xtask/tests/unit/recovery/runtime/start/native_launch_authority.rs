@@ -58,6 +58,72 @@ fn ordinary_command_authority_rejects_retired_fields_versions_and_missing_tool()
 }
 
 #[test]
+fn production_asset_cache_requires_the_bound_independent_b1_target() -> Result<()> {
+    let fixture = configured()?;
+    let tools = &fixture.request["tools"];
+    let verify = |request: &Value| {
+        let mut inputs = Inputs::new(&fixture.backend);
+        let direct = commands::verify_direct(request, &mut inputs)?;
+        let expected = commands::expected(request, tools, &mut inputs)?;
+        assert_eq!(expected, direct);
+        inputs.finish(Ok(direct))
+    };
+    assert_eq!(verify(&fixture.request)?, fixture.commands);
+
+    let mut request = fixture.request.clone();
+    request["unexpected"] = json!(true);
+    assert!(verify(&request).is_err());
+    request.as_object_mut().unwrap().remove("unexpected");
+    for invalid in [json!(null), json!(true), json!("warm")] {
+        request["frontend_asset_cache"] = invalid;
+        let error = verify(&request).unwrap_err().to_string();
+        assert!(error.contains("恢复前端资源缓存模式无效"), "{error}");
+    }
+    request["frontend_asset_cache"] = json!(commands::PRODUCTION_ASSET_CACHE_MODE);
+    let error = verify(&request).unwrap_err().to_string();
+    assert!(error.contains("仅适用于同一已登记独立 B1 目标"), "{error}");
+
+    let (registered, target) = independent_cache_registration(&fixture)?;
+    request["registration"] = json!({"registration":registered,"target_plan":target});
+    let mut expected = fixture.commands.clone();
+    expected["frontend"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("--production-asset-cache"));
+    assert_eq!(verify(&request)?, expected);
+
+    let mut changed = request.clone();
+    changed["authority"]["frontend_endpoint"] = json!("http://127.0.0.1:1");
+    let error = verify(&changed).unwrap_err().to_string();
+    assert!(error.contains("未绑定独立 B1 运行目录与端点"), "{error}");
+    request["registration"]["target_plan"]["sha256"] = json!("d".repeat(64));
+    assert!(verify(&request).is_err());
+    assert!(!fixture.root.try_exists()?);
+    Ok(())
+}
+
+fn independent_cache_registration(fixture: &Fixture) -> Result<(Value, Value)> {
+    let reference_path = fixture.control.join("reference.json");
+    let envelope = json!({
+        "format_version":1,"kind":"restore-reference-independent-b1-plan",
+        "reference_plan":strict::read(&reference_path)?,"arm_input":{},"source_export":{},
+    });
+    strict::write_replace(&reference_path, &envelope)?;
+    let target_path = fixture.control.join("target.json");
+    let mut target = strict::read(&target_path)?;
+    target["kind"] = json!("restore-reference-target-plan");
+    target["reference_plan_sha256"] = json!(document::hash(&envelope)?);
+    strict::write_replace(&target_path, &target)?;
+    let target_binding = file_binding(fixture, &target_path)?;
+    let registration_path = fixture.control.join("registration.json");
+    let mut registered = strict::read(&registration_path)?;
+    registered["reference_plan"] = file_binding(fixture, &reference_path)?;
+    registered["target_plan"] = target_binding.clone();
+    strict::write_replace(&registration_path, &registered)?;
+    Ok((file_binding(fixture, &registration_path)?, target_binding))
+}
+
+#[test]
 fn ordinary_registration_rejects_boolean_version_and_remote_write_count() -> Result<()> {
     let fixture = configured()?;
     let path = fixture.control.join("registration.json");

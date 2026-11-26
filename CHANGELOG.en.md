@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Apply production static-asset caching rules to independent B1 homepage measurements and validate the actual cold-load and warmup-hit counts.
+
 - Fix a race when checking monitor exit during Linux full-stack cleanup. The controller uses the same pidfd to confirm that the original process exited and continues to verify the complete group shutdown receipt.
 
 - Upgrade the backend Rust toolchain to stable 1.100.0 and raise the minimum Rust version to 1.100. Rust 2024 edition remains in use. Update the production builder image and pin its official digest.

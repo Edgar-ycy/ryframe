@@ -1,15 +1,20 @@
 //! 从当前协调器和受管构建绑定生成独立的恢复命令。
-use super::{check, inputs::Inputs, path};
+use super::{check, inputs::Inputs, path, registration};
 use crate::{
     Result,
     recovery::{
         clone::native::{digest, json as strict, source},
         fixture_control::portable_path,
         frontend_build::b0,
+        inputs::{document, reference::is_independent_b1},
     },
 };
 use serde_json::{Value, json};
 use std::path::Path;
+
+pub(in crate::recovery::runtime) const PRODUCTION_ASSET_CACHE_MODE: &str = "production";
+pub(in crate::recovery::runtime) const PRODUCTION_ASSET_CACHE_FLAG: &str =
+    "--production-asset-cache";
 
 pub(in crate::recovery::runtime) fn current_tools(
     backend: &Path,
@@ -42,23 +47,27 @@ fn validate_request(request: &Value, current: &Value) -> Result<()> {
 
 fn validate_request_shape(request: &Value) -> Result<()> {
     super::request_shape::validate(request)?;
-    strict::exact(
-        request,
-        &[
-            "format_version",
-            "kind",
-            "runtime_directory",
-            "authority",
-            "registration",
-            "roots",
-            "paths",
-            "digests",
-            "artifacts",
-            "tools",
-            "environment",
-        ],
-        "恢复启动请求",
-    )?;
+    let mut fields = vec![
+        "format_version",
+        "kind",
+        "runtime_directory",
+        "authority",
+        "registration",
+        "roots",
+        "paths",
+        "digests",
+        "artifacts",
+        "tools",
+        "environment",
+    ];
+    if let Some(mode) = request.get("frontend_asset_cache") {
+        check(
+            mode == PRODUCTION_ASSET_CACHE_MODE,
+            "恢复前端资源缓存模式无效",
+        )?;
+        fields.push("frontend_asset_cache");
+    }
+    strict::exact(request, &fields, "恢复启动请求")?;
     check(
         request["format_version"] == 2 && request["kind"] == "restore-runtime-launch-request",
         "恢复启动请求版本或类型不同",
@@ -128,15 +137,23 @@ pub(in crate::recovery::runtime) fn verify_direct(
             == json!({"path":current["path"],"bytes":current["bytes"],"sha256":current["sha256"]}),
         "恢复前端服务工具与当前正式协调器绑定不同",
     )?;
-    request_commands(request, &tools["frontend_server"]["path"])
+    request_commands(request, &tools["frontend_server"]["path"], inputs)
 }
 
-pub(in crate::recovery::runtime) fn expected(request: &Value, current: &Value) -> Result<Value> {
+pub(in crate::recovery::runtime) fn expected(
+    request: &Value,
+    current: &Value,
+    inputs: &mut Inputs,
+) -> Result<Value> {
     validate_request(request, current)?;
-    request_commands(request, &current["frontend_server"]["path"])
+    request_commands(request, &current["frontend_server"]["path"], inputs)
 }
 
-fn request_commands(request: &Value, frontend_program: &Value) -> Result<Value> {
+fn request_commands(
+    request: &Value,
+    frontend_program: &Value,
+    inputs: &mut Inputs,
+) -> Result<Value> {
     let mut commands = json!({});
     let legacy = crate::recovery::b0::matches(&request["authority"]);
     for role in ["api", "worker"] {
@@ -153,11 +170,52 @@ fn request_commands(request: &Value, frontend_program: &Value) -> Result<Value> 
             ])
         };
     }
-    commands["frontend"] = frontend_command(request, frontend_program)?;
+    let production_asset_cache = verified_production_asset_cache(request, inputs)?;
+    commands["frontend"] = frontend_command(request, frontend_program, production_asset_cache)?;
     Ok(commands)
 }
 
-pub(super) fn frontend_command(request: &Value, executable: &Value) -> Result<Value> {
+fn verified_production_asset_cache(request: &Value, inputs: &mut Inputs) -> Result<bool> {
+    if request.get("frontend_asset_cache").is_none() {
+        return Ok(false);
+    }
+    let binding = &request["registration"];
+    let registered = inputs.bound(&binding["registration"])?;
+    let target = inputs.bound(&binding["target_plan"])?;
+    let reference = registration::read_binding(inputs, binding, &target, &registered)?.value;
+    let plan = &reference["reference_plan"];
+    check(
+        is_independent_b1(&reference)
+            && reference["format_version"] == 1
+            && plan["target_side"] == "candidate"
+            && target.value["kind"] == "restore-reference-target-plan"
+            && target.value["target_side"] == "candidate"
+            && target.value["reference_plan_sha256"] == document::hash(&reference)?,
+        "生产资源缓存仅适用于同一已登记独立 B1 目标",
+    )?;
+    let selected = &plan["target"];
+    let product = &target.value["product_plan"];
+    let authority = &request["authority"];
+    check(
+        same_path(
+            &path(&request["runtime_directory"])?,
+            &path(&selected["runtime_dir"])?,
+        )? && product["scope_id"] == selected["scope_id"]
+            && selected["scope_id"] == authority["scope_id"]
+            && product["frontend_sha"] == authority["frontend_sha"]
+            && product["api_ready_url"] == authority["api_endpoint"]
+            && product["worker_ready_url"] == authority["worker_endpoint"]
+            && selected["frontend_url"] == authority["frontend_endpoint"],
+        "生产资源缓存未绑定独立 B1 运行目录与端点",
+    )?;
+    Ok(true)
+}
+
+pub(super) fn frontend_command(
+    request: &Value,
+    executable: &Value,
+    production_asset_cache: bool,
+) -> Result<Value> {
     let authority = &request["authority"];
     path(&request["runtime_directory"])?;
     let endpoint = crate::recovery::inputs::domain::endpoint(
@@ -185,6 +243,10 @@ pub(super) fn frontend_command(request: &Value, executable: &Value) -> Result<Va
         b0 || !(frontend || adapter),
         "恢复 B0 前端服务必须绑定精确历史产品、执行树和适配合同",
     )?;
+    check(
+        !b0 || !production_asset_cache,
+        "B0 静态前端不支持生产资源缓存",
+    )?;
     let mut command = vec![
         executable.clone(),
         json!("__restore-frontend-serve"),
@@ -207,6 +269,8 @@ pub(super) fn frontend_command(request: &Value, executable: &Value) -> Result<Va
     ];
     if b0 {
         command.push(json!("--b0"));
+    } else if production_asset_cache {
+        command.push(json!(PRODUCTION_ASSET_CACHE_FLAG));
     }
     Ok(Value::Array(command))
 }

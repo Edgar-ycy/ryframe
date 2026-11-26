@@ -41,7 +41,11 @@ fn prepared_fixture() -> Result<(Fixture, [TcpListener; 3])> {
         strict::write_new(&file, &json!({}))?;
         fixture.request["digests"][key] = file_binding(&fixture, &file)?["sha256"].clone();
     }
-    fixture.commands = commands::expected(&fixture.request, &fixture.request["tools"])?;
+    fixture.commands = commands::expected(
+        &fixture.request,
+        &fixture.request["tools"],
+        &mut Inputs::new(&fixture.backend),
+    )?;
     Ok((fixture, ports))
 }
 

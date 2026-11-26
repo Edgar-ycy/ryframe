@@ -318,12 +318,20 @@ fn homepage_requires_loopback_and_separate_visitor_identity() {
 #[test]
 fn homepage_failure_counts_once_and_requires_real_lcp_and_network() {
     let identities = configuration::identities(&pool(10), "homepage", "homepage", 10).unwrap();
-    let rows=(0..10).map(|index|json!({"cycle":index,"cache":"cold","client_address":format!("198.18.0.{index}"),"phase":"measuring","succeeded":true,"session_failure":false,"measured_requests":3,"diagnostics":[],"times":{"navigation":10,"lcp":20,"content":30}})).collect::<Vec<_>>();
+    let rows = (0..10)
+        .map(|index| {
+            json!({"cycle":index,"cache":"cold","client_address":format!("198.18.0.{index}"),
+                "phase":"measuring","succeeded":true,"session_failure":false,"measured_requests":3,
+                "static_cache":{"responses":2,"hits":0,"primed_hits":0},
+                "diagnostics":[],"times":{"navigation":10,"lcp":20,"content":30}})
+        })
+        .collect::<Vec<_>>();
     let mut response = json!({"format_version":1,"kind":"ryframe-devex-homepage","cache":"cold","elapsed_ms":1000,"cycles":rows});
     response["cycles"][0]["succeeded"] = json!(false);
     response["cycles"][0]["session_failure"] = json!(true);
     response["cycles"][0]["phase"] = json!("login");
     response["cycles"][0]["failure"] = json!("timeout");
+    response["cycles"][0]["static_cache"] = json!({"responses":0,"hits":0,"primed_hits":0});
     let measured = homepage::validate(&response, 10, "cold", &identities).unwrap();
     assert_eq!(measured.failed_cycles, 1);
     assert_eq!(measured.session_failures, 1);

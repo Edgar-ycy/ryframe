@@ -130,6 +130,7 @@ pub(crate) fn validate(
                             | "session_failure"
                             | "preparation_requests"
                             | "measured_requests"
+                            | "static_cache"
                             | "diagnostics"
                             | "preparation_duration_ms"
                             | "times"
@@ -141,6 +142,7 @@ pub(crate) fn validate(
         {
             return Err(Failure::new("homepage_cycle_binding"));
         }
+        validate_static_cache(row, cache)?;
         requests += row["measured_requests"]
             .as_u64()
             .ok_or_else(|| Failure::new("homepage_network"))?;
@@ -193,6 +195,30 @@ pub(crate) fn validate(
         pending: Vec::new(),
     })
 }
+
+fn validate_static_cache(row: &Value, cache: &str) -> NativeResult<()> {
+    let invalid = || Failure::new("homepage_cache_evidence");
+    let fields = row["static_cache"]
+        .as_object()
+        .filter(|fields| fields.len() == 3)
+        .ok_or_else(invalid)?;
+    let [Some(responses), Some(hits), Some(primed_hits)] =
+        ["responses", "hits", "primed_hits"].map(|key| fields.get(key).and_then(Value::as_u64))
+    else {
+        return Err(invalid());
+    };
+    let observed = row["succeeded"] == false
+        || match cache {
+            "cold" => responses > 0 && hits == 0,
+            "warm" => primed_hits > 0,
+            _ => false,
+        };
+    if primed_hits > hits || hits > responses || !observed {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
 fn number(value: &Value) -> NativeResult<f64> {
     value
         .as_f64()
