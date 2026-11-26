@@ -1,4 +1,3 @@
-use chrono::{DateTime, TimeZone, Utc};
 use ryframe_application::ports::export::{CreateExportRecord, ExportStartDecision};
 use ryframe_db::{
     application_ports::export::{database_create, map_start_decision},
@@ -12,10 +11,10 @@ use ryframe_db::{
 use ryframe_kernel::AppError;
 use sea_orm::{DatabaseBackend, QueryTrait};
 use serde_json::json;
-use time::{Duration, OffsetDateTime};
+use time::{Duration, OffsetDateTime, macros::datetime};
 
 fn export(status: &str, tenant_id: &str, requester_id: i64) -> export_job::Model {
-    let now = Utc::now();
+    let now = OffsetDateTime::now_utc();
     export_job::Model {
         id: 11,
         tenant_id: tenant_id.into(),
@@ -103,7 +102,7 @@ fn start_gate_rejects_duplicate_worker_and_third_tenant_export() {
 
 #[test]
 fn only_terminal_states_are_deletable() {
-    let now = Utc::now();
+    let now = OffsetDateTime::now_utc();
     for status in [
         export_job::Model::STATUS_SUCCEEDED,
         export_job::Model::STATUS_FAILED,
@@ -126,15 +125,14 @@ fn only_terminal_states_are_deletable() {
 
 #[test]
 fn active_lease_rejects_whole_batch_but_expired_lease_does_not() {
-    let queue_now = OffsetDateTime::now_utc();
-    let now = DateTime::from_timestamp(queue_now.unix_timestamp(), queue_now.nanosecond()).unwrap();
+    let now = OffsetDateTime::now_utc();
     let exports = [
         export(export_job::Model::STATUS_SUCCEEDED, "tenant-a", 7),
         export(export_job::Model::STATUS_FAILED, "tenant-a", 7),
     ];
     let active = background(
         background_job::Model::STATUS_SUCCEEDED,
-        Some(queue_now + Duration::seconds(1)),
+        Some(now + Duration::seconds(1)),
     );
     assert!(matches!(
         validate_deletion_candidates(&exports, &[active], now),
@@ -143,7 +141,7 @@ fn active_lease_rejects_whole_batch_but_expired_lease_does_not() {
 
     let expired = background(
         background_job::Model::STATUS_RUNNING,
-        Some(queue_now - Duration::seconds(1)),
+        Some(now - Duration::seconds(1)),
     );
     validate_deletion_candidates(&exports, &[expired], now).expect("过期租约不能永久阻止终态清理");
 }
@@ -178,7 +176,7 @@ fn foreign_missing_or_hidden_member_rejects_whole_batch_as_not_found() {
         Err(AppError::NotFound(_))
     ));
     let mut hidden = export(export_job::Model::STATUS_SUCCEEDED, "tenant-a", 7);
-    hidden.delete_pending_at = Some(Utc::now());
+    hidden.delete_pending_at = Some(OffsetDateTime::now_utc());
     assert!(matches!(
         validate_candidate_ownership(&[hidden], 1, "tenant-a", 7),
         Err(AppError::NotFound(_))
@@ -187,7 +185,7 @@ fn foreign_missing_or_hidden_member_rejects_whole_batch_as_not_found() {
 
 #[test]
 fn create_mapping_moves_every_snapshot_field() {
-    let now = Utc.with_ymd_and_hms(2026, 8, 21, 1, 2, 3).unwrap();
+    let now = datetime!(2026-08-21 01:02:03 UTC);
     let command = database_create(CreateExportRecord {
         tenant_id: "tenant-a".into(),
         requester_id: 7,

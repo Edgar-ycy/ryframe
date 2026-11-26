@@ -1,11 +1,11 @@
 use crate::DbResultExt;
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait, QueryFilter, QueryOrder,
     QuerySelect,
     sea_query::{Expr, LockType},
 };
+use time::OffsetDateTime;
 
 use crate::entities::{background_job, export_job};
 
@@ -25,7 +25,7 @@ impl ExportJobRepository {
         tenant_id: &str,
         requester_id: i64,
         ids: &[i64],
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<MarkExportJobsDeletePending> {
         // 先读取关联后台任务标识，再按“后台任务 → 公开导出任务”的全局顺序加锁，
         // 与 Worker 的完成迁移保持一致，避免形成反向锁等待。
@@ -121,14 +121,13 @@ impl ExportJobRepository {
 pub fn validate_deletion_candidates(
     exports: &[export_job::Model],
     background_jobs: &[background_job::Model],
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<()> {
     if exports.iter().any(|export| !export.is_terminal()) {
         return Err(AppError::Conflict(
             "排队或执行中的导出任务必须先取消".into(),
         ));
     }
-    let now = crate::repositories::utc_time_from_chrono(now).db_context("导出任务租约校验时间")?;
     let has_active_lease = background_jobs.iter().any(|job| {
         job.lease_owner.is_some() && job.lease_until.is_some_and(|lease_until| lease_until > now)
     });

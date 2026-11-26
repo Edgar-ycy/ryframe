@@ -1,5 +1,6 @@
 use crate::DbResultExt;
 use std::sync::Arc;
+use time::OffsetDateTime;
 
 use crate::{
     ControlDatabaseCluster, ExportJobRepository, FileRepository, ReadConsistency, Repository,
@@ -83,8 +84,8 @@ impl ExportRequesterPersistencePort for DatabaseExportRequesterPersistence {
             })
     }
 
-    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
-        crate::repositories::database_utc_now(self.database.write()).await
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime> {
+        crate::repositories::database_utc_now_time(self.database.write()).await
     }
 
     async fn mark_notifications_read<'a>(
@@ -92,7 +93,7 @@ impl ExportRequesterPersistencePort for DatabaseExportRequesterPersistence {
         tenant_id: &'a str,
         requester_id: i64,
         ids: &'a [i64],
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<u64> {
         ExportJobRepository
             .mark_notifications_read(self.database.write(), tenant_id, requester_id, ids, now)
@@ -124,8 +125,8 @@ impl ExportRequesterPersistencePort for DatabaseExportRequesterPersistence {
 
 #[async_trait::async_trait]
 impl ExportRequesterTransaction for DatabaseExportRequesterTransaction {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
-        crate::repositories::database_utc_now(&self.transaction).await
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime> {
+        crate::repositories::database_utc_now_time(&self.transaction).await
     }
 
     async fn cancel<'a>(
@@ -133,7 +134,7 @@ impl ExportRequesterTransaction for DatabaseExportRequesterTransaction {
         tenant_id: &'a str,
         requester_id: i64,
         export_id: i64,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         ExportJobRepository
             .cancel_for_requester(&self.transaction, tenant_id, requester_id, export_id, now)

@@ -1,24 +1,24 @@
-use chrono::{DateTime, Utc};
+use time::OffsetDateTime;
 
 use crate::EnqueueJob;
 
 /// 导出记录整批删除受理所需的控制库事务。
 #[async_trait::async_trait]
 pub trait ExportDeletionTransaction: crate::PersistenceTransaction + Send + Sync {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime>;
 
     async fn mark_delete_pending<'a>(
         &'a self,
         tenant_id: &'a str,
         requester_id: i64,
         ids: &'a [i64],
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<u64>;
 
     async fn enqueue_cleanup(
         &self,
         command: EnqueueJob,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<()>;
 }
 

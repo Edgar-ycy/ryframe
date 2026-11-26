@@ -1,5 +1,5 @@
-use chrono::{DateTime, Utc};
 use serde_json::Value;
+use time::OffsetDateTime;
 
 #[derive(Debug)]
 pub struct ExportRequesterRecord {
@@ -9,14 +9,14 @@ pub struct ExportRequesterRecord {
     pub result_file_name: Option<String>,
     pub content_type: Option<String>,
     pub file_size: Option<i64>,
-    pub expires_at: Option<DateTime<Utc>>,
+    pub expires_at: Option<OffsetDateTime>,
     pub error_message: Option<String>,
-    pub snapshot_at: DateTime<Utc>,
+    pub snapshot_at: OffsetDateTime,
     pub matched_rows: i64,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub completed_at: Option<DateTime<Utc>>,
-    pub notification_read_at: Option<DateTime<Utc>>,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
+    pub completed_at: Option<OffsetDateTime>,
+    pub notification_read_at: Option<OffsetDateTime>,
     pub permission_code: String,
     pub request_params: Value,
     pub request_version: i32,
@@ -34,14 +34,14 @@ pub struct ExportDownloadFile {
 /// 申请人取消导出时使用的控制库事务。
 #[async_trait::async_trait]
 pub trait ExportRequesterTransaction: crate::PersistenceTransaction + Send + Sync {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime>;
 
     async fn cancel<'a>(
         &'a self,
         tenant_id: &'a str,
         requester_id: i64,
         export_id: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool>;
 }
 
@@ -69,14 +69,14 @@ pub trait ExportRequesterPersistencePort: Send + Sync {
         limit: u64,
     ) -> ryframe_kernel::AppResult<Vec<ExportRequesterRecord>>;
 
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime>;
 
     async fn mark_notifications_read<'a>(
         &'a self,
         tenant_id: &'a str,
         requester_id: i64,
         ids: &'a [i64],
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<u64>;
 
     async fn find_download_file<'a>(

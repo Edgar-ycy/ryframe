@@ -1,6 +1,6 @@
-use chrono::{DateTime, Utc};
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 /// 面向用户的异步导出任务。
 ///
@@ -20,7 +20,8 @@ pub struct Model {
     pub authorization_fingerprint: String,
     pub request_fingerprint: String,
     pub active_request_fingerprint: Option<String>,
-    pub snapshot_at: DateTime<Utc>,
+    #[serde(with = "ryframe_application::ports::utc_timestamp")]
+    pub snapshot_at: OffsetDateTime,
     pub upper_id: i64,
     pub matched_rows: i64,
     pub exported_rows: i64,
@@ -29,14 +30,36 @@ pub struct Model {
     pub result_file_name: Option<String>,
     pub content_type: Option<String>,
     pub file_size: Option<i64>,
-    pub expires_at: Option<DateTime<Utc>>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub expires_at: Option<OffsetDateTime>,
     pub error_message: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub completed_at: Option<DateTime<Utc>>,
-    pub notification_read_at: Option<DateTime<Utc>>,
+    #[serde(with = "ryframe_application::ports::utc_timestamp")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "ryframe_application::ports::utc_timestamp")]
+    pub updated_at: OffsetDateTime,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub completed_at: Option<OffsetDateTime>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub notification_read_at: Option<OffsetDateTime>,
     /// 非空后立即从所有用户查询中隐藏，直到清理器删除对象与元数据。
-    pub delete_pending_at: Option<DateTime<Utc>>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub delete_pending_at: Option<OffsetDateTime>,
 }
 
 impl Model {

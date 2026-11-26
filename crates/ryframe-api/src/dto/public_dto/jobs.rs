@@ -183,8 +183,8 @@ impl TryFrom<ServiceExportJobVo> for ExportJobVo {
             completed_at,
             notification_read_at,
         } = value;
-        let to_utc = |timestamp, field| {
-            utc_timestamp::from_chrono(timestamp).map_err(|_| {
+        let to_utc = |timestamp: OffsetDateTime, field| {
+            timestamp.checked_to_offset(UtcOffset::UTC).ok_or_else(|| {
                 AppError::Internal(format!("导出任务响应的 {field} 无法精确表示为 UTC"))
             })
         };

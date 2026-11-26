@@ -1,5 +1,6 @@
 use crate::DbResultExt;
 use std::sync::Arc;
+use time::OffsetDateTime;
 
 use crate::{BackgroundJobRepository, ControlDatabaseCluster, ExportJobRepository};
 use sea_orm::{DatabaseTransaction, TransactionTrait};
@@ -32,8 +33,8 @@ impl ExportDeletionPersistencePort for DatabaseExportDeletionPersistence {
 
 #[async_trait::async_trait]
 impl ExportDeletionTransaction for DatabaseExportDeletionTransaction {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
-        crate::repositories::database_utc_now(&self.transaction).await
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime> {
+        crate::repositories::database_utc_now_time(&self.transaction).await
     }
 
     async fn mark_delete_pending<'a>(
@@ -41,7 +42,7 @@ impl ExportDeletionTransaction for DatabaseExportDeletionTransaction {
         tenant_id: &'a str,
         requester_id: i64,
         ids: &'a [i64],
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<u64> {
         ExportJobRepository
             .mark_delete_pending_in_transaction(
@@ -58,13 +59,13 @@ impl ExportDeletionTransaction for DatabaseExportDeletionTransaction {
     async fn enqueue_cleanup(
         &self,
         command: EnqueueJob,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<()> {
         BackgroundJobRepository
             .enqueue_in_transaction(
                 &self.transaction,
                 super::super::jobs::database_enqueue(command),
-                crate::repositories::utc_time_from_chrono(now).db_context("导出清理入队时间")?,
+                now,
             )
             .await
             .map(|_| ())

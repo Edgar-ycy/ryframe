@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use time::OffsetDateTime;
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct ExportArtifactState {
@@ -17,7 +17,7 @@ pub struct ExportArtifactFileDraft {
     pub content_type: String,
     pub sha256: String,
     pub uploaded_by: String,
-    pub created_at: DateTime<Utc>,
+    pub created_at: OffsetDateTime,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -35,14 +35,14 @@ pub struct CompleteExportArtifact {
     pub file_name: String,
     pub content_type: String,
     pub file_size: i64,
-    pub expires_at: DateTime<Utc>,
-    pub completed_at: DateTime<Utc>,
+    pub expires_at: OffsetDateTime,
+    pub completed_at: OffsetDateTime,
 }
 
 /// 导出结果落账所需的控制库事务。
 #[async_trait::async_trait]
 pub trait ExportArtifactTransaction: crate::PersistenceTransaction + Send + Sync {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime>;
 
     async fn lock_export(
         &self,

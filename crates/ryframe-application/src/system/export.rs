@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use chrono::Duration;
 use ryframe_kernel::AppError;
+use time::Duration;
 
 use crate::{
     JobQueue,

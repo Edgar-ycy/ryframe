@@ -429,12 +429,12 @@ fn background_job_response_preserves_utc_precision_nullability_and_schema() {
 
 #[test]
 fn export_job_response_preserves_utc_precision_nullability_and_schema() {
-    use chrono::{DateTime, Utc};
     use ryframe_api::dto::public_dto::ExportJobVo;
     use ryframe_application::ports::export::ExportRequesterRecord;
     use ryframe_application::system::operations::export_requester_view;
     use ryframe_kernel::AppError;
     use serde_json::{Value, json};
+    use time::macros::{datetime, offset};
     use utoipa::OpenApi;
 
     let job = export_requester_view(ExportRequesterRecord {
@@ -446,14 +446,14 @@ fn export_job_response_preserves_utc_precision_nullability_and_schema() {
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".into(),
         ),
         file_size: Some(256),
-        expires_at: DateTime::from_timestamp(20, 0),
+        expires_at: Some(datetime!(1970-01-01 00:00:20 UTC)),
         error_message: None,
-        snapshot_at: DateTime::from_timestamp(0, 123_400_000).unwrap(),
+        snapshot_at: datetime!(1970-01-01 01:00:00.123400 +01:00),
         matched_rows: 8,
-        created_at: DateTime::from_timestamp(0, 120_000_000).unwrap(),
-        updated_at: DateTime::from_timestamp(10, 0).unwrap(),
-        completed_at: DateTime::from_timestamp(9, 123_456_700),
-        notification_read_at: DateTime::from_timestamp(10, 0),
+        created_at: datetime!(1970-01-01 00:00:00.120 UTC),
+        updated_at: datetime!(1970-01-01 00:00:10 UTC),
+        completed_at: Some(datetime!(1970-01-01 00:00:09.123456700 UTC)),
+        notification_read_at: Some(datetime!(1970-01-01 00:00:10 UTC)),
         permission_code: "system:user:export".into(),
         request_params: json!({"selected_ids": [10]}),
         request_version: 1,
@@ -499,12 +499,8 @@ fn export_job_response_preserves_utc_precision_nullability_and_schema() {
     job.expires_at = None;
     job.completed_at = None;
     job.notification_read_at = None;
-    job.created_at = DateTime::parse_from_rfc3339("1000-01-01T00:00:00Z")
-        .unwrap()
-        .with_timezone(&Utc);
-    job.snapshot_at = DateTime::parse_from_rfc3339("9999-12-31T23:59:59.499999Z")
-        .unwrap()
-        .with_timezone(&Utc);
+    job.created_at = datetime!(1000-01-01 00:00:00 UTC);
+    job.snapshot_at = datetime!(9999-12-31 23:59:59.499999 UTC);
     let response = serde_json::to_value(ExportJobVo::try_from(job.clone()).unwrap()).unwrap();
     assert_eq!(response, serde_json::to_value(&job).unwrap());
     assert_eq!(response["created_at"], "1000-01-01T00:00:00Z");
@@ -518,7 +514,7 @@ fn export_job_response_preserves_utc_precision_nullability_and_schema() {
         assert!(!required.contains(&json!(field)));
     }
 
-    job.snapshot_at = DateTime::from_timestamp(-1, 1_123_456_000).unwrap();
+    job.snapshot_at = time::PrimitiveDateTime::MAX.assume_offset(offset!(-01:00));
     assert!(matches!(
         ExportJobVo::try_from(job),
         Err(AppError::Internal(message)) if message.contains("snapshot_at")

@@ -102,9 +102,7 @@ mod resources {
 
     #[test]
     fn execution_snapshot_uses_application_record() {
-        let now = chrono::DateTime::parse_from_rfc3339("2026-08-21T00:00:00Z")
-            .expect("测试时间应有效")
-            .with_timezone(&chrono::Utc);
+        let now = time::macros::datetime!(2026-08-21 00:00:00 UTC);
         let record = ExportExecutionRecord {
             id: 1,
             tenant_id: "tenant-a".into(),
@@ -123,7 +121,7 @@ mod resources {
         let snapshot = export_execution_snapshot(&record);
         assert_eq!(snapshot.request_version, i32::from(EXPORT_REQUEST_VERSION));
         assert_eq!(snapshot.authorization_fingerprint, "authorization");
-        assert_eq!(snapshot.snapshot_at, &now);
+        assert_eq!(snapshot.snapshot_at, now);
         assert_eq!(snapshot.upper_id, 99);
         assert_eq!(snapshot.matched_rows, 8);
     }

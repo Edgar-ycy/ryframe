@@ -1,5 +1,6 @@
 use crate::DbResultExt;
 use std::sync::Arc;
+use time::{OffsetDateTime, UtcOffset};
 
 use crate::{
     ControlDatabaseCluster, ExportJobRepository, FileRepository, MarkExportJobSucceeded,
@@ -35,8 +36,8 @@ impl ExportArtifactPersistencePort for DatabaseExportArtifactPersistence {
 
 #[async_trait::async_trait]
 impl ExportArtifactTransaction for DatabaseExportArtifactTransaction {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
-        crate::repositories::database_utc_now(&self.transaction).await
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime> {
+        crate::repositories::database_utc_now_time(&self.transaction).await
     }
 
     async fn lock_export(
@@ -59,9 +60,13 @@ impl ExportArtifactTransaction for DatabaseExportArtifactTransaction {
         tenant_id: &'a str,
         file: ExportArtifactFileDraft,
     ) -> ryframe_kernel::AppResult<ExportArtifactFileRecord> {
-        let created_at = sys_file::utc_datetime(
-            crate::application_ports::files::utc_time_from_chrono(file.created_at)?,
-        );
+        let utc = file
+            .created_at
+            .checked_to_offset(UtcOffset::UTC)
+            .ok_or_else(|| {
+                ryframe_kernel::AppError::Database("文件时间无法精确表示为 UTC".into())
+            })?;
+        let created_at = sys_file::utc_datetime(utc);
         let model = sys_file::Model {
             id: file.id,
             tenant_id: tenant_id.to_owned(),

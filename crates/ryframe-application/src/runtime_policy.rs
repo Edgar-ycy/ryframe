@@ -1,6 +1,5 @@
 use std::{sync::Arc, time::Duration};
 
-use chrono::Duration as ChronoDuration;
 use ryframe_kernel::{AppError, AppResult};
 use time::Duration as SignedDuration;
 
@@ -154,7 +153,7 @@ pub struct JobRuntimePolicy {
 pub struct ExportPolicy {
     pub(crate) default_max_attempts: i32,
     pub(crate) max_rows: usize,
-    pub(crate) retention: ChronoDuration,
+    pub(crate) retention: SignedDuration,
 }
 
 impl ExportPolicy {
@@ -169,7 +168,7 @@ impl ExportPolicy {
         Ok(Self {
             default_max_attempts,
             max_rows,
-            retention: ChronoDuration::hours(i64::from(retention_hours)),
+            retention: SignedDuration::hours(i64::from(retention_hours)),
         })
     }
 }

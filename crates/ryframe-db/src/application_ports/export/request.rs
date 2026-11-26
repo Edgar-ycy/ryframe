@@ -1,5 +1,6 @@
 use crate::DbResultExt;
 use std::sync::Arc;
+use time::OffsetDateTime;
 
 use crate::{
     BackgroundJobRepository, ConfigFilter, ConfigRepository, ControlDatabaseCluster,
@@ -42,8 +43,8 @@ impl ExportRequestPersistencePort for DatabaseExportRequestPersistence {
 
 #[async_trait::async_trait]
 impl ExportRequestTransaction for DatabaseExportRequestTransaction {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
-        crate::repositories::database_utc_now(&self.transaction).await
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime> {
+        crate::repositories::database_utc_now_time(&self.transaction).await
     }
 
     async fn find_active<'a>(
@@ -165,13 +166,13 @@ impl ExportRequestTransaction for DatabaseExportRequestTransaction {
     async fn enqueue_job(
         &self,
         command: EnqueueJob,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<i64> {
         BackgroundJobRepository
             .enqueue_in_transaction(
                 &self.transaction,
                 super::super::jobs::database_enqueue(command),
-                crate::repositories::utc_time_from_chrono(now).db_context("导出任务入队时间")?,
+                now,
             )
             .await
             .map(|result| result.job.id)
@@ -180,7 +181,7 @@ impl ExportRequestTransaction for DatabaseExportRequestTransaction {
     async fn create_export(
         &self,
         command: CreateExportRecord,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<ExportRequesterRecord> {
         ExportJobRepository
             .create_in_transaction(&self.transaction, database_create(command), now)

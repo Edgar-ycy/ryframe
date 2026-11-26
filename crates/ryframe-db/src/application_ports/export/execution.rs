@@ -1,5 +1,6 @@
 use crate::DbResultExt;
 use std::sync::Arc;
+use time::OffsetDateTime;
 
 use crate::{
     BackgroundJobRepository, ControlDatabaseCluster, ExportJobRepository,
@@ -27,8 +28,8 @@ pub fn port(database: ControlDatabaseCluster) -> Arc<dyn ExportExecutionPersiste
 
 #[async_trait::async_trait]
 impl ExportExecutionPersistencePort for DatabaseExportExecutionPersistence {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
-        crate::repositories::database_utc_now(self.database.write()).await
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime> {
+        crate::repositories::database_utc_now_time(self.database.write()).await
     }
 
     async fn find_by_background_job(
@@ -51,7 +52,7 @@ impl ExportExecutionPersistencePort for DatabaseExportExecutionPersistence {
         &self,
         export_id: i64,
         exported_rows: i64,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         ExportJobRepository
             .update_exported_rows(self.database.write(), export_id, exported_rows, now)
@@ -64,9 +65,8 @@ impl ExportExecutionPersistencePort for DatabaseExportExecutionPersistence {
     ) -> ryframe_kernel::AppResult<Option<ExportBackgroundLease>> {
         BackgroundJobRepository
             .find_by_id(self.database.write(), background_job_id)
-            .await?
-            .map(map_background_lease)
-            .transpose()
+            .await
+            .map(|record| record.map(map_background_lease))
     }
 
     async fn find_export_state(
@@ -92,7 +92,7 @@ impl ExportExecutionTransaction for DatabaseExportExecutionTransaction {
         export_id: i64,
         tenant_id: &'a str,
         maximum_running: u64,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<ExportStartDecision> {
         ExportJobRepository
             .try_mark_running_in_transaction(
@@ -143,22 +143,12 @@ fn map_execution_record(record: export_job::Model) -> ExportExecutionRecord {
     }
 }
 
-fn map_background_lease(
-    record: background_job::Model,
-) -> ryframe_kernel::AppResult<ExportBackgroundLease> {
-    let lease_until = record
-        .lease_until
-        .map(|value| {
-            chrono::DateTime::from_timestamp(value.unix_timestamp(), value.nanosecond()).ok_or_else(
-                || ryframe_kernel::AppError::Internal("导出任务租约超出 UTC 表示范围".into()),
-            )
-        })
-        .transpose()?;
-    Ok(ExportBackgroundLease {
+fn map_background_lease(record: background_job::Model) -> ExportBackgroundLease {
+    ExportBackgroundLease {
         status: record.status,
         lease_owner: record.lease_owner,
-        lease_until,
-    })
+        lease_until: record.lease_until,
+    }
 }
 
 pub fn map_start_decision(value: DatabaseStartDisposition) -> ExportStartDecision {

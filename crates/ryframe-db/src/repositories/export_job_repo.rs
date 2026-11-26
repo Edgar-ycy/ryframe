@@ -1,5 +1,4 @@
 use crate::DbResultExt;
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait,
@@ -9,6 +8,7 @@ use sea_orm::{
     sea_query::{Expr, LockType},
 };
 use serde_json::Value;
+use time::OffsetDateTime;
 
 use crate::entities::{export_job, tenant};
 
@@ -33,7 +33,7 @@ pub struct CreateExportJob {
     pub permission_code: String,
     pub authorization_fingerprint: String,
     pub request_fingerprint: String,
-    pub snapshot_at: DateTime<Utc>,
+    pub snapshot_at: OffsetDateTime,
     pub upper_id: i64,
     pub matched_rows: i64,
 }
@@ -55,8 +55,8 @@ pub struct MarkExportJobSucceeded {
     pub file_name: String,
     pub content_type: String,
     pub file_size: i64,
-    pub expires_at: DateTime<Utc>,
-    pub completed_at: DateTime<Utc>,
+    pub expires_at: OffsetDateTime,
+    pub completed_at: OffsetDateTime,
 }
 
 /// 异步导出任务仓储。
@@ -77,7 +77,7 @@ impl ExportJobRepository {
         &self,
         transaction: &DatabaseTransaction,
         command: CreateExportJob,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<export_job::Model> {
         validate_create_command(&command)?;
         export_job::ActiveModel {
@@ -183,7 +183,7 @@ impl ExportJobRepository {
         tenant_id: &str,
         requester_id: i64,
         ids: &[i64],
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<u64>
     where
         C: ConnectionTrait,
@@ -239,7 +239,7 @@ impl ExportJobRepository {
         id: i64,
         tenant_id: &str,
         maximum_running: u64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<ExportStartDisposition> {
         tenant::Entity::find()
             .filter(tenant::Column::TenantId.eq(tenant_id))
@@ -298,7 +298,7 @@ impl ExportJobRepository {
         db: &C,
         id: i64,
         exported_rows: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<bool>
     where
         C: ConnectionTrait,
@@ -371,7 +371,7 @@ impl ExportJobRepository {
         db: &C,
         id: i64,
         error_message: &str,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<bool>
     where
         C: ConnectionTrait,
@@ -406,7 +406,7 @@ impl ExportJobRepository {
         db: &C,
         id: i64,
         error_message: &str,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<bool>
     where
         C: ConnectionTrait,
@@ -437,7 +437,7 @@ impl ExportJobRepository {
         tenant_id: &str,
         requester_id: i64,
         id: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<bool>
     where
         C: ConnectionTrait,
@@ -471,7 +471,7 @@ impl ExportJobRepository {
     pub async fn list_expired_succeeded_after_id(
         &self,
         db: &DatabaseConnection,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
         after_id: Option<i64>,
         limit: u64,
     ) -> AppResult<Vec<export_job::Model>> {
@@ -488,7 +488,7 @@ impl ExportJobRepository {
     }
 
     /// 在文件对象与元数据均清理完成后标记导出任务过期。
-    pub async fn mark_expired<C>(&self, db: &C, id: i64, now: DateTime<Utc>) -> AppResult<bool>
+    pub async fn mark_expired<C>(&self, db: &C, id: i64, now: OffsetDateTime) -> AppResult<bool>
     where
         C: ConnectionTrait,
     {

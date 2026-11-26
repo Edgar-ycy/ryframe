@@ -1,5 +1,6 @@
 use crate::DbResultExt;
 use std::sync::Arc;
+use time::OffsetDateTime;
 
 use crate::{
     ControlDatabaseCluster, ExportJobRepository, FileRepository, ReadConsistency,
@@ -26,8 +27,8 @@ pub fn port(database: ControlDatabaseCluster) -> Arc<dyn ExportCleanupPersistenc
 
 #[async_trait::async_trait]
 impl ExportCleanupPersistencePort for DatabaseExportCleanupPersistence {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
-        crate::repositories::database_utc_now(self.database.write()).await
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime> {
+        crate::repositories::database_utc_now_time(self.database.write()).await
     }
 
     async fn list_delete_pending(
@@ -43,7 +44,7 @@ impl ExportCleanupPersistencePort for DatabaseExportCleanupPersistence {
 
     async fn list_expired(
         &self,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
         after_id: Option<i64>,
         limit: u64,
     ) -> ryframe_kernel::AppResult<Vec<ExportCleanupRecord>> {
@@ -122,7 +123,7 @@ impl ExportCleanupTransaction for DatabaseExportCleanupTransaction {
     async fn mark_expired(
         &self,
         export_id: i64,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
         ExportJobRepository
             .mark_expired(&self.transaction, export_id, now)

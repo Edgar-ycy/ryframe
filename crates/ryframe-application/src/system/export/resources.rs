@@ -257,7 +257,7 @@ pub fn export_execution_snapshot(export: &ExportExecutionRecord) -> PersistedExp
     PersistedExportSnapshot {
         request_version: export.request_version,
         authorization_fingerprint: &export.authorization_fingerprint,
-        snapshot_at: &export.snapshot_at,
+        snapshot_at: export.snapshot_at,
         upper_id: export.upper_id,
         matched_rows: export.matched_rows,
     }

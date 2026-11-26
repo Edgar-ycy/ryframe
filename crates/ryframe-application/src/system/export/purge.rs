@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
+use time::OffsetDateTime;
 
 use super::{EXPORT_BUCKET, EXPORT_STATUS_SUCCEEDED, storage_error};
 use crate::ports::{
@@ -69,7 +69,7 @@ impl ExportPurgeUseCase {
     pub async fn purge_expired_export(
         &self,
         export: ExportCleanupRecord,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<bool> {
         let file = self.result_file(&export).await?;
         if let Some(file) = &file {

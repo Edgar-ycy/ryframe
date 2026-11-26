@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use time::OffsetDateTime;
 
 #[derive(Debug)]
 pub struct ExportCleanupRecord {
@@ -6,8 +6,8 @@ pub struct ExportCleanupRecord {
     pub tenant_id: String,
     pub status: String,
     pub result_file_id: Option<i64>,
-    pub expires_at: Option<DateTime<Utc>>,
-    pub delete_pending_at: Option<DateTime<Utc>>,
+    pub expires_at: Option<OffsetDateTime>,
+    pub delete_pending_at: Option<OffsetDateTime>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -42,14 +42,14 @@ pub trait ExportCleanupTransaction: crate::PersistenceTransaction + Send + Sync 
     async fn mark_expired(
         &self,
         export_id: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool>;
 }
 
 /// 导出墓碑与过期结果清理使用的控制库端口。
 #[async_trait::async_trait]
 pub trait ExportCleanupPersistencePort: Send + Sync {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime>;
 
     async fn list_delete_pending(
         &self,
@@ -59,7 +59,7 @@ pub trait ExportCleanupPersistencePort: Send + Sync {
 
     async fn list_expired(
         &self,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
         after_id: Option<i64>,
         limit: u64,
     ) -> ryframe_kernel::AppResult<Vec<ExportCleanupRecord>>;

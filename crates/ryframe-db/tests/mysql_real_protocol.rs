@@ -45,6 +45,9 @@ fn bootstrap_hashes() -> ryframe_db::migration::BootstrapHashes {
 #[path = "mysql_real_protocol/backup.rs"]
 mod backup;
 #[cfg(feature = "migration")]
+#[path = "mysql_real_protocol/export_lifecycle.rs"]
+mod export_lifecycle;
+#[cfg(feature = "migration")]
 #[path = "mysql_real_protocol/initialization.rs"]
 mod initialization;
 #[cfg(feature = "migration")]

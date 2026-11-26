@@ -1,5 +1,5 @@
-use chrono::{DateTime, Utc};
 use serde_json::Value;
+use time::OffsetDateTime;
 
 #[derive(Debug)]
 pub struct ExportExecutionRecord {
@@ -11,7 +11,7 @@ pub struct ExportExecutionRecord {
     pub request_version: i32,
     pub permission_code: String,
     pub authorization_fingerprint: String,
-    pub snapshot_at: DateTime<Utc>,
+    pub snapshot_at: OffsetDateTime,
     pub upper_id: i64,
     pub matched_rows: i64,
     pub status: String,
@@ -20,14 +20,14 @@ pub struct ExportExecutionRecord {
 #[derive(Debug, Eq, PartialEq)]
 pub struct ExportExecutionState {
     pub status: String,
-    pub delete_pending_at: Option<DateTime<Utc>>,
+    pub delete_pending_at: Option<OffsetDateTime>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct ExportBackgroundLease {
     pub status: String,
     pub lease_owner: Option<String>,
-    pub lease_until: Option<DateTime<Utc>>,
+    pub lease_until: Option<OffsetDateTime>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -45,14 +45,14 @@ pub trait ExportExecutionTransaction: crate::PersistenceTransaction + Send + Syn
         export_id: i64,
         tenant_id: &'a str,
         maximum_running: u64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<ExportStartDecision>;
 }
 
 /// Worker 执行导出时使用的控制库状态端口。
 #[async_trait::async_trait]
 pub trait ExportExecutionPersistencePort: Send + Sync {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime>;
 
     async fn find_by_background_job(
         &self,
@@ -65,7 +65,7 @@ pub trait ExportExecutionPersistencePort: Send + Sync {
         &self,
         export_id: i64,
         exported_rows: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool>;
 
     async fn find_background_lease(

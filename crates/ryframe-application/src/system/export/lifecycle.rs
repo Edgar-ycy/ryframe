@@ -23,19 +23,18 @@ impl ExportService {
             let removed_unread_count = transaction
                 .mark_delete_pending(tenant_id, actor.user_id, &ids, now)
                 .await?;
-            let queue_now = crate::jobs::queue_time_from_database(now)?;
             let trace_context = crate::trace_context::current_trace_context();
             transaction
                 .enqueue_cleanup(
                     EnqueueJob {
                         tenant_id: None,
                         schedule_id: None,
-                        scheduled_for: Some(queue_now),
+                        scheduled_for: Some(now),
                         max_runtime_seconds: None,
                         job_type: EXPORT_CLEANUP_JOB_TYPE.to_owned(),
                         payload: serde_json::json!({"request_version": 1}),
                         priority: -5,
-                        available_at: queue_now,
+                        available_at: now,
                         max_attempts: self.default_max_attempts,
                         dedupe_key: Some(deletion_cleanup_dedupe_key(
                             tenant_id,
@@ -114,14 +113,13 @@ impl ExportService {
                     &command.selection,
                 )
                 .await?;
-            let queue_now = crate::jobs::queue_time_from_database(now)?;
             let trace_context = crate::trace_context::current_trace_context();
             let background_job_id = transaction
                 .enqueue_job(
                     EnqueueJob {
                         tenant_id: Some(tenant_id.to_owned()),
                         schedule_id: None,
-                        scheduled_for: Some(queue_now),
+                        scheduled_for: Some(now),
                         max_runtime_seconds: Some(EXPORT_MAX_RUNTIME_SECONDS),
                         job_type: EXPORT_JOB_TYPE.to_owned(),
                         payload: serde_json::to_value(ExportJobPayload::new(resource)).map_err(
@@ -130,7 +128,7 @@ impl ExportService {
                             },
                         )?,
                         priority: 5,
-                        available_at: queue_now,
+                        available_at: now,
                         max_attempts: self.default_max_attempts,
                         dedupe_key: None,
                         traceparent: trace_context.traceparent,
@@ -143,7 +141,7 @@ impl ExportService {
                 request_version: EXPORT_REQUEST_VERSION,
                 selection: command.selection,
                 authorization_fingerprint,
-                snapshot_at: now,
+                snapshot_at: StoredExportRequest::persisted_timestamp(now)?,
                 upper_id: snapshot.upper_id,
                 matched_rows: snapshot.matched_rows,
             };
@@ -390,7 +388,7 @@ pub fn export_requester_snapshot(export: &ExportRequesterRecord) -> PersistedExp
     PersistedExportSnapshot {
         request_version: export.request_version,
         authorization_fingerprint: &export.authorization_fingerprint,
-        snapshot_at: &export.snapshot_at,
+        snapshot_at: export.snapshot_at,
         upper_id: export.upper_id,
         matched_rows: export.matched_rows,
     }

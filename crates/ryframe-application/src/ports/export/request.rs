@@ -1,6 +1,6 @@
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{ActorContext, ExportQuerySnapshot};
 use serde_json::Value;
+use time::OffsetDateTime;
 
 use crate::{EnqueueJob, system::operations::ExportSelection};
 
@@ -17,7 +17,7 @@ pub struct CreateExportRecord {
     pub permission_code: String,
     pub authorization_fingerprint: String,
     pub request_fingerprint: String,
-    pub snapshot_at: DateTime<Utc>,
+    pub snapshot_at: OffsetDateTime,
     pub upper_id: i64,
     pub matched_rows: i64,
 }
@@ -25,7 +25,7 @@ pub struct CreateExportRecord {
 /// 导出申请创建所需的控制库一致性事务。
 #[async_trait::async_trait]
 pub trait ExportRequestTransaction: crate::PersistenceTransaction + Send + Sync {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime>;
 
     async fn find_active<'a>(
         &'a self,
@@ -44,13 +44,13 @@ pub trait ExportRequestTransaction: crate::PersistenceTransaction + Send + Sync 
     async fn enqueue_job(
         &self,
         command: EnqueueJob,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<i64>;
 
     async fn create_export(
         &self,
         command: CreateExportRecord,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<ExportRequesterRecord>;
 }
 

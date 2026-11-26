@@ -143,9 +143,7 @@ mod lifecycle {
     use super::*;
 
     fn requester_record() -> ExportRequesterRecord {
-        let now = DateTime::parse_from_rfc3339("2026-08-21T00:00:00Z")
-            .expect("测试时间应有效")
-            .with_timezone(&Utc);
+        let now = time::macros::datetime!(2026-08-21 00:00:00 UTC);
         ExportRequesterRecord {
             id: 42,
             resource: "users".into(),
@@ -319,13 +317,30 @@ mod types {
                 "filter": {"name": "ops", "code": null, "status": "0"}
             },
             "authorization_fingerprint": "fingerprint-at-request",
-            "snapshot_at": "2026-08-20T12:00:00Z",
+            "snapshot_at": "2026-08-20T12:00:00.123456Z",
             "upper_id": 88,
             "matched_rows": 12
         });
         let request: StoredExportRequest =
-            serde_json::from_value(valid).expect("当前版本快照应可解析");
+            serde_json::from_value(valid.clone()).expect("当前版本快照应可解析");
         request.validate("roles").expect("资源应匹配");
+        assert_eq!(serde_json::to_value(&request).unwrap(), valid);
+        let persisted = PersistedExportSnapshot {
+            request_version: i32::from(EXPORT_REQUEST_VERSION),
+            authorization_fingerprint: "fingerprint-at-request",
+            snapshot_at: time::macros::datetime!(2026-08-20 13:00:00.123456 +01:00),
+            upper_id: 88,
+            matched_rows: 12,
+        };
+        let wrong_time = PersistedExportSnapshot {
+            snapshot_at: persisted.snapshot_at + time::Duration::microseconds(1),
+            ..persisted
+        };
+        assert!(matches!(
+            request.validate_persisted_snapshot(wrong_time),
+            Err(AppError::Validation(message)) if message.contains("快照时间")
+        ));
+        request.validate_persisted_snapshot(persisted).unwrap();
 
         let previous_version = serde_json::json!({
             "request_version": EXPORT_REQUEST_VERSION - 1,

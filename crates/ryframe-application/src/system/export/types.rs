@@ -1,5 +1,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
+
+use crate::ports::utc_timestamp;
 
 use super::ExportSelection;
 
@@ -72,14 +75,20 @@ pub struct ExportJobVo {
     pub result_file_name: Option<String>,
     pub content_type: Option<String>,
     pub file_size: Option<i64>,
-    pub expires_at: Option<DateTime<Utc>>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    pub expires_at: Option<OffsetDateTime>,
     pub error_message: Option<String>,
-    pub snapshot_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    pub snapshot_at: OffsetDateTime,
     pub matched_rows: i64,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub completed_at: Option<DateTime<Utc>>,
-    pub notification_read_at: Option<DateTime<Utc>>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    pub created_at: OffsetDateTime,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    pub updated_at: OffsetDateTime,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    pub completed_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    pub notification_read_at: Option<OffsetDateTime>,
 }
 
 /// 已完成导出对应的受控文件定位信息。
@@ -111,12 +120,21 @@ pub struct StoredExportRequest {
 pub struct PersistedExportSnapshot<'a> {
     pub request_version: i32,
     pub authorization_fingerprint: &'a str,
-    pub snapshot_at: &'a DateTime<Utc>,
+    pub snapshot_at: OffsetDateTime,
     pub upper_id: i64,
     pub matched_rows: i64,
 }
 
 impl StoredExportRequest {
+    /// 保留已持久化请求快照的时间编码。
+    pub(super) fn persisted_timestamp(
+        now: OffsetDateTime,
+    ) -> ryframe_kernel::AppResult<DateTime<Utc>> {
+        DateTime::from_timestamp(now.unix_timestamp(), now.nanosecond()).ok_or_else(|| {
+            ryframe_kernel::AppError::Internal("导出请求快照时间超出 UTC 表示范围".into())
+        })
+    }
+
     pub fn validate(&self, expected_resource: &str) -> ryframe_kernel::AppResult<()> {
         if self.request_version != EXPORT_REQUEST_VERSION {
             return Err(ryframe_kernel::AppError::Validation(format!(
@@ -158,7 +176,9 @@ impl StoredExportRequest {
                 "导出请求授权指纹与任务记录不一致".into(),
             ));
         }
-        if &self.snapshot_at != export.snapshot_at {
+        if !utc_timestamp::from_chrono(self.snapshot_at)
+            .is_ok_and(|timestamp| timestamp == export.snapshot_at)
+        {
             return Err(ryframe_kernel::AppError::Validation(
                 "导出请求快照时间与任务记录不一致".into(),
             ));

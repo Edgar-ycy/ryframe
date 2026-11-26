@@ -72,6 +72,9 @@ impl ExportService {
                 )
                 .await?;
             let completed_at = transaction.database_now().await?;
+            let expires_at = completed_at
+                .checked_add(self.export_retention)
+                .ok_or_else(|| AppError::Internal("导出结果到期时间超出 UTC 表示范围".into()))?;
             if !transaction
                 .mark_succeeded(CompleteExportArtifact {
                     export_id,
@@ -79,7 +82,7 @@ impl ExportService {
                     file_name: file.file_name,
                     content_type: file.content_type,
                     file_size: file.file_size,
-                    expires_at: completed_at + self.export_retention,
+                    expires_at,
                     completed_at,
                 })
                 .await?
