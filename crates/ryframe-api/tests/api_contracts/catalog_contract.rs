@@ -1,5 +1,8 @@
 use ryframe_api::{openapi::ApiDoc, permission_catalog::*};
 
+#[path = "catalog_contract/message_request.rs"]
+mod message_request;
+
 #[test]
 fn generated_post_router_composes_with_manual_export_extension() {
     use std::sync::Arc;

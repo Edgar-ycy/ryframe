@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Utc};
 use serde_json::Value;
 use time::OffsetDateTime;
 
@@ -19,7 +18,7 @@ pub struct PublishMessageParams {
     pub source_type: Option<String>,
     pub source_id: Option<String>,
     pub audiences: Vec<MessageAudienceSelector>,
-    pub expires_at: Option<DateTime<Utc>>,
+    pub expires_at: Option<OffsetDateTime>,
 }
 
 /// 纯文本或本地化键形式的消息片段。

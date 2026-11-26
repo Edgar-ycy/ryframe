@@ -1,6 +1,6 @@
-use chrono::Duration;
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use serde_json::Value;
+use time::Duration;
 
 use crate::{
     TransactionAuditMode,
@@ -42,9 +42,10 @@ impl MessageService {
             }
             None => actor_tenant_id.to_owned(),
         };
-        let available_at = self.queue.database_now().await?;
-        let now = Self::legacy_persistence_time(available_at)?;
-        let maximum_expiry = now + Duration::days(i64::from(self.config.retention_days));
+        let available_at = self.database_now().await?;
+        let maximum_expiry = available_at
+            .checked_add(Duration::days(i64::from(self.config.retention_days)))
+            .ok_or_else(|| AppError::Database("消息有效期上限超出 UTC 时间表示范围".into()))?;
         let expires_at = expires_at.unwrap_or(maximum_expiry);
         if expires_at > maximum_expiry {
             return Err(AppError::Validation(format!(
@@ -81,7 +82,7 @@ impl MessageService {
                     source_type,
                     source_id,
                     created_by: actor.user_id,
-                    published_at: now,
+                    published_at: available_at,
                     expires_at,
                     audiences,
                 },

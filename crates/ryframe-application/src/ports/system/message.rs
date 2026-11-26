@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use serde_json::Value;
 use time::OffsetDateTime;
 
@@ -61,8 +60,8 @@ pub struct PublishMessageRecord {
     pub source_type: Option<String>,
     pub source_id: Option<String>,
     pub created_by: i64,
-    pub published_at: DateTime<Utc>,
-    pub expires_at: DateTime<Utc>,
+    pub published_at: OffsetDateTime,
+    pub expires_at: OffsetDateTime,
     pub audiences: Vec<MessageAudienceRecord>,
 }
 
@@ -93,7 +92,7 @@ pub struct MessageInboxFilter<'a> {
     pub limit: u64,
     pub unread_only: bool,
     pub unacknowledged_only: bool,
-    pub now: DateTime<Utc>,
+    pub now: OffsetDateTime,
 }
 
 #[async_trait::async_trait]
@@ -111,7 +110,7 @@ pub trait MessageTransaction: PersistenceTransaction + Sync {
         tenant_id: &'a str,
         user_id: i64,
         message_ids: &'a [i64],
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<u64>;
 
     async fn mark_read<'a>(
@@ -119,14 +118,14 @@ pub trait MessageTransaction: PersistenceTransaction + Sync {
         tenant_id: &'a str,
         user_id: i64,
         message_id: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool>;
 
     async fn mark_all_read<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<u64>;
 
     async fn soft_delete<'a>(
@@ -134,18 +133,18 @@ pub trait MessageTransaction: PersistenceTransaction + Sync {
         tenant_id: &'a str,
         user_id: i64,
         message_ids: &'a [i64],
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<u64>;
 
     async fn mark_enqueued(
         &self,
         message_id: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<u64>;
 
     async fn delete_expired_batch(
         &self,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
         batch_size: u64,
     ) -> ryframe_kernel::AppResult<u64>;
 }
@@ -161,14 +160,14 @@ pub trait MessagePersistencePort: Send + Sync {
         &'a self,
         message_id: i64,
         user_ids: Option<&'a [i64]>,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<Vec<MessageRecipientRecord>>;
 
     async fn unread_count<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<u64>;
 
     async fn find_message(

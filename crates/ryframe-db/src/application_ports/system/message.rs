@@ -8,6 +8,7 @@ use crate::{
     entities::message,
 };
 use sea_orm::{EntityTrait, TransactionTrait};
+use time::OffsetDateTime;
 
 use ryframe_application::{
     PersistenceTransaction, TransactionAuditMode,
@@ -46,7 +47,7 @@ impl MessagePersistencePort for DatabaseMessagePersistence {
                     limit: filter.limit,
                     unread_only: filter.unread_only,
                     unacknowledged_only: filter.unacknowledged_only,
-                    now: filter.now,
+                    now: to_persistence_time(filter.now)?,
                 },
             )
             .await?;
@@ -64,8 +65,9 @@ impl MessagePersistencePort for DatabaseMessagePersistence {
         &'a self,
         message_id: i64,
         user_ids: Option<&'a [i64]>,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<Vec<MessageRecipientRecord>> {
+        let now = to_persistence_time(now)?;
         let records = match user_ids {
             Some(user_ids) => {
                 MessageRepository
@@ -90,8 +92,9 @@ impl MessagePersistencePort for DatabaseMessagePersistence {
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<u64> {
+        let now = to_persistence_time(now)?;
         MessageRepository
             .unread_count(self.database.write(), tenant_id, user_id, now)
             .await
@@ -138,8 +141,8 @@ impl MessageTransaction for DatabaseMessageTransaction {
                     source_type: command.source_type,
                     source_id: command.source_id,
                     created_by: command.created_by,
-                    published_at: command.published_at,
-                    expires_at: command.expires_at,
+                    published_at: to_persistence_time(command.published_at)?,
+                    expires_at: to_persistence_time(command.expires_at)?,
                     audiences: command
                         .audiences
                         .into_iter()
@@ -194,8 +197,9 @@ impl MessageTransaction for DatabaseMessageTransaction {
         tenant_id: &'a str,
         user_id: i64,
         message_ids: &'a [i64],
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<u64> {
+        let now = to_persistence_time(now)?;
         MessageRepository
             .acknowledge(&self.transaction, tenant_id, user_id, message_ids, now)
             .await
@@ -206,8 +210,9 @@ impl MessageTransaction for DatabaseMessageTransaction {
         tenant_id: &'a str,
         user_id: i64,
         message_id: i64,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<bool> {
+        let now = to_persistence_time(now)?;
         MessageRepository
             .mark_read(&self.transaction, tenant_id, user_id, message_id, now)
             .await
@@ -217,8 +222,9 @@ impl MessageTransaction for DatabaseMessageTransaction {
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<u64> {
+        let now = to_persistence_time(now)?;
         MessageRepository
             .mark_all_read(&self.transaction, tenant_id, user_id, now)
             .await
@@ -229,8 +235,9 @@ impl MessageTransaction for DatabaseMessageTransaction {
         tenant_id: &'a str,
         user_id: i64,
         message_ids: &'a [i64],
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<u64> {
+        let now = to_persistence_time(now)?;
         MessageRepository
             .soft_delete(&self.transaction, tenant_id, user_id, message_ids, now)
             .await
@@ -239,8 +246,9 @@ impl MessageTransaction for DatabaseMessageTransaction {
     async fn mark_enqueued(
         &self,
         message_id: i64,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<u64> {
+        let now = to_persistence_time(now)?;
         MessageRepository
             .mark_enqueued(&self.transaction, message_id, now)
             .await
@@ -248,9 +256,10 @@ impl MessageTransaction for DatabaseMessageTransaction {
 
     async fn delete_expired_batch(
         &self,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
         batch_size: u64,
     ) -> ryframe_kernel::AppResult<u64> {
+        let now = to_persistence_time(now)?;
         MessageRepository
             .delete_expired_batch(&self.transaction, now, batch_size)
             .await
@@ -274,6 +283,14 @@ impl PersistenceTransaction for DatabaseMessageTransaction {
     async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
         self.transaction.rollback().await.db()
     }
+}
+
+fn to_persistence_time(
+    instant: OffsetDateTime,
+) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::from_timestamp(instant.unix_timestamp(), instant.nanosecond()).ok_or_else(
+        || ryframe_kernel::AppError::Database("消息持久化时间无法精确表示为 UTC".into()),
+    )
 }
 
 fn to_recipient_record(

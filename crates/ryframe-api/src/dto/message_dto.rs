@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
 
 use crate::http::HttpResult;
-use chrono::{DateTime, Utc};
+use ryframe_application::ports::utc_timestamp;
 use ryframe_kernel::AppError;
 use ryframe_kernel::LocalizedText;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use time::OffsetDateTime;
 use utoipa::{IntoParams, ToSchema};
 use validator::Validate;
 
@@ -64,7 +65,9 @@ pub struct PublishMessageDto {
     #[validate(length(min = 1, max = 500, message = "消息受众数量必须在 1 到 500 之间"))]
     pub audiences: Vec<MessageAudienceDto>,
     /// 可选的提前过期时间，最长仍受服务端 90 天上限约束。
-    pub expires_at: Option<DateTime<Utc>>,
+    #[serde(default, deserialize_with = "utc_timestamp::deserialize_optional")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub expires_at: Option<OffsetDateTime>,
 }
 
 impl PublishMessageDto {

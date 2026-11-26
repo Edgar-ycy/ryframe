@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Use the database UTC clock and time types for message publishing, inbox reads, read markers, and expiry checks. The optional publish expiry field continues to use RFC3339.
+
 - Apply production static-asset caching rules to independent B1 homepage measurements and validate the actual cold-load and warmup-hit counts.
 
 - Fix a race when checking monitor exit during Linux full-stack cleanup. The controller uses the same pidfd to confirm that the original process exited and continues to verify the complete group shutdown receipt.

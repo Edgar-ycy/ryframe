@@ -205,11 +205,9 @@ impl MessageService {
             .find_message(message_id)
             .await?
             .ok_or_else(|| AppError::NotFound("待投递消息不存在".into()))?;
-        let utc_now = crate::ports::utc_timestamp::from_chrono(now)
-            .map_err(|_| AppError::Database("消息投递数据库时间无法精确表示为 UTC".into()))?;
         if message
             .expires_at
-            .is_some_and(|expires_at| expires_at <= utc_now)
+            .is_some_and(|expires_at| expires_at <= now)
         {
             return Ok(());
         }
