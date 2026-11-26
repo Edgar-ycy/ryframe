@@ -1,4 +1,5 @@
 //! 复制后与 seed 共享同一持锁事实窗口，沿用原复制和来源证据。
+use super::diagnostic::IdentityVerifyCheckpoint;
 #[cfg(windows)]
 use crate::recovery::clone::native::target_verify::resume_baseline::HeldPrepareHistory;
 use crate::recovery::fixture_control::source_pair::execution::HeldTargetSource;
@@ -84,12 +85,12 @@ impl<'a> Context<'a> {
         let backend = request.backend;
         let run = request.run_dir;
         let number = request.attempt.ok_or("复制后阶段序号缺失")?;
-        let (manifest, saved) = stage_state(request, number)?;
-        let held_storage = hold_originals.then_some(storage);
-        let registered = registered(request, owner, &manifest, input, held_storage)?;
-        quiet(backend, run, number, request.mode, &saved)?;
-        let (copy, session, ledger) = completed_copy(backend, &manifest)?;
-        let output = super::files::stage_output(request, number)?;
+        let held = hold_originals.then_some(storage);
+        let (manifest, saved, registered) = stage_binding(request, owner, number, input, held)?;
+        let (copy, session, ledger) = IdentityVerifyCheckpoint::CompletedCopy
+            .for_stage(request, completed_copy(backend, &manifest))?;
+        let output = IdentityVerifyCheckpoint::StageOutput
+            .for_stage(request, super::files::stage_output(request, number))?;
         let source = export::input::Context::for_copy(backend, run, &output)?;
         let (source_generation, proof_files) =
             source_proof(request.stage, &source, scope, &session["source_export"])?;
@@ -405,6 +406,26 @@ fn source_proof(
         return Err("原来源代次不同于完整复制来源".into());
     }
     Ok((observed, proof["proof_files"].clone()))
+}
+
+fn stage_binding(
+    request: &StageRequest<'_>,
+    owner: &Generation,
+    number: u64,
+    input: Option<&Value>,
+    held_storage: Option<&Path>,
+) -> Result<(Value, Value, Registered)> {
+    let (manifest, saved) =
+        IdentityVerifyCheckpoint::StageState.for_stage(request, stage_state(request, number))?;
+    let registered = IdentityVerifyCheckpoint::RegisteredContext.for_stage(
+        request,
+        registered(request, owner, &manifest, input, held_storage),
+    )?;
+    let backend = request.backend;
+    let run = request.run_dir;
+    let quiet_result = quiet(backend, run, number, request.mode, &saved);
+    IdentityVerifyCheckpoint::ProducerQuiet.for_stage(request, quiet_result)?;
+    Ok((manifest, saved, registered))
 }
 
 fn stage_state(request: &StageRequest<'_>, number: u64) -> Result<(Value, Value)> {

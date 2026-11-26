@@ -25,6 +25,16 @@ pub(crate) fn resolve(
                     backend, run, descriptor, current, cleanup,
                 );
             }
+            if path == seed::identity_verification_tool::successor_path(run)
+                || path == seed::identity_verification_tool::recovery_path(run)
+                || current.is_some_and(|number| {
+                    path == seed::identity_verification_tool::recovery_retry_path(run, number)
+                })
+            {
+                return seed::identity_verification_tool::resolve_successor(
+                    backend, run, descriptor, current, cleanup,
+                );
+            }
             seed::identity_verification_tool::require_original(run, current, cleanup)?;
             if path == seed::identity_successor::path(run) {
                 require_identity_mode(run, current)?;

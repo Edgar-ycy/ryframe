@@ -22,6 +22,12 @@ use crate::{
 const PURPOSE: &str = "identity-verification";
 const MODE: &str = "identities-verify";
 
+#[path = "identity_verification_tool/successor.rs"]
+mod successor;
+pub(crate) use successor::{
+    path as successor_path, recovery_path, recovery_retry_path, resolve as resolve_successor,
+};
+
 pub(crate) fn path(run: &Path) -> PathBuf {
     run.join("seed-runtime")
         .join("identity-verification-tool.json")
@@ -51,43 +57,73 @@ pub(crate) fn select(
     if owner != identity::current()? {
         return Err("只有当前持锁身份核验控制器能登记工具".into());
     }
-    let history = History::load(backend, run, attempts, number, original, &publication)?;
-    if history.request != *request
-        || history.departments["stage"] != departments["stage"]
-        || history.departments["plan"] != departments["plan"]
-        || history.departments["prerequisite"] != departments["prerequisite"]
-    {
-        return Err("身份核验工具与已确认的原 seed 或部门证据不同".into());
+    let active = api_successor::select(backend, run, &request["post_copy"])?
+        .ok_or("身份核验工具缺少当前已发布 API 后继")?;
+    if active.publication != publication || active.passed_attempt >= number {
+        return Err("身份核验工具的当前 API 发布或时序已变化".into());
     }
-    let filename = path(run);
-    let binding = match fs::symlink_metadata(&filename) {
-        Ok(_) => {
-            let bound = common::binding(&filename)?;
-            if let Some(candidate) = supplied_build {
-                let (build, _) = continuation_tool::bind(backend, candidate, PURPOSE, &owner)?;
-                let old = common::read_bound(backend, &bound, "原身份核验工具登记")?;
-                if build != old["build"] {
-                    return Err("已有身份核验工具登记只接受同一冻结构建".into());
-                }
-            }
-            bound
-        }
-        Err(error) if error.kind() == ErrorKind::NotFound => {
-            let build = supplied_build.ok_or("首次身份核验接续需要当前控制器的冻结构建收据")?;
-            let (build, tool) = continuation_tool::bind(backend, build, PURPOSE, &owner)?;
-            history.check_projection(backend, true)?;
-            let (controller, _) = verify_controller(run, row, true)?;
-            let value = history.record(number, &controller, &build, &tool)?;
-            document::publish_new(&filename, &value, "独立身份核验工具")?;
-            common::binding(&filename)?
-        }
-        Err(error) => return Err(error.into()),
-    };
+    let publication_path = common::bound_file(backend, &active.binding, "身份核验 API 发布")?;
+    if publication_path != first_publication_path(run) {
+        return successor::select(
+            backend,
+            run,
+            &saved,
+            supplied_build,
+            &active,
+            successor::Current {
+                row,
+                owner: &owner,
+                original,
+                request,
+                departments,
+            },
+        );
+    }
+    let history = History::load(backend, run, attempts, number, original, &publication)?;
+    if history.request != *request {
+        return Err("身份核验工具与已确认的原 seed 证据不同".into());
+    }
+    history.check_departments(departments)?;
+    let binding = register_legacy(backend, run, row, &owner, &history, supplied_build)?;
     let selected = resolve(backend, run, &binding, Some(number), false)?;
     if state::load(run, true)? != saved {
         return Err("身份核验工具登记期间正式阶段变化".into());
     }
     Ok((selected, binding))
+}
+
+fn register_legacy(
+    backend: &Path,
+    run: &Path,
+    row: &Value,
+    owner: &Value,
+    history: &History,
+    supplied_build: Option<&Path>,
+) -> Result<Value> {
+    let filename = path(run);
+    match fs::symlink_metadata(&filename) {
+        Ok(_) => {
+            let bound = common::binding(&filename)?;
+            if let Some(candidate) = supplied_build {
+                let (build, _) = continuation_tool::bind(backend, candidate, PURPOSE, owner)?;
+                let old = common::read_bound(backend, &bound, "原身份核验工具登记")?;
+                if build != old["build"] {
+                    return Err("已有身份核验工具登记只接受同一冻结构建".into());
+                }
+            }
+            Ok(bound)
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            let build = supplied_build.ok_or("首次身份核验接续需要当前控制器的冻结构建收据")?;
+            let (build, tool) = continuation_tool::bind(backend, build, PURPOSE, owner)?;
+            history.check_projection(backend, true)?;
+            let (controller, _) = verify_controller(run, row, true)?;
+            let value = history.record(number_of(&row["number"])?, &controller, &build, &tool)?;
+            document::publish_new(&filename, &value, "独立身份核验工具")?;
+            common::binding(&filename)
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 
 pub(crate) fn resolve(
@@ -98,49 +134,70 @@ pub(crate) fn resolve(
     cleanup: bool,
 ) -> Result<Value> {
     let number = number.ok_or("独立身份核验工具缺少正式阶段编号")?;
-    if common::bound_file(backend, descriptor, "独立身份核验工具")? != path(run) {
-        return Err("独立身份核验工具不在当前 seed 的固定路径".into());
-    }
     let saved = state::load(run, true)?;
     let attempts = state::attempts(&saved)?;
     let row = verify_attempt(attempts, number)?;
-    let value = common::read_bound(backend, descriptor, "独立身份核验工具")?;
-    let first = number_of(&value["first_attempt"])?;
-    let first_row = verify_attempt(attempts, first)?;
-    let (controller, first_owner) = verify_controller(run, first_row, false)?;
     let (_, owner) = verify_controller(run, row, !cleanup)?;
-    if first > number {
-        return Err("独立身份核验工具不能改写原阶段授权".into());
-    }
-    let original = &value["original_registration"];
-    let old = common::read_bound(backend, original, "原 seed 登记")?;
-    let publication = api_successor::load(backend, run, &old["post_copy"])?
-        .ok_or("独立身份核验工具缺少正式 API 后继")?;
-    let history = History::load(backend, run, attempts, number, original, &publication)?;
-    let build = &value["build"];
-    let tool = continuation_tool::verify(backend, build, PURPOSE, &first_owner)?;
-    if history.record(first, &controller, build, &tool)? != value
-        || owner["executable"] != first_owner["executable"]
-    {
-        return Err("独立身份核验工具不同于原阶段、构建或不可变登记".into());
+    let legacy = Legacy::load(backend, run, attempts, number, descriptor)?;
+    if owner["executable"] != legacy.owner["executable"] {
+        return Err("独立身份核验工具不同于原阶段控制器".into());
     }
     if !cleanup {
-        history.check_projection(backend, false)?;
-        let verified =
-            department::authorize_identity_verification(backend, run, &history.request, number)?;
-        if history.departments["stage"] != verified["stage"]
-            || history.departments["plan"] != verified["plan"]
-            || history.departments["prerequisite"] != verified["prerequisite"]
-        {
-            return Err("独立身份核验前的部门后像已变化".into());
-        }
+        legacy.history.check_projection(backend, false)?;
+        legacy
+            .history
+            .check_departments(&department::authorize_identity_verification(
+                backend,
+                run,
+                &legacy.history.request,
+                number,
+            )?)?;
     }
     if common::binding(&path(run))? != *descriptor || state::load(run, true)? != saved {
         return Err("独立身份核验工具或原阶段在解析期间变化".into());
     }
-    let mut selected = history.request;
-    selected["identity_tool"] = tool;
+    let mut selected = legacy.history.request;
+    selected["identity_tool"] = legacy.tool;
     Ok(selected)
+}
+
+struct Legacy {
+    history: History,
+    tool: Value,
+    owner: Value,
+}
+
+impl Legacy {
+    fn load(
+        backend: &Path,
+        run: &Path,
+        attempts: &[Value],
+        number: u64,
+        descriptor: &Value,
+    ) -> Result<Self> {
+        let value = read_at(backend, descriptor, &path(run))?;
+        let first = number_of(&value["first_attempt"])?;
+        if first > number {
+            return Err("独立身份核验工具不能改写原阶段授权".into());
+        }
+        let (controller, owner) = verify_controller(run, verify_attempt(attempts, first)?, false)?;
+        let original = &value["original_registration"];
+        let old = read_at(backend, original, &run.join("seed-runtime.json"))?;
+        let api = api_successor::select_before(backend, run, &old["post_copy"], first)?
+            .ok_or("原独立身份核验工具缺少首次执行前的 API 后继")?;
+        let history = History::load(backend, run, attempts, number, original, &api.publication)?;
+        let tool = continuation_tool::verify(backend, &value["build"], PURPOSE, &owner)?;
+        if api.binding != history.api_publication
+            || history.record(first, &controller, &value["build"], &tool)? != value
+        {
+            return Err("独立身份核验工具不同于原阶段、构建或不可变登记".into());
+        }
+        Ok(Self {
+            history,
+            tool,
+            owner,
+        })
+    }
 }
 
 pub(crate) fn require_original(run: &Path, number: Option<u64>, cleanup: bool) -> Result<()> {
@@ -201,10 +258,7 @@ impl History {
             .ok_or("身份核验工具缺少已经通过的 API 后继")?;
         let api_number = number_of(&api["number"])?;
         let api_result = common::read_bound(backend, &api["result"], "原 API 后继结果")?;
-        let api_path = run
-            .join("post-copy")
-            .join("api-successors")
-            .join("published.json");
+        let api_path = first_publication_path(run);
         if api_result["status"] != "api_successor_ready"
             || api_result["restore_qualified"] != false
             || read_at(backend, &api_result["publication"], &api_path)? != *publication
@@ -275,7 +329,17 @@ impl History {
         )
     }
 
-    fn check_projection(&self, backend: &Path, first: bool) -> Result<()> {
+    fn check_departments(&self, verified: &Value) -> Result<()> {
+        if ["stage", "plan", "prerequisite"]
+            .into_iter()
+            .any(|field| self.departments[field] != verified[field])
+        {
+            return Err("独立身份核验前的部门后像已变化".into());
+        }
+        Ok(())
+    }
+
+    fn check_projection(&self, backend: &Path, first: bool) -> Result<Value> {
         let plan = common::read_bound(backend, &self.request["identity_plan"], "原身份计划")?;
         let root = Path::new(document::text(
             &self.request["identity_state"],
@@ -299,7 +363,7 @@ impl History {
         {
             return Err("身份核验重试不能改写原 622 项已确认投影".into());
         }
-        Ok(())
+        Ok(current)
     }
 }
 
@@ -481,6 +545,10 @@ fn digest_shape(value: &Value) -> bool {
 fn output(run: &Path, number: u64) -> PathBuf {
     run.join("seed-runtime")
         .join(format!("attempt-{number:04}"))
+}
+
+fn first_publication_path(run: &Path) -> PathBuf {
+    run.join("post-copy/api-successors/published.json")
 }
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
 //! seed 配额桥接沿用正式控制器和旧动作的完整阶段守卫。
 
-use super::super::registration;
+use super::super::{diagnostic::IdentityVerifyCheckpoint, registration};
 use super::{
     Context, Kind, Producer, RPC_TIMEOUT, SeedLaunch, Session, common, document, files,
     finish_session,
@@ -102,7 +102,13 @@ impl<'a> SeedLaunch<'a> {
         let mut inputs = BTreeSet::from([path]);
         if descriptor["path"] != json!(context.run.join("seed-runtime.json")) {
             let successor = common::read_bound(context.backend, descriptor, "后继身份工具登记")?;
-            files::bindings(context.backend, &successor, &mut inputs)?;
+            IdentityVerifyCheckpoint::OriginalInputs.check(
+                context.mode == "identities-verify"
+                    && successor["kind"] == files::RECOVERED_IDENTITY_TOOL,
+                context.run,
+                context.number,
+                files::seed_successor_bindings(context.backend, &successor, &mut inputs),
+            )?;
         }
         for value in [request, &identity_plan] {
             files::bindings(context.backend, value, &mut inputs)?;

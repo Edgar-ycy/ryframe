@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use super::{
     context::Context,
-    diagnostic::SeedVerifyCheckpoint,
+    diagnostic::{IdentityVerifyCheckpoint, SeedVerifyCheckpoint},
     execution, files,
     live::Live,
     ownership,
@@ -101,8 +101,8 @@ struct Runner {
     hold_originals: bool,
 }
 
-impl StageRunner for Runner {
-    fn preflight(&self, request: &StageRequest<'_>) -> Result<()> {
+impl Runner {
+    fn preflight_inputs(&self, request: &StageRequest<'_>) -> Result<()> {
         if request.stage != "seed-runtime" || request.mode != self.mode {
             return Err("seed 操作不属于当前明确运行阶段".into());
         }
@@ -132,24 +132,44 @@ impl StageRunner for Runner {
         }
         registration.assert_unchanged(request.backend, false)
     }
+}
+
+impl StageRunner for Runner {
+    fn preflight(&self, request: &StageRequest<'_>) -> Result<()> {
+        IdentityVerifyCheckpoint::RunnerPreflight.for_stage(request, self.preflight_inputs(request))
+    }
 
     fn execute(&self, request: &StageRequest<'_>) -> Result<Value> {
         self.preflight(request)?;
         let diagnose = SeedVerifyCheckpoint::applies(request.stage, request.mode);
         let mut scope = self.scope.borrow_mut();
-        let scope = scope.as_mut().ok_or("seed 缺少固定来源窗口")?;
-        let manifest = manifest::load(request.backend, &request.run_dir.join("manifest.json"))?;
-        let storage = cache::handoff::locks::Storage::acquire(
-            request.backend,
-            request.run_dir,
-            &manifest.value,
+        let scope = IdentityVerifyCheckpoint::RunnerPreflight.for_stage(
+            request,
+            scope.as_mut().ok_or_else(|| "seed 缺少固定来源窗口".into()),
         )?;
-        ownership::with_target(request, &manifest.value, storage, |owner, storage| {
+        let manifest = IdentityVerifyCheckpoint::TargetOwnership.for_stage(
+            request,
+            manifest::load(request.backend, &request.run_dir.join("manifest.json")),
+        )?;
+        let storage = IdentityVerifyCheckpoint::TargetOwnership.for_stage(
+            request,
+            cache::handoff::locks::Storage::acquire(
+                request.backend,
+                request.run_dir,
+                &manifest.value,
+            ),
+        )?;
+        let mut entered_target = false;
+        let result = ownership::with_target(request, &manifest.value, storage, |owner, storage| {
+            entered_target = true;
             #[cfg(windows)]
             if self.hold_originals {
-                let target = SeedVerifyCheckpoint::SourceOriginals.check(
-                    diagnose,
-                    super::source_proofs::hold_scope(request, &manifest.value, owner, scope),
+                let target = IdentityVerifyCheckpoint::SourceOriginals.for_stage(
+                    request,
+                    SeedVerifyCheckpoint::SourceOriginals.check(
+                        diagnose,
+                        super::source_proofs::hold_scope(request, &manifest.value, owner, scope),
+                    ),
                 )?;
                 let mut entered = false;
                 let result =
@@ -161,11 +181,21 @@ impl StageRunner for Runner {
                                 request, owner, scope, storage, None, held, true,
                             ),
                         )?;
-                        SeedVerifyCheckpoint::HeldPlan.check(diagnose, context.hold_plan())?;
+                        IdentityVerifyCheckpoint::HeldPlan.for_stage(
+                            request,
+                            SeedVerifyCheckpoint::HeldPlan.check(diagnose, context.hold_plan()),
+                        )?;
                         let result = execute(&context, self.request_file.as_deref());
                         files::combine(result, context.check_end())
                     });
-                return SeedVerifyCheckpoint::TargetOriginals.check(diagnose && !entered, result);
+                return if entered {
+                    result
+                } else {
+                    IdentityVerifyCheckpoint::TargetOriginals.for_stage(
+                        request,
+                        SeedVerifyCheckpoint::TargetOriginals.check(diagnose, result),
+                    )
+                };
             }
             let context = SeedVerifyCheckpoint::SharedContext.check(
                 diagnose,
@@ -173,7 +203,12 @@ impl StageRunner for Runner {
             )?;
             let result = execute(&context, self.request_file.as_deref());
             files::combine(result, context.check())
-        })
+        });
+        if entered_target {
+            result
+        } else {
+            IdentityVerifyCheckpoint::TargetOwnership.for_stage(request, result)
+        }
     }
 }
 

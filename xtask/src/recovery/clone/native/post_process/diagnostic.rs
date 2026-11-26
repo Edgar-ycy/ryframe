@@ -1,6 +1,10 @@
 //! 窄阶段诊断；底层正文仅留在原因链，不进入正式公共输出。
 use crate::{Result, recovery::clone::native::lifecycle::stage::StageRequest};
-use std::{error::Error, fmt, path::PathBuf};
+use std::{
+    error::Error,
+    fmt,
+    path::{Path, PathBuf},
+};
 
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Phase {
@@ -12,6 +16,7 @@ pub(super) enum Phase {
     Business,
     Cleanup,
     SeedVerify(SeedVerifyCheckpoint),
+    IdentityVerify(IdentityVerifyCheckpoint),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -66,6 +71,79 @@ impl SeedVerifyCheckpoint {
             Self::ApiBinding => ("SeedDepartmentVerifyApiBinding", "api-binding"),
             Self::TargetGeneration => ("SeedDepartmentVerifyTargetGeneration", "target-generation"),
             Self::StorageLayout => ("SeedDepartmentVerifyStorageLayout", "storage-layout"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) enum IdentityVerifyCheckpoint {
+    RunnerPreflight,
+    TargetOwnership,
+    #[cfg(windows)]
+    SourceOriginals,
+    #[cfg(windows)]
+    TargetOriginals,
+    StageState,
+    RegisteredContext,
+    ProducerQuiet,
+    CompletedCopy,
+    StageOutput,
+    #[cfg(windows)]
+    HeldPlan,
+    InitialGuard,
+    OriginalInputs,
+    ToolSelection,
+}
+
+impl IdentityVerifyCheckpoint {
+    pub(super) fn for_stage<T>(self, request: &StageRequest<'_>, result: Result<T>) -> Result<T> {
+        if request.stage == "seed-runtime" && request.mode == "identities-verify" {
+            context(request, Phase::IdentityVerify(self), result)
+        } else {
+            result
+        }
+    }
+
+    pub(super) fn check<T>(
+        self,
+        enabled: bool,
+        run: &Path,
+        attempt: u64,
+        result: Result<T>,
+    ) -> Result<T> {
+        if !enabled {
+            return result;
+        }
+        result.map_err(|cause| {
+            Box::new(Failure {
+                phase: Phase::IdentityVerify(self),
+                path: Some(run.join(format!("failure-{attempt:04}.json"))),
+                cause,
+                secondary: None,
+            }) as Box<dyn Error>
+        })
+    }
+
+    fn labels(self) -> (&'static str, &'static str) {
+        match self {
+            Self::RunnerPreflight => ("SeedIdentityVerifyRunnerPreflight", "runner-preflight"),
+            Self::TargetOwnership => ("SeedIdentityVerifyTargetOwnership", "target-ownership"),
+            #[cfg(windows)]
+            Self::SourceOriginals => ("SeedIdentityVerifySourceOriginals", "source-originals"),
+            #[cfg(windows)]
+            Self::TargetOriginals => ("SeedIdentityVerifyTargetOriginals", "target-originals"),
+            Self::StageState => ("SeedIdentityVerifyStageState", "stage-state"),
+            Self::RegisteredContext => {
+                ("SeedIdentityVerifyRegisteredContext", "registered-context")
+            }
+            Self::ProducerQuiet => ("SeedIdentityVerifyProducerQuiet", "producer-quiet"),
+            Self::CompletedCopy => ("SeedIdentityVerifyCompletedCopy", "completed-copy"),
+            Self::StageOutput => ("SeedIdentityVerifyStageOutput", "stage-output"),
+            #[cfg(windows)]
+            Self::HeldPlan => ("SeedIdentityVerifyHeldPlan", "held-plan"),
+            Self::InitialGuard => ("SeedIdentityVerifyInitialGuard", "initial-guard"),
+            Self::OriginalInputs => ("SeedIdentityVerifyOriginalInputs", "original-inputs"),
+            Self::ToolSelection => ("SeedIdentityVerifyToolSelection", "tool-selection"),
         }
     }
 }
@@ -137,6 +215,10 @@ pub(crate) fn diagnostic(error: &(dyn Error + 'static)) -> Option<(&'static str,
             let (kind, _) = checkpoint.labels();
             return Some((kind, seed_verify_reason(checkpoint, &*failure.cause)));
         }
+        Phase::IdentityVerify(checkpoint) => {
+            let (kind, _) = checkpoint.labels();
+            return Some((kind, identity_verify_reason(checkpoint, failure)));
+        }
     };
     let mut message = format!("固定请求阶段={phase}；{}", reason(&*failure.cause));
     if let Some(cause) = &failure.secondary {
@@ -150,10 +232,16 @@ pub(crate) fn diagnostic(error: &(dyn Error + 'static)) -> Option<(&'static str,
 }
 
 fn reason(error: &(dyn Error + 'static)) -> String {
-    if let Some(failure) = error.downcast_ref::<Failure>()
-        && let Phase::SeedVerify(checkpoint) = failure.phase
-    {
-        return seed_verify_reason(checkpoint, &*failure.cause);
+    if let Some(failure) = error.downcast_ref::<Failure>() {
+        match failure.phase {
+            Phase::SeedVerify(checkpoint) => {
+                return seed_verify_reason(checkpoint, &*failure.cause);
+            }
+            Phase::IdentityVerify(checkpoint) => {
+                return identity_verify_reason(checkpoint, failure);
+            }
+            _ => {}
+        }
     }
     if let Some(value) = error.downcast_ref::<std::io::Error>() {
         return format!(
@@ -236,6 +324,16 @@ fn seed_verify_reason(checkpoint: SeedVerifyCheckpoint, cause: &(dyn Error + 'st
     format!("部门核验前置检查={phase}。{details}")
 }
 
+fn identity_verify_reason(checkpoint: IdentityVerifyCheckpoint, failure: &Failure) -> String {
+    let (_, phase) = checkpoint.labels();
+    let details = seed_verify_cause(&*failure.cause).unwrap_or_else(|| "底层原因未公开".into());
+    let mut message = format!("身份核验前置检查={phase}。{details}");
+    if let Some(path) = &failure.path {
+        message.push_str(&format!("；阶段证据={}", path.display()));
+    }
+    message
+}
+
 fn seed_verify_cause(error: &(dyn Error + 'static)) -> Option<String> {
     if let Some(error) = error.downcast_ref::<std::io::Error>() {
         return Some(format!(
@@ -265,7 +363,9 @@ fn seed_verify_cause(error: &(dyn Error + 'static)) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{SeedVerifyCheckpoint, combined, diagnostic};
+    use super::{
+        IdentityVerifyCheckpoint, Path, SeedVerifyCheckpoint, StageRequest, combined, diagnostic,
+    };
     use crate::recovery::clone::native::lifecycle::stage::failure_type;
 
     #[test]
@@ -314,5 +414,76 @@ mod tests {
             assert_eq!(failure.to_string(), "original");
             assert!(diagnostic(&*failure).is_none());
         }
+    }
+
+    #[test]
+    fn identity_verify_diagnostic_reports_exact_checkpoint_and_only_managed_path() {
+        let run = Path::new("fixture").join("run");
+        let expected = run.join("failure-0069.json");
+        let private = "private-file-and-credential";
+        for (checkpoint, category, phase) in [
+            (
+                IdentityVerifyCheckpoint::InitialGuard,
+                "SeedIdentityVerifyInitialGuard",
+                "initial-guard",
+            ),
+            (
+                IdentityVerifyCheckpoint::OriginalInputs,
+                "SeedIdentityVerifyOriginalInputs",
+                "original-inputs",
+            ),
+            (
+                IdentityVerifyCheckpoint::ToolSelection,
+                "SeedIdentityVerifyToolSelection",
+                "tool-selection",
+            ),
+        ] {
+            let failure = checkpoint
+                .check::<()>(true, &run, 69, Err(private.into()))
+                .unwrap_err();
+            let (kind, message) = diagnostic(&*failure).unwrap();
+            assert_eq!(kind, category);
+            assert_eq!(failure_type(&*failure), category);
+            assert!(message.contains(phase) && message.contains(&expected.display().to_string()));
+            assert!(!message.contains(private));
+            let raw = checkpoint
+                .check::<()>(false, &run, 69, Err(private.into()))
+                .unwrap_err();
+            assert!(diagnostic(&*raw).is_none());
+            assert_eq!(raw.to_string(), private);
+        }
+
+        let mut request = StageRequest {
+            backend: &run,
+            run_dir: &run,
+            stage: "seed-runtime",
+            mode: "identities-verify",
+            attempt: Some(69),
+        };
+        let cause = std::io::Error::new(std::io::ErrorKind::PermissionDenied, private);
+        let inner =
+            IdentityVerifyCheckpoint::ProducerQuiet.for_stage::<()>(&request, Err(cause.into()));
+        let failure = IdentityVerifyCheckpoint::TargetOwnership
+            .for_stage(&request, inner)
+            .unwrap_err();
+        let (kind, message) = diagnostic(&*failure).unwrap();
+        assert_eq!(kind, "SeedIdentityVerifyProducerQuiet");
+        assert!(message.contains("producer-quiet"));
+        assert!(message.contains(&expected.display().to_string()));
+        assert!(!message.contains(private) && !message.contains("target-ownership"));
+        assert_eq!(failure.source().unwrap().to_string(), private);
+
+        let cause = std::io::Error::from_raw_os_error(32);
+        let failure = IdentityVerifyCheckpoint::StageOutput
+            .for_stage::<()>(&request, Err(cause.into()))
+            .unwrap_err();
+        let (_, message) = diagnostic(&*failure).unwrap();
+        assert!(message.contains("stage-output") && message.contains("OS码=Some(32)"));
+
+        request.mode = "departments-verify";
+        let failure = IdentityVerifyCheckpoint::StageOutput
+            .for_stage::<()>(&request, Err(private.into()))
+            .unwrap_err();
+        assert!(diagnostic(&*failure).is_none());
     }
 }

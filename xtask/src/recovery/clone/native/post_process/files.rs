@@ -1,9 +1,10 @@
 //! 文件位置、字节和独占新建沿用原受管边界；不覆盖失败现场。
 use crate::{
     Result,
+    local_test_path::{LocalTestPathKind, validate_absolute_path},
     recovery::clone::native::{
         json as document,
-        lifecycle::{stage::StageRequest, state},
+        lifecycle::{manifest, stage::StageRequest, state},
         resources::common,
         seed,
         target_verify::{self, guard::Inputs},
@@ -15,6 +16,9 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
+
+pub(super) const RECOVERED_IDENTITY_TOOL: &str =
+    "devex-seed-identity-verification-tool-successor-recovery";
 
 pub(in crate::recovery::clone::native) fn absent(path: &Path) -> Result<()> {
     match fs::symlink_metadata(path) {
@@ -64,6 +68,100 @@ pub(in crate::recovery::clone::native) fn bindings(
         _ => (),
     }
     Ok(())
+}
+
+/// 只用于已经过正式生产者解析并按原描述符回读的后继登记。
+pub(super) fn seed_successor_bindings(
+    backend: &Path,
+    successor: &Value,
+    paths: &mut BTreeSet<PathBuf>,
+) -> Result<()> {
+    if successor["kind"] != RECOVERED_IDENTITY_TOOL {
+        return bindings(backend, successor, paths);
+    }
+    recovery_proof_bindings(backend, &successor["recovered_producer"], paths)?;
+    for (field, value) in document::object(successor, "后继身份工具登记")? {
+        if field != "recovered_producer" {
+            bindings(backend, value, paths)?;
+        }
+    }
+    Ok(())
+}
+
+fn recovery_proof_bindings(
+    backend: &Path,
+    proof: &Value,
+    paths: &mut BTreeSet<PathBuf>,
+) -> Result<()> {
+    let proof = document::exact(
+        proof,
+        &[
+            "attempt",
+            "previous",
+            "failure",
+            "controller",
+            "launch",
+            "producer",
+            "stderr",
+            "launch_source",
+            "recovery_result",
+            "recovery_controller",
+            "recovery_intent",
+            "legacy_source",
+            "build",
+        ],
+        "已收口身份生产者证明",
+    )?;
+    for (field, value) in proof {
+        match field.as_str() {
+            "launch_source" => {
+                paths.insert(recovered_file(value)?);
+            }
+            "build" => recovery_build_bindings(backend, value, paths)?,
+            _ => bindings(backend, value, paths)?,
+        }
+    }
+    Ok(())
+}
+
+fn recovery_build_bindings(
+    backend: &Path,
+    build: &Value,
+    paths: &mut BTreeSet<PathBuf>,
+) -> Result<()> {
+    let build = document::exact(
+        build,
+        &[
+            "request",
+            "tool",
+            "validation",
+            "frozen",
+            "source_inputs",
+            "source_base",
+            "archived_inputs",
+        ],
+        "已收口身份生产者冻结构建",
+    )?;
+    for field in ["tool", "validation", "frozen", "source_inputs"] {
+        paths.insert(recovered_file(&build[field])?);
+    }
+    for descriptor in document::array(&build["archived_inputs"], "原冻结构建源码副本")? {
+        paths.insert(recovered_file(descriptor)?);
+    }
+    for field in ["request", "source_base"] {
+        bindings(backend, &build[field], paths)?;
+    }
+    Ok(())
+}
+
+fn recovered_file(descriptor: &Value) -> Result<PathBuf> {
+    manifest::validate_binding_shape(descriptor, "已收口核验的固定证据")?;
+    let path = PathBuf::from(document::text(&descriptor["path"], "已收口核验的证据路径")?);
+    validate_absolute_path(&path, LocalTestPathKind::ExistingFile)?;
+    if common::binding(&path)? != *descriptor {
+        return Err("已收口核验的固定证据与登记摘要不一致".into());
+    }
+    Ok(path)
 }
 
 pub(super) fn check_proof_files(
@@ -250,4 +348,78 @@ pub(super) fn same_file(backend: &Path, recorded: &Value, selected: &Path) -> Re
     }
     frozen.check()?;
     Ok(same)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recovery_launch_bindings_only_hold_named_external_evidence() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let backend = root.path();
+        let local = backend.join(".local-tests");
+        let archive = backend.join("frozen");
+        fs::create_dir(&local)?;
+        fs::create_dir(&archive)?;
+        let request = local.join("request.json");
+        let source = backend.join("launch.rs");
+        let tool = archive.join("xtask.fixture");
+        let validation = archive.join("validation.json");
+        let frozen = archive.join("frozen.json");
+        let source_inputs = archive.join("source-inputs.json");
+        let archived_input = archive.join("archived.rs");
+        let expected = BTreeSet::from([
+            request.clone(),
+            source.clone(),
+            tool.clone(),
+            validation.clone(),
+            frozen.clone(),
+            source_inputs.clone(),
+            archived_input.clone(),
+        ]);
+        for path in &expected {
+            fs::write(path, b"fixture")?;
+        }
+        let local_binding = common::binding(&request)?;
+        let source_binding = common::binding(&source)?;
+        let mut record = json!({
+            "kind": RECOVERED_IDENTITY_TOOL,
+            "previous_recovery": local_binding,
+            "recovered_producer": {
+                "attempt": 70, "previous": local_binding, "failure": local_binding,
+                "controller": local_binding, "launch": local_binding, "producer": local_binding,
+                "stderr": local_binding, "launch_source": source_binding,
+                "recovery_result": local_binding, "recovery_controller": local_binding,
+                "recovery_intent": local_binding, "legacy_source": local_binding,
+                "build": {
+                    "request": local_binding, "tool": common::binding(&tool)?,
+                    "validation": common::binding(&validation)?, "frozen": common::binding(&frozen)?,
+                    "source_inputs": common::binding(&source_inputs)?, "source_base": "fixture",
+                    "archived_inputs": [common::binding(&archived_input)?],
+                },
+            },
+        });
+        let mut paths = BTreeSet::new();
+        seed_successor_bindings(backend, &record, &mut paths)?;
+        assert_eq!(paths, expected);
+        Inputs::open(paths)?.check()?;
+
+        let mut ordinary = record.clone();
+        ordinary["kind"] = json!("devex-seed-identity-verification-tool-successor");
+        assert!(seed_successor_bindings(backend, &ordinary, &mut BTreeSet::new()).is_err());
+
+        let mut changed = record.clone();
+        changed["recovered_producer"]["build"]["archived_inputs"][0]["sha256"] =
+            json!("a".repeat(64));
+        assert!(seed_successor_bindings(backend, &changed, &mut BTreeSet::new()).is_err());
+
+        let mut unexpected = record.clone();
+        unexpected["recovered_producer"]["build"]["unexpected"] = json!(true);
+        assert!(seed_successor_bindings(backend, &unexpected, &mut BTreeSet::new()).is_err());
+
+        record["recovered_producer"]["build"]["request"] = source_binding;
+        assert!(seed_successor_bindings(backend, &record, &mut BTreeSet::new()).is_err());
+        Ok(())
+    }
 }

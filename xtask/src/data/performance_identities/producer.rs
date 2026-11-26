@@ -3,7 +3,7 @@ use super::{evidence, inspection::VerifiedApi, producer_authorization};
 use crate::{
     Result,
     local_test_path::{LocalTestPathKind, validate_local_test_path},
-    recovery::clone::native::{digest, post_process::registration, seed},
+    recovery::clone::native::{digest, lifecycle::manifest, post_process::registration, seed},
 };
 use serde_json::Value;
 use std::{
@@ -89,7 +89,7 @@ impl Registration {
         let original_path = self.run.join("seed-runtime.json");
         let seed = seed::Registration::load(root, &self.run, false)?;
         let original_binding = binding(&original_path)?;
-        let selected = self.selected_registration(root, &seed.value, &original_binding)?;
+        let selected = self.selected_registration(root, &seed.value, &original_binding, grant)?;
         let registration = registration::resolve(
             root,
             &self.run,
@@ -135,13 +135,17 @@ impl Registration {
         Ok(token)
     }
 
-    fn selected_registration(
+    pub(super) fn selected_registration(
         &self,
         root: &Path,
         original: &Value,
         original_binding: &Value,
+        grant: &Value,
     ) -> Result<Value> {
         if self.mode == "verify" {
+            if let Some(successor) = self.verification_successor_from_launch(root, grant)? {
+                return Ok(successor);
+            }
             let path = seed::identity_verification_tool::path(&self.run);
             match fs::symlink_metadata(&path) {
                 Ok(_) => return binding(&path),
@@ -157,6 +161,62 @@ impl Registration {
             original_binding,
         )?;
         Ok(descriptor)
+    }
+
+    fn verification_successor_from_launch(
+        &self,
+        root: &Path,
+        grant: &Value,
+    ) -> Result<Option<Value>> {
+        let seed_directory = self.run.join("seed-runtime");
+        let launch_path = seed_directory
+            .join(format!("attempt-{:04}", self.attempt))
+            .join("session-launch.json");
+        validate_local_test_path(&launch_path, root, LocalTestPathKind::ExistingFile)?;
+        let bytes = evidence::regular(&launch_path)?.ok_or("身份核验父启动收据不存在")?;
+        let digest = digest::FileDigest {
+            bytes: bytes.len() as u64,
+            sha256: evidence::hash(&bytes),
+        };
+        if grant["operation"] != "start"
+            || grant["run_dir"].as_str() != self.run.to_str()
+            || grant["attempt"] != self.attempt
+            || grant["launch"] != manifest::binding(&launch_path, &digest)?
+        {
+            return Err("身份核验授权未绑定当前阶段的父启动收据".into());
+        }
+        let launch = evidence::parse(&bytes)?;
+        if launch["format_version"] != 1
+            || launch["kind"] != "devex-post-producer-launch"
+            || launch["attempt"] != self.attempt
+            || launch["producer_kind"] != "identity-verify"
+        {
+            return Err("父启动收据不属于当前身份核验".into());
+        }
+        let registration = &launch["registration"];
+        let path = Path::new(
+            registration["path"]
+                .as_str()
+                .ok_or("父启动收据缺少登记路径")?,
+        );
+        if path == seed::identity_verification_tool::successor_path(&self.run)
+            || path == seed::identity_verification_tool::recovery_path(&self.run)
+            || path
+                == seed::identity_verification_tool::recovery_retry_path(&self.run, self.attempt)
+        {
+            validate_local_test_path(path, root, LocalTestPathKind::ExistingFile)?;
+            if *registration != binding(path)? {
+                return Err("身份核验后继登记与父启动收据的摘要不符".into());
+            }
+            return Ok(Some(registration.clone()));
+        }
+        if path == self.run.join("seed-runtime.json")
+            || path == seed::identity_successor::path(&self.run)
+            || path == seed::identity_verification_tool::path(&self.run)
+        {
+            return Ok(None);
+        }
+        Err("父启动收据未绑定当前 run 的身份登记".into())
     }
 
     fn command(&self, tool: &Value) -> Result<Vec<String>> {

@@ -4,7 +4,10 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
-use super::{context::Context, inspection, producer, seed_capacity::Guard};
+use super::{
+    context::Context, diagnostic::IdentityVerifyCheckpoint, inspection, producer,
+    seed_capacity::Guard,
+};
 use crate::{
     Result,
     data::performance_identities::seed_evidence,
@@ -44,9 +47,7 @@ pub(super) fn execute(
         || capacity::evidence(context.backend, context.run, request, Some(context.number));
     let original_departments = departments()?;
     let original_capacity = capacity()?;
-    guard.full()?;
-    let plan = common::read_bound(context.backend, &request["identity_plan"], "seed 身份计划")?;
-    let root = Path::new(document::text(&request["identity_state"], "seed 身份账本")?);
+    let (plan, root) = initial_inputs(guard, request, verify)?;
     let (producer_request, producer_registration) = select_producer(
         context,
         request,
@@ -96,6 +97,26 @@ pub(super) fn execute(
     Ok(response)
 }
 
+fn initial_inputs<'a>(
+    guard: &Guard<'_, '_>,
+    request: &'a Value,
+    verify: bool,
+) -> Result<(Value, &'a Path)> {
+    let context = guard.live.context;
+    IdentityVerifyCheckpoint::InitialGuard.check(
+        verify,
+        context.run,
+        context.number,
+        guard.full(),
+    )?;
+    let inputs = (|| {
+        let plan = common::read_bound(context.backend, &request["identity_plan"], "seed 身份计划")?;
+        let root = Path::new(document::text(&request["identity_state"], "seed 身份账本")?);
+        Ok((plan, root))
+    })();
+    IdentityVerifyCheckpoint::OriginalInputs.check(verify, context.run, context.number, inputs)
+}
+
 fn select_producer(
     context: &Context<'_>,
     request: &Value,
@@ -104,7 +125,7 @@ fn select_producer(
     departments: Option<&Value>,
 ) -> Result<(Value, Value)> {
     if let Some(departments) = departments {
-        return identity_verification_tool::select(
+        let selected = identity_verification_tool::select(
             context.backend,
             context.run,
             context.number,
@@ -112,6 +133,12 @@ fn select_producer(
             registration,
             producer_build,
             departments,
+        );
+        return IdentityVerifyCheckpoint::ToolSelection.check(
+            true,
+            context.run,
+            context.number,
+            selected,
         );
     }
     if producer_build.is_some() {

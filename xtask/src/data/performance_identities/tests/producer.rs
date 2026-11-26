@@ -5,6 +5,7 @@ use super::{
 use crate::recovery::clone::native::{
     digest,
     lifecycle::{identity, state},
+    seed::identity_verification_tool,
 };
 use serde_json::{Value, json};
 use std::{
@@ -19,6 +20,10 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
+        Self::for_mode("apply")
+    }
+
+    fn for_mode(mode: &str) -> Self {
         let backend = crate::workspace::root_dir();
         let run = backend
             .join(".local-tests")
@@ -51,8 +56,13 @@ impl Fixture {
             None,
         )
         .unwrap();
-        let (number, started) =
-            state::begin(&run, "seed-runtime", "identities-apply", &json!({})).unwrap();
+        let (number, started) = state::begin(
+            &run,
+            "seed-runtime",
+            &format!("identities-{mode}"),
+            &json!({}),
+        )
+        .unwrap();
         assert_eq!(number, 2);
         state::bind_controller(&run, number, &owner, &started).unwrap();
         let args = [
@@ -66,7 +76,7 @@ impl Fixture {
                 "--identity-state",
                 run.join("seed-runtime/identities").display().to_string(),
             ),
-            ("--identity-mode", "apply".into()),
+            ("--identity-mode", mode.into()),
             (
                 "--identity-plan-sha256",
                 digest::file(&run.join("plan.json")).unwrap().sha256,
@@ -84,7 +94,7 @@ impl Fixture {
         ]
         .concat();
         let launch = run.join("seed-runtime/attempt-0002/session-launch.json");
-        evidence::new(&launch,&json!({"format_version":1,"kind":"devex-post-producer-launch","run_manifest":producer::binding(&run.join("manifest.json")).unwrap(),"registration":producer::binding(&run.join("seed-runtime.json")).unwrap(),"controller":producer::binding(&run.join("controller-0002.json")).unwrap(),"attempt":2,"producer_kind":"identity-apply","command":command,"tool":tool,"source":producer::binding(&backend.join("xtask/src/data/performance_identities/producer.rs")).unwrap()})).unwrap();
+        evidence::new(&launch,&json!({"format_version":1,"kind":"devex-post-producer-launch","run_manifest":producer::binding(&run.join("manifest.json")).unwrap(),"registration":producer::binding(&run.join("seed-runtime.json")).unwrap(),"controller":producer::binding(&run.join("controller-0002.json")).unwrap(),"attempt":2,"producer_kind":format!("identity-{mode}"),"command":command,"tool":tool,"source":producer::binding(&backend.join("xtask/src/data/performance_identities/producer.rs")).unwrap()})).unwrap();
         let token = uuid::Uuid::new_v4().to_string();
         let process = run.join("seed-runtime/attempt-0002/session-process.json");
         evidence::new(&process,&json!({"format_version":1,"kind":"devex-post-producer","identity":identity::current().unwrap(),"launch":producer::binding(&launch).unwrap(),"identity_lock_owner":token})).unwrap();
@@ -97,11 +107,129 @@ impl Fixture {
     fn root(&self) -> PathBuf {
         crate::workspace::root_dir()
     }
+
+    fn bind_launch_registration(&mut self, registration: &Value) {
+        let path = self
+            .run
+            .join("seed-runtime/attempt-0002/session-launch.json");
+        let original = fs::read(&path).unwrap();
+        let mut launch = evidence::parse(&original).unwrap();
+        launch["registration"] = registration.clone();
+        evidence::replace(&path, &launch, &original).unwrap();
+        self.grant["launch"] = producer::binding(&path).unwrap();
+    }
+
+    fn selected_registration(&self, grant: &Value) -> crate::Result<Value> {
+        let path = self.run.join("seed-runtime.json");
+        self.registration().selected_registration(
+            &self.root(),
+            &evidence::parse(&fs::read(&path)?)?,
+            &producer::binding(&path)?,
+            grant,
+        )
+    }
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
         fs::remove_dir_all(&self.run).unwrap();
     }
+}
+
+#[test]
+fn verification_selects_the_parent_bound_successor_while_legacy_registration_exists() {
+    let mut fixture = Fixture::for_mode("verify");
+    let seed_directory = fixture.run.join("seed-runtime");
+    evidence::new(
+        &seed_directory.join("identity-verification-tool.json"),
+        &json!({"first_attempt":1}),
+    )
+    .unwrap();
+    for path in [
+        identity_verification_tool::successor_path(&fixture.run),
+        identity_verification_tool::recovery_path(&fixture.run),
+        identity_verification_tool::recovery_retry_path(&fixture.run, 2),
+    ] {
+        evidence::new(&path, &json!({"first_attempt":2})).unwrap();
+        let registration = producer::binding(&path).unwrap();
+        fixture.bind_launch_registration(&registration);
+        assert_eq!(
+            fixture.selected_registration(&fixture.grant).unwrap(),
+            registration
+        );
+    }
+}
+
+#[test]
+fn verification_retry_rejects_a_registration_from_another_attempt() {
+    let mut fixture = Fixture::for_mode("verify");
+    let wrong = identity_verification_tool::recovery_retry_path(&fixture.run, 1);
+    fs::create_dir_all(wrong.parent().unwrap()).unwrap();
+    evidence::new(&wrong, &json!({"first_attempt":1})).unwrap();
+    fixture.bind_launch_registration(&producer::binding(&wrong).unwrap());
+    assert!(fixture.selected_registration(&fixture.grant).is_err());
+}
+
+#[test]
+fn verification_rejects_a_replaced_launch_registration_or_foreign_successor() {
+    let mut fixture = Fixture::for_mode("verify");
+    let seed_directory = fixture.run.join("seed-runtime");
+    evidence::new(
+        &seed_directory.join("identity-verification-tool.json"),
+        &json!({"first_attempt":1}),
+    )
+    .unwrap();
+    let filename = "identity-verification-tool-successor.json";
+    let path = seed_directory.join(filename);
+    evidence::new(&path, &json!({"first_attempt":2})).unwrap();
+    let registration = producer::binding(&path).unwrap();
+
+    let earlier_grant = fixture.grant.clone();
+    fixture.bind_launch_registration(&registration);
+    assert!(fixture.selected_registration(&earlier_grant).is_err());
+
+    let original = fs::read(&path).unwrap();
+    evidence::replace(&path, &json!({"first_attempt":3}), &original).unwrap();
+    assert!(fixture.selected_registration(&fixture.grant).is_err());
+
+    let foreign_seed = fixture.run.join("other-run/seed-runtime");
+    fs::create_dir_all(&foreign_seed).unwrap();
+    let foreign = foreign_seed.join(filename);
+    evidence::new(&foreign, &json!({"first_attempt":2})).unwrap();
+    fixture.bind_launch_registration(&producer::binding(&foreign).unwrap());
+    assert!(fixture.selected_registration(&fixture.grant).is_err());
+}
+
+#[test]
+fn ordinary_apply_and_verify_keep_original_and_first_generation_registration() {
+    let ordinary = Fixture::new();
+    let mut verify = Fixture::for_mode("verify");
+    for fixture in [&ordinary, &verify] {
+        let seed_directory = fixture.run.join("seed-runtime");
+        for filename in [
+            "identity-verification-tool-successor.json",
+            "identity-verification-tool-successor-recovery.json",
+        ] {
+            evidence::new(&seed_directory.join(filename), &json!({"unused":true})).unwrap();
+        }
+        assert_eq!(
+            fixture
+                .registration()
+                .authorize(&fixture.root(), &fixture.grant)
+                .unwrap(),
+            fixture.grant["identity_lock_owner"]
+        );
+    }
+
+    let first = verify
+        .run
+        .join("seed-runtime/identity-verification-tool.json");
+    evidence::new(&first, &json!({"first_attempt":2})).unwrap();
+    let registration = producer::binding(&first).unwrap();
+    verify.bind_launch_registration(&registration);
+    assert_eq!(
+        verify.selected_registration(&verify.grant).unwrap(),
+        registration
+    );
 }
 
 #[test]
