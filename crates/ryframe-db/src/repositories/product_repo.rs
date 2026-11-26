@@ -7,6 +7,7 @@ use sea_orm::{
     IntoActiveModel, QueryFilter, QueryOrder, QuerySelect,
     sea_query::{Expr, LockType},
 };
+use time::OffsetDateTime;
 
 use crate::entities::{
     product_plan, product_plan_capability, product_plan_version,
@@ -228,7 +229,7 @@ impl ProductRepository {
         plan_version_id: i64,
         changed_by: i64,
     ) -> AppResult<()> {
-        let now = chrono::Utc::now();
+        let now = OffsetDateTime::now_utc();
         tenant_product_plan::ActiveModel {
             tenant_id: Set(tenant_id.to_owned()),
             plan_version_id: Set(plan_version_id),

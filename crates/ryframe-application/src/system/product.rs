@@ -1,9 +1,8 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use chrono::{Duration, Utc};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sha2::{Digest, Sha256};
-use time::OffsetDateTime;
+use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
 use crate::{
@@ -151,7 +150,7 @@ impl ProductService {
         if transaction.plan_key_exists(&command.key).await? {
             return Err(AppError::Conflict("产品套餐标识已存在".into()));
         }
-        let now = Utc::now();
+        let now = OffsetDateTime::now_utc();
         let plan_id = crate::next_id()?;
         let plan = transaction
             .insert_plan(ProductPlanState {
@@ -185,7 +184,7 @@ impl ProductService {
         plan.name = command.name;
         plan.description = command.description;
         plan.status = command.status;
-        plan.updated_at = Utc::now();
+        plan.updated_at = OffsetDateTime::now_utc();
         let plan = transaction.save_plan(plan).await?;
         transaction
             .commit(crate::TransactionAuditMode::CurrentRequest)
@@ -206,7 +205,7 @@ impl ProductService {
         let transaction = self.write.begin().await?;
         let plan = transaction.lock_plan(plan_id).await?;
         let number = transaction.next_version(plan.id).await?;
-        let now = Utc::now();
+        let now = OffsetDateTime::now_utc();
         let id = crate::next_id()?;
         let result = transaction
             .insert_version(
@@ -253,9 +252,13 @@ impl ProductService {
         }
         version.name = command.name;
         version.description = command.description;
-        version.updated_at = Utc::now();
+        version.updated_at = OffsetDateTime::now_utc();
         let result = transaction
-            .replace_draft_version(version, capability_records(capabilities), Utc::now())
+            .replace_draft_version(
+                version,
+                capability_records(capabilities),
+                OffsetDateTime::now_utc(),
+            )
             .await?;
         transaction
             .commit(crate::TransactionAuditMode::CurrentRequest)
@@ -281,7 +284,7 @@ impl ProductService {
         version.status = VERSION_PUBLISHED.into();
         version.published_by = Some(actor.user_id);
         version.published_at = Some(OffsetDateTime::now_utc());
-        version.updated_at = Utc::now();
+        version.updated_at = OffsetDateTime::now_utc();
         let saved = transaction
             .transition_version(version, VERSION_DRAFT, VERSION_PUBLISHED)
             .await?;
@@ -308,7 +311,7 @@ impl ProductService {
         }
         let capabilities = transaction.capabilities(version.id).await?;
         version.status = VERSION_RETIRED.into();
-        version.updated_at = Utc::now();
+        version.updated_at = OffsetDateTime::now_utc();
         let saved = transaction
             .transition_version(version, VERSION_PUBLISHED, VERSION_RETIRED)
             .await?;
@@ -412,13 +415,16 @@ impl ProductService {
         }
         let current_authorization_epoch = locked_tenant.authorization_epoch;
         let now = locked_tenant.database_now;
+        let lease_expires_at = now
+            .checked_add(Duration::seconds(PRODUCT_CHANGE_LEASE_SECONDS))
+            .ok_or_else(|| AppError::Database("产品变更租约截止时间超出 UTC 表示范围".into()))?;
         transaction
             .acquire_change_lease(
                 tenant_id,
                 &owner_token,
                 target.plan_version_id,
                 now,
-                now + Duration::seconds(PRODUCT_CHANGE_LEASE_SECONDS),
+                lease_expires_at,
             )
             .await?;
         let target_snapshot = transaction

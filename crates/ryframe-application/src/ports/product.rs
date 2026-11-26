@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use time::OffsetDateTime;
 
 use crate::ports::authorization::AuthorizationMirrorTransaction;
@@ -43,8 +42,8 @@ pub struct ProductPlanState {
     pub description: Option<String>,
     pub status: String,
     pub created_by: i64,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
 }
 
 #[derive(Debug)]
@@ -58,8 +57,8 @@ pub struct ProductVersionState {
     pub created_by: i64,
     pub published_by: Option<i64>,
     pub published_at: Option<OffsetDateTime>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
 }
 
 #[derive(Debug)]
@@ -113,7 +112,7 @@ pub struct ProductChangeTenantState {
     pub status: String,
     pub authorization_epoch: i32,
     pub runtime_epoch: i64,
-    pub database_now: DateTime<Utc>,
+    pub database_now: OffsetDateTime,
 }
 
 #[derive(Debug)]
@@ -123,7 +122,7 @@ pub struct ProductAssignmentChange {
     pub changed_by: i64,
     pub reason: Option<String>,
     pub overrides: Vec<TenantCapabilityOverrideRecord>,
-    pub changed_at: DateTime<Utc>,
+    pub changed_at: OffsetDateTime,
 }
 
 #[async_trait::async_trait]
@@ -176,8 +175,8 @@ pub trait ProductWriteTransaction: crate::PersistenceTransaction + Send + Sync {
         tenant_id: &'a str,
         owner_token: &'a str,
         version_id: i64,
-        acquired_at: DateTime<Utc>,
-        expires_at: DateTime<Utc>,
+        acquired_at: OffsetDateTime,
+        expires_at: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<()>;
 
     async fn lock_assignable_version(
@@ -243,7 +242,7 @@ pub trait ProductWriteTransaction: crate::PersistenceTransaction + Send + Sync {
         &self,
         version: ProductVersionState,
         capabilities: Vec<ProductCapabilityRecord>,
-        capability_time: DateTime<Utc>,
+        capability_time: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<ProductVersionWriteResult>;
 
     async fn lock_version(
@@ -261,7 +260,7 @@ pub trait ProductWriteTransaction: crate::PersistenceTransaction + Send + Sync {
         &self,
         version: ProductVersionState,
         capabilities: Vec<ProductCapabilityRecord>,
-        capability_time: DateTime<Utc>,
+        capability_time: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<ProductVersionWriteResult>;
 
     async fn transition_version(

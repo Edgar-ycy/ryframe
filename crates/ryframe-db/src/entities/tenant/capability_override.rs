@@ -1,8 +1,8 @@
 //! 租户能力覆盖实体。
 
-use chrono::{DateTime, Utc};
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
 #[sea_orm(table_name = "sys_tenant_capability_override")]
@@ -17,8 +17,10 @@ pub struct Model {
     pub config: Json,
     pub reason: Option<String>,
     pub changed_by: Option<i64>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    #[serde(with = "ryframe_application::ports::utc_timestamp")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "ryframe_application::ports::utc_timestamp")]
+    pub updated_at: OffsetDateTime,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

@@ -11,6 +11,7 @@ use crate::{
 use chrono::{DateTime, Utc};
 use ryframe_kernel::AppError;
 use sea_orm::TransactionTrait;
+use time::OffsetDateTime;
 
 use ryframe_application::ports::product::{
     ProductAssignmentChange, ProductCapabilityRecord, ProductChangeTenantState, ProductPlanRecord,
@@ -168,7 +169,7 @@ impl ProductWriteTransaction for DatabaseProductWriteTransaction {
         let tenant = repository
             .lock_tenant_and_validate_in_txn(&self.transaction, tenant_id, None)
             .await?;
-        let database_now = crate::repositories::database_utc_now(&self.transaction).await?;
+        let database_now = crate::repositories::database_utc_now_time(&self.transaction).await?;
         Ok(ProductChangeTenantState {
             status: tenant.status,
             authorization_epoch: tenant.authorization_epoch,
@@ -182,9 +183,11 @@ impl ProductWriteTransaction for DatabaseProductWriteTransaction {
         tenant_id: &'a str,
         owner_token: &'a str,
         version_id: i64,
-        acquired_at: DateTime<Utc>,
-        expires_at: DateTime<Utc>,
+        acquired_at: OffsetDateTime,
+        expires_at: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<()> {
+        let acquired_at = shared_lease_time(acquired_at, "获取")?;
+        let expires_at = shared_lease_time(expires_at, "截止")?;
         TenantOperationLeaseRepository
             .acquire_in_txn(
                 &self.transaction,
@@ -359,7 +362,7 @@ impl ProductWriteTransaction for DatabaseProductWriteTransaction {
         &self,
         version: ProductVersionState,
         capabilities: Vec<ProductCapabilityRecord>,
-        capability_time: DateTime<Utc>,
+        capability_time: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<ProductVersionWriteResult> {
         let version_id = version.id;
         let saved = ProductRepository
@@ -406,7 +409,7 @@ impl ProductWriteTransaction for DatabaseProductWriteTransaction {
         &self,
         version: ProductVersionState,
         capabilities: Vec<ProductCapabilityRecord>,
-        capability_time: DateTime<Utc>,
+        capability_time: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<ProductVersionWriteResult> {
         let version_id = version.id;
         let saved = ProductRepository
@@ -446,6 +449,14 @@ impl ProductWriteTransaction for DatabaseProductWriteTransaction {
             .await
             .map(version_state)
     }
+}
+
+fn shared_lease_time(
+    value: OffsetDateTime,
+    field: &str,
+) -> ryframe_kernel::AppResult<DateTime<Utc>> {
+    DateTime::from_timestamp(value.unix_timestamp(), value.nanosecond())
+        .ok_or_else(|| AppError::Database(format!("产品变更租约{field}时间无法精确表示为 UTC")))
 }
 
 #[async_trait::async_trait]

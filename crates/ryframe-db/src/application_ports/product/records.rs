@@ -1,10 +1,9 @@
-use chrono::{DateTime, Utc};
 use ryframe_application::ports::product::{
     ProductCapabilityRecord, ProductPlanRecord, ProductPlanState, ProductVersionRecord,
     ProductVersionSnapshot, ProductVersionState, TenantCapabilityOverrideRecord,
     TenantProductSnapshot,
 };
-use time::{PrimitiveDateTime, UtcOffset};
+use time::{OffsetDateTime, PrimitiveDateTime, UtcOffset};
 
 use crate::{
     ProductRepository,
@@ -126,7 +125,7 @@ pub(super) fn version_model(version: ProductVersionState) -> product_plan_versio
 pub(super) fn capability_models(
     version_id: i64,
     capabilities: Vec<ProductCapabilityRecord>,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> Vec<product_plan_capability::Model> {
     capabilities
         .into_iter()
@@ -144,7 +143,7 @@ pub(super) fn capability_models(
 
 pub(super) fn override_models(
     tenant_id: &str,
-    changed_at: DateTime<Utc>,
+    changed_at: OffsetDateTime,
     overrides: Vec<TenantCapabilityOverrideRecord>,
 ) -> Vec<tenant_capability_override::Model> {
     overrides

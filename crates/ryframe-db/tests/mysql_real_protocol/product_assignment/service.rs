@@ -137,9 +137,13 @@ async fn verify_version_publication_timestamps(fixture: &Fixture) -> Result<(), 
         .await
         .map_err(|error| error.to_string())?;
     assert_eq!(draft.published_at, None);
+    let created_at = draft.created_at;
+    let offset = UtcOffset::from_hms(8, 0, 0).unwrap();
     draft.status = "published".into();
     draft.published_by = Some(fixture.actor.user_id);
-    draft.published_at = Some(historical_utc.to_offset(UtcOffset::from_hms(8, 0, 0).unwrap()));
+    draft.published_at = Some(historical_utc.to_offset(offset));
+    draft.created_at = created_at.to_offset(offset);
+    draft.updated_at = historical_utc.to_offset(offset);
     let saved = transaction
         .transition_version(draft, "draft", "published")
         .await
@@ -155,6 +159,10 @@ async fn verify_version_publication_timestamps(fixture: &Fixture) -> Result<(), 
         .map_err(db_error)?
         .ok_or("缺少已发布的测试版本")?;
     assert_eq!(stored.published_at, Some(historical));
+    assert_eq!(stored.created_at, created_at);
+    assert_eq!(stored.updated_at, historical_utc);
+    assert_eq!(stored.created_at.offset(), UtcOffset::UTC);
+    assert_eq!(stored.updated_at.offset(), UtcOffset::UTC);
     Ok(())
 }
 
@@ -251,6 +259,10 @@ async fn switch_version_and_reject_old_preview(fixture: &Fixture) -> Result<(), 
     assert_eq!(after.assignment.changed_by, Some(fixture.actor.user_id));
     assert_eq!(after.assignment.created_at, before.assignment.created_at);
     assert_eq!(after.overrides.len(), before.overrides.len());
+    assert!(after.overrides.iter().all(|entry| {
+        entry.created_at == after.assignment.updated_at
+            && entry.updated_at == after.assignment.updated_at
+    }));
     assert_eq!(
         after.context["capabilities"],
         before.context["capabilities"]
