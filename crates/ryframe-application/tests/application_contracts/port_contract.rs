@@ -1,6 +1,5 @@
 use std::{collections::BTreeSet, time::Duration};
 
-use chrono::{TimeZone, Utc};
 use ryframe_application::{
     ports::{
         health::{DependencyHealthCache, DependencyStatus},
@@ -67,7 +66,7 @@ fn only_normal_user_status_is_enabled() {
 
 #[test]
 fn user_import_terminal_statuses_are_application_owned() {
-    let at = Utc.with_ymd_and_hms(2026, 8, 21, 8, 0, 0).unwrap();
+    let at = time::macros::datetime!(2026-08-21 08:00:00 UTC);
     let mut record = UserImportJobRecord {
         id: 1,
         tenant_id: "tenant-a".into(),
