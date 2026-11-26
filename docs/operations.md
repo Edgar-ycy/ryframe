@@ -198,6 +198,8 @@ B0 后端构建仍由当前受信任工具执行，但 `--source-backend` 必须
 
 若该执行器在部门会话初始化时失败，保留原计划及失败、启动和进程收据。已启动的会话先用 `recover-session` 确认零写入。续作可用 `cargo xtask check recovery clone seed-runtime --run-dir <registered-run> --operation departments-plan --request <department-tool-build.json> --write` 单独登记经过验证的冻结部门工具，已发布的 API 后继继续运行。部门核验通过后，可用 `cargo xtask check recovery clone seed-runtime --run-dir <registered-run> --operation identities-verify --request <identity-tool-build.json> --write` 单独登记身份核验工具，绑定原身份准备和最新通过的部门后像。两种构建请求都绑定实际控制器二进制、冻结记录和通过的测试结果。原启动和回收收据继续解析原执行器。
 
+`departments-verify` 为原件加载、登记、配置、API 绑定和首次存储布局等前置检查返回固定的失败类别。按阶段和可公开的系统错误码核对原始证据，保留已确认的部门应用收据。
+
 若已登记的部门修正工具在首次规划的认证前因 Tokio 就绪探针失败，保留原启动与进程收据、标准错误、注销错误及正式失败记录。确认同一生产者已完成零写入回收，且没有认证或部门意图后，才可用同一 `departments-plan --request` 命令登记独立验证的探针修正构建。该登记继续使用同一 API 后继，原两代工具及各自的运行证据继续参与历史核对。
 
 ### 指标与告警

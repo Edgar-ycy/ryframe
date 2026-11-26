@@ -7,7 +7,10 @@ use std::{
 
 use serde_json::{Value, json};
 
-use super::{api_successor, context::Context, files, images, inspection, runtime, schedule_images};
+use super::{
+    api_successor, context::Context, diagnostic::SeedVerifyCheckpoint, files, images, inspection,
+    runtime, schedule_images,
+};
 use crate::{
     Result,
     recovery::{
@@ -43,24 +46,34 @@ pub(super) struct Live<'a, 'c> {
 
 impl<'a, 'c> Live<'a, 'c> {
     pub(super) fn load(context: &'a Context<'c>) -> Result<Self> {
-        context.check()?;
-        let environment = context.environment()?;
+        let diagnose = SeedVerifyCheckpoint::applies(context.stage, context.mode);
+        SeedVerifyCheckpoint::SharedContext.check(diagnose, context.check())?;
+        let environment =
+            SeedVerifyCheckpoint::Configuration.check(diagnose, context.environment())?;
         let target = StorageInputs {
             backend: context.backend,
             request: &context.target,
             environment: &environment,
             observation_dir: &context.output,
         };
-        let execution = target.execution_backend()?;
-        let product = context.product_root()?;
-        let (directory, _) =
-            request_configuration::fresh_files(&execution, &environment, &context.target)?;
-        let configuration = app_configuration::configuration_value(&execution, &directory, "test")?;
+        let execution =
+            SeedVerifyCheckpoint::Configuration.check(diagnose, target.execution_backend())?;
+        let product = SeedVerifyCheckpoint::ApiBinding.check(diagnose, context.product_root())?;
+        let (directory, _) = SeedVerifyCheckpoint::Configuration.check(
+            diagnose,
+            request_configuration::fresh_files(&execution, &environment, &context.target),
+        )?;
+        let configuration = SeedVerifyCheckpoint::Configuration.check(
+            diagnose,
+            app_configuration::configuration_value(&execution, &directory, "test"),
+        )?;
         let mut source_request = context.source.request.clone();
         source_request["target"] = context.source.request["source"].clone();
         source_request["execution_backend"] = json!({"path":context.source.execution_backend});
-        let (runtime, original_api, files) = api_bindings(context, &product)?;
-        let successor = ActiveSuccessor::load(context)?;
+        let (runtime, original_api, files) =
+            SeedVerifyCheckpoint::ApiBinding.check(diagnose, api_bindings(context, &product))?;
+        let successor =
+            SeedVerifyCheckpoint::ApiBinding.check(diagnose, ActiveSuccessor::load(context))?;
         let api = successor
             .as_ref()
             .map_or(original_api, |active| active.tree["process"].clone());
@@ -77,7 +90,7 @@ impl<'a, 'c> Live<'a, 'c> {
             roles: RoleWindow::select(context.stage, context.mode),
             files,
         };
-        guard.check()?;
+        guard.check_with_pre_layout_diagnostic(diagnose)?;
         Ok(guard)
     }
 
@@ -115,15 +128,19 @@ impl<'a, 'c> Live<'a, 'c> {
     }
 
     pub(super) fn check(&self) -> Result<()> {
+        self.check_with_pre_layout_diagnostic(false)
+    }
+
+    fn check_with_pre_layout_diagnostic(&self, diagnose: bool) -> Result<()> {
         let context = self.context;
-        self.files.check()?;
-        context.check()?;
+        SeedVerifyCheckpoint::ApiBinding.check(diagnose, self.files.check())?;
+        SeedVerifyCheckpoint::SharedContext.check(diagnose, context.check())?;
         let post_copy = context.stage == "post-copy";
         if post_copy {
             context.source_generation()?;
         }
-        self.check_target()?;
-        images::target_storage(context)?;
+        SeedVerifyCheckpoint::TargetGeneration.check(diagnose, self.check_target())?;
+        SeedVerifyCheckpoint::StorageLayout.check(diagnose, images::target_storage(context))?;
         self.check_api()?;
         let check = || self.checkpoint();
         if post_copy {

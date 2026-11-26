@@ -11,6 +11,63 @@ pub(super) enum Phase {
     Schedules,
     Business,
     Cleanup,
+    SeedVerify(SeedVerifyCheckpoint),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) enum SeedVerifyCheckpoint {
+    #[cfg(windows)]
+    SourceOriginals,
+    #[cfg(windows)]
+    TargetOriginals,
+    SharedContext,
+    #[cfg(windows)]
+    HeldPlan,
+    Registration,
+    Configuration,
+    ApiBinding,
+    TargetGeneration,
+    StorageLayout,
+}
+
+impl SeedVerifyCheckpoint {
+    pub(super) fn applies(stage: &str, mode: &str) -> bool {
+        stage == "seed-runtime" && mode == "departments-verify"
+    }
+
+    pub(super) fn check<T>(self, enabled: bool, result: Result<T>) -> Result<T> {
+        if !enabled {
+            return result;
+        }
+        result.map_err(|cause| {
+            if cause.is::<Failure>() {
+                return cause;
+            }
+            Box::new(Failure {
+                phase: Phase::SeedVerify(self),
+                path: None,
+                cause,
+                secondary: None,
+            })
+        })
+    }
+
+    fn labels(self) -> (&'static str, &'static str) {
+        match self {
+            #[cfg(windows)]
+            Self::SourceOriginals => ("SeedDepartmentVerifySourceOriginals", "source-originals"),
+            #[cfg(windows)]
+            Self::TargetOriginals => ("SeedDepartmentVerifyTargetOriginals", "target-originals"),
+            Self::SharedContext => ("SeedDepartmentVerifySharedContext", "shared-context"),
+            #[cfg(windows)]
+            Self::HeldPlan => ("SeedDepartmentVerifyHeldPlan", "held-plan"),
+            Self::Registration => ("SeedDepartmentVerifyRegistration", "registration"),
+            Self::Configuration => ("SeedDepartmentVerifyConfiguration", "configuration"),
+            Self::ApiBinding => ("SeedDepartmentVerifyApiBinding", "api-binding"),
+            Self::TargetGeneration => ("SeedDepartmentVerifyTargetGeneration", "target-generation"),
+            Self::StorageLayout => ("SeedDepartmentVerifyStorageLayout", "storage-layout"),
+        }
+    }
 }
 
 struct Failure {
@@ -76,6 +133,10 @@ pub(crate) fn diagnostic(error: &(dyn Error + 'static)) -> Option<(&'static str,
         Phase::Schedules => ("PostCopySchedulesRejected", "schedules"),
         Phase::Business => ("PostCopyBusinessRejected", "business"),
         Phase::Cleanup => ("PostCopyCleanupRejected", "cleanup"),
+        Phase::SeedVerify(checkpoint) => {
+            let (kind, _) = checkpoint.labels();
+            return Some((kind, seed_verify_reason(checkpoint, &*failure.cause)));
+        }
     };
     let mut message = format!("固定请求阶段={phase}；{}", reason(&*failure.cause));
     if let Some(cause) = &failure.secondary {
@@ -89,6 +150,11 @@ pub(crate) fn diagnostic(error: &(dyn Error + 'static)) -> Option<(&'static str,
 }
 
 fn reason(error: &(dyn Error + 'static)) -> String {
+    if let Some(failure) = error.downcast_ref::<Failure>()
+        && let Phase::SeedVerify(checkpoint) = failure.phase
+    {
+        return seed_verify_reason(checkpoint, &*failure.cause);
+    }
     if let Some(value) = error.downcast_ref::<std::io::Error>() {
         return format!(
             "本地文件或系统操作失败，OS码={:?}；核对受管目录、权限及原文件",
@@ -161,5 +227,92 @@ fn reason(error: &(dyn Error + 'static)) -> String {
         _ => error.source().map(reason).unwrap_or_else(|| {
             "固定请求、来源、配置、原生历史或发布核验未通过；底层原因未列入安全公开类别".into()
         }),
+    }
+}
+
+fn seed_verify_reason(checkpoint: SeedVerifyCheckpoint, cause: &(dyn Error + 'static)) -> String {
+    let (_, phase) = checkpoint.labels();
+    let details = seed_verify_cause(cause).unwrap_or_else(|| "底层原因未公开".into());
+    format!("部门核验前置检查={phase}。{details}")
+}
+
+fn seed_verify_cause(error: &(dyn Error + 'static)) -> Option<String> {
+    if let Some(error) = error.downcast_ref::<std::io::Error>() {
+        return Some(format!(
+            "本地文件或系统操作失败，OS码={:?}",
+            error.raw_os_error()
+        ));
+    }
+    if let Some(error) =
+        error.downcast_ref::<super::super::seed::source_registration::quiet::CimUnavailable>()
+    {
+        return Some(format!(
+            "HistoricalProducerCimUnavailable，HRESULT={:?}",
+            error.code
+        ));
+    }
+    if let Some((kind, _)) = super::super::resources::storage::diagnostic(error) {
+        return Some(format!("原存储检查类型={kind}"));
+    }
+    if let Some((kind, _)) = super::super::target_verify::diagnostic(error) {
+        return Some(format!("原目标检查类型={kind}"));
+    }
+    if let Some((kind, _)) = super::super::cache::handoff::diagnostic(error) {
+        return Some(format!("原交接检查类型={kind}"));
+    }
+    error.source().and_then(seed_verify_cause)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SeedVerifyCheckpoint, combined, diagnostic};
+    use crate::recovery::clone::native::lifecycle::stage::failure_type;
+
+    #[test]
+    fn seed_verify_diagnostic_keeps_deepest_label_and_private_cause() {
+        let private = "private-test-payload";
+        let inner = SeedVerifyCheckpoint::SharedContext.check::<()>(true, Err(private.into()));
+        let failure = SeedVerifyCheckpoint::ApiBinding
+            .check(true, inner)
+            .unwrap_err();
+        let (kind, message) = diagnostic(&*failure).unwrap();
+
+        assert_eq!(kind, "SeedDepartmentVerifySharedContext");
+        assert_eq!(failure_type(&*failure), kind);
+        assert!(message.contains("shared-context") && !message.contains(private));
+        assert!(!failure.to_string().contains(private));
+        assert!(!format!("{failure:?}").contains(private));
+        assert_eq!(failure.source().unwrap().to_string(), private);
+
+        let cleanup = std::io::Error::from_raw_os_error(32);
+        let both = combined(failure, Box::new(cleanup));
+        let (kind, message) = diagnostic(&*both).unwrap();
+        assert_eq!(kind, "PostCopyCleanupRejected");
+        assert!(message.contains("shared-context") && message.contains("OS码=Some(32)"));
+        assert!(!message.contains(private));
+    }
+
+    #[test]
+    fn seed_verify_diagnostic_only_applies_to_seed_department_verify() {
+        assert!(SeedVerifyCheckpoint::applies(
+            "seed-runtime",
+            "departments-verify"
+        ));
+        for (stage, mode) in [
+            ("seed-runtime", "departments-plan"),
+            ("seed-runtime", "departments-apply"),
+            ("seed-runtime", "departments-reconcile"),
+            ("seed-runtime", "identities-verify"),
+            ("post-copy", "departments-verify"),
+        ] {
+            let failure = SeedVerifyCheckpoint::Registration
+                .check::<()>(
+                    SeedVerifyCheckpoint::applies(stage, mode),
+                    Err("original".into()),
+                )
+                .unwrap_err();
+            assert_eq!(failure.to_string(), "original");
+            assert!(diagnostic(&*failure).is_none());
+        }
     }
 }

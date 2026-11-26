@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 
 use super::{
     context::Context,
+    diagnostic::SeedVerifyCheckpoint,
     execution, files,
     live::Live,
     ownership,
@@ -134,6 +135,7 @@ impl StageRunner for Runner {
 
     fn execute(&self, request: &StageRequest<'_>) -> Result<Value> {
         self.preflight(request)?;
+        let diagnose = SeedVerifyCheckpoint::applies(request.stage, request.mode);
         let mut scope = self.scope.borrow_mut();
         let scope = scope.as_mut().ok_or("seed 缺少固定来源窗口")?;
         let manifest = manifest::load(request.backend, &request.run_dir.join("manifest.json"))?;
@@ -145,22 +147,30 @@ impl StageRunner for Runner {
         ownership::with_target(request, &manifest.value, storage, |owner, storage| {
             #[cfg(windows)]
             if self.hold_originals {
-                let target =
-                    super::source_proofs::hold_scope(request, &manifest.value, owner, scope)?;
-                return super::runtime::with_held_published_target(
-                    request.backend,
-                    &target,
-                    |held| {
-                        let mut context = Context::load_with_held_target(
-                            request, owner, scope, storage, None, held, true,
+                let target = SeedVerifyCheckpoint::SourceOriginals.check(
+                    diagnose,
+                    super::source_proofs::hold_scope(request, &manifest.value, owner, scope),
+                )?;
+                let mut entered = false;
+                let result =
+                    super::runtime::with_held_published_target(request.backend, &target, |held| {
+                        entered = true;
+                        let mut context = SeedVerifyCheckpoint::SharedContext.check(
+                            diagnose,
+                            Context::load_with_held_target(
+                                request, owner, scope, storage, None, held, true,
+                            ),
                         )?;
-                        context.hold_plan()?;
+                        SeedVerifyCheckpoint::HeldPlan.check(diagnose, context.hold_plan())?;
                         let result = execute(&context, self.request_file.as_deref());
                         files::combine(result, context.check_end())
-                    },
-                );
+                    });
+                return SeedVerifyCheckpoint::TargetOriginals.check(diagnose && !entered, result);
             }
-            let context = Context::load(request, owner, scope, storage, None)?;
+            let context = SeedVerifyCheckpoint::SharedContext.check(
+                diagnose,
+                Context::load(request, owner, scope, storage, None),
+            )?;
             let result = execute(&context, self.request_file.as_deref());
             files::combine(result, context.check())
         })
@@ -168,21 +178,28 @@ impl StageRunner for Runner {
 }
 
 fn execute(context: &Context<'_>, request_file: Option<&Path>) -> Result<Value> {
-    let registration = seed::Registration::load(context.backend, context.run, false)?;
-    let registration_path = common::common_file(
-        context.backend,
-        &context.run.join("seed-runtime.json"),
-        "seed 登记",
+    let diagnose = SeedVerifyCheckpoint::applies(context.stage, context.mode);
+    let (registration, descriptor, held) = SeedVerifyCheckpoint::Registration.check(
+        diagnose,
+        (|| {
+            let registration = seed::Registration::load(context.backend, context.run, false)?;
+            let registration_path = common::common_file(
+                context.backend,
+                &context.run.join("seed-runtime.json"),
+                "seed 登记",
+            )?;
+            let descriptor = common::binding(&registration_path)?;
+            let held = Inputs::open([
+                registration_path,
+                common::bound_file(
+                    context.backend,
+                    &registration.value["identity_plan"],
+                    "seed 身份计划",
+                )?,
+            ])?;
+            Ok((registration, descriptor, held))
+        })(),
     )?;
-    let descriptor = common::binding(&registration_path)?;
-    let held = Inputs::open([
-        registration_path,
-        common::bound_file(
-            context.backend,
-            &registration.value["identity_plan"],
-            "seed 身份计划",
-        )?,
-    ])?;
     let guard = Guard {
         live: Live::load(context)?,
         current: seed::Current::load(context.backend, context.run)?,
