@@ -237,22 +237,7 @@ async fn terminal_business_states_converge_across_failure_paths() {
             1,
         )
         .await?;
-        let row = database
-            .query_one_raw(Statement::from_string(
-                DbBackend::MySql,
-                "SELECT updated_at FROM sys_user_import_job \
-                 WHERE id = 7405 AND status = 'pending' AND completed_at IS NULL"
-                    .to_owned(),
-            ))
-            .await
-            .map_err(|error| error.to_string())?
-            .ok_or("未找到回到待执行状态的用户导入任务")?;
-        let updated_at: PrimitiveDateTime = row
-            .try_get("", "updated_at")
-            .map_err(|error| error.to_string())?;
-        if updated_at.assume_utc() != now {
-            return Err(format!("导入重试时间应保留数据库 UTC 微秒：{updated_at}"));
-        }
+        verify_retried_import_utc_timestamp(&database, now).await?;
         require_count(
             &database,
             "SELECT COUNT(*) AS value FROM sys_background_job_attempt \
@@ -272,6 +257,29 @@ async fn terminal_business_states_converge_across_failure_paths() {
         .await
     })
     .await;
+}
+
+async fn verify_retried_import_utc_timestamp(
+    database: &DatabaseConnection,
+    now: OffsetDateTime,
+) -> Result<(), String> {
+    let row = database
+        .query_one_raw(Statement::from_string(
+            DbBackend::MySql,
+            "SELECT updated_at FROM sys_user_import_job \
+             WHERE id = 7405 AND status = 'pending' AND completed_at IS NULL"
+                .to_owned(),
+        ))
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or("未找到回到待执行状态的用户导入任务")?;
+    let updated_at: PrimitiveDateTime = row
+        .try_get("", "updated_at")
+        .map_err(|error| error.to_string())?;
+    if updated_at.assume_utc() != now {
+        return Err(format!("导入重试时间应保留数据库 UTC 微秒：{updated_at}"));
+    }
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

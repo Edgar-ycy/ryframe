@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use std::path::Path;
 
 #[cfg(test)]
-#[path = "reconcile_tests.rs"]
+#[path = "../../../../tests/unit/data/performance_identities/ledger/reconcile_tests.rs"]
 mod tests;
 
 const OPERATION: &str = "post_system_users";

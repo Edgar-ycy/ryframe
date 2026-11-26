@@ -334,7 +334,7 @@ fn background_job_response_preserves_utc_precision_nullability_and_schema() {
     use serde_json::{Value, json};
     use time::{
         Date, OffsetDateTime,
-        macros::{datetime, offset},
+        macros::{datetime, offset, time},
     };
     use utoipa::PartialSchema;
 
@@ -377,11 +377,10 @@ fn background_job_response_preserves_utc_precision_nullability_and_schema() {
         job.created_at = at(-3);
         job.updated_at = at(1);
         job.completed_at = Some(at(2));
-        let expected = serde_json::to_value(&job).unwrap();
         let encoded =
             serde_json::to_string(&BackgroundJobVo::try_from(job.clone()).unwrap()).unwrap();
         let response: Value = serde_json::from_str(&encoded).unwrap();
-        assert_eq!(response, expected);
+        assert_eq!(response, serde_json::to_value(&job).unwrap());
         for (field, base) in [
             ("scheduled_for", "1969-12-31T23:59:58"),
             ("available_at", "1969-12-31T23:59:59"),
@@ -409,11 +408,7 @@ fn background_job_response_preserves_utc_precision_nullability_and_schema() {
     let schema = serde_json::to_value(BackgroundJobVo::schema()).unwrap();
     let required = schema["required"].as_array().unwrap();
     for field in ["available_at", "created_at", "updated_at"] {
-        assert_eq!(
-            schema["properties"][field],
-            json!({"type":"string","format":"date-time"})
-        );
-        assert!(required.contains(&json!(field)));
+        assert_required_date_time(&schema, field);
     }
     for field in ["scheduled_for", "lease_until", "completed_at"] {
         assert_eq!(
@@ -424,12 +419,8 @@ fn background_job_response_preserves_utc_precision_nullability_and_schema() {
     }
     assert!(schema["properties"].get("payload").is_none());
 
-    job.lease_until = Some(
-        Date::MAX
-            .with_hms(23, 59, 59)
-            .unwrap()
-            .assume_offset(offset!(-01:00)),
-    );
+    let last_local_time = Date::MAX.with_time(time!(23:59:59));
+    job.lease_until = Some(last_local_time.assume_offset(offset!(-01:00)));
     assert!(matches!(
         BackgroundJobVo::try_from(job),
         Err(AppError::Internal(message)) if message.contains("lease_until")
