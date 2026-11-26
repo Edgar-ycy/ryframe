@@ -112,6 +112,7 @@ async fn copy_dictionaries(
     dictionary_data: Vec<TenantDictionaryDataTemplate>,
     now: DateTime<Utc>,
 ) -> AppResult<()> {
+    let now = crate::repositories::utc_time_from_chrono(now).db_context("字典初始化时间")?;
     let types = dictionary_types
         .into_iter()
         .map(|source| -> AppResult<_> {

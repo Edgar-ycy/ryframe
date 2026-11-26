@@ -1,7 +1,13 @@
 use super::{bootstrap_hashes, db_error, execute, require_count, run_mysql_test};
-use ryframe_db::migration;
+use ryframe_application::{
+    TransactionAuditMode,
+    ports::system::{DictDataRecord, DictTypeRecord},
+};
+use ryframe_db::{ControlDatabaseCluster, application_ports::system::dict, migration};
+use ryframe_kernel::AppResult;
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, Statement};
 use sea_orm_migration::MigratorTrait;
+use time::{OffsetDateTime, PrimitiveDateTime, macros::datetime};
 
 #[path = "initialization_data.rs"]
 mod data;
@@ -43,12 +49,95 @@ async fn sql_import_and_migrations_produce_equivalent_control_databases() {
             migration::verify(&migrated).await.map_err(db_error)?;
             assert_eq!(inventory(&imported).await?, inventory(&migrated).await?);
             data::compare(&imported, &migrated).await?;
-            Ok(())
+            verify_dictionary_utc_writes(&migrated).await
         })
         .await;
         Ok(())
     })
     .await;
+}
+
+async fn verify_dictionary_utc_writes(database: &DatabaseConnection) -> Result<(), String> {
+    let created = datetime!(2026-08-21 00:59:59 +08:00);
+    let updated = datetime!(2026-08-20 12:00:00 -05:00);
+    write_dictionary(database, created, updated)
+        .await
+        .map_err(|error| error.to_string())?;
+    let row = database
+        .query_one_raw(Statement::from_string(
+            DbBackend::MySql,
+            "SELECT t.created_at AS type_created, t.updated_at AS type_updated, \
+                    d.created_at AS data_created, d.updated_at AS data_updated \
+             FROM sys_dict_type t JOIN sys_dict_data d \
+               ON d.tenant_id=t.tenant_id AND d.type_code=t.code \
+             WHERE t.tenant_id='system' AND t.id=30041 AND d.id=30042 \
+               AND t.name='更新后的类型' AND d.label='更新后的字典项'"
+                .to_owned(),
+        ))
+        .await
+        .map_err(db_error)?
+        .ok_or("未找到写入并更新的字典类型和字典项")?;
+    for (column, expected) in [
+        ("type_created", datetime!(2026-08-20 16:59:59)),
+        ("data_created", datetime!(2026-08-20 16:59:59)),
+        ("type_updated", datetime!(2026-08-20 17:00:00)),
+        ("data_updated", datetime!(2026-08-20 17:00:00)),
+    ] {
+        let actual: PrimitiveDateTime = row.try_get("", column).map_err(db_error)?;
+        assert_eq!(actual, expected, "{column}");
+    }
+    Ok(())
+}
+
+async fn write_dictionary(
+    database: &DatabaseConnection,
+    created: OffsetDateTime,
+    updated: OffsetDateTime,
+) -> AppResult<()> {
+    const TENANT: &str = "system";
+    const TYPE_CODE: &str = "dictionary_utc_probe";
+    let persistence = dict(ControlDatabaseCluster::single(database.clone()));
+    let transaction = persistence.begin().await?;
+    transaction.lock_configuration(TENANT).await?;
+    let mut dict_type = transaction
+        .insert_type(
+            TENANT,
+            DictTypeRecord {
+                id: 30041,
+                name: "原字典类型".into(),
+                code: TYPE_CODE.into(),
+                status: "1".into(),
+                remark: None,
+                created_at: created,
+                updated_at: created,
+            },
+        )
+        .await?;
+    let mut entry = transaction
+        .insert_data(
+            TENANT,
+            DictDataRecord {
+                id: 30042,
+                type_code: TYPE_CODE.into(),
+                label: "原字典项".into(),
+                value: "value".into(),
+                sort: 0,
+                status: "1".into(),
+                css_class: None,
+                remark: None,
+                created_at: created,
+                updated_at: created,
+            },
+        )
+        .await?;
+    dict_type.name = "更新后的类型".into();
+    dict_type.updated_at = updated;
+    entry.label = "更新后的字典项".into();
+    entry.updated_at = updated;
+    transaction.update_type(TENANT, dict_type).await?;
+    transaction.update_data(TENANT, entry).await?;
+    transaction.increment_configuration_version(TENANT).await?;
+    transaction.commit(TransactionAuditMode::Skip).await
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

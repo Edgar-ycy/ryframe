@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery};
 use time::OffsetDateTime;
 
@@ -13,7 +12,7 @@ pub struct DictTypeRecord {
     pub status: String,
     pub remark: Option<String>,
     pub created_at: OffsetDateTime,
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: OffsetDateTime,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -33,8 +32,8 @@ pub struct DictDataRecord {
     pub status: String,
     pub css_class: Option<String>,
     pub remark: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
 }
 
 #[async_trait]

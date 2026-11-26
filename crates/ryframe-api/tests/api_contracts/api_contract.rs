@@ -215,7 +215,7 @@ fn dict_type_created_at_preserves_utc_json_export_and_schema() {
                 .replace_nanosecond(nanos)
                 .unwrap()
                 .to_offset(offset),
-            updated_at: Default::default(),
+            updated_at: OffsetDateTime::UNIX_EPOCH,
         });
         assert_eq!(
             serde_json::to_value(&dict_type).unwrap()["created_at"],

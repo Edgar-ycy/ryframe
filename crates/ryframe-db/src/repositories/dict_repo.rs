@@ -5,6 +5,7 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
     EntityTrait, QueryFilter, QueryOrder, QuerySelect, Select,
 };
+use time::OffsetDateTime;
 
 use crate::{
     Repository,
@@ -71,7 +72,7 @@ impl Repository<dict_type::Model, i64> for DictTypeRepository {
     }
 
     async fn delete(&self, db: &DatabaseConnection, tenant_id: &str, id: i64) -> AppResult<()> {
-        soft_delete_entity!(dict_type, db, tenant_id, id)
+        soft_delete_entity!(dict_type, db, tenant_id, id, OffsetDateTime::now_utc())
     }
 }
 
@@ -116,7 +117,13 @@ impl DictTypeRepository {
         tenant_id: &str,
         id: i64,
     ) -> AppResult<()> {
-        soft_delete_entity!(dict_type, transaction, tenant_id, id)
+        soft_delete_entity!(
+            dict_type,
+            transaction,
+            tenant_id,
+            id,
+            OffsetDateTime::now_utc()
+        )
     }
 
     /// 按主键递增游标读取字典类型导出批次。
@@ -250,7 +257,7 @@ impl Repository<dict_data::Model, i64> for DictDataRepository {
     }
 
     async fn delete(&self, db: &DatabaseConnection, tenant_id: &str, id: i64) -> AppResult<()> {
-        soft_delete_entity!(dict_data, db, tenant_id, id)
+        soft_delete_entity!(dict_data, db, tenant_id, id, OffsetDateTime::now_utc())
     }
 }
 
@@ -279,7 +286,13 @@ impl DictDataRepository {
         tenant_id: &str,
         id: i64,
     ) -> AppResult<()> {
-        soft_delete_entity!(dict_data, transaction, tenant_id, id)
+        soft_delete_entity!(
+            dict_data,
+            transaction,
+            tenant_id,
+            id,
+            OffsetDateTime::now_utc()
+        )
     }
 
     /// 按字典类型编码获取字典数据

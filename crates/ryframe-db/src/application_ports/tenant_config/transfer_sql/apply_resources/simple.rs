@@ -50,6 +50,7 @@ pub(super) async fn upsert_dict_types(
     changed: &BTreeSet<(String, String)>,
     now: DateTime<Utc>,
 ) -> AppResult<()> {
+    let now = crate::repositories::utc_time_from_chrono(now).db_context("字典类型配置应用时间")?;
     for item in &resources.dict_types {
         if !changed.contains(&("dict_type".to_owned(), normalize_stable_key(&item.code))) {
             continue;
@@ -91,6 +92,7 @@ pub(super) async fn upsert_dict_data(
     changed: &BTreeSet<(String, String)>,
     now: DateTime<Utc>,
 ) -> AppResult<()> {
+    let now = crate::repositories::utc_time_from_chrono(now).db_context("字典数据配置应用时间")?;
     for item in &resources.dict_data {
         let key = format!("{}:{}:{}", item.type_code.len(), item.type_code, item.value);
         if !changed.contains(&("dict_data".to_owned(), normalize_stable_key(&key))) {

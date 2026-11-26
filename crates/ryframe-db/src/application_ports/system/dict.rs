@@ -7,7 +7,7 @@ use crate::{
     entities::{dict_data, dict_type},
 };
 use async_trait::async_trait;
-use ryframe_kernel::{AppError, AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery};
+use ryframe_kernel::{AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ColumnTrait, EntityTrait, QueryFilter, QuerySelect, TransactionTrait, sea_query::LockType,
 };
@@ -48,11 +48,7 @@ impl DictPersistencePort for DatabaseDictPersistence {
             .find_by_page_filtered(&database, tenant_id, &page, &filter)
             .await?;
         Ok(PageResult::new(
-            result
-                .records
-                .into_iter()
-                .map(to_type_record)
-                .collect::<AppResult<_>>()?,
+            result.records.into_iter().map(to_type_record).collect(),
             result.total,
             &page,
         ))
@@ -70,10 +66,8 @@ impl DictPersistencePort for DatabaseDictPersistence {
             .connection;
         DictTypeRepository
             .find_for_export_after_id(&database, tenant_id, &to_database_filter(filter), window)
-            .await?
-            .into_iter()
-            .map(to_type_record)
-            .collect()
+            .await
+            .map(|records| records.into_iter().map(to_type_record).collect())
     }
 
     async fn find_data_by_type(
@@ -111,7 +105,7 @@ impl DictTransaction for DatabaseDictTransaction {
         tenant_id: &str,
         code: &str,
     ) -> AppResult<Option<DictTypeRecord>> {
-        dict_type::Entity::find()
+        Ok(dict_type::Entity::find()
             .filter(dict_type::Column::TenantId.eq(tenant_id))
             .filter(dict_type::Column::Code.eq(code))
             .filter(dict_type::Column::DelFlag.eq(dict_type::Model::DEL_FLAG_NORMAL))
@@ -119,8 +113,7 @@ impl DictTransaction for DatabaseDictTransaction {
             .one(&self.transaction)
             .await
             .db()?
-            .map(to_type_record)
-            .transpose()
+            .map(to_type_record))
     }
 
     async fn find_type_by_id_for_update(
@@ -128,15 +121,14 @@ impl DictTransaction for DatabaseDictTransaction {
         tenant_id: &str,
         id: i64,
     ) -> AppResult<Option<DictTypeRecord>> {
-        dict_type::Entity::find_by_id(id)
+        Ok(dict_type::Entity::find_by_id(id)
             .filter(dict_type::Column::TenantId.eq(tenant_id))
             .filter(dict_type::Column::DelFlag.eq(dict_type::Model::DEL_FLAG_NORMAL))
             .lock(LockType::Update)
             .one(&self.transaction)
             .await
             .db()?
-            .map(to_type_record)
-            .transpose()
+            .map(to_type_record))
     }
 
     async fn insert_type(
@@ -148,10 +140,10 @@ impl DictTransaction for DatabaseDictTransaction {
             .insert_in_transaction(
                 &self.transaction,
                 tenant_id,
-                to_type_entity(tenant_id, record)?,
+                to_type_entity(tenant_id, record),
             )
             .await
-            .and_then(to_type_record)
+            .map(to_type_record)
     }
 
     async fn update_type(
@@ -163,10 +155,10 @@ impl DictTransaction for DatabaseDictTransaction {
             .update_in_transaction(
                 &self.transaction,
                 tenant_id,
-                to_type_entity(tenant_id, record)?,
+                to_type_entity(tenant_id, record),
             )
             .await
-            .and_then(to_type_record)
+            .map(to_type_record)
     }
 
     async fn delete_type(&self, tenant_id: &str, id: i64) -> AppResult<()> {
@@ -258,26 +250,20 @@ fn to_database_filter(filter: DictTypeFilter<'_>) -> DatabaseDictTypeFilter<'_> 
     }
 }
 
-fn to_type_record(model: dict_type::Model) -> AppResult<DictTypeRecord> {
-    Ok(DictTypeRecord {
+fn to_type_record(model: dict_type::Model) -> DictTypeRecord {
+    DictTypeRecord {
         id: model.id,
         name: model.name,
         code: model.code,
         status: model.status,
         remark: model.remark,
-        created_at: crate::repositories::utc_time_from_chrono(model.created_at)
-            .db_context("读取字典类型创建时间")?,
+        created_at: model.created_at,
         updated_at: model.updated_at,
-    })
+    }
 }
 
-fn to_type_entity(tenant_id: &str, record: DictTypeRecord) -> AppResult<dict_type::Model> {
-    let created_at = chrono::DateTime::from_timestamp(
-        record.created_at.unix_timestamp(),
-        record.created_at.nanosecond(),
-    )
-    .ok_or_else(|| AppError::Database("字典类型创建时间超出 UTC 表示范围".into()))?;
-    Ok(dict_type::Model {
+fn to_type_entity(tenant_id: &str, record: DictTypeRecord) -> dict_type::Model {
+    dict_type::Model {
         id: record.id,
         tenant_id: tenant_id.to_owned(),
         name: record.name,
@@ -285,9 +271,9 @@ fn to_type_entity(tenant_id: &str, record: DictTypeRecord) -> AppResult<dict_typ
         status: record.status,
         remark: record.remark,
         del_flag: dict_type::Model::DEL_FLAG_NORMAL.into(),
-        created_at,
+        created_at: record.created_at,
         updated_at: record.updated_at,
-    })
+    }
 }
 
 fn to_data_record(model: dict_data::Model) -> DictDataRecord {
@@ -324,8 +310,7 @@ fn to_data_entity(tenant_id: &str, record: DictDataRecord) -> dict_data::Model {
 
 #[cfg(test)]
 mod tests {
-    use chrono::DateTime;
-    use time::UtcOffset;
+    use time::{OffsetDateTime, UtcOffset};
 
     use super::{dict_type, to_type_entity, to_type_record};
 
@@ -341,16 +326,22 @@ mod tests {
                 status: "1".into(),
                 remark: Some("工单生命周期".into()),
                 del_flag: dict_type::Model::DEL_FLAG_NORMAL.into(),
-                created_at: DateTime::from_timestamp(seconds, nanos).unwrap(),
-                updated_at: DateTime::from_timestamp(1, 456_000_000).unwrap(),
+                created_at: OffsetDateTime::from_unix_timestamp(seconds)
+                    .unwrap()
+                    .replace_nanosecond(nanos)
+                    .unwrap(),
+                updated_at: OffsetDateTime::from_unix_timestamp(1)
+                    .unwrap()
+                    .replace_nanosecond(456_000_000)
+                    .unwrap(),
             };
-            let mut record = to_type_record(entity.clone()).unwrap();
+            let mut record = to_type_record(entity.clone());
             assert_eq!(record.created_at.offset(), UtcOffset::UTC);
             assert_eq!(record.created_at.unix_timestamp(), seconds);
             assert_eq!(record.created_at.nanosecond(), nanos);
 
             record.created_at = record.created_at.to_offset(offset);
-            let restored = to_type_entity("tenant-a", record).unwrap();
+            let restored = to_type_entity("tenant-a", record);
             assert_eq!(restored, entity);
         }
     }

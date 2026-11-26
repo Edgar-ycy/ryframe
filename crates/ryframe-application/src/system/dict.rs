@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use chrono::Utc;
 use ryframe_kernel::{
     ActorContext, AppError, AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery,
 };
@@ -150,15 +149,14 @@ impl DictService {
         code: &str,
     ) -> AppResult<DictTypeVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let now = Utc::now();
+        let now = OffsetDateTime::now_utc();
         let record = DictTypeRecord {
             id: crate::next_id()?,
             name: name.to_owned(),
             code: code.to_owned(),
             status: "1".into(),
             remark: None,
-            created_at: utc_timestamp::from_chrono(now)
-                .map_err(|_| AppError::Internal("字典类型创建时间无法精确表示为 UTC".into()))?,
+            created_at: now,
             updated_at: now,
         };
         let transaction = self.persistence.begin().await?;
@@ -198,7 +196,7 @@ impl DictService {
                 .ok_or_else(|| AppError::NotFound("字典类型不存在".into()))?;
             dict_type.name = name.to_owned();
             dict_type.status = status;
-            dict_type.updated_at = Utc::now();
+            dict_type.updated_at = OffsetDateTime::now_utc();
             let saved = transaction.update_type(tenant_id, dict_type).await?;
             transaction
                 .increment_configuration_version(tenant_id)
@@ -265,7 +263,7 @@ impl DictService {
         sort: i32,
     ) -> AppResult<DictDataVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
-        let now = Utc::now();
+        let now = OffsetDateTime::now_utc();
         let record = DictDataRecord {
             id: crate::next_id()?,
             type_code: type_code.to_owned(),
@@ -321,7 +319,7 @@ impl DictService {
             data.value = value.to_owned();
             data.sort = sort;
             data.status = status;
-            data.updated_at = Utc::now();
+            data.updated_at = OffsetDateTime::now_utc();
             let saved = transaction.update_data(tenant_id, data).await?;
             transaction
                 .increment_configuration_version(tenant_id)
