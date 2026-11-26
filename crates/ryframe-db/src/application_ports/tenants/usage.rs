@@ -1,13 +1,15 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use crate::{
-    ControlDatabaseCluster, ReadConsistency, TenantRepository, TenantUsageAggregate,
+    ControlDatabaseCluster, DbResultExt, ReadConsistency, TenantRepository, TenantUsageAggregate,
     TenantUsagePageFilter, TenantUsageRepository, entities::tenant,
 };
 
 use ryframe_application::ports::tenants::{
     TenantCapacityRecord, TenantUsageAggregateRecord, TenantUsageFilter, TenantUsagePersistencePort,
 };
+use ryframe_kernel::AppResult;
+use time::OffsetDateTime;
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn TenantUsagePersistencePort> {
     Arc::new(DatabaseTenantUsagePersistence { database })
@@ -23,7 +25,7 @@ impl TenantUsagePersistencePort for DatabaseTenantUsagePersistence {
         &'a self,
         filter: TenantUsageFilter<'a>,
         page: &'a ryframe_kernel::ValidatedPageQuery,
-        calculated_at: chrono::DateTime<chrono::Utc>,
+        calculated_at: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<ryframe_kernel::PageResult<TenantCapacityRecord>> {
         let database = self
             .database
@@ -44,7 +46,11 @@ impl TenantUsagePersistencePort for DatabaseTenantUsagePersistence {
             )
             .await?;
         Ok(ryframe_kernel::PageResult {
-            records: result.records.into_iter().map(to_tenant_record).collect(),
+            records: result
+                .records
+                .into_iter()
+                .map(to_tenant_record)
+                .collect::<AppResult<Vec<_>>>()?,
             total: result.total,
             page: result.page,
             page_size: result.page_size,
@@ -59,10 +65,11 @@ impl TenantUsagePersistencePort for DatabaseTenantUsagePersistence {
             .database
             .select_read(ReadConsistency::Strong)
             .connection;
-        Ok(TenantRepository
+        TenantRepository
             .find_by_tenant_id(&database, tenant_id)
             .await?
-            .map(to_tenant_record))
+            .map(to_tenant_record)
+            .transpose()
     }
 
     async fn aggregate<'a>(
@@ -82,18 +89,22 @@ impl TenantUsagePersistencePort for DatabaseTenantUsagePersistence {
     }
 }
 
-fn to_tenant_record(tenant: tenant::Model) -> TenantCapacityRecord {
-    TenantCapacityRecord {
+fn to_tenant_record(tenant: tenant::Model) -> AppResult<TenantCapacityRecord> {
+    Ok(TenantCapacityRecord {
         tenant_id: tenant.tenant_id,
         name: tenant.name,
         domain: tenant.domain,
         status: tenant.status,
-        expire_at: tenant.expire_at,
+        expire_at: tenant
+            .expire_at
+            .map(crate::repositories::utc_time_from_chrono)
+            .transpose()
+            .db_context("读取租户到期时间")?,
         max_users: tenant.max_users,
         max_roles: tenant.max_roles,
         max_storage_mb: tenant.max_storage_mb,
         max_requests_per_min: tenant.max_requests_per_min,
-    }
+    })
 }
 
 fn to_aggregate_entry(aggregate: TenantUsageAggregate) -> (String, TenantUsageAggregateRecord) {

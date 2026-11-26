@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
+use time::OffsetDateTime;
 
 #[derive(Clone, Debug)]
 pub struct TenantCapacityRecord {
@@ -9,7 +9,7 @@ pub struct TenantCapacityRecord {
     pub name: String,
     pub domain: Option<String>,
     pub status: String,
-    pub expire_at: Option<DateTime<Utc>>,
+    pub expire_at: Option<OffsetDateTime>,
     pub max_users: i32,
     pub max_roles: i32,
     pub max_storage_mb: i64,
@@ -43,7 +43,7 @@ pub trait TenantUsagePersistencePort: Send + Sync {
         &'a self,
         filter: TenantUsageFilter<'a>,
         page: &'a ValidatedPageQuery,
-        calculated_at: DateTime<Utc>,
+        calculated_at: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<PageResult<TenantCapacityRecord>>;
 
     async fn find<'a>(

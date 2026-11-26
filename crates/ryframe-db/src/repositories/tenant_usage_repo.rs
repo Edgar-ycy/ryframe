@@ -1,9 +1,9 @@
 use crate::DbResultExt;
-use chrono::{DateTime, Duration, Utc};
 use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ConnectionTrait, DatabaseConnection, FromQueryResult, QueryResult, Statement, Value,
 };
+use time::{Duration, OffsetDateTime};
 
 use crate::entities::tenant;
 
@@ -98,7 +98,7 @@ impl TenantUsageRepository {
         db: &DatabaseConnection,
         filter: TenantUsagePageFilter<'_>,
         page: &ValidatedPageQuery,
-        calculated_at: DateTime<Utc>,
+        calculated_at: OffsetDateTime,
     ) -> AppResult<PageResult<tenant::Model>> {
         let needs_usage_join = filter.capacity_status.is_some();
         let usage_joins = if needs_usage_join {
@@ -255,7 +255,7 @@ LEFT JOIN (
 
 fn page_filter_sql(
     filter: TenantUsagePageFilter<'_>,
-    calculated_at: DateTime<Utc>,
+    calculated_at: OffsetDateTime,
 ) -> (String, Vec<Value>) {
     let mut conditions = Vec::<String>::with_capacity(5);
     let mut values = Vec::with_capacity(5);
@@ -274,12 +274,16 @@ fn page_filter_sql(
     match filter.expiration_status {
         Some("active") => {
             conditions.push("`tenant`.`expire_at` > ?".to_owned());
-            values.push(Value::from(calculated_at + Duration::days(30)));
+            values.push(Value::from(
+                calculated_at.saturating_add(Duration::days(30)),
+            ));
         }
         Some("expiring") => {
             conditions.push("`tenant`.`expire_at` > ? AND `tenant`.`expire_at` <= ?".to_owned());
             values.push(Value::from(calculated_at));
-            values.push(Value::from(calculated_at + Duration::days(30)));
+            values.push(Value::from(
+                calculated_at.saturating_add(Duration::days(30)),
+            ));
         }
         Some("expired") => {
             conditions

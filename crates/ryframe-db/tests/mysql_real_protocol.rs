@@ -531,6 +531,81 @@ async fn verify_generated_post_writes(database: &DatabaseConnection) -> Result<(
     Ok(())
 }
 
+#[cfg(feature = "migration")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tenant_usage_expiration_filter_matches_utc_classification() {
+    use ryframe_application::{
+        ports::tenants::TenantUsageFilter, system::platform::expiration_status,
+    };
+    use time::macros::datetime;
+
+    run_mysql_test("tenant-usage-expiration", |database| async move {
+        ryframe_db::migration::up(&database, Some(&bootstrap_hashes()))
+            .await
+            .map_err(db_error)?;
+        // 独立写入 UTC 字面量，避免用分页所测试的时间参数编码生成前像。
+        execute(
+            &database,
+            "INSERT INTO sys_tenant (id, tenant_id, name, expire_at) VALUES
+                (31001, 'expiry-probe-never', '无到期日', NULL),
+                (31002, 'expiry-probe-now', '恰好到期', '2026-08-20 19:00:00'),
+                (31003, 'expiry-probe-after-now', '刚进入临期', '2026-08-20 19:00:01'),
+                (31004, 'expiry-probe-day-30', '第三十天', '2026-09-19 19:00:00'),
+                (31005, 'expiry-probe-after-day-30', '刚超过三十天', '2026-09-19 19:00:01'),
+                (31006, 'expiry-probe-day-31', '第三十一天', '2026-09-20 19:00:00')",
+        )
+        .await?;
+
+        let page = ValidatedPageQuery::new(1, 10, PaginationPolicy::new(10, 100))
+            .map_err(|error| error.to_string())?;
+        let usage = application_ports::tenants::usage(ControlDatabaseCluster::single(database));
+        let calculated_at = datetime!(2026-08-21 00:30:00 +05:30);
+        let cases: [(&str, &[&str]); 4] = [
+            ("never", &["expiry-probe-never"]),
+            ("expired", &["expiry-probe-now"]),
+            (
+                "expiring",
+                &["expiry-probe-after-now", "expiry-probe-day-30"],
+            ),
+            (
+                "active",
+                &["expiry-probe-after-day-30", "expiry-probe-day-31"],
+            ),
+        ];
+        for (status, expected_ids) in cases {
+            let result = usage
+                .page(
+                    TenantUsageFilter {
+                        tenant_id: Some("expiry-probe-"),
+                        expiration_status: Some(status),
+                        ..Default::default()
+                    },
+                    &page,
+                    calculated_at,
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            let ids: Vec<_> = result
+                .records
+                .iter()
+                .map(|tenant| tenant.tenant_id.as_str())
+                .collect();
+            assert_eq!(ids.as_slice(), expected_ids, "{status}");
+            assert_eq!(result.total, expected_ids.len() as u64, "{status}");
+            for tenant in result.records {
+                assert_eq!(
+                    expiration_status(&tenant, calculated_at),
+                    status,
+                    "{}",
+                    tenant.tenant_id
+                );
+            }
+        }
+        Ok(())
+    })
+    .await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn user_detail_loads_department_with_tenant_and_data_scope() {
     run_mysql_test("user-department", |database| async move {

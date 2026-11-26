@@ -1,10 +1,10 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::DateTime;
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use serde::Serialize;
-use time::OffsetDateTime;
+use time::{Duration, OffsetDateTime};
 
 use crate::ports::tenants::{
     TenantCapacityRecord, TenantUsageAggregateRecord, TenantUsageFilter, TenantUsagePersistencePort,
@@ -126,7 +126,7 @@ impl TenantUsageService {
                 "筛选租户容量状态需要租户用量查看权限".into(),
             ));
         }
-        let calculated_at = Utc::now();
+        let calculated_at = OffsetDateTime::now_utc();
         let result = self
             .persistence
             .page(
@@ -154,7 +154,7 @@ impl TenantUsageService {
                 let tenant_usage = usage.remove(&tenant.tenant_id);
                 tenant_capacity_vo(tenant, tenant_usage, calculated_at)
             })
-            .collect();
+            .collect::<AppResult<Vec<_>>>()?;
         Ok(PageResult::new(records, result.total, page))
     }
 
@@ -178,7 +178,7 @@ impl TenantUsageService {
         } else {
             None
         };
-        Ok(tenant_capacity_vo(tenant, usage, Utc::now()))
+        tenant_capacity_vo(tenant, usage, OffsetDateTime::now_utc())
     }
 
     pub async fn usage(&self, actor: &ActorContext, tenant_id: &str) -> AppResult<TenantUsageVo> {
@@ -307,29 +307,36 @@ impl TenantUsageService {
 fn tenant_capacity_vo(
     tenant: TenantCapacityRecord,
     usage: Option<TenantUsageVo>,
-    now: DateTime<Utc>,
-) -> TenantCapacityVo {
+    now: OffsetDateTime,
+) -> AppResult<TenantCapacityVo> {
     let capacity_status = usage.as_ref().map(capacity_status);
-    TenantCapacityVo {
+    Ok(TenantCapacityVo {
         expiration_status: expiration_status(&tenant, now).to_owned(),
         capacity_status,
-        tenant: tenant_vo(tenant),
+        tenant: tenant_vo(tenant)?,
         usage,
-    }
+    })
 }
 
-fn tenant_vo(tenant: TenantCapacityRecord) -> TenantVo {
-    TenantVo {
+fn tenant_vo(tenant: TenantCapacityRecord) -> AppResult<TenantVo> {
+    let expire_at = tenant
+        .expire_at
+        .map(|value| {
+            DateTime::from_timestamp(value.unix_timestamp(), value.nanosecond())
+                .ok_or_else(|| AppError::Database("租户到期时间无法精确表示为 UTC".into()))
+        })
+        .transpose()?;
+    Ok(TenantVo {
         tenant_id: tenant.tenant_id,
         name: tenant.name,
         domain: tenant.domain,
         status: tenant.status,
-        expire_at: tenant.expire_at,
+        expire_at,
         max_users: tenant.max_users,
         max_roles: tenant.max_roles,
         max_storage_mb: tenant.max_storage_mb,
         max_requests_per_min: tenant.max_requests_per_min,
-    }
+    })
 }
 
 fn tenant_usage_vo(
@@ -414,11 +421,11 @@ fn capacity_status(usage: &TenantUsageVo) -> String {
     "unlimited".to_owned()
 }
 
-pub fn expiration_status(tenant: &TenantCapacityRecord, now: DateTime<Utc>) -> &'static str {
+pub fn expiration_status(tenant: &TenantCapacityRecord, now: OffsetDateTime) -> &'static str {
     match tenant.expire_at {
         None => "never",
         Some(expire_at) if expire_at <= now => "expired",
-        Some(expire_at) if expire_at <= now + chrono::Duration::days(30) => "expiring",
+        Some(expire_at) if expire_at <= now.saturating_add(Duration::days(30)) => "expiring",
         Some(_) => "active",
     }
 }

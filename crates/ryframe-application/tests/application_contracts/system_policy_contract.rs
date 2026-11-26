@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 
-use chrono::{Duration, TimeZone, Utc};
 use ryframe_application::{
     jobs::{normalize_job_status_filter, public_job_error},
     ports::{
@@ -60,7 +59,7 @@ fn file_reservation(status: &str, expires_at: OffsetDateTime) -> FileCleanupReco
     }
 }
 
-fn tenant(expire_at: Option<chrono::DateTime<Utc>>) -> TenantCapacityRecord {
+fn tenant(expire_at: Option<OffsetDateTime>) -> TenantCapacityRecord {
     TenantCapacityRecord {
         tenant_id: "tenant-a".into(),
         name: "测试租户".into(),
@@ -400,15 +399,18 @@ fn tenant_quota_and_expiration_boundaries_are_stable() {
     assert_eq!(quota_status(90, 100), "critical");
     assert_eq!(quota_status(100, 100), "exceeded");
     assert_eq!(percentage_basis_points(1, 3), Some(3333));
-    let now = Utc::now();
+    let now = datetime!(2026-08-21 00:30:00 +05:30);
     assert_eq!(expiration_status(&tenant(None), now), "never");
-    assert_eq!(expiration_status(&tenant(Some(now)), now), "expired");
     assert_eq!(
-        expiration_status(&tenant(Some(now + Duration::days(30))), now),
+        expiration_status(&tenant(Some(now.to_offset(time::UtcOffset::UTC))), now),
+        "expired"
+    );
+    assert_eq!(
+        expiration_status(&tenant(Some(now + TimeDuration::days(30))), now),
         "expiring"
     );
     assert_eq!(
-        expiration_status(&tenant(Some(now + Duration::days(31))), now),
+        expiration_status(&tenant(Some(now + TimeDuration::days(31))), now),
         "active"
     );
 }
