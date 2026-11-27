@@ -1,5 +1,5 @@
-use chrono::{DateTime, Utc};
 use serde_json::Value;
+use time::OffsetDateTime;
 
 use crate::entities::{message, message_recipient};
 
@@ -43,8 +43,8 @@ pub struct PublishMessageCommand {
     pub source_type: Option<String>,
     pub source_id: Option<String>,
     pub created_by: i64,
-    pub published_at: DateTime<Utc>,
-    pub expires_at: DateTime<Utc>,
+    pub published_at: OffsetDateTime,
+    pub expires_at: OffsetDateTime,
     pub audiences: Vec<MessageAudienceSelector>,
 }
 
@@ -79,5 +79,5 @@ pub struct MessageInboxQuery<'a> {
     pub limit: u64,
     pub unread_only: bool,
     pub unacknowledged_only: bool,
-    pub now: DateTime<Utc>,
+    pub now: OffsetDateTime,
 }

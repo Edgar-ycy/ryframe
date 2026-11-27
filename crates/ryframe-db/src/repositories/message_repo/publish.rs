@@ -1,13 +1,13 @@
 use crate::DbResultExt;
 use std::collections::BTreeSet;
 
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::sea_query::{Expr, Order, Query};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, Condition, ConnectionTrait,
     DatabaseTransaction, EntityTrait, PaginatorTrait, QueryFilter, QuerySelect, QueryTrait,
 };
+use time::OffsetDateTime;
 
 use crate::entities::{message, message_audience, message_recipient, role, user, user_role};
 
@@ -219,10 +219,10 @@ async fn insert_recipient_snapshot(
         .column(user::Column::Id)
         .expr(Expr::value(message.tenant_id.clone()))
         .expr(Expr::value(message.published_at))
-        .expr(Expr::value(Option::<DateTime<Utc>>::None))
-        .expr(Expr::value(Option::<DateTime<Utc>>::None))
-        .expr(Expr::value(Option::<DateTime<Utc>>::None))
-        .expr(Expr::value(Option::<DateTime<Utc>>::None))
+        .expr(Expr::value(Option::<OffsetDateTime>::None))
+        .expr(Expr::value(Option::<OffsetDateTime>::None))
+        .expr(Expr::value(Option::<OffsetDateTime>::None))
+        .expr(Expr::value(Option::<OffsetDateTime>::None))
         .from(user::Entity)
         .and_where(user::Column::TenantId.eq(&message.tenant_id))
         .and_where(user::Column::Status.eq(user::Model::STATUS_NORMAL))

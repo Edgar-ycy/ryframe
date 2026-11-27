@@ -54,6 +54,9 @@ mod initialization;
 #[path = "mysql_real_protocol/job_attempts.rs"]
 mod job_attempts;
 #[cfg(feature = "migration")]
+#[path = "mysql_real_protocol/message_sql.rs"]
+mod message_sql;
+#[cfg(feature = "migration")]
 #[path = "mysql_real_protocol/notice_data_scope.rs"]
 mod notice_data_scope;
 #[cfg(feature = "migration")]

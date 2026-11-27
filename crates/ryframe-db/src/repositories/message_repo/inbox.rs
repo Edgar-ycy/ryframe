@@ -1,11 +1,11 @@
 use crate::DbResultExt;
-use chrono::{DateTime, Utc};
 use ryframe_kernel::AppResult;
 use sea_orm::sea_query::{Expr, SelectStatement};
 use sea_orm::{
     ColumnTrait, Condition, ConnectionTrait, DatabaseConnection, EntityTrait, PaginatorTrait,
     QueryFilter, QueryOrder, QuerySelect, QueryTrait,
 };
+use time::OffsetDateTime;
 
 use crate::entities::{message, message_recipient};
 
@@ -78,7 +78,7 @@ impl MessageRepository {
         &self,
         db: &DatabaseConnection,
         message_id: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<Vec<RecipientMessage>> {
         self.unacknowledged_recipients_for_message_for_users(db, message_id, None, now)
             .await
@@ -90,7 +90,7 @@ impl MessageRepository {
         db: &DatabaseConnection,
         message_id: i64,
         user_ids: &[i64],
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<Vec<RecipientMessage>> {
         self.unacknowledged_recipients_for_message_for_users(db, message_id, Some(user_ids), now)
             .await
@@ -101,7 +101,7 @@ impl MessageRepository {
         db: &DatabaseConnection,
         message_id: i64,
         user_ids: Option<&[i64]>,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<Vec<RecipientMessage>> {
         if user_ids.is_some_and(|ids| ids.is_empty()) {
             return Ok(Vec::new());
@@ -146,7 +146,7 @@ impl MessageRepository {
         db: &DatabaseConnection,
         tenant_id: &str,
         user_id: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<u64> {
         message_recipient::Entity::find()
             .inner_join(message::Entity)
@@ -173,7 +173,7 @@ impl MessageRepository {
         tenant_id: &str,
         user_id: i64,
         message_ids: &[i64],
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<u64>
     where
         C: ConnectionTrait,
@@ -203,7 +203,7 @@ impl MessageRepository {
         &self,
         db: &C,
         message_id: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<u64>
     where
         C: ConnectionTrait,
@@ -226,7 +226,7 @@ impl MessageRepository {
         tenant_id: &str,
         user_id: i64,
         message_id: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<bool>
     where
         C: ConnectionTrait,
@@ -279,7 +279,7 @@ impl MessageRepository {
         db: &C,
         tenant_id: &str,
         user_id: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<u64>
     where
         C: ConnectionTrait,
@@ -314,7 +314,7 @@ impl MessageRepository {
         tenant_id: &str,
         user_id: i64,
         message_ids: &[i64],
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<u64>
     where
         C: ConnectionTrait,
@@ -338,7 +338,7 @@ impl MessageRepository {
     pub async fn delete_expired_batch<C>(
         &self,
         db: &C,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
         batch_size: u64,
     ) -> AppResult<u64>
     where
@@ -366,7 +366,7 @@ impl MessageRepository {
     }
 }
 
-fn active_message_id_subquery(tenant_id: &str, now: DateTime<Utc>) -> SelectStatement {
+fn active_message_id_subquery(tenant_id: &str, now: OffsetDateTime) -> SelectStatement {
     message::Entity::find()
         .select_only()
         .column(message::Column::Id)

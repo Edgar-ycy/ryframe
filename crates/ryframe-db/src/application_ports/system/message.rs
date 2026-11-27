@@ -8,7 +8,7 @@ use crate::{
     entities::message,
 };
 use sea_orm::{EntityTrait, TransactionTrait};
-use time::OffsetDateTime;
+use time::{OffsetDateTime, UtcOffset};
 
 use ryframe_application::{
     PersistenceTransaction, TransactionAuditMode,
@@ -52,11 +52,7 @@ impl MessagePersistencePort for DatabaseMessagePersistence {
             )
             .await?;
         Ok(MessagePage {
-            records: page
-                .records
-                .into_iter()
-                .map(to_recipient_record)
-                .collect::<ryframe_kernel::AppResult<_>>()?,
+            records: page.records.into_iter().map(to_recipient_record).collect(),
             next_cursor: page.next_cursor,
         })
     }
@@ -85,7 +81,7 @@ impl MessagePersistencePort for DatabaseMessagePersistence {
                     .await?
             }
         };
-        records.into_iter().map(to_recipient_record).collect()
+        Ok(records.into_iter().map(to_recipient_record).collect())
     }
 
     async fn unread_count<'a>(
@@ -104,12 +100,11 @@ impl MessagePersistencePort for DatabaseMessagePersistence {
         &self,
         message_id: i64,
     ) -> ryframe_kernel::AppResult<Option<MessageRecord>> {
-        message::Entity::find_by_id(message_id)
+        Ok(message::Entity::find_by_id(message_id)
             .one(self.database.write())
             .await
             .db()?
-            .map(to_message_record)
-            .transpose()
+            .map(to_message_record))
     }
 
     async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn MessageTransaction>> {
@@ -162,7 +157,7 @@ impl MessageTransaction for DatabaseMessageTransaction {
         let tenant_id = std::mem::take(&mut published.message.tenant_id);
         Ok(PublishedMessageRecord {
             tenant_id,
-            message: to_message_record(published.message)?,
+            message: to_message_record(published.message),
             recipient_count: published.recipient_count,
             inserted: published.inserted,
         })
@@ -285,38 +280,24 @@ impl PersistenceTransaction for DatabaseMessageTransaction {
     }
 }
 
-fn to_persistence_time(
-    instant: OffsetDateTime,
-) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
-    chrono::DateTime::from_timestamp(instant.unix_timestamp(), instant.nanosecond()).ok_or_else(
-        || ryframe_kernel::AppError::Database("消息持久化时间无法精确表示为 UTC".into()),
-    )
-}
-
-fn to_recipient_record(
-    record: RecipientMessage,
-) -> ryframe_kernel::AppResult<MessageRecipientRecord> {
-    Ok(MessageRecipientRecord {
-        tenant_id: record.recipient.tenant_id,
-        user_id: record.recipient.user_id,
-        acked_at: record
-            .recipient
-            .acked_at
-            .map(crate::repositories::utc_time_from_chrono)
-            .transpose()
-            .db_context("读取消息确认时间")?,
-        read_at: record
-            .recipient
-            .read_at
-            .map(crate::repositories::utc_time_from_chrono)
-            .transpose()
-            .db_context("读取消息已读时间")?,
-        message: to_message_record(record.message)?,
+fn to_persistence_time(instant: OffsetDateTime) -> ryframe_kernel::AppResult<OffsetDateTime> {
+    instant.checked_to_offset(UtcOffset::UTC).ok_or_else(|| {
+        ryframe_kernel::AppError::Database("消息持久化时间无法精确表示为 UTC".into())
     })
 }
 
-fn to_message_record(message: message::Model) -> ryframe_kernel::AppResult<MessageRecord> {
-    Ok(MessageRecord {
+fn to_recipient_record(record: RecipientMessage) -> MessageRecipientRecord {
+    MessageRecipientRecord {
+        tenant_id: record.recipient.tenant_id,
+        user_id: record.recipient.user_id,
+        acked_at: record.recipient.acked_at,
+        read_at: record.recipient.read_at,
+        message: to_message_record(record.message),
+    }
+}
+
+fn to_message_record(message: message::Model) -> MessageRecord {
+    MessageRecord {
         id: message.id,
         topic: message.topic,
         title_text: message.title_text,
@@ -326,12 +307,7 @@ fn to_message_record(message: message::Model) -> ryframe_kernel::AppResult<Messa
         args_json: message.args_json,
         severity: message.severity,
         payload_json: message.payload_json,
-        published_at: crate::repositories::utc_time_from_chrono(message.published_at)
-            .db_context("读取消息发布时间")?,
-        expires_at: message
-            .expires_at
-            .map(crate::repositories::utc_time_from_chrono)
-            .transpose()
-            .db_context("读取消息过期时间")?,
-    })
+        published_at: message.published_at,
+        expires_at: message.expires_at,
+    }
 }
