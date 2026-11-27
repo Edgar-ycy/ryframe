@@ -53,6 +53,14 @@ pub(crate) fn rfc3339_order_key(value: &str) -> crate::Result<(i64, u32)> {
 }
 
 pub(crate) fn normalize_rfc3339_utc(value: &str) -> crate::Result<String> {
+    normalize_rfc3339(value, Precision::AutoSi)
+}
+
+pub(crate) fn normalize_rfc3339_seconds_or_micros(value: &str) -> crate::Result<String> {
+    normalize_rfc3339(value, Precision::SecondsOrMicros)
+}
+
+fn normalize_rfc3339(value: &str, precision: Precision) -> crate::Result<String> {
     const NANOS_PER_SECOND: u32 = 1_000_000_000;
     const DAY_SECONDS: i64 = time::Duration::days(1).whole_seconds();
     const FIRST_EXTENDED_YEAR: i64 =
@@ -69,7 +77,12 @@ pub(crate) fn normalize_rfc3339_utc(value: &str) -> crate::Result<String> {
     };
     let instant = OffsetDateTime::from_unix_timestamp(represented_seconds)?
         .replace_nanosecond(nanos % NANOS_PER_SECOND)?;
-    let mut output = rfc3339(instant);
+    let precision = match (precision, leap_second) {
+        // 旧对象证据将闰秒的子秒部分计为至少一百万微秒，始终输出六位。
+        (Precision::SecondsOrMicros, true) => Precision::Micros,
+        (precision, _) => precision,
+    };
+    let mut output = encode(instant, precision, "+00:00");
     if leap_second || extended_year {
         let separator = output.find('T').ok_or("UTC 时间缺少固定分隔符")?;
         if leap_second {
@@ -274,6 +287,44 @@ mod tests {
             assert_eq!(normalize_rfc3339_utc(input).unwrap(), expected, "{input}");
         }
         assert!(normalize_rfc3339_utc("1970-01-01T00:00:00").is_err());
+    }
+
+    #[test]
+    fn normalized_object_time_preserves_seconds_micros_and_leap_seconds() {
+        for (input, expected) in [
+            (
+                "1970-01-01T00:00:00.000000999Z",
+                "1970-01-01T00:00:00+00:00",
+            ),
+            (
+                "1970-01-01T01:30:00.000001999+01:30",
+                "1970-01-01T00:00:00.000001+00:00",
+            ),
+            ("1969-12-31T23:59:60Z", "1969-12-31T23:59:60.000000+00:00"),
+            (
+                "1970-01-01T00:01:60.123456789+00:02",
+                "1969-12-31T23:59:60.123456+00:00",
+            ),
+            (
+                "9999-12-31T23:59:60.01-00:01",
+                "+10000-01-01T00:00:60.010000+00:00",
+            ),
+        ] {
+            let old = chrono::DateTime::parse_from_rfc3339(input)
+                .unwrap()
+                .to_utc();
+            let precision = if old.timestamp_subsec_micros() == 0 {
+                chrono::SecondsFormat::Secs
+            } else {
+                chrono::SecondsFormat::Micros
+            };
+            assert_eq!(old.to_rfc3339_opts(precision, false), expected, "{input}");
+            assert_eq!(
+                normalize_rfc3339_seconds_or_micros(input).unwrap(),
+                expected,
+                "{input}"
+            );
+        }
     }
 
     #[test]

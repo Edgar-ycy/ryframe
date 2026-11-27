@@ -1,11 +1,10 @@
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, SecondsFormat, Utc};
 use regex::Regex;
 use serde_json::{Map, Value};
 
 use super::json;
-use crate::Result;
+use crate::{Result, utc_timestamp::normalize_rfc3339_utc};
 
 const FIELDS: &[&str] = &[
     "ContentType",
@@ -75,16 +74,9 @@ pub(crate) fn copy(value: &Value) -> Result<Value> {
         if !pattern.is_match(expires) {
             return Err("复制对象 Expires 必须是带时区且精确到秒的 RFC3339".into());
         }
-        let instant = DateTime::parse_from_rfc3339(expires)
+        let instant = normalize_rfc3339_utc(expires)
             .map_err(|_| "复制对象 Expires 必须是带时区且精确到秒的 RFC3339")?;
-        result.insert(
-            "Expires".into(),
-            Value::String(
-                instant
-                    .with_timezone(&Utc)
-                    .to_rfc3339_opts(SecondsFormat::Secs, false),
-            ),
-        );
+        result.insert("Expires".into(), Value::String(instant));
     }
     let custom = object
         .get("Metadata")

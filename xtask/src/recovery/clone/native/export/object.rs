@@ -1,6 +1,5 @@
 use std::{collections::BTreeMap, fs, path::Path};
 
-use chrono::DateTime;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -443,7 +442,7 @@ fn ensure_same_identity(head: &Value, get: &Value) -> Result<()> {
 
 fn normalized_time(value: &Value) -> Result<String> {
     let value = value.as_str().ok_or("对象 LastModified 必须为字符串")?;
-    Ok(DateTime::parse_from_rfc3339(value)?.to_utc().to_rfc3339())
+    crate::utc_timestamp::normalize_rfc3339_utc(value)
 }
 
 fn header_fields(value: &Value) -> BTreeMap<String, Value> {

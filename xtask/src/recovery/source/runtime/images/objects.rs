@@ -1,7 +1,6 @@
 //! 完整像只重读既有对象证据；不向 S3 请求，不赋予当前资源或复制成功资格。
 use std::{collections::BTreeMap, fs, io::ErrorKind, path::Path};
 
-use chrono::{DateTime, SecondsFormat};
 use serde_json::{Value, json};
 
 use crate::{
@@ -262,22 +261,18 @@ pub(in crate::recovery) fn inspect(value: &Value) -> Result<Value> {
             return Err("对象版本标识无效".into());
         }
     }
-    let time =
-        DateTime::parse_from_rfc3339(document::text(&value["LastModified"], "对象修改时间")?)
-            .map_err(|_| "对象修改时间必须带明确时区")?
-            .to_utc();
-    let precision = if time.timestamp_subsec_micros() == 0 {
-        SecondsFormat::Secs
-    } else {
-        SecondsFormat::Micros
-    };
+    let modified = crate::utc_timestamp::normalize_rfc3339_seconds_or_micros(document::text(
+        &value["LastModified"],
+        "对象修改时间",
+    )?)
+    .map_err(|_| "对象修改时间必须带明确时区")?;
     let copy = COPY
         .iter()
         .map(|name| ((*name).to_owned(), value[*name].clone()))
         .collect();
     Ok(
         json!({"metadata":metadata::copy(&Value::Object(copy))?,"identity":{
-        "ContentLength":value["ContentLength"],"ETag":etag,"LastModified":time.to_rfc3339_opts(precision,false),
+        "ContentLength":value["ContentLength"],"ETag":etag,"LastModified":modified,
         "VersionId":value.get("VersionId").cloned().unwrap_or(Value::Null)}}),
     )
 }
