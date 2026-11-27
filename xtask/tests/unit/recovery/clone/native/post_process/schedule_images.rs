@@ -16,6 +16,19 @@ const UUID: &str = "67cd8d4a-fe90-11ef-98fd-5847ca786499";
 const ID: i64 = 9012345678901234567;
 const AT: &str = "2026-11-09 10:00:00.000001";
 
+#[test]
+fn database_clock_rejects_year_zero_and_leap_seconds() {
+    assert!(database_time(&json!("0001-01-01 00:00:00")).is_ok());
+    assert!(database_time(&json!("9999-12-31 23:59:59.999999")).is_ok());
+    for value in [
+        "0000-12-31 23:59:59",
+        "1969-12-31 23:59:60",
+        "2026-11-09T10:00:00",
+    ] {
+        assert!(database_time(&json!(value)).is_err(), "{value}");
+    }
+}
+
 pub(in crate::recovery::clone::native::post_process) fn before() -> Value {
     json!({"database_now":AT,"row":{
         "id":ID,"tenant_id":"system","name":"调度夹具","handler_key":"system.cleanup",

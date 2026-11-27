@@ -12,7 +12,6 @@ use std::{
     time::Duration,
 };
 
-use chrono::NaiveDateTime;
 use serde_json::{Map, Value, json};
 
 use super::super::{
@@ -32,7 +31,11 @@ use super::super::{
         storage::StorageInputs,
     },
 };
-use crate::{Result, cli::CloneSide};
+use crate::{
+    Result,
+    cli::CloneSide,
+    utc_timestamp::{UtcOrderKey, mysql_datetime_key, mysql_datetime_micros},
+};
 
 const ACTION_FIELDS: &[&str] = &[
     "action",
@@ -43,7 +46,6 @@ const ACTION_FIELDS: &[&str] = &[
     "source_row_sha256",
 ];
 const CHANGED_FIELDS: &[&str] = &["enabled", "next_run_at", "version", "updated_at"];
-const UTC_FORMAT: &str = "%Y-%m-%d %H:%M:%S%.f";
 const SQL_UTC_FORMAT: &str = "%Y-%m-%d %H:%i:%s.%f";
 
 pub(in crate::recovery::clone::native) fn action_input(pending: &Value) -> Result<Value> {
@@ -136,7 +138,7 @@ fn columns(execution: &Path) -> Result<Columns> {
         .ok_or_else(|| "控制库 catalog 缺少调度完整列".into())
 }
 
-fn observation(value: &Value, columns: &Columns) -> Result<(NaiveDateTime, Row)> {
+fn observation(value: &Value, columns: &Columns) -> Result<(UtcOrderKey, Row)> {
     document::exact(value, &["database_now", "row"], "目标调度完整读取")?;
     let current = database_time(&value["database_now"])?;
     let fields = document::object(&value["row"], "目标调度完整行")?;
@@ -155,11 +157,9 @@ fn observation(value: &Value, columns: &Columns) -> Result<(NaiveDateTime, Row)>
                         .ok_or("调度数据库整数列必须为明确整数")?
                         .to_string(),
                 ),
-                ("DATETIME", value) => SqlValue::Text(
-                    database_time(value)?
-                        .format("%Y-%m-%d %H:%M:%S%.6f")
-                        .to_string(),
-                ),
+                ("DATETIME", value) => {
+                    SqlValue::Text(mysql_datetime_micros(database_time(value)?)?)
+                }
                 ("CHAR" | "VARCHAR", Value::String(value)) => SqlValue::Text(value.clone()),
                 _ => return Err("调度完整行列类型与控制库 catalog 不一致".into()),
             };
@@ -169,39 +169,26 @@ fn observation(value: &Value, columns: &Columns) -> Result<(NaiveDateTime, Row)>
     Ok((current, row))
 }
 
-fn database_time(value: &Value) -> Result<NaiveDateTime> {
+fn database_time(value: &Value) -> Result<UtcOrderKey> {
     let value = document::text(value, "数据库 UTC 时间")?;
-    let (seconds, fraction) = value
-        .split_once('.')
-        .map_or((value, None), |(s, f)| (s, Some(f)));
-    if seconds.len() != 19
-        || !seconds.is_ascii()
-        || seconds.starts_with("0000")
-        || seconds.ends_with(":60")
-        || fraction
-            .is_some_and(|f| f.is_empty() || f.len() > 6 || !f.bytes().all(|b| b.is_ascii_digit()))
-    {
+    let seconds = value.split_once('.').map_or(value, |(seconds, _)| seconds);
+    if seconds.starts_with("0000") || seconds.ends_with(":60") {
         return Err("调度核对只接受数据库 UTC 的无时区 DATETIME".into());
     }
-    let parsed = NaiveDateTime::parse_from_str(value, UTC_FORMAT)?;
-    if parsed.format("%Y-%m-%d %H:%M:%S").to_string() != seconds {
+    let parsed = mysql_datetime_key(value)?;
+    if mysql_datetime_micros(parsed)?.get(..19) != Some(seconds) {
         return Err("数据库 UTC 日期必须使用明确的日期与空格分隔格式".into());
     }
     Ok(parsed)
 }
 
-fn disabled(
-    old: &Row,
-    current: &Row,
-    started: NaiveDateTime,
-    finished: NaiveDateTime,
-) -> Result<bool> {
+fn disabled(old: &Row, current: &Row, started: UtcOrderKey, finished: UtcOrderKey) -> Result<bool> {
     let version = old["version"]
         .integer()
         .and_then(|value| value.checked_add(1))
         .ok_or("原调度版本无法递增")?;
     let updated = match &current["updated_at"] {
-        SqlValue::Text(value) => NaiveDateTime::parse_from_str(value, UTC_FORMAT)?,
+        SqlValue::Text(value) => mysql_datetime_key(value)?,
         _ => return Ok(false),
     };
     Ok(current["enabled"].integer() == Some(0)

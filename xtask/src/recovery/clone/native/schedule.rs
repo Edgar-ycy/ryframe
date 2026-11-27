@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 
-use chrono::NaiveDateTime;
 use regex::Regex;
 use serde_json::{Value, json};
 
@@ -9,7 +8,10 @@ use super::{
     json::{array, exact, text},
     sql::{Row, SqlValue},
 };
-use crate::Result;
+use crate::{
+    Result,
+    utc_timestamp::{mysql_datetime_key, mysql_datetime_micros},
+};
 
 const DATE_COLUMNS: &[&str] = &["next_run_at", "last_run_at", "created_at", "updated_at"];
 pub(crate) const TRIGGERS: &[&str] = &["scheduled", "misfire", "manual"];
@@ -158,22 +160,16 @@ pub(crate) fn inspect(
 }
 
 pub(crate) fn row_sha256(row: &Row) -> Result<String> {
-    let date = Regex::new(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?$")?;
     let mut entries = Vec::with_capacity(row.len());
     for (name, value) in row {
         let canonical = if DATE_COLUMNS.contains(&name.as_str()) {
             match value {
                 SqlValue::Null => json!(["null"]),
                 SqlValue::Text(value) => {
-                    if !date.is_match(value) {
-                        return Err("完整调度行的 UTC 日期格式无效".into());
-                    }
-                    let parsed = NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S%.f")
+                    let canonical = mysql_datetime_key(value)
+                        .and_then(mysql_datetime_micros)
                         .map_err(|_| "完整调度行的日期类型无效")?;
-                    json!([
-                        "datetime-utc",
-                        parsed.format("%Y-%m-%d %H:%M:%S%.6f").to_string()
-                    ])
+                    json!(["datetime-utc", canonical])
                 }
                 _ => return Err("完整调度行的日期类型无效".into()),
             }

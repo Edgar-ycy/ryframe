@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Recovery job timing, schedule row digests, and disable verification share UTC microsecond encoding and preserve each entry point’s time range.
+
 - Object copying, export, and full snapshots use the shared UTC encoder and preserve existing header validation and receipt precision.
 
 - DevEx save measurements use the shared UTC encoder for sample start times and preserve the existing record format and historical precision.

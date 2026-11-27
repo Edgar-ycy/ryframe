@@ -6,8 +6,10 @@ use super::{
     schedule::{TRIGGERS, normalize_decimal},
     sql::{Row, SqlValue},
 };
-use crate::Result;
-use chrono::NaiveDateTime;
+use crate::{
+    Result,
+    utc_timestamp::{UtcOrderKey, mysql_datetime_key, rfc3339_order_key},
+};
 use regex::Regex;
 use serde_json::Value;
 
@@ -350,9 +352,9 @@ fn validate_system_cleanup(job: &Row, execution: &Row, schedule: Option<&Row>) -
     }
     validate_state("sys_background_job", job)?;
     validate_state("sys_job_schedule_execution", execution)?;
-    let scheduled = timing(execution.get("scheduled_for"), false)?;
-    if timing(job.get("scheduled_for"), false)? != scheduled
-        || timing(job.get("completed_at"), false)? < scheduled
+    let scheduled = timing(execution.get("scheduled_for"))?;
+    if timing(job.get("scheduled_for"))? != scheduled
+        || timing(job.get("completed_at"))? < scheduled
     {
         return Err("平台维护父任务的计划时间或完成时间不匹配".into());
     }
@@ -378,32 +380,20 @@ fn validate_system_cleanup(job: &Row, execution: &Row, schedule: Option<&Row>) -
     Ok(())
 }
 
-fn timing(value: Option<&SqlValue>, payload: bool) -> Result<NaiveDateTime> {
-    let value = value
-        .and_then(SqlValue::text)
-        .ok_or("平台维护关联时间必须是完整 UTC 微秒时间，不截断未知精度")?;
-    parse_timing(value, payload)
+const TIMING_FORMAT: &str = "平台维护关联时间必须是完整 UTC 微秒时间，不截断未知精度";
+
+fn timing(value: Option<&SqlValue>) -> Result<UtcOrderKey> {
+    let value = value.and_then(SqlValue::text).ok_or(TIMING_FORMAT)?;
+    mysql_datetime_key(value).map_err(|_| TIMING_FORMAT.into())
 }
 
-fn timing_json(value: Option<&Value>) -> Result<NaiveDateTime> {
-    let value = value
-        .and_then(Value::as_str)
-        .ok_or("平台维护关联时间必须是完整 UTC 微秒时间，不截断未知精度")?;
-    parse_timing(value, true)
-}
-
-fn parse_timing(value: &str, payload: bool) -> Result<NaiveDateTime> {
-    let pattern = if payload {
-        r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$"
-    } else {
-        r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?$"
-    };
-    if !Regex::new(pattern)?.is_match(value) {
-        return Err("平台维护关联时间必须是完整 UTC 微秒时间，不截断未知精度".into());
+fn timing_json(value: Option<&Value>) -> Result<UtcOrderKey> {
+    let value = value.and_then(Value::as_str).ok_or(TIMING_FORMAT)?;
+    let pattern = Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$")?;
+    if !pattern.is_match(value) {
+        return Err(TIMING_FORMAT.into());
     }
-    let value = value.strip_suffix('Z').unwrap_or(value).replace('T', " ");
-    NaiveDateTime::parse_from_str(&value, "%Y-%m-%d %H:%M:%S%.f")
-        .map_err(|_| "平台维护关联时间必须是完整 UTC 微秒时间，不截断未知精度".into())
+    rfc3339_order_key(value).map_err(|_| TIMING_FORMAT.into())
 }
 
 fn positive_id(value: &SqlValue) -> Result<String> {

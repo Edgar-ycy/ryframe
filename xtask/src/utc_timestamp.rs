@@ -10,6 +10,8 @@ enum Precision {
     SecondsOrMicros,
 }
 
+pub(crate) type UtcOrderKey = (i64, u32);
+
 pub(crate) fn rfc3339(value: OffsetDateTime) -> String {
     encode(value, Precision::AutoSi, "+00:00")
 }
@@ -18,12 +20,12 @@ pub(crate) fn now_rfc3339() -> String {
     rfc3339(time::OffsetDateTime::now_utc())
 }
 
-pub(crate) fn now_order_key() -> (i64, u32) {
+pub(crate) fn now_order_key() -> UtcOrderKey {
     let now = OffsetDateTime::now_utc();
     (now.unix_timestamp(), now.nanosecond())
 }
 
-pub(crate) fn rfc3339_order_key(value: &str) -> crate::Result<(i64, u32)> {
+pub(crate) fn rfc3339_order_key(value: &str) -> crate::Result<UtcOrderKey> {
     let bytes = value.as_bytes();
     if !matches!(bytes.get(10), Some(b'T' | b't' | b' ')) {
         return Err("RFC3339 日期时间分隔符无效".into());
@@ -52,6 +54,32 @@ pub(crate) fn rfc3339_order_key(value: &str) -> crate::Result<(i64, u32)> {
     ))
 }
 
+pub(crate) fn mysql_datetime_key(value: &str) -> crate::Result<UtcOrderKey> {
+    let (seconds, fraction) = value
+        .split_once('.')
+        .map_or((value, None), |(seconds, fraction)| {
+            (seconds, Some(fraction))
+        });
+    if seconds.len() != 19
+        || seconds.as_bytes()[10] != b' '
+        || fraction.is_some_and(|f| {
+            f.is_empty() || f.len() > 6 || !f.bytes().all(|byte| byte.is_ascii_digit())
+        })
+    {
+        return Err("数据库 UTC DATETIME 必须使用空格分隔并保留最多六位小数".into());
+    }
+    rfc3339_order_key(&format!("{value}Z"))
+}
+
+pub(crate) fn mysql_datetime_micros(key: UtcOrderKey) -> crate::Result<String> {
+    let utc = encode_rfc3339_key(key, Precision::Micros)?;
+    let (date, clock) = utc
+        .strip_suffix("+00:00")
+        .and_then(|value| value.split_once('T'))
+        .ok_or("数据库 UTC DATETIME 无法按固定微秒格式输出")?;
+    Ok(format!("{date} {clock}"))
+}
+
 pub(crate) fn normalize_rfc3339_utc(value: &str) -> crate::Result<String> {
     normalize_rfc3339(value, Precision::AutoSi)
 }
@@ -61,12 +89,18 @@ pub(crate) fn normalize_rfc3339_seconds_or_micros(value: &str) -> crate::Result<
 }
 
 fn normalize_rfc3339(value: &str, precision: Precision) -> crate::Result<String> {
+    encode_rfc3339_key(rfc3339_order_key(value)?, precision)
+}
+
+fn encode_rfc3339_key(
+    (seconds, nanos): UtcOrderKey,
+    precision: Precision,
+) -> crate::Result<String> {
     const NANOS_PER_SECOND: u32 = 1_000_000_000;
     const DAY_SECONDS: i64 = time::Duration::days(1).whole_seconds();
     const FIRST_EXTENDED_YEAR: i64 =
         time::macros::datetime!(9999-12-31 00:00 UTC).unix_timestamp() + DAY_SECONDS;
 
-    let (seconds, nanos) = rfc3339_order_key(value)?;
     let leap_second = nanos >= NANOS_PER_SECOND;
     let extended_year = (FIRST_EXTENDED_YEAR..FIRST_EXTENDED_YEAR + DAY_SECONDS).contains(&seconds);
     // 四位年份及合法偏移最多跨到下一年的第一天，借用前一天的相同 UTC 时分秒输出。
@@ -324,6 +358,39 @@ mod tests {
                 expected,
                 "{input}"
             );
+        }
+    }
+
+    #[test]
+    fn mysql_datetime_preserves_chrono_order_and_fixed_microsecond_bytes() {
+        for (input, expected) in [
+            ("0000-02-29 23:59:60", "0000-02-29 23:59:60.000000"),
+            ("0001-01-01 00:00:00", "0001-01-01 00:00:00.000000"),
+            ("1969-12-31 23:59:59.9", "1969-12-31 23:59:59.900000"),
+            ("1969-12-31 23:59:60.01", "1969-12-31 23:59:60.010000"),
+            ("1970-01-01 00:00:00.0001", "1970-01-01 00:00:00.000100"),
+            ("9999-12-31 23:59:60.999999", "9999-12-31 23:59:60.999999"),
+        ] {
+            let old = chrono::NaiveDateTime::parse_from_str(input, "%Y-%m-%d %H:%M:%S%.f").unwrap();
+            let canonical = mysql_datetime_key(input).unwrap();
+            assert_eq!(
+                canonical,
+                (
+                    old.and_utc().timestamp(),
+                    old.and_utc().timestamp_subsec_nanos()
+                )
+            );
+            assert_eq!(old.format("%Y-%m-%d %H:%M:%S%.6f").to_string(), expected);
+            assert_eq!(mysql_datetime_micros(canonical).unwrap(), expected);
+        }
+        for invalid in [
+            "1900-02-29 00:00:00",
+            "2026-01-01T00:00:00",
+            "2026-01-01 00:00:61",
+            "2026-01-01 00:00:00Z",
+            "2026-01-01 00:00:00.1234567",
+        ] {
+            assert!(mysql_datetime_key(invalid).is_err(), "{invalid}");
         }
     }
 
