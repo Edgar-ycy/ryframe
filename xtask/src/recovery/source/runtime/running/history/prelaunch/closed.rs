@@ -1,5 +1,5 @@
 //! 只有完整成功恢复收据才能封存原零启动失败；全部旧文件仍逐项读取。
-use super::{number, origin, partial, proof, reregistration};
+use super::{number, origin, partial, proof, reregistration, revalidated};
 use crate::recovery::source::evidence::images;
 use crate::{
     Result,
@@ -43,19 +43,40 @@ pub(in crate::recovery::source::evidence) fn closed(
             && row["status"] == "passed"
     }) {
         let value = common::read_bound(backend, &row["result"], "来源历史恢复结果")?;
-        if matches!(
-            value["status"].as_str(),
-            Some("seed_source_prelaunch_closed" | "seed_source_partial_prelaunch_closed")
-        ) {
+        if is_closure(&value) {
             matches.push((row, value));
         }
     }
-    if matches.is_empty() {
-        return Ok(Value::Null);
+    match matches.as_slice() {
+        [] => Ok(Value::Null),
+        [(record, value)] if value["status"] != revalidated::STATUS => {
+            read_original(backend, run, attempts, record, value)
+        }
+        [(first_record, first), (next_record, next)]
+            if first["status"] == "seed_source_partial_prelaunch_closed"
+                && next["status"] == revalidated::STATUS =>
+        {
+            let original = read_original(backend, run, attempts, first_record, first)?;
+            read_revalidated(backend, run, attempts, next_record, next, &original)
+        }
+        _ => Err("原未启动尝试不能重复封存恢复，后继完整前像收口必须继承原封存".into()),
     }
-    let [(record, value)] = matches.as_slice() else {
-        return Err("原未启动尝试不能重复封存恢复".into());
-    };
+}
+
+fn is_closure(value: &Value) -> bool {
+    matches!(
+        value["status"].as_str(),
+        Some("seed_source_prelaunch_closed" | "seed_source_partial_prelaunch_closed")
+    ) || value["status"] == revalidated::STATUS
+}
+
+fn read_original(
+    backend: &Path,
+    run: &Path,
+    attempts: &[Value],
+    record: &Value,
+    value: &Value,
+) -> Result<Value> {
     document::exact(value, FIELDS, "原未启动封存收据")?;
     let prefix = attempts
         .iter()
@@ -90,14 +111,67 @@ pub(in crate::recovery::source::evidence) fn closed(
     {
         return Err("未启动封存配置不属于同一恢复 attempt".into());
     }
-    let image = image(backend, &output, value)?;
+    let image = image(backend, &output, value, None)?;
     let index = prefix
         .iter()
         .position(|row| *row == start)
         .ok_or("封存原 START 不属于完整历史")?;
     let mut records = prefix[index..].to_vec();
-    records.push((*record).clone());
+    records.push(record.clone());
     Ok(json!({"start":start,"recovery":record,"records":records,"receipt":value,"image":image}))
+}
+
+fn read_revalidated(
+    backend: &Path,
+    run: &Path,
+    attempts: &[Value],
+    record: &Value,
+    receipt: &Value,
+    archive: &Value,
+) -> Result<Value> {
+    document::exact(receipt, FIELDS, "后继完整前像封存收据")?;
+    let index = attempts
+        .iter()
+        .position(|row| row == record)
+        .ok_or("后继封存不属于完整历史")?;
+    let prefix = &attempts[..index];
+    let recovery_number = number(record)?;
+    let original = revalidated::load(
+        backend,
+        run,
+        prefix,
+        recovery_number,
+        &receipt["request"],
+        archive,
+    )?;
+    if receipt["failed_start"] != original.start["number"]
+        || receipt["failure_proof"] != original.proof
+        || receipt["before"] != original.before
+        || !receipt["collection_failure"].is_null()
+        || receipt["history_length"].as_u64() != Some(u64::try_from(prefix.len())?)
+        || receipt["history_sha256"] != digest::plan_hash(&json!(prefix))?
+        || receipt["coordinator_source"] != record["sources"]
+        || receipt["historical_image_compared"] != true
+        || receipt["remote_writes"].as_u64() != Some(0)
+        || receipt["restore_qualified"] != false
+        || common::bound_file(backend, &record["result"], "后继封存结果")?
+            != run.join(format!("results/{recovery_number:04}.json"))
+    {
+        return Err("后继封存没有绑定原失败、完整前像和相邻历史".into());
+    }
+    frozen_request(backend, receipt, prefix)?;
+    let output = run.join(format!("seed-runtime/attempt-{recovery_number:04}"));
+    if common::bound_file(backend, &receipt["runtime"], "后继封存运行配置")?
+        != output.join("runtime/runtime.json")
+    {
+        return Err("后继封存配置不属于同一恢复 attempt".into());
+    }
+    let verified_image = image(backend, &output, receipt, Some(original.image))?;
+    let mut records = document::array(&archive["records"], "原封存历史")?.to_vec();
+    records.extend([original.start.clone(), record.clone()]);
+    Ok(
+        json!({"start":original.start,"recovery":record,"records":records,"receipt":receipt,"image":verified_image}),
+    )
 }
 
 fn failure(
@@ -121,7 +195,7 @@ fn failure(
     Ok((start, original, collection))
 }
 
-fn image(backend: &Path, output: &Path, value: &Value) -> Result<Value> {
+fn image(backend: &Path, output: &Path, value: &Value, historical: Option<Value>) -> Result<Value> {
     let outer = common::read_bound(backend, &value["source_registration"], "原封存来源登记结果")?;
     let request = common::read_bound(backend, &outer["source_request"], "原封存来源请求")?;
     let mut selected = request["source"].clone();
@@ -131,8 +205,13 @@ fn image(backend: &Path, output: &Path, value: &Value) -> Result<Value> {
     if generation["format_version"].as_u64() == Some(2) {
         selected["s3"]["configuration"] = generation["configuration"].clone();
     }
-    let mut observed = Value::Null;
-    for phase in ["before", "after"] {
+    let phases = if historical.is_some() {
+        &["after"][..]
+    } else {
+        &["before", "after"][..]
+    };
+    let mut observed = historical.unwrap_or(Value::Null);
+    for &phase in phases {
         if common::bound_file(backend, &value[phase], "原封存完整像")?
             != output.join(phase).join("image.json")
         {
@@ -159,12 +238,13 @@ pub(in crate::recovery::source::evidence::running::history) fn starts(
     attempts: &[Value],
 ) -> Result<Vec<Value>> {
     let archive = closed(backend, run, attempts)?;
+    let consumed = archive["records"].as_array().map_or(&[][..], Vec::as_slice);
     let mut starts = attempts
         .iter()
         .filter(|row| {
             row["stage"] == "seed-runtime"
                 && row["mode"] == "source-generation-start"
-                && (archive.is_null() || **row != archive["start"])
+                && !consumed.contains(row)
         })
         .cloned()
         .collect::<Vec<_>>();

@@ -114,9 +114,13 @@ impl<'a> Frame<'a> {
         self.scope.assert_unchanged()
     }
 
+    pub(super) fn can_capture_revalidated_after(&self) -> bool {
+        self.mode == "source-generation-recover" && self.number == 88
+    }
+
     #[cfg(windows)]
     pub(super) fn hold_sources(&mut self, request: &Value) -> Result<()> {
-        if self.mode != "source-generation-start"
+        if (self.mode != "source-generation-start" && !self.can_capture_revalidated_after())
             || !super::super::resources::warm_redis::applies(request)
         {
             return Ok(());

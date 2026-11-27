@@ -239,14 +239,28 @@ impl<'a, 'b, T: Transport + Sync> Observation<'a, 'b, T> {
         }
         #[cfg(windows)]
         if self.frame.mode == "source-generation-start"
-            && matches!(phase, "before" | "running")
             && super::super::resources::warm_redis::applies(&self.prepared.facts["request"])
         {
-            return held::capture(self, phase);
+            match phase {
+                "before" => return held::capture(self, held::Phase::Before),
+                "running" => return held::capture(self, held::Phase::Running),
+                _ => {}
+            }
         }
         let result = self.capture_with(phase, &|| self.checkpoint())?;
         self.checkpoint()?;
         Ok(result)
+    }
+
+    pub(super) fn capture_revalidated_after(&self) -> Result<(Value, Value)> {
+        if !self.frame.can_capture_revalidated_after() {
+            return Err("单份后像观察仅适用于第 88 次未启动恢复".into());
+        }
+        #[cfg(windows)]
+        if super::super::resources::warm_redis::applies(&self.prepared.facts["request"]) {
+            return held::capture(self, held::Phase::AfterPrelaunch);
+        }
+        self.capture("after")
     }
 
     fn capture_with(
