@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Compare configuration package and rollback snapshot retention deadlines in UTC, preserving MySQL microsecond precision, active job protections, and the cleanup grace period after the last file reference is released.
+
 - Use UTC time types for message and inbox storage. Preserve MySQL microsecond precision, expiry boundaries, and the shared transaction for messages, recipients, and outbox entries.
 
 - Store the database UTC timestamp directly in export request snapshots, preserving the existing JSON timestamp format and worker consistency checks.

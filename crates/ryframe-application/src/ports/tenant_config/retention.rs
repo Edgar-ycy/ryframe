@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Utc};
+use time::OffsetDateTime;
 
 use crate::ports::retention::RetentionCleanupResult;
 
@@ -26,19 +26,19 @@ impl TenantConfigArtifactCounts {
 pub trait TenantConfigRetentionPersistencePort: Send + Sync {
     async fn preview(
         &self,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<TenantConfigArtifactCounts>;
 
     async fn cleanup_packages(
         &self,
-        before: DateTime<Utc>,
+        before: OffsetDateTime,
         batch_size: usize,
         maximum: usize,
     ) -> ryframe_kernel::AppResult<RetentionCleanupResult>;
 
     async fn cleanup_snapshots(
         &self,
-        before: DateTime<Utc>,
+        before: OffsetDateTime,
         batch_size: usize,
         maximum: usize,
     ) -> ryframe_kernel::AppResult<RetentionCleanupResult>;

@@ -432,6 +432,147 @@ async fn retention_cutoff_keeps_utc_microseconds_and_excludes_current_run() {
     .await;
 }
 
+#[cfg(feature = "migration")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn config_artifact_retention_uses_utc_cutoff_and_releases_last_reference() {
+    use ryframe_db::repositories::database_utc_now_time;
+    use time::{UtcOffset, macros::datetime};
+
+    run_mysql_test("config-retention-utc", |database| async move {
+        migration::up(&database, Some(&super::bootstrap_hashes()))
+            .await
+            .map_err(super::db_error)?;
+        seed_config_artifact_retention(&database).await?;
+        let retention =
+            application_ports::tenant_config::retention(ControlDatabaseCluster::single(database.clone()));
+        let cutoff = datetime!(2026-11-27 05:29:59.123456 +05:30);
+        let eligible = retention.preview(cutoff).await.map_err(|error| error.to_string())?;
+        assert_eq!((eligible.packages, eligible.snapshots), (1, 1));
+        assert_eq!(
+            retention.preview(cutoff.to_offset(UtcOffset::UTC)).await.map_err(|error| error.to_string())?,
+            eligible,
+        );
+        let packages = retention
+            .cleanup_packages(cutoff, 1, 1)
+            .await
+            .map_err(|error| error.to_string())?;
+        assert_eq!((packages.deleted, packages.remaining), (1, 0));
+        require_count(
+            &database,
+            "SELECT COUNT(*) AS value FROM sys_tenant_config_bundle b
+             JOIN sys_tenant_config_transfer t ON t.tenant_id = b.tenant_id AND t.bundle_id = b.id
+             JOIN sys_file f ON f.tenant_id = t.tenant_id AND f.id = t.snapshot_file_id
+             WHERE b.tenant_id = 'system' AND b.id = 55101 AND b.file_id IS NULL AND b.status = 'expired'
+               AND t.id = 55201 AND t.status = 'applied' AND f.id = 55001
+               AND f.upload_status = 'ready' AND f.reservation_expires_at IS NULL",
+            1,
+        )
+        .await?;
+        let before_detach = database_utc_now_time(&database)
+            .await
+            .map_err(|error| error.to_string())?;
+        let snapshots = retention
+            .cleanup_snapshots(cutoff, 1, 1)
+            .await
+            .map_err(|error| error.to_string())?;
+        assert_eq!((snapshots.deleted, snapshots.remaining), (1, 0));
+        require_config_artifact_retention_images(&database, before_detach).await
+    })
+    .await;
+}
+
+#[cfg(feature = "migration")]
+async fn seed_config_artifact_retention(database: &DatabaseConnection) -> Result<(), String> {
+    execute(
+        database,
+        "INSERT INTO sys_file
+         (id, tenant_id, original_name, storage_name, storage_path, bucket, file_url, content_type, file_sha256)
+         VALUES
+         (55001, 'system', 'shared.zip', 'shared.zip', 'utc/shared.zip', 'config-packages',
+          'config-packages/utc/shared.zip', 'application/zip', REPEAT('1', 64)),
+         (55002, 'system', 'later.zip', 'later.zip', 'utc/later.zip', 'config-packages',
+          'config-packages/utc/later.zip', 'application/zip', REPEAT('2', 64)),
+         (55003, 'system', 'active.zip', 'active.zip', 'utc/active.zip', 'config-packages',
+          'config-packages/utc/active.zip', 'application/zip', REPEAT('3', 64))",
+    )
+    .await?;
+    execute(
+        database,
+        "INSERT INTO sys_tenant_config_bundle
+         (id, tenant_id, origin, source_tenant_key, source_tenant_name_snapshot,
+          package_schema_version, source_app_version, file_id, resource_counts, status,
+          created_by, expires_at, created_at, updated_at)
+         VALUES
+         (55101, 'system', 'generated', 'system', '系统租户', '1', '0.10.0', 55001, JSON_OBJECT(),
+          'succeeded', 1, '2026-11-26 23:59:59.123456', '2026-11-25 00:00:00', '2026-11-25 00:00:00'),
+         (55102, 'system', 'generated', 'system', '系统租户', '1', '0.10.0', 55002, JSON_OBJECT(),
+          'succeeded', 1, '2026-11-26 23:59:59.123457', '2026-11-25 00:00:00', '2026-11-25 00:00:00'),
+         (55103, 'system', 'generated', 'system', '系统租户', '1', '0.10.0', 55003, JSON_OBJECT(),
+          'succeeded', 1, '2026-11-26 23:59:59.123456', '2026-11-25 00:00:00', '2026-11-25 00:00:00')",
+    )
+    .await?;
+    execute(
+        database,
+        "INSERT INTO sys_tenant_config_transfer
+         (id, tenant_id, bundle_id, idempotency_key_hash, request_kind, request_fingerprint, status,
+          target_configuration_version, target_authorization_epoch, snapshot_file_id, change_counts,
+          requested_by, rollback_expires_at, created_at, updated_at)
+         VALUES
+         (55201, 'system', 55101, REPEAT('1', 64), 'from_package', REPEAT('a', 64), 'applied',
+          1, 1, 55001, JSON_OBJECT(), 1, '2026-11-26 23:59:59.123456', '2026-11-25 00:00:00', '2026-11-25 00:00:00'),
+         (55202, 'system', 55102, REPEAT('2', 64), 'from_package', REPEAT('b', 64), 'applied',
+          1, 1, 55002, JSON_OBJECT(), 1, '2026-11-26 23:59:59.123457', '2026-11-25 00:00:00', '2026-11-25 00:00:00'),
+         (55203, 'system', 55103, REPEAT('3', 64), 'from_package', REPEAT('c', 64), 'rolling_back',
+          1, 1, 55003, JSON_OBJECT(), 1, '2026-11-26 23:59:59.123456', '2026-11-25 00:00:00', '2026-11-25 00:00:00'),
+         (55204, 'system', 55103, REPEAT('4', 64), 'from_package', REPEAT('d', 64), 'preview_pending',
+          1, 1, NULL, JSON_OBJECT(), 1, NULL, '2026-11-25 00:00:00', '2026-11-25 00:00:00')",
+    )
+    .await
+}
+
+#[cfg(feature = "migration")]
+async fn require_config_artifact_retention_images(
+    database: &DatabaseConnection,
+    before_detach: OffsetDateTime,
+) -> Result<(), String> {
+    let row = database
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::MySql,
+            "SELECT COUNT(*) AS value FROM sys_tenant_config_transfer t
+             JOIN sys_file f ON f.tenant_id = t.tenant_id AND f.id = 55001
+             WHERE t.tenant_id = 'system' AND t.id = 55201 AND t.snapshot_file_id IS NULL
+               AND t.status = 'applied' AND t.updated_at BETWEEN ? AND UTC_TIMESTAMP(6)
+               AND f.upload_status = 'cleanup' AND f.reservation_token IS NULL
+               AND ABS(TIMESTAMPDIFF(MICROSECOND, t.updated_at, f.updated_at)) < 1000000
+               AND TIMESTAMPDIFF(SECOND, f.updated_at, f.reservation_expires_at) = 900",
+            [before_detach.into()],
+        ))
+        .await
+        .map_err(super::db_error)?
+        .ok_or("MySQL 未返回配置包清理墓碑核对结果")?;
+    let tombstones: i64 = row.try_get("", "value").map_err(super::db_error)?;
+    assert_eq!(tombstones, 1);
+    require_count(
+        database,
+        "SELECT COUNT(*) AS value FROM sys_tenant_config_bundle b
+         JOIN sys_tenant_config_transfer t ON t.tenant_id = b.tenant_id AND t.bundle_id = b.id
+         JOIN sys_file f ON f.tenant_id = b.tenant_id AND f.id = b.file_id AND f.id = t.snapshot_file_id
+         WHERE b.tenant_id = 'system' AND b.status = 'succeeded' AND f.upload_status = 'ready'
+           AND f.reservation_expires_at IS NULL
+           AND ((b.id = 55102 AND t.id = 55202 AND t.status = 'applied'
+                 AND b.expires_at = '2026-11-26 23:59:59.123457'
+                 AND t.rollback_expires_at = '2026-11-26 23:59:59.123457')
+             OR (b.id = 55103 AND t.id = 55203 AND t.status = 'rolling_back'
+                 AND b.expires_at = '2026-11-26 23:59:59.123456'
+                 AND t.rollback_expires_at = '2026-11-26 23:59:59.123456'
+                 AND EXISTS (SELECT 1 FROM sys_tenant_config_transfer pending_transfer
+                             WHERE pending_transfer.tenant_id = b.tenant_id AND pending_transfer.bundle_id = b.id
+                               AND pending_transfer.id = 55204 AND pending_transfer.status = 'preview_pending')))",
+        2,
+    )
+    .await
+}
+
 async fn install_control_schema(database: &DatabaseConnection) -> Result<(), String> {
     for statement in migration::control_ddl_statements() {
         execute(database, statement).await?;

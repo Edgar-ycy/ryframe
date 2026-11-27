@@ -5,8 +5,8 @@ use crate::{
     ControlDatabaseCluster, FileRepository, TenantRepository,
     tenant::{config_bundle as tenant_config_bundle, config_transfer as tenant_config_transfer},
 };
-use chrono::{DateTime, Duration, Utc};
-use ryframe_kernel::AppResult;
+use chrono::Duration;
+use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait,
     ActiveValue::Set,
@@ -14,6 +14,7 @@ use sea_orm::{
     TransactionTrait,
     sea_query::{Expr, LockType, SimpleExpr},
 };
+use time::{OffsetDateTime, UtcOffset};
 
 use ryframe_application::ports::{
     retention::RetentionCleanupResult,
@@ -36,34 +37,34 @@ struct DatabaseTenantConfigRetentionPersistence {
 impl TenantConfigRetentionPersistencePort for DatabaseTenantConfigRetentionPersistence {
     async fn preview(
         &self,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<TenantConfigArtifactCounts> {
-        self.preview_counts(now).await
+        self.preview_counts(utc_cutoff(now)?).await
     }
 
     async fn cleanup_packages(
         &self,
-        before: DateTime<Utc>,
+        before: OffsetDateTime,
         batch_size: usize,
         maximum: usize,
     ) -> ryframe_kernel::AppResult<RetentionCleanupResult> {
-        self.cleanup_expired_packages(before, batch_size, maximum)
+        self.cleanup_expired_packages(utc_cutoff(before)?, batch_size, maximum)
             .await
     }
 
     async fn cleanup_snapshots(
         &self,
-        before: DateTime<Utc>,
+        before: OffsetDateTime,
         batch_size: usize,
         maximum: usize,
     ) -> ryframe_kernel::AppResult<RetentionCleanupResult> {
-        self.cleanup_expired_snapshots(before, batch_size, maximum)
+        self.cleanup_expired_snapshots(utc_cutoff(before)?, batch_size, maximum)
             .await
     }
 }
 
 impl DatabaseTenantConfigRetentionPersistence {
-    async fn preview_counts(&self, now: DateTime<Utc>) -> AppResult<TenantConfigArtifactCounts> {
+    async fn preview_counts(&self, now: OffsetDateTime) -> AppResult<TenantConfigArtifactCounts> {
         let packages = tenant_config_bundle::Entity::find()
             .filter(tenant_config_bundle::Column::FileId.is_not_null())
             .filter(tenant_config_bundle::Column::ExpiresAt.lte(now))
@@ -91,7 +92,7 @@ impl DatabaseTenantConfigRetentionPersistence {
 
     async fn cleanup_expired_packages(
         &self,
-        before: DateTime<Utc>,
+        before: OffsetDateTime,
         batch_size: usize,
         maximum: usize,
     ) -> AppResult<RetentionCleanupResult> {
@@ -149,7 +150,7 @@ impl DatabaseTenantConfigRetentionPersistence {
     async fn detach_expired_package(
         &self,
         candidate: tenant_config_bundle::Model,
-        before: DateTime<Utc>,
+        before: OffsetDateTime,
     ) -> AppResult<bool> {
         let Some(file_id) = candidate.file_id else {
             return Ok(false);
@@ -198,7 +199,7 @@ impl DatabaseTenantConfigRetentionPersistence {
 
     async fn cleanup_expired_snapshots(
         &self,
-        before: DateTime<Utc>,
+        before: OffsetDateTime,
         batch_size: usize,
         maximum: usize,
     ) -> AppResult<RetentionCleanupResult> {
@@ -246,7 +247,7 @@ impl DatabaseTenantConfigRetentionPersistence {
     async fn detach_expired_snapshot(
         &self,
         candidate: tenant_config_transfer::Model,
-        before: DateTime<Utc>,
+        before: OffsetDateTime,
     ) -> AppResult<bool> {
         let Some(file_id) = candidate.snapshot_file_id else {
             return Ok(false);
@@ -286,6 +287,12 @@ impl DatabaseTenantConfigRetentionPersistence {
         transaction.commit().await.db()?;
         Ok(true)
     }
+}
+
+fn utc_cutoff(instant: OffsetDateTime) -> AppResult<OffsetDateTime> {
+    instant
+        .checked_to_offset(UtcOffset::UTC)
+        .ok_or_else(|| AppError::Database("租户配置保留时间无法精确表示为 UTC".into()))
 }
 
 fn config_bundle_not_required_by_active_transfer() -> SimpleExpr {
