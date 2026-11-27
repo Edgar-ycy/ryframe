@@ -12,7 +12,10 @@ use crate::{
             images,
             running::{
                 self,
-                history::{lineage as lineage_model, prelaunch::partial},
+                history::{
+                    lineage as lineage_model,
+                    prelaunch::{partial, revalidated},
+                },
             },
         },
     },
@@ -32,6 +35,9 @@ pub(super) fn preflight(backend: &Path, run: &Path, saved: &Value, request: &Pat
         return Ok(());
     }
     reject_retry(prefix)?;
+    if prefix.last().is_some_and(revalidated::applies) {
+        return prelaunch::preflight_revalidated(backend, run, prefix, number, request);
+    }
     let starts = running::history::starts(backend, run, prefix)?;
     let [start] = starts.as_slice() else {
         return Err("源代次回收必须继承唯一已登记 start".into());
@@ -59,7 +65,7 @@ pub(super) fn preflight(backend: &Path, run: &Path, saved: &Value, request: &Pat
 }
 
 pub(super) fn run<T: Transport + Sync>(
-    frame: &Frame<'_>,
+    frame: &mut Frame<'_>,
     request: &Path,
     transport: &T,
 ) -> Result<Value> {
@@ -68,6 +74,9 @@ pub(super) fn run<T: Transport + Sync>(
         return lineage::run(frame, request, transport);
     }
     reject_retry(&frame.prefix)?;
+    if frame.prefix.last().is_some_and(revalidated::applies) {
+        return prelaunch::run_revalidated(frame, request, transport);
+    }
     let starts = running::history::starts(frame.backend, frame.run, &frame.prefix)?;
     let [start] = starts.as_slice() else {
         return Err("回收必须继承唯一实际来源启动".into());

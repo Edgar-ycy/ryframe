@@ -140,7 +140,7 @@ impl StageRunner for GenerationRunner {
         } else if self.mode == "source-generation-stop" {
             stop::run(&frame, &self.receipt, &SystemTransport)
         } else {
-            recover::run(&frame, &self.receipt, &SystemTransport)
+            recover::run(&mut frame, &self.receipt, &SystemTransport)
         };
         let checked = frame.checkpoint_full();
         match (result, checked) {

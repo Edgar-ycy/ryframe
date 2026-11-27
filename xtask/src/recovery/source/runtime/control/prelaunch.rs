@@ -10,11 +10,18 @@ use crate::{
         clone::native::{
             digest, export::transport::Transport, lifecycle::state, resources::common,
         },
-        source::evidence::running::history::{self, prelaunch},
+        source::evidence::running::history::{
+            self,
+            prelaunch::{self, revalidated},
+        },
     },
 };
 use serde_json::{Value, json};
 use std::path::Path;
+
+#[path = "prelaunch/revalidated.rs"]
+mod complete_image;
+pub(super) use complete_image::{preflight as preflight_revalidated, run as run_revalidated};
 
 pub(super) struct Plan {
     prepared: Prepared,
@@ -187,17 +194,29 @@ fn observe<T: Transport + Sync>(frame: &Frame<'_>, plan: Plan, transport: &T) ->
         return Err("未启动恢复采集期间完整当前像变化，不允许后续启动".into());
     }
     checkpoint(&observation, &evidence)?;
-    let request_value = &observation.prepared.facts["request"];
     let status = if prelaunch::partial::applies(&evidence.start) {
         "seed_source_partial_prelaunch_closed"
     } else {
         "seed_source_prelaunch_closed"
     };
+    receipt(&observation, status, &evidence, &before, &after, false)
+}
+
+fn receipt<T: Transport + Sync>(
+    observation: &Observation<'_, '_, T>,
+    status: &str,
+    evidence: &FailureEvidence,
+    before: &Value,
+    after: &Value,
+    historical_image_compared: bool,
+) -> Result<Value> {
+    let frame = observation.frame;
+    let request_value = &observation.prepared.facts["request"];
     let mut result = json!({"status":status,"request":observation.prepared.descriptor,
         "failed_start":evidence.start["number"],"failure_proof":evidence.proof,"collection_failure":evidence.collection,
         "history_length":frame.prefix.len(),"history_sha256":digest::plan_hash(&json!(frame.prefix))?,
         "coordinator_source":frame.source(),"runtime":common::binding(&observation.output()?.join("runtime/runtime.json"))?,
-        "before":before,"after":after,"historical_image_compared":false,"remote_writes":0,"restore_qualified":false});
+        "before":before,"after":after,"historical_image_compared":historical_image_compared,"remote_writes":0,"restore_qualified":false});
     for key in [
         "source_registration",
         "source_rebind",

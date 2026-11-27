@@ -384,7 +384,12 @@ fn frozen_executable(owner: &Value) -> Result<Value> {
     Ok(binding)
 }
 
-fn verify_request(backend: &Path, run: &Path, request: &Value, output: &Path) -> Result<Value> {
+pub(super) fn verify_request(
+    backend: &Path,
+    run: &Path,
+    request: &Value,
+    output: &Path,
+) -> Result<Value> {
     let external = common::bound_file(backend, request, "部分输出的原显式请求")?;
     let internal = common::binding(&output.join("request.json"))?;
     if external != expected_request_path(run)?
@@ -399,7 +404,7 @@ fn verify_request(backend: &Path, run: &Path, request: &Value, output: &Path) ->
     Ok(internal)
 }
 
-fn verify_intent(value: &Value, request: &Value, runtime: &Path) -> Result<()> {
+pub(super) fn verify_intent(value: &Value, request: &Value, runtime: &Path) -> Result<()> {
     document::exact(&value["operations"], &["api", "worker"], "原角色启动预留")?;
     let operations = &value["operations"];
     let operation = |role| {

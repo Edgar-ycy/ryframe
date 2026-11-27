@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- A registered complete prelaunch image can be revalidated after a source start fails with only role reservations. One live after-image completes the closure in the original ledger.
+
 - Recovery source lineage accepts `/readyz` for the Worker and rejects a Worker that shares the target API's listening address and port.
 
 - Data placement and migration stage records use UTC time and preserve the public response format, database clocks, write precision, and backup window validation.

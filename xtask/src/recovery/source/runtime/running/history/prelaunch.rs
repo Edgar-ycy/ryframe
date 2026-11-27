@@ -18,6 +18,8 @@ mod closed;
 mod data;
 #[path = "prelaunch/partial.rs"]
 pub(in crate::recovery::source::evidence) mod partial;
+#[path = "prelaunch/revalidated.rs"]
+pub(in crate::recovery::source::evidence) mod revalidated;
 pub(in crate::recovery::source::evidence) use closed::closed;
 pub(super) use closed::starts;
 
