@@ -69,7 +69,7 @@ pub(crate) fn execute_registered_task(
         TaskExecutor::FrontendDocumentation => run_process(
             &context.frontend_dir,
             "node",
-            &["scripts/check-documentation.mjs"],
+            executor.static_arguments().ok_or("前端文档任务缺少参数")?,
         ),
         TaskExecutor::RemovedIdentity => run_removed_identity(
             &context.root,

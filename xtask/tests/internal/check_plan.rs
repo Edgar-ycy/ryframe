@@ -206,6 +206,28 @@ fn smart_frontend_only_and_documentation_plans_do_not_invent_backend_work() {
         assert!(task.definition().compilation_coverage.is_empty());
         assert!(task.definition().allowed_writes.is_empty());
     }
+
+    let frontend_docs = select_check_mode(
+        CheckScope::Frontend,
+        false,
+        &["Cargo.lock".into()],
+        &["README.md".into()],
+        &WorkspaceGraph::default(),
+    );
+    let plan = tasks_for(CheckScope::Frontend, &frontend_docs).unwrap();
+    let [task] = plan.tasks.as_slice() else {
+        panic!("前端纯文档变更应只运行前端文档检查");
+    };
+    assert_eq!(task.id, "policy.documentation.frontend");
+    assert_eq!(task.executor, TaskExecutor::FrontendDocumentation);
+    assert_eq!(
+        task.definition().working_directory,
+        TaskWorkingDirectory::Frontend
+    );
+    assert_eq!(
+        task.executor.static_arguments(),
+        Some(&["scripts/check-documentation.ts"][..])
+    );
 }
 
 #[test]

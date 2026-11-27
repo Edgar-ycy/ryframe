@@ -179,7 +179,7 @@ const CHECK_TASKS: [TaskDefinition; 25] = [
         Frontend,
         Static,
         Frontend,
-        Some(&["scripts/check-documentation.mjs"]),
+        Some(&["scripts/check-documentation.ts"]),
         &[],
         &[],
         &[]

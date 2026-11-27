@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Backend planning and execution use the same TypeScript entry for frontend documentation-only checks and retain bilingual validation.
+
 - Reference recovery backups verify the clean coordinating worktree and the product build source recorded in the inventory independently, allowing each to use its own commit.
 
 - OpenAPI generation verifies the unique entry in the actual frontend Git worktree and the staged inputs before generating derived files.
