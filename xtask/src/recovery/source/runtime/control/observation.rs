@@ -25,6 +25,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[cfg(windows)]
+#[path = "observation/held.rs"]
+mod held;
+
 pub(super) struct Prepared {
     pub facts: Value,
     pub descriptor: Value,
@@ -135,7 +139,30 @@ impl<'a, 'b, T: Transport + Sync> Observation<'a, 'b, T> {
     }
 
     pub(super) fn checkpoint(&self) -> Result<()> {
-        self.frame.checkpoint()?;
+        self.checkpoint_with(
+            || self.frame.checkpoint(),
+            builds::verify,
+            fixture_control::verify_full_stack_runtime,
+        )
+        .map(drop)
+    }
+
+    #[cfg(windows)]
+    fn full_checkpoint(&self) -> Result<Value> {
+        self.checkpoint_with(
+            || self.frame.checkpoint_full(),
+            builds::verify,
+            fixture_control::verify_full_stack_runtime,
+        )
+    }
+
+    fn checkpoint_with<B>(
+        &self,
+        check_frame: impl FnOnce() -> Result<()>,
+        verify_builds: impl FnOnce(&Path, &Value) -> Result<B>,
+        verify_contract: impl FnOnce(&Path, &Path) -> Result<Value>,
+    ) -> Result<B> {
+        check_frame()?;
         let facts = &self.prepared.facts;
         let request = &facts["request"];
         if common::read_bound(
@@ -147,7 +174,7 @@ impl<'a, 'b, T: Transport + Sync> Observation<'a, 'b, T> {
         {
             return Err("恢复观察期间正式请求或控制环境变化".into());
         }
-        builds::verify(self.frame.backend, request)?;
+        let build = verify_builds(self.frame.backend, request)?;
         let execution = Path::new(document::text(&facts["execution"], "恢复执行根")?);
         let runtime = self.output()?.join("runtime");
         let internal = self.output()?.join("request.json");
@@ -169,7 +196,7 @@ impl<'a, 'b, T: Transport + Sync> Observation<'a, 'b, T> {
                 &[],
             )?;
         }
-        if fixture_control::verify_full_stack_runtime(execution, &runtime)? != self.contract
+        if verify_contract(execution, &runtime)? != self.contract
             || document::read(&runtime.join("binaries.json"))? != self.prepared.binaries
         {
             return Err("恢复观察的完整 runtime 或实际产品/维护产物变化".into());
@@ -185,17 +212,23 @@ impl<'a, 'b, T: Transport + Sync> Observation<'a, 'b, T> {
             &facts["source"],
             &facts["selected"],
             config,
-        )
+        )?;
+        Ok(build)
     }
 
     pub(super) fn quiet(&self) -> Result<()> {
         self.checkpoint()?;
+        self.predecessor_quiet()?;
+        self.checkpoint()
+    }
+
+    fn predecessor_quiet(&self) -> Result<()> {
         let source = &self.prepared.facts["source"];
         live::quiet(
             self.frame.backend,
             &json!({"registration":source["registration"],"request":source["request"]}),
         )?;
-        self.checkpoint()
+        Ok(())
     }
 
     pub(super) fn capture(&self, phase: &str) -> Result<(Value, Value)> {
@@ -204,9 +237,25 @@ impl<'a, 'b, T: Transport + Sync> Observation<'a, 'b, T> {
         {
             return Err("恢复只读观察阶段无效".into());
         }
+        #[cfg(windows)]
+        if self.frame.mode == "source-generation-start"
+            && matches!(phase, "before" | "running")
+            && super::super::resources::warm_redis::applies(&self.prepared.facts["request"])
+        {
+            return held::capture(self, phase);
+        }
+        let result = self.capture_with(phase, &|| self.checkpoint())?;
+        self.checkpoint()?;
+        Ok(result)
+    }
+
+    fn capture_with(
+        &self,
+        phase: &str,
+        checkpoint: &dyn Fn() -> Result<()>,
+    ) -> Result<(Value, Value)> {
         let facts = &self.prepared.facts;
         let output = self.output()?.join(phase);
-        let checkpoint = || self.checkpoint();
         let resources = Resources {
             backend: self.frame.backend,
             execution: Path::new(document::text(&facts["execution"], "恢复执行根")?),
@@ -215,7 +264,7 @@ impl<'a, 'b, T: Transport + Sync> Observation<'a, 'b, T> {
             environment: &self.environment,
             output: &output,
             transport: self.transport,
-            checkpoint: &checkpoint,
+            checkpoint,
         };
         let context = images::capture::context(&resources, facts)?;
         let binding =
@@ -227,7 +276,6 @@ impl<'a, 'b, T: Transport + Sync> Observation<'a, 'b, T> {
             &facts["source"]["request"],
             &facts["request"]["source_registration"],
         )?;
-        self.checkpoint()?;
         Ok((binding, image))
     }
 }

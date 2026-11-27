@@ -134,15 +134,15 @@ impl StageRunner for GenerationRunner {
             return Err("源控制执行根或模式发生变化".into());
         }
         frame::stage(request)?;
-        let frame = frame::Frame::load(request)?;
+        let mut frame = frame::Frame::load(request)?;
         let result = if self.mode == "source-generation-start" {
-            start::run(&frame, &self.receipt, &SystemTransport)
+            start::run(&mut frame, &self.receipt, &SystemTransport)
         } else if self.mode == "source-generation-stop" {
             stop::run(&frame, &self.receipt, &SystemTransport)
         } else {
             recover::run(&frame, &self.receipt, &SystemTransport)
         };
-        let checked = frame.checkpoint();
+        let checked = frame.checkpoint_full();
         match (result, checked) {
             (Ok(value), Ok(())) => Ok(value),
             (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),

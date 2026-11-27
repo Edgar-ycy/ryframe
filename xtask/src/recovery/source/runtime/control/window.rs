@@ -17,6 +17,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[cfg(windows)]
+#[path = "window/held.rs"]
+mod held;
+
 pub(super) struct Window<'a, 'b, T> {
     pub frame: &'a Frame<'b>,
     pub facts: Value,
@@ -86,16 +90,20 @@ impl<'a, 'b, T: Transport + Sync> Window<'a, 'b, T> {
     }
 
     pub(super) fn checkpoint(&self) -> Result<()> {
+        self.checkpoint_with(|| match &self.origin {
+            Origin::Published(start) => running::load(self.frame.backend, start, false, true),
+            Origin::Unpublished { start, request } => {
+                existing::unpublished(self.frame, start, request)
+            }
+        })
+    }
+
+    fn checkpoint_with(&self, observe: impl FnOnce() -> Result<Value>) -> Result<()> {
         self.frame.checkpoint()?;
         if std::env::vars().collect::<BTreeMap<_, _>>() != self.original_environment {
             return Err("源停止或恢复的控制环境发生变化，禁止继续操作或发布".into());
         }
-        let actual = match &self.origin {
-            Origin::Published(start) => running::load(self.frame.backend, start, false, true)?,
-            Origin::Unpublished { start, request } => {
-                existing::unpublished(self.frame, start, request)?
-            }
-        };
+        let actual = observe()?;
         if actual != self.facts {
             return Err("源停止或恢复期间原 START、完整历史、文件配置或已登记资源变化".into());
         }
@@ -119,9 +127,29 @@ impl<'a, 'b, T: Transport + Sync> Window<'a, 'b, T> {
         ) {
             return Err("源控制完整像阶段无效".into());
         }
+        #[cfg(windows)]
+        if let Origin::Published(start) = &self.origin
+            && self.frame.mode == "source-generation-stop"
+            && matches!(phase, "stop-before" | "after")
+            && crate::recovery::source::evidence::resources::warm_redis::applies(
+                &self.facts["request"],
+            )
+        {
+            return held::capture(self, start, phase);
+        }
         let output = self.output()?.join(phase);
         let checkpoint = || self.checkpoint();
-        let resources = self.resources(&output, &checkpoint)?;
+        let result = self.capture_with(&output, &checkpoint)?;
+        self.checkpoint()?;
+        Ok(result)
+    }
+
+    fn capture_with(
+        &self,
+        output: &Path,
+        checkpoint: &dyn Fn() -> Result<()>,
+    ) -> Result<(Value, Value)> {
+        let resources = self.resources(output, checkpoint)?;
         let context = images::capture::context(&resources, &self.facts)?;
         let descriptor = images::capture::run(
             &resources,
@@ -136,7 +164,6 @@ impl<'a, 'b, T: Transport + Sync> Window<'a, 'b, T> {
             &self.facts["source"]["request"],
             &self.facts["request"]["source_registration"],
         )?;
-        self.checkpoint()?;
         Ok((descriptor, value))
     }
 

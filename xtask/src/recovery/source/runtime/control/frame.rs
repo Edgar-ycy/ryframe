@@ -26,6 +26,8 @@ pub(super) struct Frame<'a> {
     owner: Value,
     owner_binding: Value,
     control_source: Value,
+    #[cfg(windows)]
+    sources_held: bool,
 }
 
 impl<'a> Frame<'a> {
@@ -85,12 +87,51 @@ impl<'a> Frame<'a> {
             owner,
             owner_binding,
             control_source,
+            #[cfg(windows)]
+            sources_held: false,
         };
         frame.checkpoint()?;
         Ok(frame)
     }
 
     pub(super) fn checkpoint(&self) -> Result<()> {
+        self.check_live()?;
+        #[cfg(windows)]
+        if self.sources_held {
+            return self.scope.assert_unchanged();
+        }
+        self.check_source()?;
+        self.scope.assert_unchanged()
+    }
+
+    pub(super) fn checkpoint_full(&self) -> Result<()> {
+        self.check_live()?;
+        self.check_source()?;
+        #[cfg(windows)]
+        if self.sources_held {
+            return self.scope.assert_unchanged_full();
+        }
+        self.scope.assert_unchanged()
+    }
+
+    #[cfg(windows)]
+    pub(super) fn hold_sources(&mut self, request: &Value) -> Result<()> {
+        if self.mode != "source-generation-start"
+            || !super::super::resources::warm_redis::applies(request)
+        {
+            return Ok(());
+        }
+        let execution = Path::new(document::text(&request["execution_backend"], "来源执行根")?);
+        self.check_live()?;
+        self.scope.hold_windows_sources(&[execution])?;
+        self.check_source()?;
+        self.check_live()?;
+        self.scope.assert_unchanged()?;
+        self.sources_held = true;
+        Ok(())
+    }
+
+    fn check_live(&self) -> Result<()> {
         let manifest = manifest::load(self.backend, &self.run.join("manifest.json"))?;
         let saved = state::load(self.run, true)?;
         let attempt = active(&saved, self.number, self.mode)?;
@@ -104,14 +145,19 @@ impl<'a> Frame<'a> {
             || owner != self.owner
             || common::read_bound(self.backend, &self.owner_binding, "源控制锁持有者")? != owner
             || common::binding(&self.run.join("run.lock/owner.json"))? != self.owner_binding
-            || source::current(self.backend)? != self.control_source
         {
             return Err(
-                "源代次停止或恢复期间清单、完整阶段前缀、控制器或工具来源变化；保留现场，禁止重放"
-                    .into(),
+                "源代次阶段清单、完整前缀、控制器或锁持有者变化；保留现场，禁止重放".into(),
             );
         }
-        self.scope.assert_unchanged()
+        Ok(())
+    }
+
+    fn check_source(&self) -> Result<()> {
+        if source::current(self.backend)? != self.control_source {
+            return Err("源代次阶段的完整工具来源变化；保留现场，禁止重放".into());
+        }
+        Ok(())
     }
 
     pub(super) fn verifier_stopped(&self) -> Result<Value> {

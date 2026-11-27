@@ -18,16 +18,19 @@ mod facts;
 #[path = "running/history.rs"]
 pub(super) mod history;
 pub(super) use facts::load;
+#[cfg(windows)]
+pub(super) use facts::{HeldLoad, load_held};
 #[path = "running/roles.rs"]
 pub(super) mod roles;
 
-pub(super) fn runtime(
+fn runtime(
     backend: &Path,
     output: &Path,
     request: &Value,
     selected: &Value,
     physical: &Value,
     live: bool,
+    verify_build_artifacts: impl FnOnce(&Path, &Value) -> Result<Value>,
 ) -> Result<Value> {
     directory(backend, output)?;
     let execution = Path::new(document::text(&request["execution_backend"], "来源执行根")?);
@@ -71,8 +74,8 @@ pub(super) fn runtime(
     }
     roles::directory(&runtime, &intent["operations"])?;
     let contract = fixture_control::verify_full_stack_runtime(execution, &runtime)?;
-    let build = builds::verify(backend, request)?;
-    let artifacts = document::object(&build["artifacts"], "API/Worker 构建产物")?
+    let build_artifacts = verify_build_artifacts(backend, request)?;
+    let artifacts = document::object(&build_artifacts, "API/Worker 构建产物")?
         .iter()
         .map(|(role, artifact)| {
             (

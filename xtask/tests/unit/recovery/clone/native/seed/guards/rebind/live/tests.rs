@@ -62,7 +62,7 @@ impl Fixture {
         );
         let runtime = self.file(
             "runtime.json",
-            &json!({"worker_ready_url":format!("http://127.0.0.1:{worker}")}),
+            &json!({"worker_ready_url":format!("http://127.0.0.1:{worker}/readyz")}),
         );
         json!({"registration":{"producer_lineage":lineage},"request":{"runtime":runtime,
             "source":{"api_url":format!("http://127.0.0.1:{api}")}}})
@@ -151,13 +151,21 @@ fn quiet_checks_both_actual_ports_lineage_and_no_external_writes() {
     let worker_port = worker.local_addr().unwrap().port();
     let fixture = Fixture::new();
     let input = fixture.source(api_port, worker_port);
-    assert!(quiet(&fixture.backend, &input).is_err());
+    let error = quiet(&fixture.backend, &input).unwrap_err().to_string();
+    assert!(
+        error.contains(&format!("资源端口 {api_port} 仍被占用")),
+        "{error}"
+    );
     drop(api);
-    assert!(quiet(&fixture.backend, &input).is_err());
+    let error = quiet(&fixture.backend, &input).unwrap_err().to_string();
+    assert!(
+        error.contains(&format!("资源端口 {worker_port} 仍被占用")),
+        "{error}"
+    );
     drop(worker);
     let history = fixture.directory.path().join("history.json");
     let before = fs::read(&history).unwrap();
-    assert!(quiet(&fixture.backend, &input).is_ok());
+    quiet(&fixture.backend, &input).unwrap();
     assert_eq!(before, fs::read(&history).unwrap());
     fs::write(history, b"{\"events\":[\"started\"]}").unwrap();
     assert!(quiet(&fixture.backend, &input).is_err());

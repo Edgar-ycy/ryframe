@@ -17,6 +17,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[cfg(windows)]
+use running::builds::held::HeldBuilds;
+
+#[cfg(windows)]
+#[path = "session/held.rs"]
+mod held;
+
 pub(super) struct Session<'a, T> {
     pub backend: &'a Path,
     pub start: Value,
@@ -30,6 +37,8 @@ pub(super) struct Session<'a, T> {
     pub transport: &'a T,
     original_environment: BTreeMap<String, String>,
     recovery_tools: Value,
+    #[cfg(windows)]
+    held_builds: Option<HeldBuilds>,
     owner: RunLock,
     guard: ProcessGuard,
 }
@@ -97,16 +106,45 @@ impl<'a, T: Transport> Session<'a, T> {
             transport,
             original_environment,
             recovery_tools,
+            #[cfg(windows)]
+            held_builds: None,
             owner,
             guard,
         };
         if let Err(error) = session.checkpoint() {
             return session.finish(Err(error));
         }
+        #[cfg(windows)]
+        let session = {
+            let mut session = session;
+            if let Err(error) = session.enable_held() {
+                return session.finish(Err(error));
+            }
+            session
+        };
         Ok(session)
     }
 
     pub(super) fn checkpoint(&self) -> Result<()> {
+        #[cfg(windows)]
+        if let Some(builds) = &self.held_builds {
+            return self.checkpoint_with(|| {
+                running::load_held(
+                    self.backend,
+                    &self.start,
+                    running::HeldLoad::Live(&self.facts["coordinator_source"]),
+                    builds,
+                )
+            });
+        }
+        self.checkpoint_original()
+    }
+
+    fn checkpoint_original(&self) -> Result<()> {
+        self.checkpoint_with(|| running::load(self.backend, &self.start, true, self.recover))
+    }
+
+    fn checkpoint_with(&self, load: impl FnOnce() -> Result<Value>) -> Result<()> {
         self.guard.check()?;
         self.owner.verify()?;
         if std::env::vars().collect::<BTreeMap<_, _>>() != self.original_environment {
@@ -115,7 +153,7 @@ impl<'a, T: Transport> Session<'a, T> {
         if self.recover && source::current(self.backend)? != self.recovery_tools {
             return Err("来源恢复工具的当前完整来源发生变化".into());
         }
-        if running::load(self.backend, &self.start, true, self.recover)? != self.facts {
+        if load()? != self.facts {
             return Err("来源运行代次、完整历史或前像在控制区间内变化".into());
         }
         self.scope.assert_unchanged()?;
@@ -124,7 +162,14 @@ impl<'a, T: Transport> Session<'a, T> {
     }
 
     pub(super) fn finish<R>(self, result: Result<R>) -> Result<R> {
+        #[cfg(windows)]
+        let checked = self.held_builds.as_ref().map_or_else(
+            || self.checkpoint_original(),
+            |builds| self.finish_held(builds),
+        );
+        #[cfg(not(windows))]
         let checked = self.checkpoint();
+        // 源码与构建持有句柄仍归本会话所有，直到同一控制锁完成释放。
         let released = self.owner.release();
         match (result,checked,released) {
             (Ok(value),Ok(()),Ok(())) => Ok(value),

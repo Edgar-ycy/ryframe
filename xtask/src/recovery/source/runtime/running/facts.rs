@@ -21,6 +21,63 @@ pub(in crate::recovery::source::evidence) fn load(
     live: bool,
     historical: bool,
 ) -> Result<Value> {
+    load_with(
+        backend,
+        start,
+        live,
+        |backend, actual| coordinator_source(backend, actual, historical),
+        |backend, request| Ok(super::builds::verify(backend, request)?["artifacts"].clone()),
+    )
+}
+
+#[cfg(windows)]
+pub(in crate::recovery::source::evidence) enum HeldLoad<'a> {
+    Live(&'a Value),
+    Historical { live: bool },
+}
+
+#[cfg(windows)]
+pub(in crate::recovery::source::evidence) fn load_held(
+    backend: &Path,
+    start: &Value,
+    authority: HeldLoad<'_>,
+    builds: &super::builds::held::HeldBuilds,
+) -> Result<Value> {
+    let live = match &authority {
+        HeldLoad::Live(_) => true,
+        HeldLoad::Historical { live } => *live,
+    };
+    load_with(
+        backend,
+        start,
+        live,
+        |backend, actual| match &authority {
+            HeldLoad::Live(expected) => {
+                staging::validate_source(actual)?;
+                // 会话在同一控制锁下持有协调根，并在边界重验实际完整来源。
+                if actual != *expected {
+                    return Err("运行中源的协调器证明不同于已完整核对的原值".into());
+                }
+                Ok(())
+            }
+            HeldLoad::Historical { .. } => coordinator_source(backend, actual, true),
+        },
+        |backend, request| {
+            if !crate::recovery::source::evidence::resources::warm_redis::applies(request) {
+                return Err("运行中持有核验仅适用于原暖态来源请求".into());
+            }
+            Ok(builds.checked_build(backend, request)?["artifacts"].clone())
+        },
+    )
+}
+
+fn load_with(
+    backend: &Path,
+    start: &Value,
+    live: bool,
+    verify_coordinator: impl Fn(&Path, &Value) -> Result<()>,
+    verify_build_artifacts: impl FnOnce(&Path, &Value) -> Result<Value>,
+) -> Result<Value> {
     let path = common::bound_file(backend, start, "来源 START")?;
     let run = path
         .parent()
@@ -44,7 +101,7 @@ pub(in crate::recovery::source::evidence) fn load(
         return Err("来源验证必须绑定同一账本唯一已通过 START 的外层结果".into());
     }
     let coordinator = record["sources"].clone();
-    coordinator_source(backend, &coordinator, historical)?;
+    verify_coordinator(backend, &coordinator)?;
     let value = common::read_bound(backend, start, "来源 START")?;
     let output = run.join(format!("g{number:04}"));
     let source = history::predecessor(backend, run, &saved)?;
@@ -72,6 +129,7 @@ pub(in crate::recovery::source::evidence) fn load(
         &selected,
         &source["generation"]["physical_binding"],
         live,
+        verify_build_artifacts,
     )?;
     if live
         && serde_json::to_value(registered::current(backend, run, CloneSide::Target)?)?
@@ -84,7 +142,7 @@ pub(in crate::recovery::source::evidence) fn load(
     {
         return Err("来源核验期间完整账本或 START 字节变化".into());
     }
-    coordinator_source(backend, &coordinator, historical)?;
+    verify_coordinator(backend, &coordinator)?;
     Ok(
         json!({"receipt":value,"start_descriptor":start,"number":number,"directory":run,"output":output,
         "request":request,"source":source,"execution":request["execution_backend"],"selected":selected,"runtime":runtime,

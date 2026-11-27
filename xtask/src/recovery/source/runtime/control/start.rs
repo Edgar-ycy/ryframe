@@ -24,11 +24,13 @@ use std::path::Path;
 mod publication;
 
 pub(super) fn run<T: Transport + Sync>(
-    frame: &Frame<'_>,
+    frame: &mut Frame<'_>,
     request: &Path,
     transport: &T,
 ) -> Result<Value> {
     let plan = Plan::load(frame, request)?;
+    #[cfg(windows)]
+    frame.hold_sources(&plan.prepared.facts["request"])?;
     let archive = plan.archive;
     let segment = plan.segment;
     let config = plan.prepared.config.clone();

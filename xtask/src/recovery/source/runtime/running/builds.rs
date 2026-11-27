@@ -7,6 +7,10 @@ use crate::{
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
+#[cfg(windows)]
+#[path = "builds/held.rs"]
+pub(in crate::recovery::source::evidence) mod held;
+
 pub(in crate::recovery::source::evidence) fn verify(
     backend: &Path,
     request: &Value,
