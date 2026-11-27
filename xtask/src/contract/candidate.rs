@@ -4,11 +4,18 @@ use std::{
     process,
 };
 
-use crate::{Result, cli::ApiGenerateCommand, process::run as run_process, workspace::root_dir};
+use crate::{
+    Result,
+    cli::ApiGenerateCommand,
+    local_test_path::{LocalTestPathKind, validate_absolute_path},
+    process::run as run_process,
+    workspace::root_dir,
+};
 
 use super::{
     atomic::write_atomically,
     formal::sync_commit,
+    generator::GeneratorEntry,
     model::{
         CANDIDATE_MARKER, CRUD_RESOURCE_ARTIFACT, ContractLock, Snapshot, StagingFrontend,
         export_target, nonce, sha256_hex,
@@ -17,9 +24,6 @@ use super::{
     recovery::reject_contract_recovery_artifacts,
     transaction::install_snapshots,
 };
-
-pub(crate) const CANDIDATE_GENERATION_ARGS: &[&str] =
-    &["scripts/generate-api-artifacts.mjs", "--write"];
 
 pub(crate) fn generate_api(command: &ApiGenerateCommand, frontend_dir: &Path) -> Result<()> {
     match (&command.reference, command.write) {
@@ -33,6 +37,7 @@ fn sync_candidate(frontend_dir: &Path) -> Result<()> {
     if !frontend_dir.is_dir() {
         return Err(format!("前端目录不存在：{}", frontend_dir.display()).into());
     }
+    let entry = GeneratorEntry::capture(frontend_dir)?;
     let root = root_dir();
     let temporary_dir = root.join(".local-tests/contract-export");
     fs::create_dir_all(&temporary_dir)?;
@@ -74,9 +79,14 @@ fn sync_candidate(frontend_dir: &Path) -> Result<()> {
 
     let result = (|| {
         let bytes = canonical_contract(&fs::read(&candidate_path)?)?;
-        apply_candidate(&root, frontend_dir, &bytes, |staging| {
-            run_process(staging, "node", CANDIDATE_GENERATION_ARGS)
-        })
+        apply_candidate_stage(
+            &root,
+            frontend_dir,
+            &bytes,
+            |_| Ok(()),
+            |staging| entry.run(frontend_dir, staging),
+            Some(&entry),
+        )
     })();
     let cleanup_result = fs::remove_file(&candidate_path);
     match (result, cleanup_result) {
@@ -120,6 +130,7 @@ pub(crate) fn canonical_contract(bytes: &[u8]) -> Result<Vec<u8>> {
     Ok(canonical)
 }
 
+#[cfg(test)]
 pub(crate) fn apply_candidate<F>(
     backend_dir: &Path,
     frontend_dir: &Path,
@@ -132,12 +143,35 @@ where
     apply_candidate_with_staging_hook(backend_dir, frontend_dir, candidate, |_| Ok(()), generate)
 }
 
+#[cfg(test)]
 pub(crate) fn apply_candidate_with_staging_hook<F, H>(
     backend_dir: &Path,
     frontend_dir: &Path,
     candidate: &[u8],
     after_staging: H,
     generate: F,
+) -> Result<()>
+where
+    F: FnOnce(&Path) -> Result<()>,
+    H: FnOnce(&Path) -> Result<()>,
+{
+    apply_candidate_stage(
+        backend_dir,
+        frontend_dir,
+        candidate,
+        after_staging,
+        generate,
+        None,
+    )
+}
+
+fn apply_candidate_stage<F, H>(
+    backend_dir: &Path,
+    frontend_dir: &Path,
+    candidate: &[u8],
+    after_staging: H,
+    generate: F,
+    entry: Option<&GeneratorEntry>,
 ) -> Result<()>
 where
     F: FnOnce(&Path) -> Result<()>,
@@ -203,6 +237,9 @@ where
             &staging.path,
             &candidate,
         )?;
+        if let Some(entry) = entry {
+            entry.verify(frontend_dir, &staging.path)?;
+        }
         install_snapshots(&before, &desired)
     })()
 }
@@ -351,10 +388,18 @@ pub(super) fn prepare_staging_frontend(
     snapshots: &[Snapshot],
     inputs: &[Snapshot],
 ) -> Result<StagingFrontend> {
-    let parent = frontend_dir.join(".local-tests");
-    fs::create_dir_all(&parent)?;
+    let parent = frontend_dir.canonicalize()?.join(".local-tests");
+    validate_absolute_path(&parent, LocalTestPathKind::StateDirectory)?;
+    if let Err(error) = fs::create_dir(&parent)
+        && error.kind() != std::io::ErrorKind::AlreadyExists
+    {
+        return Err(error.into());
+    }
+    validate_absolute_path(&parent, LocalTestPathKind::ExistingDirectory)?;
     let path = parent.join(format!("contract-stage-{}-{}", process::id(), nonce()?));
+    validate_absolute_path(&path, LocalTestPathKind::NewDirectory)?;
     fs::create_dir(&path)?;
+    validate_absolute_path(&path, LocalTestPathKind::ExistingDirectory)?;
     let staging = StagingFrontend { path };
     for input in inputs {
         let relative = input

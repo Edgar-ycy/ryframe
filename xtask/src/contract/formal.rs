@@ -2,7 +2,7 @@ use std::{fs, path::Path};
 
 use crate::{
     Result,
-    process::{command_output, run, run_owned},
+    process::{command_output, run_owned},
     workspace::root_dir,
 };
 
@@ -12,14 +12,12 @@ use super::{
         snapshot_managed_files, snapshot_staging_inputs, validate_candidate_contract,
         verify_input_snapshots,
     },
+    generator::GeneratorEntry,
     model::{CANDIDATE_MARKER, ContractLock, sha256_hex},
     ownership::contract_managed_paths,
     recovery::reject_contract_recovery_artifacts,
     transaction::install_snapshots,
 };
-
-pub(crate) const FORMAL_DERIVATION_ARGS: &[&str] =
-    &["scripts/generate-api-artifacts.mjs", "--write"];
 
 pub(crate) fn formal_sync_arguments(repository: &str, commit: &str, worktree: &str) -> Vec<String> {
     [
@@ -53,6 +51,7 @@ pub(super) fn sync_commit(reference: &str, frontend_dir: &Path) -> Result<()> {
         .to_str()
         .ok_or("后端工作区路径不是有效 UTF-8，无法同步契约")?;
     let sync_arguments = formal_sync_arguments(&repository, &commit, worktree);
+    let entry = GeneratorEntry::capture(frontend_dir)?;
     let _lock = ContractLock::acquire(frontend_dir)?;
     let inputs = snapshot_staging_inputs(frontend_dir)?;
     let artifact_paths = artifact_paths_from_inputs(&inputs, frontend_dir)?;
@@ -60,11 +59,13 @@ pub(super) fn sync_commit(reference: &str, frontend_dir: &Path) -> Result<()> {
     reject_contract_recovery_artifacts(&managed_paths)?;
     let before = snapshot_managed_files(&managed_paths)?;
     let staging = prepare_staging_frontend(frontend_dir, &before, &inputs)?;
+    entry.verify_staging(&staging.path)?;
     run_owned(&staging.path, "node", &sync_arguments)?;
-    run(&staging.path, "node", FORMAL_DERIVATION_ARGS)?;
+    entry.run(frontend_dir, &staging.path)?;
     validate_formal_sync(&staging.path, &repository, &commit, &artifact_paths)?;
     verify_input_snapshots(&inputs)?;
     let desired = desired_frontend_snapshots(&before, frontend_dir, &staging.path)?;
+    entry.verify(frontend_dir, &staging.path)?;
     install_snapshots(&before, &desired)
 }
 

@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- OpenAPI generation verifies the unique entry in the actual frontend Git worktree and the staged inputs before generating derived files.
+
 - Persistent Windows supervisors receive the existing startup request over an anonymous pipe, fixing temporary input files that blocked runtime verification and shutdown.
 
 - Generic soft deletion for departments, menus, roles, and users uses the shared host UTC clock and preserves MySQL's second-level update timestamps and repeated matching of deleted rows.

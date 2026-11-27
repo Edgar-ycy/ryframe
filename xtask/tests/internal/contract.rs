@@ -5,10 +5,10 @@ use std::{
 };
 
 use super::contract::{
-    CANDIDATE_GENERATION_ARGS, ContractFileOperations, FORMAL_DERIVATION_ARGS, Snapshot,
-    apply_candidate, apply_candidate_with_staging_hook, formal_sync_arguments,
-    generated_artifact_paths, github_repository_identifier, install_snapshots_with, sha256_hex,
-    validate_candidate_contract, validate_formal_sync, write_atomically_with,
+    ContractFileOperations, GeneratorEntry, Snapshot, apply_candidate,
+    apply_candidate_with_staging_hook, formal_sync_arguments, generated_artifact_paths,
+    github_repository_identifier, install_snapshots_with, sha256_hex, validate_candidate_contract,
+    validate_formal_sync, write_atomically_with,
 };
 
 const CANDIDATE_MANAGED_PATHS: &[&str] = &[
@@ -35,14 +35,30 @@ static NEXT_DIR: AtomicU64 = AtomicU64::new(1);
 
 #[test]
 fn staging_contract_generation_runs_node_without_package_installation() {
-    assert_eq!(
-        CANDIDATE_GENERATION_ARGS,
-        ["scripts/generate-api-artifacts.mjs", "--write"]
-    );
-    assert_eq!(
-        FORMAL_DERIVATION_ARGS,
-        ["scripts/generate-api-artifacts.mjs", "--write"]
-    );
+    for relative in GENERATOR_ENTRIES {
+        let frontend = generator_checkout();
+        let root = frontend.path();
+        let content = b"// frontend worktree entry\n";
+        fs::write(root.join(relative), content).unwrap();
+        generator_git(root, &["add", "--", relative]);
+        let entry = GeneratorEntry::capture(root).unwrap();
+        assert_eq!(entry.arguments(), [relative, "--write"]);
+        let staging = root.join(".local-tests/contract-stage-fixture");
+        fs::create_dir_all(staging.join("scripts")).unwrap();
+        fs::write(staging.join(relative), content).unwrap();
+        entry.verify_staging(&staging).unwrap();
+        assert!(GeneratorEntry::capture(&staging).is_err());
+        fs::write(staging.join(relative), b"// drift\n").unwrap();
+        assert!(entry.verify_staging(&staging).is_err());
+
+        fs::write(root.join(relative), b"// unstaged legitimate edit\n").unwrap();
+        assert!(entry.verify_source(root).is_err());
+        let edited = GeneratorEntry::capture(root).unwrap();
+        fs::copy(root.join(relative), staging.join(relative)).unwrap();
+        edited.verify_staging(&staging).unwrap();
+        generator_git(root, &["add", "--", relative]);
+        assert!(edited.verify_source(root).is_err());
+    }
     assert_eq!(
         formal_sync_arguments("owner/backend", &"a".repeat(40), "D:/backend"),
         vec![
@@ -57,6 +73,62 @@ fn staging_contract_generation_runs_node_without_package_installation() {
             "openapi/openapi.json".to_owned(),
             "--write".to_owned(),
         ]
+    );
+}
+
+const GENERATOR_ENTRIES: [&str; 2] = [
+    "scripts/generate-api-artifacts.mjs",
+    "scripts/generate-api-artifacts.ts",
+];
+
+#[test]
+fn generator_rejects_missing_dual_and_unowned_entries_before_staging() {
+    let frontend = generator_checkout();
+    let root = frontend.path();
+    let [legacy, current] = GENERATOR_ENTRIES;
+    assert!(GeneratorEntry::capture(root).is_err());
+    fs::write(root.join(legacy), b"// legacy\n").unwrap();
+    assert!(GeneratorEntry::capture(root).is_err());
+    generator_git(root, &["add", "--", legacy]);
+    let entry = GeneratorEntry::capture(root).unwrap();
+    fs::write(root.join(current), b"// untracked alternate\n").unwrap();
+    assert!(GeneratorEntry::capture(root).is_err());
+    assert!(entry.verify_source(root).is_err());
+    generator_git(root, &["add", "--", current]);
+    assert!(GeneratorEntry::capture(root).is_err());
+    fs::remove_file(root.join(legacy)).unwrap();
+    assert!(GeneratorEntry::capture(root).is_err());
+    generator_git(root, &["add", "--", legacy]);
+    assert_eq!(
+        GeneratorEntry::capture(root).unwrap().arguments()[0],
+        current
+    );
+    let linked = root.join("another-script");
+    fs::hard_link(root.join(current), &linked).unwrap();
+    assert!(GeneratorEntry::capture(root).is_err());
+    fs::remove_file(linked).unwrap();
+    fs::remove_file(root.join(current)).unwrap();
+    assert!(GeneratorEntry::capture(root).is_err());
+    assert!(!root.join(".local-tests").exists());
+}
+
+fn generator_checkout() -> tempfile::TempDir {
+    let frontend = tempfile::tempdir().unwrap();
+    generator_git(frontend.path(), &["init", "--quiet"]);
+    fs::create_dir(frontend.path().join("scripts")).unwrap();
+    frontend
+}
+
+fn generator_git(root: &Path, args: &[&str]) {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 
@@ -482,6 +554,56 @@ fn candidate_snapshot_precedes_staging_copy_and_preserves_interleaved_edit() {
         "original-backend-openapi"
     );
     assert!(!frontend.0.join("openapi/candidate.json").exists());
+}
+
+#[cfg(any(unix, windows))]
+#[test]
+fn candidate_rejects_linked_staging_parent_before_copying_snapshots() {
+    let frontend = TestFrontend::new();
+    let outside = tempfile::Builder::new()
+        .prefix("contract-external-")
+        .tempdir_in(frontend.0.parent().unwrap())
+        .unwrap();
+    let sentinel = outside.path().join("sentinel");
+    fs::write(&sentinel, "保留外部原件").unwrap();
+    let linked = frontend.0.join(".local-tests");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(outside.path(), &linked).unwrap();
+    #[cfg(windows)]
+    {
+        let relative = Path::new("..").join(outside.path().file_name().unwrap());
+        let status = std::process::Command::new("cmd.exe")
+            .args(["/D", "/C", "mklink", "/J", ".local-tests"])
+            .arg(relative)
+            .current_dir(&frontend.0)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+    assert_eq!(
+        fs::read_to_string(linked.join("sentinel")).unwrap(),
+        "保留外部原件"
+    );
+    let mut reached_staging = false;
+    let error = apply_candidate_with_staging_hook(
+        &frontend.backend(),
+        &frontend.backend().join(".."),
+        candidate(),
+        |_| {
+            reached_staging = true;
+            Ok(())
+        },
+        |_| Ok(()),
+    );
+    #[cfg(unix)]
+    fs::remove_file(&linked).unwrap();
+    #[cfg(windows)]
+    fs::remove_dir(&linked).unwrap();
+    let error = error.expect_err("暂存目录链接必须在复制输入前拒绝");
+    assert!(error.to_string().contains("junction"), "{error}");
+    assert!(!reached_staging);
+    assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 1);
+    assert_eq!(fs::read_to_string(sentinel).unwrap(), "保留外部原件");
 }
 
 #[test]

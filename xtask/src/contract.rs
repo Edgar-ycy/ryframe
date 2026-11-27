@@ -6,6 +6,8 @@ mod atomic;
 mod candidate;
 #[path = "contract/formal.rs"]
 mod formal;
+#[path = "contract/generator.rs"]
+mod generator;
 #[path = "contract/model.rs"]
 pub(crate) mod model;
 #[path = "contract/ownership.rs"]
@@ -26,16 +28,18 @@ pub(crate) use candidate::generate_api;
 
 #[allow(unused_imports)]
 pub(crate) use atomic::write_atomically_with;
+#[cfg(test)]
 #[allow(unused_imports)]
-pub(crate) use candidate::{
-    CANDIDATE_GENERATION_ARGS, apply_candidate, apply_candidate_with_staging_hook,
-    generated_artifact_paths, validate_candidate_contract,
-};
+pub(crate) use candidate::{apply_candidate, apply_candidate_with_staging_hook};
+#[allow(unused_imports)]
+pub(crate) use candidate::{generated_artifact_paths, validate_candidate_contract};
 #[allow(unused_imports)]
 pub(crate) use formal::{
-    FORMAL_DERIVATION_ARGS, formal_sync_arguments, github_repository_identifier,
-    validate_formal_sync,
+    formal_sync_arguments, github_repository_identifier, validate_formal_sync,
 };
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use generator::GeneratorEntry;
 #[allow(unused_imports)]
 pub(crate) use model::{ContractFileOperations, Snapshot, sha256_hex};
 #[allow(unused_imports)]

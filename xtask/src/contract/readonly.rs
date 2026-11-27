@@ -13,11 +13,11 @@ use crate::{
 
 use super::{
     candidate::{
-        CANDIDATE_GENERATION_ARGS, artifact_paths_from_inputs, canonical_contract,
-        prepare_staging_frontend, read_optional, snapshot_managed_files, snapshot_staging_inputs,
-        verify_input_snapshots,
+        artifact_paths_from_inputs, canonical_contract, prepare_staging_frontend, read_optional,
+        snapshot_managed_files, snapshot_staging_inputs, verify_input_snapshots,
     },
     formal::github_repository_identifier,
+    generator::GeneratorEntry,
     model::{CANDIDATE_MARKER, Snapshot, StagingFrontend, export_target, nonce},
     ownership::contract_managed_paths,
     recovery::reject_contract_recovery_artifacts,
@@ -26,12 +26,13 @@ use super::{
 
 pub(super) fn check_current(frontend_dir: &Path) -> Result<()> {
     let backend_dir = root_dir();
+    let entry = GeneratorEntry::capture(frontend_dir)?;
     let source_before = crate::devex::source_fingerprints(&backend_dir, frontend_dir)?;
     let result = check_current_with(
         &backend_dir,
         frontend_dir,
         |output| export_current_openapi(&backend_dir, output),
-        |staging| run_process(staging, "node", CANDIDATE_GENERATION_ARGS),
+        |staging| entry.run(frontend_dir, staging),
     );
     let source_after = crate::devex::source_fingerprints(&backend_dir, frontend_dir)?;
     if source_after != source_before {
@@ -42,6 +43,7 @@ pub(super) fn check_current(frontend_dir: &Path) -> Result<()> {
         };
     }
     result?;
+    entry.verify_source(frontend_dir)?;
     println!("当前后端 OpenAPI、前端正式契约及全部派生文件一致。");
     Ok(())
 }

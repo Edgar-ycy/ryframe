@@ -146,6 +146,6 @@ After sorting and deduplication, there must be 1–100 IDs. The entire batch is 
 
 ## Contract Validation
 
-After OpenAPI changes, run `cargo xtask generate api --write` to refresh the frontend's derived contract, then run the frontend consumer self-check and browser smoke checks. If a caller reports a missing operation or mismatched DTO, resynchronize the contract first, then check the operation IDs exported by the backend.
+After OpenAPI changes, run `cargo xtask generate api --write` to refresh the frontend's derived contract, then run the frontend consumer self-check and browser smoke checks. The contract tool uses the sole registered generator entry in the actual frontend Git worktree. When renaming it, stage the old entry removal and the new entry addition together. If a caller reports a missing operation or mismatched DTO, resynchronize the contract first, then check the operation IDs exported by the backend.
 
 When multi-tenancy is enabled, the login page selects a tenant through the public tenant name search, and authentication requests pass the selected tenant identifier. Single-tenant mode does not display or request tenant selection. `GET /api/v1/auth/tenants` supports `search`, `page`, and `page_size`, with at most 50 items per page. It returns only the names and identifiers of enabled, unexpired tenants; tenant status is still revalidated during login.
