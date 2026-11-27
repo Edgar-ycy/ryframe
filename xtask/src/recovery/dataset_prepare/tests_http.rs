@@ -134,6 +134,9 @@ fn catalog() -> std::collections::BTreeMap<String, Value> {
 #[test]
 fn existing_verification_reads_all_tenants_collects_subjects_and_clears_bearer_for_logout() {
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    use sha2::{Digest, Sha256};
+
+    const CONTENT: &[u8] = b"source verification sample";
     let server = Server::new(move |headers, _| {
         let tenant = headers
             .lines()
@@ -143,8 +146,17 @@ fn existing_verification_reads_all_tenants_collects_subjects_and_clears_bearer_f
             })
             .map(|(_, value)| value.trim())
             .unwrap_or("system");
+        let has_bearer = headers.lines().any(|line| {
+            line.to_ascii_lowercase()
+                .starts_with("authorization: bearer ")
+        });
         if headers.starts_with("POST /logout ") {
-            assert!(!headers.to_ascii_lowercase().contains("authorization:"));
+            assert!(!has_bearer);
+        } else if headers.starts_with("GET /posts/1 ") || headers.starts_with("GET /context ") {
+            assert!(has_bearer);
+        } else if headers.starts_with("GET /download?") {
+            assert!(has_bearer);
+            return (200, CONTENT.to_vec());
         }
         let data = if headers.starts_with("GET /context ") {
             full_context(headers)
@@ -164,8 +176,10 @@ fn existing_verification_reads_all_tenants_collects_subjects_and_clears_bearer_f
     });
     let target =
         json!({"scope_id":"current-source","api_url":server.url,"frontend_url":server.url});
+    let sample_file = json!({"file_path":"source/sample.txt","bytes":CONTENT.len(),
+                             "sha256":hex::encode(Sha256::digest(CONTENT))});
     let identities = (0..11).map(|index| {
-        json!({"tenant_id":if index == 0 {"system".into()} else {format!("origin-{index:02}")},"username":if index == 0 {"admin"} else {"owner"},"posts":[{"id":"1","code":"sample","name":"恢复样本"}],"files":[]})
+        json!({"tenant_id":if index == 0 {"system".into()} else {format!("origin-{index:02}")},"username":if index == 0 {"admin"} else {"owner"},"posts":[{"id":"1","code":"sample","name":"恢复样本"}],"files":[sample_file]})
     }).collect::<Vec<_>>();
     let counts = runtime()
         .block_on(existing::verify_at(
@@ -181,7 +195,7 @@ fn existing_verification_reads_all_tenants_collects_subjects_and_clears_bearer_f
             || Ok(()),
         ))
         .unwrap();
-    assert_eq!((counts.tenants, counts.posts, counts.files), (11, 11, 0));
+    assert_eq!((counts.tenants, counts.posts, counts.files), (11, 11, 11));
     assert_eq!(counts.subjects.len(), 11);
     assert!(
         counts

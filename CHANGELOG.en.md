@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Keep the access token for post queries and file downloads during source business verification, then clear it before logging out with the refresh cookie.
+
 - Share RFC3339 validation for recovery target initialization receipts and inventory continuation history, preserving the original input formats, time boundaries, and digests.
 
 - Share UTC timestamp ordering for source inventory, shutdown evidence, and identity activation while preserving the original cutoff boundaries and subsecond precision.

@@ -125,9 +125,12 @@ pub(in crate::recovery) async fn verify_at(
             result
                 .subjects
                 .push(access_subject(client.token()?, identity)?);
-            client.clear_bearer();
         }
         let verified = verify_identity(&mut client, identity).await;
+        if options.collect_subjects {
+            // 来源验收只用刷新 Cookie 注销，避免生成访问令牌撤销键。
+            client.clear_bearer();
+        }
         let logout = client
             .request(&json!({"operation":"post_auth_logout"}))
             .await;
