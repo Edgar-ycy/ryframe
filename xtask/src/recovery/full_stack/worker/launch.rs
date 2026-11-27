@@ -37,13 +37,36 @@ pub(super) fn environment(command: &mut Command) {
     command.env("APP_ENV", "test");
 }
 pub(super) fn command(operation: &str, args: &Value, directory: &Path) -> Result<Command> {
+    let (mut command, request) = command_and_request(operation, args, directory)?;
+    let mut input = tempfile::tempfile_in(directory)?;
+    input.write_all(&request)?;
+    input.seek(SeekFrom::Start(0))?;
+    command.stdin(input);
+    Ok(command)
+}
+
+#[cfg(windows)]
+pub(super) fn supervisor(
+    args: &Value,
+    directory: &Path,
+) -> Result<(Command, std::io::PipeWriter, Vec<u8>)> {
+    let (mut command, request) = command_and_request("supervise", args, directory)?;
+    let (reader, writer) = std::io::pipe()?;
+    command.stdin(reader);
+    Ok((command, writer, request))
+}
+
+fn command_and_request(
+    operation: &str,
+    args: &Value,
+    directory: &Path,
+) -> Result<(Command, Vec<u8>)> {
     let worker = operation != "run-frontend"
         && operation != "role-control"
         && args.get("role").is_none_or(|role| role == "worker");
-    let request = json!({"format_version":1,"kind":if worker {"ryframe-full-stack-worker"} else {"ryframe-full-stack-process"},"operation":operation,"arguments":args});
-    let mut input = tempfile::tempfile_in(directory)?;
-    input.write_all(&serde_json::to_vec(&request)?)?;
-    input.seek(SeekFrom::Start(0))?;
+    let request = serde_json::to_vec(
+        &json!({"format_version":1,"kind":if worker {"ryframe-full-stack-worker"} else {"ryframe-full-stack-process"},"operation":operation,"arguments":args}),
+    )?;
     let mut command = Command::new(std::env::current_exe()?);
     command
         .arg(if worker {
@@ -51,7 +74,6 @@ pub(super) fn command(operation: &str, args: &Value, directory: &Path) -> Result
         } else {
             "__full-stack-process"
         })
-        .stdin(input)
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     environment(&mut command);
@@ -60,7 +82,7 @@ pub(super) fn command(operation: &str, args: &Value, directory: &Path) -> Result
     {
         environment.apply(&mut command)?;
     }
-    Ok(command)
+    Ok((command, request))
 }
 #[cfg(windows)]
 pub(super) fn detached(_operation: &str, args: &Value, directory: &Path) -> Result<u32> {

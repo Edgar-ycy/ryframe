@@ -13,6 +13,8 @@ use crate::{
     recovery::clone::native::{json, resources::common},
 };
 use serde_json::{Value, json};
+#[cfg(windows)]
+use std::io::Write;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -118,6 +120,9 @@ pub(super) fn monitor(args: &Value) -> Result<Value> {
         super::environment::Environment::operation(&op.request)
     })?;
     let mut child = preparation::step(&op, &monitor, Stage::MemberSpawn, || {
+        #[cfg(windows)]
+        let (mut command, input, request) = launch::supervisor(args, &directory)?;
+        #[cfg(not(windows))]
         let mut command = launch::command("supervise", args, &directory)?;
         if role == Role::Frontend {
             command.stdout(Stdio::inherit()).stderr(Stdio::inherit());
@@ -125,7 +130,10 @@ pub(super) fn monitor(args: &Value) -> Result<Value> {
         if let Some(environment) = &environment {
             environment.apply(&mut command)?;
         }
-        ChildGroup::new()?.spawn(command)
+        let child = ChildGroup::new()?.spawn(command)?;
+        #[cfg(windows)]
+        let child = send_supervisor_request(child, input, &request)?;
+        Ok(child)
     })?;
     let supervisor = preparation::step(&op, &monitor, Stage::MemberIdentity, || {
         common::process_identity(child.id())?.ok_or_else(|| "角色监督进程登记前退出".into())
@@ -171,6 +179,26 @@ pub(super) fn monitor(args: &Value) -> Result<Value> {
         return Err(error);
     }
     Ok(Value::Null)
+}
+
+#[cfg(windows)]
+fn send_supervisor_request(
+    mut child: crate::process::ManagedChild,
+    mut input: std::io::PipeWriter,
+    request: &[u8],
+) -> Result<crate::process::ManagedChild> {
+    let sent = input.write_all(request);
+    // 监督器从标准输入读至 EOF，必须在发布就绪收据前关闭写端。
+    drop(input);
+    if let Err(error) = sent {
+        if let Err(cleanup) = stop_child(&mut child) {
+            return Err(
+                format!("发送监督请求失败：{error}。本次 Job 关闭未确认：{cleanup}").into(),
+            );
+        }
+        return Err(error.into());
+    }
+    Ok(child)
 }
 
 #[cfg(not(target_os = "linux"))]

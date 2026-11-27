@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Persistent Windows supervisors receive the existing startup request over an anonymous pipe, fixing temporary input files that blocked runtime verification and shutdown.
+
 - Generic soft deletion for departments, menus, roles, and users uses the shared host UTC clock and preserves MySQL's second-level update timestamps and repeated matching of deleted rows.
 
 - A registered complete prelaunch image can be revalidated after a source start fails with only role reservations. One live after-image completes the closure in the original ledger.

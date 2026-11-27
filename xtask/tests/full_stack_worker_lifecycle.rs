@@ -445,6 +445,14 @@ fn api_survives_controller_exit_and_stops_its_complete_role_tree() {
             tree[field]["pid"].as_u64().unwrap() as u32
         ));
     }
+    #[cfg(windows)]
+    for entry in fs::read_dir(&fixture.run).unwrap() {
+        let name = entry.unwrap().file_name();
+        assert!(
+            !name.to_string_lossy().starts_with(".tmp"),
+            "API 持久监督器留有临时输入：{name:?}"
+        );
+    }
     let status = fixture.ok("status");
     assert_eq!(status["state"], "running");
     assert_eq!(status["identity"], started["identity"]);
