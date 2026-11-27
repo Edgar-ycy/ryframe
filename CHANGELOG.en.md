@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Reference recovery backups verify the clean coordinating worktree and the product build source recorded in the inventory independently, allowing each to use its own commit.
+
 - OpenAPI generation verifies the unique entry in the actual frontend Git worktree and the staged inputs before generating derived files.
 
 - Persistent Windows supervisors receive the existing startup request over an anonymous pipe, fixing temporary input files that blocked runtime verification and shutdown.

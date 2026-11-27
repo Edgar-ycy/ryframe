@@ -13,18 +13,31 @@ fn backend() -> &'static Path {
 fn backup_inventory_is_derived_from_unchanged_raw_input() {
     let plan = json!({"id":"new-backup"});
     let raw = json!({"source_sha":"a".repeat(40)});
-    let source = || Ok(json!({"clean":true,"head":"a".repeat(40)}));
-    let inventory = model::backup_inventory(&plan, &raw, source).unwrap();
-    assert_eq!(inventory["id"], "new-backup");
+    for coordinator_head in ["a".repeat(40), "b".repeat(40)] {
+        let inventory = model::backup_inventory(&plan, &raw, || {
+            Ok(json!({"clean":true,"head":coordinator_head}))
+        })
+        .unwrap();
+        assert_eq!(
+            inventory,
+            json!({"id":plan["id"],"source_sha":raw["source_sha"]})
+        );
+    }
     assert!(raw.get("id").is_none());
+    let mut handwritten = raw.clone();
+    handwritten["id"] = plan["id"].clone();
     assert!(
-        model::backup_inventory(&plan, &inventory, || panic!("handwritten id read Git")).is_err()
+        model::backup_inventory(&plan, &handwritten, || panic!("手写 ID 不应读取协调源码"))
+            .unwrap_err()
+            .to_string()
+            .contains("不能手工补写")
     );
-    for bad in [
-        json!({"clean":false,"head":raw["source_sha"]}),
-        json!({"clean":true,"head":"b".repeat(40)}),
-    ] {
-        assert!(model::backup_inventory(&plan, &raw, || Ok(bad)).is_err());
+    for clean in [json!(false), json!("true"), Value::Null] {
+        let error = model::backup_inventory(&plan, &raw, || {
+            Ok(json!({"clean":clean,"head":raw["source_sha"]}))
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("干净的 Git 工作树"));
     }
 }
 

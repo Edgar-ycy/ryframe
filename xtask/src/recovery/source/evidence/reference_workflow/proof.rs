@@ -27,6 +27,8 @@ pub(in crate::recovery) fn backup_source(args: &Value) -> Result<Value> {
     let exported = &args["exported"];
     let generation = &exported["generation"];
     let request = &exported["request"];
+    let build_snapshot = &args["build"]["sources"]["full"]["source"]["snapshot"];
+    let inventory = &args["inventory"];
     let mut expected = native::json::object(&exported["inventory"], "导出库存")?.clone();
     // 原始库存不得覆盖正式计划ID。
     if expected.contains_key("id") {
@@ -35,20 +37,24 @@ pub(in crate::recovery) fn backup_source(args: &Value) -> Result<Value> {
     expected.insert("id".into(), args["plan"]["id"].clone());
     if identity["source_generation"] != args["descriptor"]
         || source["source_generation"] != args["descriptor"]
-        || args["inventory"] != Value::Object(expected)
+        || *inventory != Value::Object(expected)
         || request["source"] != args["plan"]["source"]
         || request["tools"] != args["plan"]["tools"]
         || *request != source["request"]
         || *generation != source["generation"]
-        || generation["source"] != args["build"]["sources"]["full"]["source"]["snapshot"]
+        || generation["source"] != *build_snapshot
     {
         return Err("正式备份与共享导出的库存、配置、构建或运行代次不同".into());
+    }
+    let head = inputs::domain::hash_40(&build_snapshot["head"], "共享导出产品构建提交")?;
+    if inventory["source_sha"].as_str() != Some(head.as_str()) {
+        return Err("正式备份库存源码 SHA 与已核验的产品构建提交不同".into());
     }
     let times = [
         &args["runtime"]["verified_at"],
         &args["quiescence"]["observed_stopped_at"],
-        &args["inventory"]["quiesced_at"],
-        &args["inventory"]["captured_at"],
+        &inventory["quiesced_at"],
+        &inventory["captured_at"],
     ]
     .into_iter()
     .map(|value| DateTime::parse_from_rfc3339(text(value)?).map_err(Into::into))

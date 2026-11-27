@@ -815,6 +815,27 @@ fn backup_source_requires_same_inventory_build_configuration_generation_and_orde
         *invalid.pointer_mut(pointer).unwrap() = json!("changed");
         assert!(proof::backup_source(&invalid).is_err(), "{pointer}");
     }
+    // 两份库存即使一致，也必须绑定已核验的产品构建提交。
+    let mut wrong_inventory = args.clone();
+    wrong_inventory["inventory"]["source_sha"] = json!("d".repeat(40));
+    wrong_inventory["exported"]["inventory"]["source_sha"] =
+        wrong_inventory["inventory"]["source_sha"].clone();
+    assert!(
+        proof::backup_source(&wrong_inventory)
+            .unwrap_err()
+            .to_string()
+            .contains("库存源码 SHA 与已核验的产品构建提交不同")
+    );
+    for malformed_head in ["A".repeat(40), "g".repeat(40), "a".repeat(39)] {
+        let mut invalid = args.clone();
+        invalid["build"]["sources"]["full"]["source"]["snapshot"]["head"] = json!(malformed_head);
+        invalid["source"]["generation"]["source"]["head"] = json!(malformed_head);
+        invalid["exported"]["generation"]["source"]["head"] = json!(malformed_head);
+        invalid["inventory"]["source_sha"] = json!(malformed_head);
+        invalid["exported"]["inventory"]["source_sha"] = json!(malformed_head);
+        let error = proof::backup_source(&invalid).unwrap_err();
+        assert!(error.to_string().contains("共享导出产品构建提交格式无效"));
+    }
     // 两份库存保持一致，使每个反例都命中同代来源的实际时间顺序检查。
     for (pointer, timestamp) in [
         ("/runtime/verified_at", "2025-01-01T00:00:03Z"),

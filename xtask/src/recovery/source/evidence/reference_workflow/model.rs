@@ -143,15 +143,14 @@ pub(super) fn preflight(args: &Value) -> Result<Value> {
 pub(super) fn backup_inventory(
     plan: &Value,
     raw: &Value,
-    source: impl FnOnce() -> Result<Value>,
+    coordinator_snapshot: impl FnOnce() -> Result<Value>,
 ) -> Result<Value> {
     let mut inventory = native::json::object(raw, "共享导出原始库存")?.clone();
     if inventory.contains_key("id") {
         return Err("backup必须直接消费共享导出的原始库存，不能手工补写id".into());
     }
-    let source = source()?;
-    if source["clean"].as_bool() != Some(true) || source["head"] != inventory["source_sha"] {
-        return Err("正式备份协调器必须是共享导出库存source_sha对应的干净工作树".into());
+    if coordinator_snapshot()?["clean"].as_bool() != Some(true) {
+        return Err("正式备份协调器必须使用干净的 Git 工作树".into());
     }
     inventory.insert("id".into(), plan["id"].clone());
     Ok(Value::Object(inventory))
