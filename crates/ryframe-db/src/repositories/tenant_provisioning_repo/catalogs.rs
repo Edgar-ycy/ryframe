@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 
-use chrono::{DateTime, Utc};
 use ryframe_application::ports::tenants::{
     TenantBaseCatalogTemplate, TenantConfigTemplate, TenantDepartmentTemplate,
     TenantDictionaryDataTemplate, TenantDictionaryTypeTemplate, TenantPostTemplate,
@@ -8,6 +7,7 @@ use ryframe_application::ports::tenants::{
 };
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{ActiveModelTrait, ActiveValue, DatabaseTransaction, EntityTrait};
+use time::OffsetDateTime;
 
 use super::TenantProvisioningRepository;
 use crate::{
@@ -42,9 +42,8 @@ async fn copy_posts(
     transaction: &DatabaseTransaction,
     tenant_id: &str,
     posts: Vec<TenantPostTemplate>,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<()> {
-    let now = crate::repositories::utc_time_from_chrono(now).db_context("岗位初始化时间")?;
     let models = posts
         .into_iter()
         .map(|source| -> AppResult<_> {
@@ -75,12 +74,11 @@ async fn copy_configs(
     transaction: &DatabaseTransaction,
     tenant_id: &str,
     configs: Vec<TenantConfigTemplate>,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<()> {
     if configs.is_empty() {
         return Ok(());
     }
-    let now = crate::repositories::utc_time_from_chrono(now).db_context("参数配置初始化时间")?;
     let models = configs
         .into_iter()
         .map(|source| -> AppResult<_> {
@@ -110,9 +108,8 @@ async fn copy_dictionaries(
     tenant_id: &str,
     dictionary_types: Vec<TenantDictionaryTypeTemplate>,
     dictionary_data: Vec<TenantDictionaryDataTemplate>,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<()> {
-    let now = crate::repositories::utc_time_from_chrono(now).db_context("字典初始化时间")?;
     let types = dictionary_types
         .into_iter()
         .map(|source| -> AppResult<_> {
@@ -167,10 +164,9 @@ async fn copy_departments(
     transaction: &DatabaseTransaction,
     tenant_id: &str,
     departments: Vec<TenantDepartmentTemplate>,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<()> {
     let departments = validate_and_order_departments(departments)?;
-    let now = crate::repositories::utc_time_from_chrono(now).db_context("部门初始化时间")?;
     let mut department_ids = HashMap::new();
     for source in departments {
         let id = crate::next_id()?;

@@ -21,8 +21,7 @@ impl TenantProvisioningRepository {
         identity: &TenantProvisioningIdentity,
         template: TenantAuthorizationTemplate,
     ) -> AppResult<()> {
-        let now = crate::repositories::utc_time_from_chrono(identity.provisioned_at)
-            .db_context("租户授权初始化时间")?;
+        let now = identity.provisioned_at;
         let permission_ids =
             copy_permissions(transaction, identity, template.permissions, now).await?;
         copy_menus(

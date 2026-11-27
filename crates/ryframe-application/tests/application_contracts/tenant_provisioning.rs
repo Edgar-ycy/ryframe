@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use chrono::Utc;
 use ryframe_kernel::{ActorContext, AppError, AppResult, DataScope, ErrorCode};
+use time::OffsetDateTime;
 
 use fixtures::policy_template;
 use ryframe_application::{
@@ -239,7 +240,7 @@ impl TenantTransaction for FakeTransaction {
             tenant_id: record.tenant_id.clone(),
             admin_role_id: 11,
             user_role_id: 12,
-            provisioned_at: Utc::now(),
+            provisioned_at: OffsetDateTime::now_utc(),
         })
     }
 
@@ -572,8 +573,8 @@ async fn provisioning_success_uses_four_stages_before_related_writes_and_commit(
             Call::Product,
             Call::Load,
             Call::Identity,
-            Call::Authorization(_, _),
-            Call::BaseCatalogs(_, _),
+            Call::Authorization(authorization_identity, _),
+            Call::BaseCatalogs(catalog_identity, _),
             Call::AssignProduct,
             Call::CreatePending,
             Call::Commit(TransactionAuditMode::CurrentRequest),
@@ -587,7 +588,7 @@ async fn provisioning_success_uses_four_stages_before_related_writes_and_commit(
             Call::Activate,
             Call::UpdateStatus,
             Call::Commit(TransactionAuditMode::Skip),
-        ]
+        ] if authorization_identity == catalog_identity
     ));
 }
 

@@ -1,3 +1,5 @@
+use time::OffsetDateTime;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TenantProvisioningTemplate {
     pub authorization: TenantAuthorizationTemplate,
@@ -107,5 +109,5 @@ pub struct TenantProvisioningIdentity {
     pub tenant_id: String,
     pub admin_role_id: i64,
     pub user_role_id: i64,
-    pub provisioned_at: chrono::DateTime<chrono::Utc>,
+    pub provisioned_at: OffsetDateTime,
 }

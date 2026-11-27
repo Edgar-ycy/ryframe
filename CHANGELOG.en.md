@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Tenant provisioning passes a single UTC timestamp as a time value to both authorization and base catalog copying.
+
 - Recovery tools verify the source inventory and JSON parser from the registered frontend tools checkout, preserving the respective sources for historical build receipts and the current TypeScript layout.
 
 - Backend planning and execution use the same TypeScript entry for frontend documentation-only checks and retain bilingual validation.

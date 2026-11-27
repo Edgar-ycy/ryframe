@@ -7,13 +7,17 @@ use ryframe_application::{
     ports::{
         authorization::AuthorizationMirrorTransaction,
         system::{DictDataRecord, DictTypeRecord},
-        tenants::ProvisionTenantRecord,
+        tenants::{
+            ProvisionTenantRecord, TenantAuthorizationTemplate, TenantBaseCatalogTemplate,
+            TenantPermissionTemplate, TenantPostTemplate, TenantProvisioningIdentity,
+        },
     },
 };
 use ryframe_db::{
     AutoFill, ControlDatabaseCluster, FillContext,
     application_ports::{system::dict, transaction::DatabasePortTransaction},
     entities::{cache_namespace_version, dept, menu, permission, role, user},
+    generated::entities::post,
     migration,
     repositories::{
         CONFIG_CACHE_NAMESPACE, DeptRepository, MenuRepository, RoleRepository,
@@ -23,8 +27,8 @@ use ryframe_db::{
 };
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait,
-    Statement, TransactionTrait,
+    ActiveModelTrait, ActiveValue, ColumnTrait, ConnectionTrait, DatabaseConnection, DbBackend,
+    EntityTrait, QueryFilter, Statement, TransactionTrait,
 };
 use sea_orm_migration::MigratorTrait;
 use time::{OffsetDateTime, PrimitiveDateTime, UtcOffset, macros::datetime};
@@ -115,11 +119,12 @@ async fn verify_cache_namespace_utc_writes(database: &DatabaseConnection) -> Res
     assert_eq!(initial.version, 0);
     assert_eq!(initial.created_at, initial.updated_at);
     assert_eq!(initial.created_at.offset(), UtcOffset::UTC);
-    let provisioned_second = provisioned.provisioned_at.timestamp();
+    let provisioned_second = provisioned.provisioned_at.unix_timestamp();
     assert!(
         (provisioned_second..=provisioned_second + 1)
             .contains(&initial.created_at.unix_timestamp())
     );
+    verify_provisioning_copy_times(&transaction, &provisioned, initial.created_at).await?;
 
     let before = OffsetDateTime::now_utc().unix_timestamp();
     let version = transaction
@@ -138,6 +143,80 @@ async fn verify_cache_namespace_utc_writes(database: &DatabaseConnection) -> Res
     assert_eq!(updated.created_at, initial.created_at);
     assert_eq!(updated.updated_at.offset(), UtcOffset::UTC);
     assert!((before..=after + 1).contains(&updated.updated_at.unix_timestamp()));
+    Ok(())
+}
+
+async fn verify_provisioning_copy_times(
+    transaction: &DatabasePortTransaction,
+    identity: &TenantProvisioningIdentity,
+    initial_time: OffsetDateTime,
+) -> Result<(), String> {
+    const PERMISSION_CODE: &str = "cache-utc:read";
+    const POST_CODE: &str = "cache-utc-post";
+    let repository = TenantProvisioningRepository;
+    repository
+        .copy_authorization_in_transaction(
+            transaction,
+            identity,
+            TenantAuthorizationTemplate {
+                permissions: vec![TenantPermissionTemplate {
+                    source_id: 1,
+                    name: "开通时钟校验权限".into(),
+                    code: PERMISSION_CODE.into(),
+                    parent_source_id: None,
+                    permission_type: "api".into(),
+                    icon: None,
+                    sort: 0,
+                    status: "1".into(),
+                    assign_admin: false,
+                    assign_user: false,
+                }],
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    repository
+        .copy_base_catalogs_in_transaction(
+            transaction,
+            identity,
+            TenantBaseCatalogTemplate {
+                posts: vec![TenantPostTemplate {
+                    name: "开通时钟校验岗位".into(),
+                    code: POST_CODE.into(),
+                    sort: 0,
+                    status: "1".into(),
+                    remark: None,
+                    delete_flag: "0".into(),
+                }],
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    let permission = permission::Entity::find()
+        .filter(permission::Column::TenantId.eq(&identity.tenant_id))
+        .filter(permission::Column::Code.eq(PERMISSION_CODE))
+        .one(transaction)
+        .await
+        .map_err(db_error)?
+        .ok_or("未找到开通写入的权限")?;
+    let post = post::Entity::find()
+        .filter(post::Column::TenantId.eq(&identity.tenant_id))
+        .filter(post::Column::Code.eq(POST_CODE))
+        .one(transaction)
+        .await
+        .map_err(db_error)?
+        .ok_or("未找到开通写入的岗位")?;
+    for timestamp in [
+        permission.created_at,
+        permission.updated_at,
+        post.created_at,
+        post.updated_at,
+    ] {
+        assert_eq!(timestamp, initial_time);
+        assert_eq!(timestamp.offset(), UtcOffset::UTC);
+    }
     Ok(())
 }
 

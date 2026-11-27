@@ -42,7 +42,7 @@ impl TenantProvisioningRepository {
             tenant_id: record.tenant_id.clone(),
             admin_role_id: ids.admin_role_id,
             user_role_id: ids.user_role_id,
-            provisioned_at: now,
+            provisioned_at: utc_now,
         })
     }
 }
