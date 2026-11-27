@@ -6,7 +6,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Result, dev::ReadyKind};
+use crate::{Result, dev::ReadyKind, utc_timestamp::rfc3339_order_key};
 
 use super::{
     metadata::{RunMetadata, SourceFingerprints},
@@ -534,7 +534,7 @@ fn validate_timestamp_order(baseline: &[&SampleRecord], candidate: &[&SampleReco
     ordered.sort_by_key(|sample| sample.order);
     let mut previous = None;
     for sample in ordered {
-        let started = chrono::DateTime::parse_from_rfc3339(&sample.started_at)
+        let started = rfc3339_order_key(&sample.started_at)
             .map_err(|error| format!("paired 样本时间戳无效：{error}"))?;
         if previous.is_some_and(|previous| started < previous) {
             return Err("DevEx paired 样本时间戳与 ABBA order 不一致".into());

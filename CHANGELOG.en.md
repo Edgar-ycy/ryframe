@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Share RFC3339 parsing between DevEx reports and targeted resource source receipts, preserving historical offsets, subsecond precision, and ABBA sample order checks.
+
 - Allow seed-runtime startup and drain shutdown on Windows to explicitly hold the registered originals. Keep full checks at the stage boundaries and verify live ports, configuration, process identities, and the outbox.
 
 - Compare configuration package and rollback snapshot retention deadlines in UTC, preserving MySQL microsecond precision, active job protections, and the cleanup grace period after the last file reference is released.

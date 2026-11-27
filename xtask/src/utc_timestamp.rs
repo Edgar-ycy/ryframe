@@ -1,6 +1,8 @@
-//! 系统 UTC 时刻的文本输出，保持既有年份、小数精度与时区后缀。
+//! 系统 UTC 时刻的文本输出与历史 RFC3339 时间比较。
 
-use time::{OffsetDateTime, UtcOffset};
+use std::borrow::Cow;
+
+use time::{OffsetDateTime, UtcOffset, format_description::well_known::Rfc3339};
 
 enum Precision {
     AutoSi,
@@ -14,6 +16,35 @@ pub(crate) fn rfc3339(value: OffsetDateTime) -> String {
 
 pub(crate) fn now_rfc3339() -> String {
     rfc3339(time::OffsetDateTime::now_utc())
+}
+
+pub(crate) fn rfc3339_order_key(value: &str) -> crate::Result<(i64, u32)> {
+    let bytes = value.as_bytes();
+    if !matches!(bytes.get(10), Some(b'T' | b't' | b' ')) {
+        return Err("RFC3339 日期时间分隔符无效".into());
+    }
+    let suffix = value.get(19..).ok_or("RFC3339 时间字段不完整")?;
+    let offset = match suffix.strip_prefix('.') {
+        Some(fraction) => fraction.trim_start_matches(|ch: char| ch.is_ascii_digit()),
+        None => suffix,
+    };
+    let leap_second = bytes.get(17..19) == Some(b"60");
+    let mut input = Cow::Borrowed(value);
+    if leap_second {
+        // 保留旧比较中秒 59 上额外的十亿纳秒及原有小数精度。
+        input.to_mut().replace_range(17..19, "59");
+    }
+    if offset.starts_with('−') {
+        let start = value.len() - offset.len();
+        input
+            .to_mut()
+            .replace_range(start..start + '−'.len_utf8(), "-");
+    }
+    let parsed = OffsetDateTime::parse(&input, &Rfc3339)?;
+    Ok((
+        parsed.unix_timestamp(),
+        parsed.nanosecond() + u32::from(leap_second) * 1_000_000_000,
+    ))
 }
 
 pub(crate) fn unix_timestamp_millis(value: OffsetDateTime) -> i128 {
@@ -118,6 +149,51 @@ fn year(value: i32) -> String {
 mod tests {
     use super::*;
     use time::{Date, Month};
+
+    #[test]
+    fn rfc3339_order_key_preserves_chrono_syntax_precision_and_order() {
+        for (text, expected) in [
+            ("1970-01-01t00:00:00z", (0, 0)),
+            ("1969-12-31 22:30:00-01:30", (0, 0)),
+            ("1970-01-01T01:30:00.123456789987+01:30", (0, 123_456_789)),
+            ("1969-12-31t22:30:00.123456789987−01:30", (0, 123_456_789)),
+            ("1970-01-01T23:59:00+23:59", (0, 0)),
+            ("1969-12-31T23:59:59.999999999Z", (-1, 999_999_999)),
+            ("1969-12-31T23:59:60.01Z", (-1, 1_010_000_000)),
+            ("1970-01-01T00:01:60.25+00:02", (-1, 1_250_000_000)),
+            ("1969-12-31T23:58:60.25−00:01", (-1, 1_250_000_000)),
+            ("1970-01-01T00:01:60.25Z", (119, 1_250_000_000)),
+            ("0000-01-01T00:00:00+01:00", (-62_167_222_800, 0)),
+            ("9999-12-31T23:59:59-01:00", (253_402_304_399, 0)),
+        ] {
+            let old = chrono::DateTime::parse_from_rfc3339(text).unwrap();
+            assert_eq!((old.timestamp(), old.timestamp_subsec_nanos()), expected);
+            assert_eq!(rfc3339_order_key(text).unwrap(), expected);
+        }
+        let ordered = [
+            "1969-12-31T23:59:59.999999999Z",
+            "1969-12-31T23:59:60.01Z",
+            "1970-01-01T00:01:60.25+00:02",
+            "1970-01-01t00:00:00z",
+        ];
+        assert!(ordered.windows(2).all(|pair| {
+            rfc3339_order_key(pair[0]).unwrap() < rfc3339_order_key(pair[1]).unwrap()
+        }));
+        for invalid in [
+            "1970-01-01X00:00:00Z",
+            "1970-01-01\t00:00:00Z",
+            "1970-01-01T00:00:00.−01:30",
+            "1970-01-01T00:00:00+24:00",
+            "1970-01-01T00:00:00−01:60",
+            "1970−01-01T00:00:00Z",
+        ] {
+            assert!(
+                chrono::DateTime::parse_from_rfc3339(invalid).is_err(),
+                "{invalid}"
+            );
+            assert!(rfc3339_order_key(invalid).is_err(), "{invalid}");
+        }
+    }
 
     #[test]
     fn utc_text_keeps_zero_millisecond_microsecond_and_nanosecond_precision() {

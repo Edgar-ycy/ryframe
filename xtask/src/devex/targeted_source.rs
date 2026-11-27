@@ -12,6 +12,7 @@ use crate::{
     Result,
     ci::resource_gate::{ResourceGateMode, analyze, decision_for, load_repository},
     cli::ResourceGateOptions,
+    utc_timestamp::rfc3339_order_key,
 };
 
 use super::model::{BaselineContract, PairedArm};
@@ -168,7 +169,7 @@ impl Manifest {
         {
             return Err("资源门禁来源收据版本、场景或准备结果无效".into());
         }
-        chrono::DateTime::parse_from_rfc3339(&self.at).map_err(|_| "资源门禁来源收据时间无效")?;
+        rfc3339_order_key(&self.at).map_err(|_| "资源门禁来源收据时间无效")?;
         Ok(())
     }
 }
