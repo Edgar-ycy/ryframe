@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- DevEx save measurements use the shared UTC encoder for sample start times and preserve the existing record format and historical precision.
+
 - The registered Windows warm source holds its static build inputs during startup, business verification, and shutdown captures. The controller verifies them in full at both boundaries and continues checking configuration, service ports, the run lock, and process identities throughout.
 
 - Share UTC time-window validation for source runtime receipts, preserving the original RFC3339 format and ordering rules.

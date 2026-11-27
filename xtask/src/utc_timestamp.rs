@@ -52,6 +52,36 @@ pub(crate) fn rfc3339_order_key(value: &str) -> crate::Result<(i64, u32)> {
     ))
 }
 
+pub(crate) fn normalize_rfc3339_utc(value: &str) -> crate::Result<String> {
+    const NANOS_PER_SECOND: u32 = 1_000_000_000;
+    const DAY_SECONDS: i64 = time::Duration::days(1).whole_seconds();
+    const FIRST_EXTENDED_YEAR: i64 =
+        time::macros::datetime!(9999-12-31 00:00 UTC).unix_timestamp() + DAY_SECONDS;
+
+    let (seconds, nanos) = rfc3339_order_key(value)?;
+    let leap_second = nanos >= NANOS_PER_SECOND;
+    let extended_year = (FIRST_EXTENDED_YEAR..FIRST_EXTENDED_YEAR + DAY_SECONDS).contains(&seconds);
+    // 四位年份及合法偏移最多跨到下一年的第一天，借用前一天的相同 UTC 时分秒输出。
+    let represented_seconds = if extended_year {
+        seconds - DAY_SECONDS
+    } else {
+        seconds
+    };
+    let instant = OffsetDateTime::from_unix_timestamp(represented_seconds)?
+        .replace_nanosecond(nanos % NANOS_PER_SECOND)?;
+    let mut output = rfc3339(instant);
+    if leap_second || extended_year {
+        let separator = output.find('T').ok_or("UTC 时间缺少固定分隔符")?;
+        if leap_second {
+            output.replace_range(separator + 7..separator + 9, "60");
+        }
+        if extended_year {
+            output.replace_range(..separator, "+10000-01-01");
+        }
+    }
+    Ok(output)
+}
+
 pub(crate) fn unix_timestamp_millis(value: OffsetDateTime) -> i128 {
     value.unix_timestamp_nanos().div_euclid(1_000_000)
 }
@@ -198,6 +228,52 @@ mod tests {
             );
             assert!(rfc3339_order_key(invalid).is_err(), "{invalid}");
         }
+    }
+
+    #[test]
+    fn normalized_rfc3339_preserves_chrono_utc_bytes_at_precision_and_calendar_boundaries() {
+        for (input, expected) in [
+            ("1970-01-01t00:00:00z", "1970-01-01T00:00:00+00:00"),
+            (
+                "1969-12-31 22:30:00.12−01:30",
+                "1970-01-01T00:00:00.120+00:00",
+            ),
+            (
+                "1970-01-01T01:30:00.1234+01:30",
+                "1970-01-01T00:00:00.123400+00:00",
+            ),
+            (
+                "1970-01-01T01:30:00.123456789987+01:30",
+                "1970-01-01T00:00:00.123456789+00:00",
+            ),
+            ("1969-12-31T23:59:60Z", "1969-12-31T23:59:60+00:00"),
+            (
+                "1970-01-01T00:01:60.25+00:02",
+                "1969-12-31T23:59:60.250+00:00",
+            ),
+            ("0000-01-01T00:00:00+00:01", "-0001-12-31T23:59:00+00:00"),
+            (
+                "0000-01-01T00:00:60.123456789+00:01",
+                "-0001-12-31T23:59:60.123456789+00:00",
+            ),
+            (
+                "9999-12-31T23:59:59.999999999Z",
+                "9999-12-31T23:59:59.999999999+00:00",
+            ),
+            ("9999-12-31T23:59:00-00:01", "+10000-01-01T00:00:00+00:00"),
+            (
+                "9999-12-31T23:59:60.1234-23:59",
+                "+10000-01-01T23:58:60.123400+00:00",
+            ),
+        ] {
+            let old = chrono::DateTime::parse_from_rfc3339(input)
+                .unwrap()
+                .to_utc()
+                .to_rfc3339();
+            assert_eq!(old, expected, "{input}");
+            assert_eq!(normalize_rfc3339_utc(input).unwrap(), expected, "{input}");
+        }
+        assert!(normalize_rfc3339_utc("1970-01-01T00:00:00").is_err());
     }
 
     #[test]

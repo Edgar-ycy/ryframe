@@ -3,11 +3,10 @@ use std::{
     process::{Command, ExitStatus},
 };
 
-use chrono::Utc;
-
 use crate::{
     Result,
     dev::{RESULT_FILE_NAME, SaveCase, SaveMeasurementContract, read_measurement_with_contract},
+    utc_timestamp::normalize_rfc3339_utc,
 };
 
 use super::{
@@ -96,10 +95,8 @@ pub(super) fn measurement_outcome(
         )
         .into());
     }
-    let started_at = chrono::DateTime::parse_from_rfc3339(&measurement.started_at)
-        .map_err(|error| format!("cargo-dev-save startedAt 无效：{error}"))?
-        .with_timezone(&Utc)
-        .to_rfc3339();
+    let started_at = normalize_rfc3339_utc(&measurement.started_at)
+        .map_err(|error| format!("cargo-dev-save startedAt 无效：{error}"))?;
     Ok(SampleOutcome {
         started_at,
         duration_ms: measurement.save_to_ready_ms,
