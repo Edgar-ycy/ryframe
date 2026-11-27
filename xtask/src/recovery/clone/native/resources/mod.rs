@@ -8,9 +8,6 @@ use crate::{
     cli::{CloneCommand, StorageOperation, StorageOptions},
 };
 
-#[cfg(windows)]
-use crate::cli::CloneSide;
-
 pub(crate) mod common;
 pub(super) mod origin;
 mod producers;
@@ -26,10 +23,7 @@ pub(crate) fn run(command: &CloneCommand, backend: &Path) -> Result<Value> {
             storage::status(backend, &options.run_dir, options.side)
         }
         #[cfg(windows)]
-        CloneCommand::Storage(options)
-            if options.side == CloneSide::Source
-                && options.operation == StorageOperation::Restart =>
-        {
+        CloneCommand::Storage(options) if options.operation == StorageOperation::Restart => {
             storage_source_windows::run(backend, options)
         }
         CloneCommand::Storage(options) => run_storage_stage(backend, options),

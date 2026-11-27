@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Use the detached controller for target RustFS restarts on Windows so the restart command can return while RustFS continues serving.
+
 - Verify native post-copy receipts during source registration and include each published API successor in producer lineage and shutdown evidence.
 
 - Share RFC3339 validation across backup inventory, recovery inputs, save measurements, and runtime receipts while preserving each entry point's timestamp precision and format rules.
