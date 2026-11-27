@@ -16,6 +16,8 @@ mod normal;
 mod recover;
 #[path = "execution/saved.rs"]
 pub(super) mod saved;
+#[path = "execution/warm.rs"]
+mod warm;
 
 pub(in crate::recovery::source) fn run(
     backend: &Path,

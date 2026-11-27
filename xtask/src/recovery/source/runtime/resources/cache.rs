@@ -16,7 +16,7 @@ impl<T: Transport> Resources<'_, T> {
         })
     }
 
-    fn cache_plan(&self, subjects: &Value) -> Result<(String, Value)> {
+    pub(super) fn cache_plan(&self, subjects: &Value) -> Result<(String, Value)> {
         let namespace = format!(
             "ryframe:{{{}}}:",
             document::text(&self.request["target"]["scope_id"], "来源 scope")?
@@ -26,7 +26,7 @@ impl<T: Transport> Resources<'_, T> {
         Ok((namespace, plan))
     }
 
-    fn cache_image(
+    pub(super) fn cache_image(
         &self,
         subjects: &Value,
         namespace: &str,

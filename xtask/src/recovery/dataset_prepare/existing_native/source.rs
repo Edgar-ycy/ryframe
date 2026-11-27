@@ -5,10 +5,18 @@ use super::{
 use crate::{
     Result,
     local_test_path::{LocalTestPathKind, validate_local_test_path},
-    recovery::clone::native::{input::BUCKETS, s3::protocol::validate_key},
+    recovery::clone::native::{
+        digest, input::BUCKETS, lifecycle::state, resources::common as bindings,
+        s3::protocol::validate_key, seed::generation::coordinator,
+    },
 };
 use serde_json::{Value, json};
-use std::{collections::BTreeSet, ffi::OsString};
+use std::{collections::BTreeSet, ffi::OsString, path::Path};
+
+// 新会话证据只适用于这次保留原 Redis 会话的来源登记和显式 v2 请求。
+const H_SOURCE_REGISTRATION: &str =
+    "4f084753d4c2b797d3aa73c967a3bab0d9051f8cc569536651e2eaed79166ff6";
+const H_GENERATION_ID: &str = "wkc61111h-current-20261127-r1";
 
 const REQUIRED: &[&str] = &[
     "--backend-dir",
@@ -65,6 +73,7 @@ pub(super) fn run(args: &[OsString]) -> Result<()> {
     let (lineage_snapshot, lineage) =
         common::Snapshot::read(&root, &lineage_path, 16 * 1024 * 1024, "派生数据血缘")?;
     validate_lineage(&lineage)?;
+    let warm = warm_sessions(&root, &run, generation, &lineage_path, &lineage)?;
     let contract_path = common::path(&args, "--contract")?;
     let (contract_snapshot, contract) =
         common::Snapshot::read(&root, &contract_path, 16 * 1024 * 1024, "来源OpenAPI契约")?;
@@ -112,12 +121,15 @@ pub(super) fn run(args: &[OsString]) -> Result<()> {
         "operation_id":operation,
         "source_generation_sha256":generation,
     }))?;
-    let counts = runtime(&lineage, &catalog, &password, || {
+    let counts = runtime(&lineage, &catalog, &password, warm, || {
         common::unchanged(&root, &snapshots, &configuration_snapshots)
     })?;
     common::unchanged(&root, &snapshots, &configuration_snapshots)?;
-    common::write_result(&json!({
-        "format_version":1,
+    if warm && !warm_sessions(&root, &run, generation, &lineage_path, &lineage)? {
+        return Err("来源会话摘要的正式暖态绑定发生变化".into());
+    }
+    let mut result = json!({
+        "format_version":if warm { 2 } else { 1 },
         "kind":"restore-source-existing-verification",
         "status":"source_existing_data_verified",
         "scope_id":lineage["verification"]["scope_id"],
@@ -131,19 +143,97 @@ pub(super) fn run(args: &[OsString]) -> Result<()> {
         "files":counts.files,
         "source_generation_sha256":generation,
         "lineage_file_sha256":snapshots[0].sha256(),
-    }))
+    });
+    if warm {
+        result["session_subjects"] = json!(counts.session_subjects);
+    }
+    common::write_result(&result)
+}
+
+fn warm_sessions(
+    root: &Path,
+    verification: &Path,
+    generation_sha256: &str,
+    lineage_path: &Path,
+    lineage: &Value,
+) -> Result<bool> {
+    let registration = &lineage["source_registration"];
+    if registration["sha256"] != H_SOURCE_REGISTRATION {
+        return Ok(false);
+    }
+    let generation = verification.parent().ok_or("暖态核验缺少来源代次")?;
+    let run = generation.parent().ok_or("暖态核验缺少源复制账本")?;
+    bindings::local_directory(root, run, "暖态核验源复制账本")?;
+    let number = generation
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix('g'))
+        .and_then(|name| name.parse::<u64>().ok())
+        .filter(|number| *number > 0 && generation == run.join(format!("g{number:04}")))
+        .ok_or("暖态核验代次目录无效")?;
+    let ledger_path = run.join("state.json");
+    let ledger = bindings::binding(&ledger_path)?;
+    let saved = state::load(run, true)?;
+    let attempts = state::attempts(&saved)?;
+    let start_path = run.join(format!("results/{number:04}.json"));
+    let binding = bindings::binding(&start_path)?;
+    if binding["sha256"] != generation_sha256
+        || !attempts.iter().any(|row| {
+            row["number"] == number
+                && row["stage"] == "seed-runtime"
+                && row["mode"] == "source-generation-start"
+                && row["status"] == "passed"
+                && row["result"] == binding
+        })
+        || bindings::bound_file(root, registration, "暖态核验原来源登记")?
+            != run.join("results/0080.json")
+    {
+        return Err("暖态核验未绑定原复制账本同代已通过的 START".into());
+    }
+    let start = bindings::read_bound(root, &binding, "暖态核验 START")?;
+    documents::exact(
+        &start,
+        coordinator::receipts::START_FIELDS,
+        "暖态核验 START",
+    )?;
+    let request = bindings::read_bound(root, &start["request"], "暖态核验正式 v2 请求")?;
+    coordinator::current_request(&request)?;
+    let before = &start["before"];
+    let image = bindings::read_bound(root, before, "暖态核验完整前像")?;
+    if start["status"] != "seed_source_generation_running"
+        || start["generation_id"] != json!(format!("g{number:04}"))
+        || start["source_registration"] != *registration
+        || start["dataset_lineage"] != bindings::binding(lineage_path)?
+        || request["id"] != H_GENERATION_ID
+        || request["source_registration"] != *registration
+        || documents::read(&generation.join("request.json"))? != request
+        || before != &lineage["current_image"]
+        || bindings::bound_file(root, before, "暖态核验完整前像")?
+            != generation.join("before/image.json")
+        || image["format_version"] != 1
+        || image["kind"] != "seed-source-generation-image"
+        || image["source_registration"] != *registration
+        || image["image_sha256"] != digest::plan_hash(&image["image"])?
+        || !image["image"]["redis"]["existing"].is_object()
+        || bindings::binding(&ledger_path)? != ledger
+        || bindings::binding(&start_path)? != binding
+    {
+        return Err("暖态核验未绑定同代正式请求、血缘或 Redis 完整前像".into());
+    }
+    Ok(true)
 }
 
 fn runtime(
     lineage: &Value,
     catalog: &std::collections::BTreeMap<String, Value>,
     password: &str,
+    warm: bool,
     checkpoint: impl FnMut() -> Result<()>,
 ) -> Result<existing::Counts> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    runtime.block_on(existing::verify_at(
+    runtime.block_on(existing::verify_at_with_sessions(
         &lineage["verification"],
         lineage["tenants"].as_array().ok_or("派生来源租户缺失")?,
         catalog,
@@ -155,6 +245,7 @@ fn runtime(
                 .ok_or("请求节奏缺失")?,
             collect_subjects: true,
         },
+        warm,
         checkpoint,
     ))
 }

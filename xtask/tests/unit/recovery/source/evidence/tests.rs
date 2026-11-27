@@ -297,6 +297,51 @@ fn exact_result_binds_all_eleven_subjects_start_lineage_and_business_counts() {
 }
 
 #[test]
+fn warm_result_requires_trusted_mode_and_exact_unique_session_digests() {
+    let mut request = result_request();
+    assert!(model::result_with_sessions(&request, true).is_err());
+    request["value"]["format_version"] = json!(2);
+    request["value"]["session_subjects"] = json!(
+        request["value"]["subjects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .map(|(index, subject)| json!({
+                "tenant_id":subject["tenant_id"],
+                "user_id":subject["user_id"],
+                "sid_sha256":format!("{index:064x}"),
+            }))
+            .collect::<Vec<_>>()
+    );
+    assert!(model::result(&request).is_err());
+    assert_eq!(
+        model::result_with_sessions(&request, true).unwrap(),
+        request["value"]
+    );
+    for (field, value) in [
+        ("user_id", json!("1")),
+        ("tenant_id", json!("system")),
+        ("sid_sha256", json!("0".repeat(64))),
+        ("sid_sha256", json!("A".repeat(64))),
+        ("sid_sha256", json!("s-raw-session")),
+    ] {
+        let mut changed = request.clone();
+        changed["value"]["session_subjects"][1][field] = value;
+        assert!(
+            model::result_with_sessions(&changed, true).is_err(),
+            "{field}"
+        );
+    }
+    let mut extra = request.clone();
+    extra["value"]["session_subjects"][1]["sid"] = json!("do-not-leak");
+    assert!(model::result_with_sessions(&extra, true).is_err());
+    let sessions = request["value"]["session_subjects"].as_array_mut().unwrap();
+    sessions.pop();
+    assert!(model::result_with_sessions(&request, true).is_err());
+}
+
+#[test]
 fn cache_plan_requires_exact_namespace_unique_subjects_and_33_registered_keys() {
     let args = json!({"namespace":"ryframe:{seed-unit}:","subjects":subjects()});
     let plan = model::cache_plan(&args).unwrap();

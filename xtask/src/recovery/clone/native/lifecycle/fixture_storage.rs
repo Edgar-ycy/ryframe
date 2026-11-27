@@ -46,9 +46,17 @@ pub(in crate::recovery) struct RustfsHandoff {
     registration: Value,
     selected: history::handoff::Selected,
     completion: Value,
+    redis_available: bool,
 }
 
 impl RustfsHandoff {
+    pub(in crate::recovery) fn retained_redis(&self) -> Result<&Value> {
+        if !self.redis_available {
+            return Err("RustFS 移交所保留的 Redis 已关闭或等待外部终止接续".into());
+        }
+        Ok(&self.selected.redis_runtime["redis"])
+    }
+
     pub(in crate::recovery) fn lock(&self) -> Result<ProcessGuard> {
         ProcessGuard::acquire(&self.service)
     }
@@ -161,6 +169,7 @@ pub(in crate::recovery) fn rustfs_handoff(
         registration,
         selected,
         completion: proof["completion"].clone(),
+        redis_available: fixture["closed"] == false && fixture["external_recovery"].is_null(),
     }))
 }
 

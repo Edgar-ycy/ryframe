@@ -6,13 +6,16 @@ use super::{
 use crate::{Result, check::consumer_context::python};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde_json::{Value, json};
-use std::{process::Stdio, time::Duration};
+use sha2::{Digest, Sha256};
+use std::{collections::BTreeSet, process::Stdio, time::Duration};
+use uuid::{Uuid, Variant};
 
 pub(in crate::recovery) struct Counts {
     pub tenants: u64,
     pub posts: u64,
     pub files: u64,
     pub subjects: Vec<Value>,
+    pub session_subjects: Vec<Value>,
 }
 
 pub(in crate::recovery) struct Options {
@@ -94,9 +97,25 @@ pub(in crate::recovery) async fn verify_at(
     catalog: &std::collections::BTreeMap<String, Value>,
     password: &str,
     options: Options,
+    checkpoint: impl FnMut() -> Result<()>,
+) -> Result<Counts> {
+    verify_at_with_sessions(
+        target, identities, catalog, password, options, false, checkpoint,
+    )
+    .await
+}
+
+pub(in crate::recovery) async fn verify_at_with_sessions(
+    target: &Value,
+    identities: &[Value],
+    catalog: &std::collections::BTreeMap<String, Value>,
+    password: &str,
+    options: Options,
+    trusted_warm: bool,
     mut checkpoint: impl FnMut() -> Result<()>,
 ) -> Result<Counts> {
     if identities.len() != 11
+        || trusted_warm && !options.collect_subjects
         || catalog
             .get("get_system_posts_by_id")
             .is_none_or(|value| value["method"] != "GET")
@@ -108,6 +127,7 @@ pub(in crate::recovery) async fn verify_at(
         posts: 0,
         files: 0,
         subjects: Vec::new(),
+        session_subjects: Vec::new(),
     };
     for (index, identity) in identities.iter().enumerate() {
         checkpoint()?;
@@ -121,12 +141,14 @@ pub(in crate::recovery) async fn verify_at(
             options.request_interval_ms,
         )?;
         client.login().await?;
-        if options.collect_subjects {
-            result
-                .subjects
-                .push(access_subject(client.token()?, identity)?);
+        let verified: Result<_> = async {
+            let subject = options
+                .collect_subjects
+                .then(|| access_subject(client.token()?, identity, trusted_warm))
+                .transpose()?;
+            Ok((verify_identity(&mut client, identity).await?, subject))
         }
-        let verified = verify_identity(&mut client, identity).await;
+        .await;
         if options.collect_subjects {
             // 来源验收只用刷新 Cookie 注销，避免生成访问令牌撤销键。
             client.clear_bearer();
@@ -134,19 +156,38 @@ pub(in crate::recovery) async fn verify_at(
         let logout = client
             .request(&json!({"operation":"post_auth_logout"}))
             .await;
-        let counts = match (verified, logout) {
+        let (counts, subject) = match (verified, logout) {
             (Ok(counts), Ok(_)) => counts,
             (Err(_), Err(_)) => return Err("已有数据验证及注销均失败；不发布验证成功".into()),
             (Err(error), _) | (_, Err(error)) => return Err(error),
         };
+        if let Some((actor, session)) = subject {
+            result.subjects.push(actor);
+            result.session_subjects.extend(session);
+        }
         result.tenants += 1;
         result.posts += counts.0;
         result.files += counts.1;
     }
+    if trusted_warm
+        && result
+            .session_subjects
+            .iter()
+            .map(|session| session["sid_sha256"].as_str())
+            .collect::<BTreeSet<_>>()
+            .len()
+            != 11
+    {
+        return Err("来源验收未取得十一项唯一会话摘要".into());
+    }
     Ok(result)
 }
 
-fn access_subject(token: &str, identity: &Value) -> Result<Value> {
+fn access_subject(
+    token: &str,
+    identity: &Value,
+    trusted_warm: bool,
+) -> Result<(Value, Option<Value>)> {
     let encoded = token
         .split('.')
         .nth(1)
@@ -170,9 +211,26 @@ fn access_subject(token: &str, identity: &Value) -> Result<Value> {
     {
         return Err("来源验收访问令牌没有绑定当前租户用户".into());
     }
-    Ok(
-        json!({"tenant_id":identity["tenant_id"],"user_id":user,"user_authorization_version":version}),
-    )
+    let actor = json!({"tenant_id":identity["tenant_id"],"user_id":user,"user_authorization_version":version});
+    let session = if trusted_warm {
+        let sid = claims["sid"]
+            .as_str()
+            .filter(|sid| {
+                sid.strip_prefix("s-").is_some_and(|value| {
+                    Uuid::parse_str(value).is_ok_and(|uuid| {
+                        uuid.get_version_num() == 4
+                            && uuid.get_variant() == Variant::RFC4122
+                            && uuid.hyphenated().to_string() == value
+                    })
+                })
+            })
+            .ok_or("来源验收访问令牌的会话标识不是规范 UUIDv4")?;
+        Some(json!({"tenant_id":identity["tenant_id"],"user_id":user,
+                    "sid_sha256":hex::encode(Sha256::digest(sid.as_bytes()))}))
+    } else {
+        None
+    };
+    Ok((actor, session))
 }
 async fn verify_identity(client: &mut Client, identity: &Value) -> Result<(u64, u64)> {
     let posts = identity["posts"].as_array().ok_or("岗位样本缺失")?;

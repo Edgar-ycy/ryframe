@@ -70,7 +70,12 @@ pub(super) fn create(args: &Value) -> Result<Value> {
         "来源运行收据生成参数",
     )?;
     let (_, directory) = directory(args)?;
-    let mut value = json!({"format_version":3,"kind":"restore-source-runtime","status":"source_runtime_verified",
+    let version = if args["cleanup"]["kind"] == "restore-source-warm-redis-expiry" {
+        4
+    } else {
+        3
+    };
+    let mut value = json!({"format_version":version,"kind":"restore-source-runtime","status":"source_runtime_verified",
         "source_generation":args["start"],"dataset_lineage":args["lineage"],"before":args["before"],"after":args["after"],
         "producer":producer_bindings(&directory)?,"verification":common::binding(&directory.join("source-producer.stdout.json"))?,
         "login_audit":common::binding(&directory.join("audit/login-audit.json"))?,
@@ -118,6 +123,7 @@ pub(super) fn schema(args: &Value) -> Result<Value> {
     let (backend, directory) = directory(args)?;
     let value = &args["value"];
     let recovered = value.get("recovery").is_some();
+    let warm = value["format_version"].as_u64() == Some(4);
     let mut fields = RECEIPT.to_vec();
     if recovered {
         fields.push("recovery");
@@ -131,7 +137,11 @@ pub(super) fn schema(args: &Value) -> Result<Value> {
         .map(str::to_owned)
         .collect::<BTreeSet<_>>();
     let attempt_entries = super::cache_attempt::entries(&backend, &directory)?;
-    if attempt_entries.is_empty() {
+    if warm {
+        if recovered || !attempt_entries.is_empty() {
+            return Err("暖来源只接受原生产者和自然过期证据".into());
+        }
+    } else if attempt_entries.is_empty() {
         return Err("已封口来源缺少原缓存 attempt".into());
     }
     expected.extend(attempt_entries.into_iter().map(str::to_owned));
@@ -150,7 +160,7 @@ pub(super) fn schema(args: &Value) -> Result<Value> {
     if directory
         .file_name()
         .is_none_or(|name| name != "verification")
-        || value["format_version"].as_u64() != Some(3)
+        || !matches!(value["format_version"].as_u64(), Some(3 | 4))
         || value["kind"] != "restore-source-runtime"
         || value["status"] != "source_runtime_verified"
         || value["restore_qualified"] != false
@@ -236,13 +246,23 @@ pub(super) fn final_check(args: &Value) -> Result<Value> {
     let receipt = &args["receipt"];
     let cleanup = &args["cleanup"];
     let recovered = args["recovered"].as_bool().ok_or("来源恢复标志无效")?;
-    super::cache_attempt::validate_cleanup(&backend, &directory, cleanup)?;
+    let warm = receipt["format_version"].as_u64() == Some(4);
+    if warm {
+        if recovered || cleanup["kind"] != "restore-source-warm-redis-expiry" {
+            return Err("暖来源封口没有绑定自然过期证据".into());
+        }
+    } else {
+        super::cache_attempt::validate_cleanup(&backend, &directory, cleanup)?;
+        if documents::array(&cleanup["after"], "来源缓存后像")?.len() != 33
+            || !recovered && cleanup["execution"] != "confirmed_watch_exec"
+        {
+            return Err("来源运行收据的授权缓存副作用与完整像不同".into());
+        }
+    }
     if args["before"] != args["expected_before"] {
         return Err("来源验收前像与 start 运行像不同".into());
     }
     if receipt["write_effects"] != args["effects"]
-        || documents::array(&cleanup["after"], "来源缓存后像")?.len() != 33
-        || !recovered && cleanup["execution"] != "confirmed_watch_exec"
         || receipt["remote_writes"]
             != model::remote_writes(&json!({"cleanup":cleanup,"recovered":recovered}))?
     {
@@ -259,9 +279,12 @@ pub(super) fn final_check(args: &Value) -> Result<Value> {
         }
     }
     let completion = documents::read(&directory.join("source-producer-completion.json"))?;
-    model::time_order(
-        &json!({"label":"来源运行收据时间","values":[receipt["started_at"],completion["completed_at"],cleanup["cleaned_at"],receipt["verified_at"]]}),
-    )?;
+    let mut times = vec![&receipt["started_at"], &completion["completed_at"]];
+    if warm {
+        times.push(&cleanup["started_at"]);
+    }
+    times.extend([&cleanup["cleaned_at"], &receipt["verified_at"]]);
+    model::time_order(&json!({"label":"来源运行收据时间","values":times}))?;
     if common::binding(&directory.join("source-runtime.json"))? != args["descriptor"] {
         return Err("来源运行收据在核验期间变化".into());
     }

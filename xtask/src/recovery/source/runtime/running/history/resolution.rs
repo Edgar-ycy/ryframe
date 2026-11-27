@@ -75,12 +75,19 @@ pub(super) fn inspect_current(
                 && row["mode"] == "source-generation-recover"
                 && row["status"] == "failed"
         }) {
-        let (start, _) = prelaunch::origin(backend, run, prefix)?;
-        let index = prefix
-            .iter()
-            .position(|row| *row == start)
-            .ok_or("未启动恢复缺少原 START")?;
-        json!(&prefix[index..])
+        if prefix
+            .last()
+            .is_some_and(prelaunch::partial::applies_recovery_failure)
+        {
+            partial_pending(backend, run, attempts, current)?
+        } else {
+            let (start, _) = prelaunch::origin(backend, run, prefix)?;
+            let index = prefix
+                .iter()
+                .position(|row| *row == start)
+                .ok_or("未启动恢复缺少原 START")?;
+            json!(&prefix[index..])
+        }
     } else {
         json!([])
     };
@@ -119,6 +126,28 @@ pub(super) fn inspect_current(
         consume(&context, &archive, action, &mut proofs)?;
     }
     Ok(json!({"later":planned["later"],"archive":archive,"segment":segment}))
+}
+
+fn partial_pending(
+    backend: &Path,
+    run: &Path,
+    attempts: &[Value],
+    current: &Value,
+) -> Result<Value> {
+    let [.., start, failed, active] = attempts else {
+        return Err("部分未启动接续缺少连续历史".into());
+    };
+    if active["number"] != *current
+        || active["stage"] != "seed-runtime"
+        || active["mode"] != "source-generation-recover"
+        || active["status"] != "running"
+        || failed["number"].as_u64().and_then(|n| n.checked_add(1)) != active["number"].as_u64()
+    {
+        return Err("原部分采集失败仅由紧邻的正式持锁恢复接续".into());
+    }
+    let request = common::binding(&prelaunch::partial::expected_request_path(run)?)?;
+    prelaunch::partial::recovery_failure(backend, run, failed, start, &request)?;
+    Ok(json!([start, failed]))
 }
 
 struct History<'a> {

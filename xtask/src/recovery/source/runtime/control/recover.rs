@@ -10,7 +10,10 @@ use crate::{
         source::evidence::{
             execution::saved,
             images,
-            running::{self, history::lineage as lineage_model},
+            running::{
+                self,
+                history::{lineage as lineage_model, prelaunch::partial},
+            },
         },
     },
 };
@@ -37,7 +40,9 @@ pub(super) fn preflight(backend: &Path, run: &Path, saved: &Value, request: &Pat
         .as_u64()
         .filter(|n| *n > 0)
         .ok_or("原 START 序号无效")?;
-    if !run.join(format!("g{started:04}")).try_exists()? {
+    if partial::applies(start) {
+        prelaunch::preflight_partial(backend, run, prefix, number, request, start)?;
+    } else if !run.join(format!("g{started:04}")).try_exists()? {
         prelaunch::prepare(backend, run, saved, number, request)?;
     } else if prefix.iter().any(|row| {
         row["number"].as_u64().is_some_and(|n| n > started)
@@ -71,7 +76,9 @@ pub(super) fn run<T: Transport + Sync>(
         .as_u64()
         .filter(|n| *n > 0)
         .ok_or("原 START 序号无效")?;
-    if !frame.run.join(format!("g{number:04}")).try_exists()? {
+    if partial::applies(start) {
+        prelaunch::run_partial(frame, request, start, transport)
+    } else if !frame.run.join(format!("g{number:04}")).try_exists()? {
         prelaunch::run(frame, request, transport)
     } else {
         existing(frame, request, transport)

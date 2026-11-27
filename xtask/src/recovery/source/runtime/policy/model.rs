@@ -171,6 +171,19 @@ pub(super) fn remote_writes(args: &Value) -> Result<Value> {
     documents::exact(args, &["cleanup", "recovered"], "来源远端写入计数参数")?;
     let cleanup = &args["cleanup"];
     let recovered = args["recovered"].as_bool().ok_or("来源恢复标志无效")?;
+    if cleanup["kind"] == "restore-source-warm-redis-expiry" {
+        if recovered || cleanup["status"] != "observed_absent" || cleanup["remote_writes"] != 0 {
+            return Err("暖来源短期键观察的写入结果无效".into());
+        }
+        let snapshots =
+            documents::array(&cleanup["expired_snapshot_keys"], "暖来源过期授权快照")?.len();
+        let limits =
+            documents::array(&cleanup["expired_rate_limit_keys"], "暖来源过期限流键")?.len();
+        return Ok(json!({"api_session_commands":22,"authorization_cache":{
+            "confirmed_commands":0,"unknown_result_commands":0,"phase":"initial_verification",
+            "historical_cleanup":"not_applicable","deleted_keys":0,"expired_snapshot_keys":snapshots,
+            "observed_absent_keys":snapshots},"expired_rate_limit_keys":limits,"confirmed_total_commands":22}));
+    }
     let expired = documents::array(&cleanup["expired_snapshot_keys"], "来源过期快照")?.len();
     let after = documents::array(&cleanup["after"], "来源缓存后像")?.len();
     let reconciled = match cleanup["execution"].as_str() {

@@ -156,6 +156,7 @@ pub(super) fn preflight(
     let value = common::read_bound(backend, &descriptor, "正式 START 请求")?;
     coordinator::current_request(&value)?;
     let archive = history::prelaunch::closed(backend, run, attempts)?;
+    partial_request(&archive, &descriptor)?;
     let planned = model(
         "preflight-plan",
         json!({"attempts":attempts,"archive":archive}),
@@ -179,6 +180,16 @@ pub(super) fn preflight(
     )?;
     common::bound_file(backend, &descriptor, "正式 START 请求")?;
     Ok((archive, segment))
+}
+
+fn partial_request(archive: &Value, descriptor: &Value) -> Result<()> {
+    let receipt = &archive["receipt"];
+    if receipt["status"] == "seed_source_partial_prelaunch_closed"
+        && receipt["request"] != *descriptor
+    {
+        return Err("部分启动前封存后的实际 START 必须使用同一正式请求".into());
+    }
+    Ok(())
 }
 
 impl Plan {
@@ -239,6 +250,24 @@ impl Plan {
             archive,
             segment,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn partial_prelaunch_start_requires_original_request_binding() {
+        let request = json!({"path":"original.json","bytes":12,"sha256":"digest"});
+        let mut other = request.clone();
+        other["path"] = json!("identical-copy.json");
+        let mut archive = json!({"receipt":{"status":"seed_source_partial_prelaunch_closed",
+            "request":request}});
+        assert!(partial_request(&archive, &request).is_ok());
+        assert!(partial_request(&archive, &other).is_err());
+        archive["receipt"]["status"] = json!("seed_source_prelaunch_closed");
+        assert!(partial_request(&archive, &other).is_ok());
     }
 }
 

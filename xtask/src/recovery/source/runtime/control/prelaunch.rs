@@ -18,6 +18,11 @@ use std::path::Path;
 
 pub(super) struct Plan {
     prepared: Prepared,
+    evidence: FailureEvidence,
+}
+
+#[derive(PartialEq)]
+struct FailureEvidence {
     start: Value,
     proof: Value,
     collection: Value,
@@ -50,26 +55,97 @@ pub(super) fn prepare(
     }
     let proof = prelaunch::proof(backend, run, &start)?;
     let descriptor = common::binding(request)?;
-    let value = common::read_bound(backend, &descriptor, "未启动恢复正式请求")?;
-    let source = history::predecessor(backend, run, saved)?;
-    let output = run.join(format!("seed-runtime/attempt-{number:04}"));
-    let prepared = observation::prepare(
-        backend,
-        run,
-        number,
-        &descriptor,
-        &source,
-        &output,
-        &crate::recovery::source::evidence::generation_request::configuration::directory(
-            backend, &value,
-        )?,
-    )?;
+    let prepared = prepare_observation(backend, run, saved, number, &descriptor)?;
     if prelaunch::proof(backend, run, &start)? != proof || common::binding(request)? != descriptor {
         return Err("未启动恢复准备期间原失败或当前请求变化".into());
     }
     Ok(Plan {
         prepared,
+        evidence: FailureEvidence {
+            start,
+            proof,
+            collection,
+        },
+    })
+}
+
+fn prepare_observation(
+    backend: &Path,
+    run: &Path,
+    saved: &Value,
+    number: u64,
+    descriptor: &Value,
+) -> Result<Prepared> {
+    let value = common::read_bound(backend, descriptor, "未启动恢复正式请求")?;
+    let source = history::predecessor(backend, run, saved)?;
+    let output = run.join(format!("seed-runtime/attempt-{number:04}"));
+    observation::prepare(
+        backend,
+        run,
+        number,
+        descriptor,
+        &source,
+        &output,
+        &crate::recovery::source::evidence::generation_request::configuration::directory(
+            backend, &value,
+        )?,
+    )
+}
+
+pub(super) fn preflight_partial(
+    backend: &Path,
+    run: &Path,
+    prefix: &[Value],
+    number: u64,
+    request: &Path,
+    start: &Value,
+) -> Result<()> {
+    let descriptor = common::binding(request)?;
+    partial_evidence(backend, run, prefix, number, start, &descriptor)?;
+    Ok(())
+}
+
+pub(super) fn run_partial<T: Transport + Sync>(
+    frame: &Frame<'_>,
+    request: &Path,
+    start: &Value,
+    transport: &T,
+) -> Result<Value> {
+    let descriptor = common::binding(request)?;
+    let evidence = partial_evidence(
+        frame.backend,
+        frame.run,
+        &frame.prefix,
+        frame.number,
         start,
+        &descriptor,
+    )?;
+    // 来源前序核验要求同一账本已有当前持锁恢复记录。
+    let prepared = prepare_observation(
+        frame.backend,
+        frame.run,
+        frame.state(),
+        frame.number,
+        &descriptor,
+    )?;
+    observe(frame, Plan { prepared, evidence }, transport)
+}
+
+fn partial_evidence(
+    backend: &Path,
+    run: &Path,
+    prefix: &[Value],
+    number: u64,
+    start: &Value,
+    descriptor: &Value,
+) -> Result<FailureEvidence> {
+    let (original, proof, collection) =
+        prelaunch::partial::recovery_history(backend, run, prefix, number, descriptor)?;
+    if original != *start {
+        return Err("部分启动前恢复没有绑定同一原失败代次".into());
+    }
+    Ok(FailureEvidence {
+        start: original,
         proof,
         collection,
     })
@@ -87,18 +163,14 @@ pub(super) fn run<T: Transport + Sync>(
         frame.number,
         request,
     )?;
-    let Plan {
-        prepared,
-        start,
-        proof,
-        collection,
-    } = plan;
+    observe(frame, plan, transport)
+}
+
+fn observe<T: Transport + Sync>(frame: &Frame<'_>, plan: Plan, transport: &T) -> Result<Value> {
+    let Plan { prepared, evidence } = plan;
     let config = prepared.config.clone();
     frame.checkpoint()?;
-    if prelaunch::proof(frame.backend, frame.run, &start)? != proof
-        || prelaunch::origin(frame.backend, frame.run, &frame.prefix)?
-            != (start.clone(), collection.clone())
-    {
+    if !evidence.unchanged(frame, &prepared.descriptor)? {
         return Err("未启动恢复写入观察目录前原失败或完整历史变化".into());
     }
     let observation = Observation::create(
@@ -107,17 +179,22 @@ pub(super) fn run<T: Transport + Sync>(
         configuration::Selection::Copy(&config),
         transport,
     )?;
-    checkpoint(&observation, &start, &proof, &collection)?;
+    checkpoint(&observation, &evidence)?;
     let (before, first) = observation.capture("before")?;
-    checkpoint(&observation, &start, &proof, &collection)?;
+    checkpoint(&observation, &evidence)?;
     let (after, last) = observation.capture("after")?;
     if first["image"] != last["image"] {
         return Err("未启动恢复采集期间完整当前像变化，不允许后续启动".into());
     }
-    checkpoint(&observation, &start, &proof, &collection)?;
+    checkpoint(&observation, &evidence)?;
     let request_value = &observation.prepared.facts["request"];
-    let mut result = json!({"status":"seed_source_prelaunch_closed","request":observation.prepared.descriptor,
-        "failed_start":start["number"],"failure_proof":proof,"collection_failure":collection,
+    let status = if prelaunch::partial::applies(&evidence.start) {
+        "seed_source_partial_prelaunch_closed"
+    } else {
+        "seed_source_prelaunch_closed"
+    };
+    let mut result = json!({"status":status,"request":observation.prepared.descriptor,
+        "failed_start":evidence.start["number"],"failure_proof":evidence.proof,"collection_failure":evidence.collection,
         "history_length":frame.prefix.len(),"history_sha256":digest::plan_hash(&json!(frame.prefix))?,
         "coordinator_source":frame.source(),"runtime":common::binding(&observation.output()?.join("runtime/runtime.json"))?,
         "before":before,"after":after,"historical_image_compared":false,"remote_writes":0,"restore_qualified":false});
@@ -134,17 +211,31 @@ pub(super) fn run<T: Transport + Sync>(
 
 fn checkpoint<T: Transport + Sync>(
     observation: &Observation<'_, '_, T>,
-    start: &Value,
-    proof: &Value,
-    collection: &Value,
+    evidence: &FailureEvidence,
 ) -> Result<()> {
-    let frame = observation.frame;
     observation.quiet()?;
-    if prelaunch::proof(frame.backend, frame.run, start)? != *proof
-        || prelaunch::origin(frame.backend, frame.run, &frame.prefix)?
-            != (start.clone(), collection.clone())
-    {
+    if !evidence.unchanged(observation.frame, &observation.prepared.descriptor)? {
         return Err("未启动恢复期间原失败、完整历史或采集失败集合变化".into());
     }
     observation.checkpoint()
+}
+
+impl FailureEvidence {
+    fn unchanged(&self, frame: &Frame<'_>, descriptor: &Value) -> Result<bool> {
+        if prelaunch::partial::applies(&self.start) {
+            return Ok(partial_evidence(
+                frame.backend,
+                frame.run,
+                &frame.prefix,
+                frame.number,
+                &self.start,
+                descriptor,
+            )? == *self);
+        }
+        Ok(
+            prelaunch::proof(frame.backend, frame.run, &self.start)? == self.proof
+                && prelaunch::origin(frame.backend, frame.run, &frame.prefix)?
+                    == (self.start.clone(), self.collection.clone()),
+        )
+    }
 }

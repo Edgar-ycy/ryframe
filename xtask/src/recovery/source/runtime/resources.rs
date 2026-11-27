@@ -25,6 +25,12 @@ mod cache;
 mod inventory;
 #[path = "resources/storage.rs"]
 mod storage;
+#[path = "resources/warm_expiry.rs"]
+mod warm_expiry;
+#[path = "resources/warm_redis.rs"]
+pub(super) mod warm_redis;
+#[path = "resources/warm_transient.rs"]
+pub(super) mod warm_transient;
 
 pub(super) struct Resources<'a, T> {
     pub backend: &'a Path,

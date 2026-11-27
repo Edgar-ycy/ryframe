@@ -12,7 +12,7 @@ use super::{
 use crate::{
     Result,
     cli::CloneSide,
-    recovery::clone::native::lifecycle::{lock, state},
+    recovery::clone::native::lifecycle::{lock, manifest::fixture_storage::RustfsHandoff, state},
 };
 
 pub(crate) fn stage(side: CloneSide) -> String {
@@ -262,6 +262,15 @@ pub(crate) fn registered(
     side: CloneSide,
     before: Option<u64>,
 ) -> Result<Option<Value>> {
+    Ok(registered_with_handoff(backend, run_dir, side, before)?.map(|(value, _)| value))
+}
+
+pub(in crate::recovery) fn registered_with_handoff(
+    backend: &Path,
+    run_dir: &Path,
+    side: CloneSide,
+    before: Option<u64>,
+) -> Result<Option<(Value, Option<RustfsHandoff>)>> {
     common::local_directory(backend, run_dir, "复制运行目录")?;
     let root = run_dir.join(stage(side));
     let selected = records(run_dir, side, true)?
@@ -334,12 +343,15 @@ pub(crate) fn registered(
     if source.as_ref() != result.get("source_fixture") {
         return Err("来源存储后继与原夹具停止收据绑定不同".into());
     }
-    if let Some(recorded) = result.get("fixture_handoff") {
+    let handoff = if let Some(recorded) = result.get("fixture_handoff") {
         let handoff = super::transferred(backend, run_dir, &manifest, side, &request, false)?;
         if handoff.as_ref().map(|handoff| &handoff.binding) != Some(recorded) {
             return Err("存储重启结果未绑定原 RustFS 移交收据".into());
         }
-    }
+        handoff
+    } else {
+        None
+    };
     let expected = json!({
         "status": "storage_restarted",
         "side": side.as_str(),
@@ -368,7 +380,7 @@ pub(crate) fn registered(
     if let Some(source) = source {
         projection["source_fixture"] = source;
     }
-    Ok(Some(projection))
+    Ok(Some((projection, handoff)))
 }
 
 #[allow(dead_code)]

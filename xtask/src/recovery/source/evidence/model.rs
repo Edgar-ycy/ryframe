@@ -19,6 +19,10 @@ const DELTAS: &[(&str, u64)] = &[
 ];
 
 pub(super) fn result(args: &Value) -> Result<Value> {
+    result_with_sessions(args, false)
+}
+
+pub(super) fn result_with_sessions(args: &Value, trusted_warm: bool) -> Result<Value> {
     documents::exact(
         args,
         &["value", "lineage", "start", "lineage_descriptor"],
@@ -46,28 +50,31 @@ pub(super) fn result(args: &Value) -> Result<Value> {
             return Err("来源结果缺少明确start或血缘文件摘要".into());
         }
     }
-    documents::exact(
-        value,
-        &[
-            "format_version",
-            "kind",
-            "status",
-            "scope_id",
-            "origin_tenant_scope_id",
-            "lineage_sha256",
-            "actions",
-            "restore_success",
-            "subjects",
-            "tenants",
-            "posts",
-            "files",
-            "source_generation_sha256",
-            "lineage_file_sha256",
-        ],
-        "来源原生验收结果",
-    )?;
+    let fields = [
+        "format_version",
+        "kind",
+        "status",
+        "scope_id",
+        "origin_tenant_scope_id",
+        "lineage_sha256",
+        "actions",
+        "restore_success",
+        "subjects",
+        "tenants",
+        "posts",
+        "files",
+        "source_generation_sha256",
+        "lineage_file_sha256",
+        "session_subjects",
+    ];
+    let fields = if trusted_warm {
+        &fields[..]
+    } else {
+        &fields[..fields.len() - 1]
+    };
+    documents::exact(value, fields, "来源原生验收结果")?;
     let expected = json!({
-        "format_version":1,"kind":"restore-source-existing-verification",
+        "format_version":if trusted_warm {2} else {1},"kind":"restore-source-existing-verification",
         "status":"source_existing_data_verified","scope_id":lineage["verification"]["scope_id"],
         "origin_tenant_scope_id":lineage["scopes"]["origin_tenant_scope_id"],
         "lineage_sha256":digest::plan_hash(lineage)?,
@@ -97,7 +104,41 @@ pub(super) fn result(args: &Value) -> Result<Value> {
             return Err("来源登录主体与派生租户身份不同".into());
         }
     }
+    if trusted_warm {
+        validate_sessions(&value["session_subjects"], subjects)?;
+    }
     Ok(value.clone())
+}
+
+fn validate_sessions(value: &Value, subjects: &[Value]) -> Result<()> {
+    let sessions = documents::array(value, "来源登录会话摘要")?;
+    if sessions.len() != subjects.len() {
+        return Err("来源登录会话摘要缺少完整主体".into());
+    }
+    let mut digests = BTreeSet::new();
+    for (session, subject) in sessions.iter().zip(subjects) {
+        documents::exact(
+            session,
+            &["tenant_id", "user_id", "sid_sha256"],
+            "来源登录会话摘要",
+        )?;
+        let sha256 = session["sid_sha256"]
+            .as_str()
+            .filter(|digest| {
+                digest.len() == 64
+                    && digest
+                        .bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            })
+            .ok_or("来源登录会话摘要格式无效")?;
+        if session["tenant_id"] != subject["tenant_id"]
+            || session["user_id"] != subject["user_id"]
+            || !digests.insert(sha256)
+        {
+            return Err("来源登录会话摘要与主体不同或重复".into());
+        }
+    }
+    Ok(())
 }
 
 fn subject_identity(subject: &Value) -> Result<(&str, &str)> {

@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Reuse the Redis generation retained by the RustFS handoff, close audited failures before startup, and verify the exact expiry times of existing sessions and logout records created during source verification.
+
 - Keep the access token for post queries and file downloads during source business verification, then clear it before logging out with the refresh cookie.
 
 - Share RFC3339 validation for recovery target initialization receipts and inventory continuation history, preserving the original input formats, time boundaries, and digests.

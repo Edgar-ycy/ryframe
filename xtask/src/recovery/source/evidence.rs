@@ -51,6 +51,8 @@ mod stopped;
 #[cfg(test)]
 #[path = "../../../tests/unit/recovery/source/evidence/tests.rs"]
 mod tests;
+#[path = "runtime/warm_effects.rs"]
+mod warm_effects;
 
 pub(in crate::recovery) use images::saved_object_captures;
 pub(in crate::recovery) use images::{inspect_object, object_capture_result};

@@ -31,6 +31,9 @@ struct Progress {
 }
 
 pub(super) fn run<T: Transport + Sync>(session: &Session<'_, T>) -> Result<Value> {
+    if super::warm::mode(&session.facts)? {
+        return Err("暖来源保留原业务失败与会话证据，禁止执行旧授权缓存清理".into());
+    }
     let prefix = prefix(session)?;
     let mut state = Progress {
         intent: Value::Null,

@@ -54,10 +54,7 @@ pub(crate) fn verify_with_observer(
     })
 }
 
-pub(in crate::recovery::clone::native) fn info_matches(
-    redis: &Value,
-    response: &Value,
-) -> Result<bool> {
+pub(in crate::recovery) fn info_matches(redis: &Value, response: &Value) -> Result<bool> {
     let raw = response.as_str().ok_or("目标 Redis INFO 响应不是字符串")?;
     let info = super::storage::redis_layout::info(raw)?;
     let expected_run = redis["run_id"].as_str().unwrap_or_default();
@@ -157,7 +154,7 @@ pub(super) fn state(
     Ok(observed)
 }
 
-pub(in crate::recovery::clone::native) fn marker_image(
+pub(in crate::recovery) fn marker_image(
     inputs: &super::storage::StorageInputs<'_>,
     command: &mut (impl FnMut(&[&str]) -> Result<Value> + ?Sized),
 ) -> Result<Value> {

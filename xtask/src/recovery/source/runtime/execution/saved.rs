@@ -2,6 +2,7 @@
 use super::super::{
     environment, images, model, producer, ready, running, session::policy, staging,
 };
+use super::warm;
 use crate::{
     Result,
     recovery::clone::native::{json as document, resources::common, source},
@@ -37,24 +38,26 @@ pub(in crate::recovery::source::evidence) fn verify(
         return Err("来源运行恢复工具与已绑定的干净后继不同".into());
     }
     let facts = running::load(backend, &receipt["source_generation"], live, recovered)?;
+    let trusted_warm = warm::mode(&facts)?;
+    if trusted_warm != (receipt["format_version"].as_u64() == Some(4)) || trusted_warm && recovered
+    {
+        return Err("来源核验收据版本与已登记的 Redis 模式不同".into());
+    }
     policy(
         "facts-binding",
         json!({"directory":directory,"generation":facts["output"],
         "receipt":receipt,"lineage":facts["receipt"]["dataset_lineage"]}),
     )?;
     let node = producer(backend, directory, &facts, recovered)?;
-    let verified = model::result(&json!({"value":node["stdout"],"lineage":facts["lineage"],
-        "start":receipt["source_generation"],"lineage_descriptor":receipt["dataset_lineage"]}))?;
+    let verified = model::result_with_sessions(
+        &json!({"value":node["stdout"],"lineage":facts["lineage"],
+        "start":receipt["source_generation"],"lineage_descriptor":receipt["dataset_lineage"]}),
+        trusted_warm,
+    )?;
     policy(
         "login-stored",
         json!({"backend":backend,"directory":directory,"descriptor":receipt["login_audit"],
         "lineage":facts["lineage"],"subjects":verified["subjects"],"started_at":receipt["started_at"]}),
-    )?;
-    let cleanup = cleanup(
-        backend,
-        directory,
-        &receipt["cache_cleanup"],
-        &verified["subjects"],
     )?;
     let before = images::verify(
         backend,
@@ -70,7 +73,35 @@ pub(in crate::recovery::source::evidence) fn verify(
         &facts["source"]["request"],
         &facts["receipt"]["source_registration"],
     )?;
-    let effects = model::write_effects(&json!({"before":before["image"],"after":after["image"]}))?;
+    let (cleanup, effects) = if trusted_warm {
+        let cleanup = warm::observation(
+            backend,
+            directory,
+            &receipt,
+            &before["image"],
+            &facts,
+            &verified,
+        )?;
+        let effects = warm::effects(
+            backend,
+            &before["image"],
+            &after["image"],
+            &verified,
+            &receipt["producer"],
+            &cleanup,
+        )?;
+        (cleanup, effects)
+    } else {
+        let cleanup = cleanup(
+            backend,
+            directory,
+            &receipt["cache_cleanup"],
+            &verified["subjects"],
+        )?;
+        let effects =
+            model::write_effects(&json!({"before":before["image"],"after":after["image"]}))?;
+        (cleanup, effects)
+    };
     if recovered {
         let chain = policy(
             "recovery-chain",

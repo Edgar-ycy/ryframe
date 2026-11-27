@@ -1,5 +1,5 @@
 //! 只有完整成功恢复收据才能封存原零启动失败；全部旧文件仍逐项读取。
-use super::{number, origin, proof, reregistration};
+use super::{number, origin, partial, proof, reregistration};
 use crate::recovery::source::evidence::images;
 use crate::{
     Result,
@@ -43,7 +43,10 @@ pub(in crate::recovery::source::evidence) fn closed(
             && row["status"] == "passed"
     }) {
         let value = common::read_bound(backend, &row["result"], "来源历史恢复结果")?;
-        if value["status"] == "seed_source_prelaunch_closed" {
+        if matches!(
+            value["status"].as_str(),
+            Some("seed_source_prelaunch_closed" | "seed_source_partial_prelaunch_closed")
+        ) {
             matches.push((row, value));
         }
     }
@@ -59,14 +62,16 @@ pub(in crate::recovery::source::evidence) fn closed(
         .take_while(|row| row["number"] != record["number"])
         .cloned()
         .collect::<Vec<_>>();
-    let (start, collection) = origin(backend, run, &prefix)?;
-    if number(record)?
+    let recovery_number = number(record)?;
+    let (start, failure_proof, collection) =
+        failure(backend, run, &prefix, recovery_number, value)?;
+    if recovery_number
         != number(prefix.last().ok_or("未启动封存缺少原历史")?)?
             .checked_add(1)
             .ok_or("封存序号溢出")?
         || value["collection_failure"] != collection
         || value["failed_start"] != start["number"]
-        || value["failure_proof"] != proof(backend, run, &start)?
+        || value["failure_proof"] != failure_proof
         || value["history_length"].as_u64() != Some(u64::try_from(prefix.len())?)
         || value["history_sha256"] != digest::plan_hash(&json!(prefix))?
         || value["coordinator_source"] != record["sources"]
@@ -74,12 +79,12 @@ pub(in crate::recovery::source::evidence) fn closed(
         || value["remote_writes"].as_u64() != Some(0)
         || value["restore_qualified"] != false
         || common::bound_file(backend, &record["result"], "原封存结果")?
-            != run.join(format!("results/{:04}.json", number(record)?))
+            != run.join(format!("results/{recovery_number:04}.json"))
     {
         return Err("原未启动封存没有绑定原失败及完整历史前缀".into());
     }
     frozen_request(backend, value, &prefix)?;
-    let output = run.join(format!("seed-runtime/attempt-{:04}", number(record)?));
+    let output = run.join(format!("seed-runtime/attempt-{recovery_number:04}"));
     if common::bound_file(backend, &value["runtime"], "原封存运行配置")?
         != output.join("runtime/runtime.json")
     {
@@ -95,12 +100,37 @@ pub(in crate::recovery::source::evidence) fn closed(
     Ok(json!({"start":start,"recovery":record,"records":records,"receipt":value,"image":image}))
 }
 
+fn failure(
+    backend: &Path,
+    run: &Path,
+    prefix: &[Value],
+    recovery_number: u64,
+    receipt: &Value,
+) -> Result<(Value, Value, Value)> {
+    if receipt["status"] == "seed_source_partial_prelaunch_closed" {
+        return partial::recovery_history(
+            backend,
+            run,
+            prefix,
+            recovery_number,
+            &receipt["request"],
+        );
+    }
+    let (start, collection) = origin(backend, run, prefix)?;
+    let original = proof(backend, run, &start)?;
+    Ok((start, original, collection))
+}
+
 fn image(backend: &Path, output: &Path, value: &Value) -> Result<Value> {
     let outer = common::read_bound(backend, &value["source_registration"], "原封存来源登记结果")?;
     let request = common::read_bound(backend, &outer["source_request"], "原封存来源请求")?;
     let mut selected = request["source"].clone();
     document::object(&selected, "原封存物理范围")?;
     selected["runtime_dir"] = json!(output.join("runtime"));
+    let generation = common::read_bound(backend, &value["request"], "原封存生成请求")?;
+    if generation["format_version"].as_u64() == Some(2) {
+        selected["s3"]["configuration"] = generation["configuration"].clone();
+    }
     let mut observed = Value::Null;
     for phase in ["before", "after"] {
         if common::bound_file(backend, &value[phase], "原封存完整像")?

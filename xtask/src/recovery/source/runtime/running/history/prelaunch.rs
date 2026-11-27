@@ -16,6 +16,8 @@ mod binary;
 mod closed;
 #[path = "prelaunch/data.rs"]
 mod data;
+#[path = "prelaunch/partial.rs"]
+pub(in crate::recovery::source::evidence) mod partial;
 pub(in crate::recovery::source::evidence) use closed::closed;
 pub(super) use closed::starts;
 

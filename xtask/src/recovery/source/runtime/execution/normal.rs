@@ -3,6 +3,7 @@ use super::super::{
     model,
     session::{Session, policy},
 };
+use super::warm;
 use crate::utc_timestamp::now_rfc3339;
 use crate::{
     Result,
@@ -11,6 +12,7 @@ use crate::{
 use serde_json::{Value, json};
 
 struct Progress {
+    warm: bool,
     started: String,
     old_rows: Vec<u8>,
     upper_id: u64,
@@ -26,6 +28,7 @@ struct Progress {
 
 pub(super) fn run<T: Transport + Sync>(session: &Session<'_, T>) -> Result<Value> {
     let mut state = Progress {
+        warm: warm::mode(&session.facts)?,
         started: now_rfc3339(),
         old_rows: Vec::new(),
         upper_id: 0,
@@ -70,9 +73,10 @@ fn step<T: Transport + Sync>(
         }
         "producer" => {
             let result = session.producer()?.run(&mut || session.checkpoint())?;
-            s.node = model::result(
+            s.node = model::result_with_sessions(
                 &json!({"value":result["stdout"],"lineage":session.facts["lineage"],
                 "start":session.start,"lineage_descriptor":session.facts["receipt"]["dataset_lineage"]}),
+                s.warm,
             )?;
         }
         "login-after" => {
@@ -84,24 +88,11 @@ fn step<T: Transport + Sync>(
                 &s.started,
             )?;
         }
-        "cache-cleanup" => {
-            let redis = &session.facts["running"]["image"]["storage"]["redis"];
-            let (observation, comparisons) =
-                resources.cache_observation(redis, &s.node["subjects"])?;
-            s.cleanup = resources.cleanup(redis, &observation, &comparisons)?;
-        }
+        "cache-cleanup" => s.cleanup = observe_cache(session, s, &resources)?,
         "capture-after" => {
             (s.after, s.after_image) = session.capture("after")?;
         }
-        "effects" => {
-            s.effects = model::write_effects(
-                &json!({"before":s.before_image["image"],"after":s.after_image["image"]}),
-            )?;
-            policy(
-                "cache-effects",
-                json!({"cleanup":s.cleanup,"effects":s.effects,"recovered":false}),
-            )?;
-        }
+        "effects" => s.effects = effects(session, s)?,
         "receipt" => {
             s.receipt = policy(
                 "runtime-receipt",
@@ -126,4 +117,50 @@ fn step<T: Transport + Sync>(
         _ => return Err("来源执行阶段不属于唯一正式计划".into()),
     }
     Ok(())
+}
+
+fn observe_cache<T: Transport>(
+    session: &Session<'_, T>,
+    s: &Progress,
+    resources: &super::super::resources::Resources<'_, T>,
+) -> Result<Value> {
+    let redis = &session.facts["running"]["image"]["storage"]["redis"];
+    if s.warm {
+        let mut observation = resources.warm_expiry(
+            redis,
+            &s.before_image["image"]["redis"],
+            &session.facts["lineage"]["tenants"],
+            &s.node,
+        )?;
+        warm::bind_observation(&mut observation, &session.start, &s.before, &s.node)?;
+        document::write_new(&session.directory.join("cache-cleanup.json"), &observation)?;
+        return Ok(observation);
+    }
+    let (observation, comparisons) = resources.cache_observation(redis, &s.node["subjects"])?;
+    resources.cleanup(redis, &observation, &comparisons)
+}
+
+fn effects<T: Transport>(session: &Session<'_, T>, s: &Progress) -> Result<Value> {
+    let before = &s.before_image["image"];
+    let after = &s.after_image["image"];
+    if s.warm {
+        let producer = policy(
+            "producer-bindings",
+            json!({"backend":session.backend,"directory":session.directory}),
+        )?;
+        return warm::effects(
+            session.backend,
+            before,
+            after,
+            &s.node,
+            &producer,
+            &s.cleanup,
+        );
+    }
+    let effects = model::write_effects(&json!({"before":before,"after":after}))?;
+    policy(
+        "cache-effects",
+        json!({"cleanup":s.cleanup,"effects":effects,"recovered":false}),
+    )?;
+    Ok(effects)
 }

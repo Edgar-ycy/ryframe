@@ -5,6 +5,7 @@ use crate::{
     cli::CloneSide,
     recovery::clone::native::{
         cache, digest,
+        lifecycle::manifest::fixture_storage::RustfsHandoff,
         resources::{common, storage::registered},
         target_verify::storage::{SystemObserver, kernel, redis_layout, rustfs},
     },
@@ -21,7 +22,9 @@ impl<T: Transport> Resources<'_, T> {
         if manifest["copy_stage"] != "source_to_seed" {
             return Err("来源存储观察只消费原 source_to_seed 复制账本".into());
         }
-        let runtime = registered::registered(self.backend, run, CloneSide::Target, None)?;
+        let (runtime, handoff) =
+            registered::registered_with_handoff(self.backend, run, CloneSide::Target, None)?
+                .map_or((None, None), |(runtime, handoff)| (Some(runtime), handoff));
         let cache = cache::binding::load(self.backend, run, None)?;
         let mut storage = self.request["storage"].clone();
         if let Some(runtime) = &runtime {
@@ -33,24 +36,24 @@ impl<T: Transport> Resources<'_, T> {
             }
             storage["rustfs"] = runtime["storage"].clone();
         }
-        if !cache.is_null() {
+        let original_redis = &self.request["storage"]["redis"];
+        let cache_redis = if cache.is_null() {
+            None
+        } else {
             let request = common::read_bound(self.backend, &cache["request"], "源缓存重启请求")?;
-            let original = &self.request["storage"]["redis"];
-            if request["previous"] != *original {
+            if request["previous"] != *original_redis {
                 return Err("缓存恢复证明未绑定原 Redis 代次".into());
-            }
-            let mut allowed = original.clone();
-            for field in ["pid", "started", "run_id"] {
-                allowed[field] = cache["redis"][field].clone();
             }
             if let Some(tools) = cache.get("tools").filter(|value| !value.is_null()) {
                 common::bound_file(self.backend, tools, "缓存已验证工具后继")?;
             }
-            if cache["redis"] != allowed {
-                return Err("缓存恢复改变了原配置、产物、端点或未授权工具".into());
-            }
-            storage["redis"] = allowed;
-        }
+            Some(&cache["redis"])
+        };
+        let retained_redis = handoff
+            .as_ref()
+            .map(RustfsHandoff::retained_redis)
+            .transpose()?;
+        storage["redis"] = select_redis(original_redis, cache_redis, retained_redis)?;
         let review = review(self)?;
         let observer = SystemObserver;
         let inputs = self.inputs();
@@ -69,22 +72,52 @@ impl<T: Transport> Resources<'_, T> {
         {
             return Err("来源存储观察期间完整账本或已登记代次变化".into());
         }
+        if let Some(handoff) = handoff {
+            handoff.check(self.backend)?;
+        }
         (self.checkpoint)()?;
         Ok(storage)
     }
 
     pub(crate) fn redis_state(&self, redis: &Value) -> Result<Value> {
         (self.checkpoint)()?;
-        let result = crate::recovery::clone::native::target_verify::redis::state_with_observer(
-            &self.inputs(),
-            redis,
-            true,
-            true,
-            &SystemObserver,
-        )?;
+        let result = if super::warm_redis::applies(self.generation) {
+            super::warm_redis::capture(&self.inputs(), redis)?
+        } else {
+            crate::recovery::clone::native::target_verify::redis::state_with_observer(
+                &self.inputs(),
+                redis,
+                true,
+                true,
+                &SystemObserver,
+            )?
+        };
         (self.checkpoint)()?;
         Ok(result)
     }
+}
+
+fn select_redis(
+    original: &Value,
+    cache: Option<&Value>,
+    retained: Option<&Value>,
+) -> Result<Value> {
+    if let (Some(cache), Some(retained)) = (cache, retained)
+        && cache != retained
+    {
+        return Err("复制缓存重启与 RustFS 移交保留的 Redis 代次不一致".into());
+    }
+    let Some(selected) = cache.or(retained) else {
+        return Ok(original.clone());
+    };
+    let mut allowed = original.clone();
+    for field in ["pid", "started", "run_id"] {
+        allowed[field] = selected[field].clone();
+    }
+    if *selected != allowed {
+        return Err("Redis 后继改变了原配置、产物、平台、端点或工具".into());
+    }
+    Ok(allowed)
 }
 
 fn review<T>(resources: &Resources<'_, T>) -> Result<Value> {
@@ -97,4 +130,54 @@ fn review<T>(resources: &Resources<'_, T>) -> Result<Value> {
         return Err("源 seed 审阅规范摘要不同".into());
     }
     Ok(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::select_redis;
+
+    #[test]
+    fn source_storage_selects_retained_redis_over_the_initial_process() {
+        let initial = json!({
+            "configuration": {"path":"redis.conf", "sha256":"original-config"},
+            "executable":"redis-server.exe", "platform":"windows", "port":6380,
+            "sha256":"original-executable", "tool":{"path":"redis-server.exe"},
+            "pid":3, "started":"1000", "run_id":"initial"
+        });
+        let mut retained = initial.clone();
+        retained["pid"] = json!(4);
+        retained["started"] = json!("2000");
+        retained["run_id"] = json!("retained");
+        assert_eq!(select_redis(&initial, None, None).unwrap(), initial);
+        assert_eq!(
+            select_redis(&initial, None, Some(&retained)).unwrap(),
+            retained
+        );
+        assert_eq!(
+            select_redis(&initial, Some(&retained), None).unwrap(),
+            retained
+        );
+        assert_eq!(
+            select_redis(&initial, Some(&retained), Some(&retained)).unwrap(),
+            retained
+        );
+        assert!(select_redis(&initial, Some(&initial), Some(&retained)).is_err());
+        for field in [
+            "configuration",
+            "executable",
+            "platform",
+            "port",
+            "sha256",
+            "tool",
+        ] {
+            let mut changed = retained.clone();
+            changed[field] = json!("changed");
+            assert!(
+                select_redis(&initial, None, Some(&changed)).is_err(),
+                "{field}"
+            );
+        }
+    }
 }
