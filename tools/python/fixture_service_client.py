@@ -1,4 +1,4 @@
-"""Python 调用原生夹具操作与生命周期；只传协议，不决定阶段、恢复或重试。"""
+"""Python 通过原生协议只读查询夹具历史与上下文。"""
 from __future__ import annotations
 
 import json
@@ -18,15 +18,6 @@ def _invoke(operation: str, arguments: dict, *, backend: Path = ROOT):
                           "backend": str(backend), "arguments": arguments},
                          ensure_ascii=False, separators=(",", ":"), default=_path_json).encode("utf-8")
     return _request("__fixture-service-history", payload, 30, "invalid_fixture_history")
-
-
-def lifecycle(backend: Path, operation: str, review: Path, environment: Path,
-              owner: Path | None, *, write: bool) -> dict:
-    payload = json.dumps({"format_version": 1, "backend": str(backend), "operation": operation,
-                          "review": str(review), "environment": str(environment),
-                          "owner": None if owner is None else str(owner), "write": write},
-                         ensure_ascii=False, separators=(",", ":"), default=_path_json).encode("utf-8")
-    return _request("__fixture-service-lifecycle", payload, 1800, "invalid_fixture_lifecycle")
 
 
 def _path_json(value):

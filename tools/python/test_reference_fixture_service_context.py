@@ -10,8 +10,7 @@ from workspace_directory import WorkspaceDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import test_reference_fixture_environment as environment_fixture
-from devex_clone_capture import write_json
-from devex_clone_run_state import binding, begin, finish, initialize_state, load_state
+from devex_clone_run_state import begin, finish, initialize_state
 import reference_fixture_service_context as context
 from restore_build import file_digest
 from restore_reference_plan import plan_hash
@@ -194,62 +193,9 @@ class ServiceContextTests(unittest.TestCase):
             {"redis": {"port": 16390, "generation": "redis-r1"}},
         )
 
-    def snapshot(self, exclude=None):
+    def snapshot(self):
         return {str(path.relative_to(self.root)): path.read_bytes()
-                for path in self.root.rglob("*") if path.is_file() and path != exclude}
-
-
-    def test_native_recovery_preserves_partial_startup_and_interrupted_close_without_replay(self):
-        from fixture_service_client import lifecycle
-        for mode in ("partial", "interrupted-close", "complete"):
-            with self.subTest(mode=mode):
-                # 每个场景由独立夹具提供，Python 写入历史与原生控制器恢复共同验证文件证据。
-                fixture = ServiceContextTests()
-                fixture.setUp()
-                self.addCleanup(fixture.doCleanups)
-                if mode == "partial":
-                    state = load_state(fixture.run)
-                    for item in state["attempts"][1:]:
-                        Path(item["result"]["path"]).unlink()
-                    state["attempts"] = state["attempts"][:1]
-                    fixture.write(fixture.run / "state.json", state)
-                if mode == "interrupted-close":
-                    value = context.context(fixture.backend, fixture.review, fixture.bootstrap)
-                    begin(fixture.run, "fixture-services", "close", value["sources"])
-                owner = {"format_version": 1, "directory": str(fixture.run),
-                         "manifest_sha256": binding(fixture.run / "manifest.json")["sha256"],
-                         "identity": {"pid": 2147483000, "started": "1",
-                                      "executable": str(Path(sys.executable).resolve())}}
-                lock = fixture.run / "run.lock"
-                lock.mkdir()
-                write_json(lock / "owner.json", owner)
-                selected = fixture.root / "owner-binding.json"
-                write_json(selected, binding(lock / "owner.json"))
-                if mode == "complete":
-                    from process_guard import process_guard
-                    with process_guard(fixture.run, "run-control.guard"):
-                        # Windows 的独占字节锁禁止读取自身标记；其他全部文件仍逐字节核对。
-                        guard_file = fixture.run / "run-control.guard"
-                        before = fixture.snapshot(exclude=guard_file)
-                        with self.assertRaises(ValueError):
-                            lifecycle(fixture.backend, "recover", fixture.review, fixture.bootstrap,
-                                      selected, write=True)
-                        self.assertEqual(before, fixture.snapshot(exclude=guard_file))
-                        self.assertEqual(guard_file.stat().st_size, 1)
-                result = lifecycle(fixture.backend, "recover", fixture.review, fixture.bootstrap,
-                                   selected, write=True)
-                self.assertEqual(result["status"], "controller_recovered")
-                self.assertFalse(lock.exists())
-                self.assertEqual(len(list(fixture.run.glob("recovered-*.json"))), 1)
-                if mode == "interrupted-close":
-                    self.assertEqual(result["next_operation"], "reconcile-evidence")
-                    self.assertEqual(load_state(fixture.run)["attempts"][3]["error_type"], "ControllerInterrupted")
-                if mode == "partial":
-                    before = fixture.snapshot()
-                    self.assertEqual(lifecycle(fixture.backend, "status", fixture.review, fixture.bootstrap,
-                                               None, write=False)["next_operation"],
-                                     "reconcile-evidence")
-                    self.assertEqual(before, fixture.snapshot())
+                for path in self.root.rglob("*") if path.is_file()}
 
     def test_context_and_transition_bridges_only_pass_native_protocol(self):
         value = {"backend": str(self.backend), "run": str(self.run), "private": {"APP_ENV": "test"}}

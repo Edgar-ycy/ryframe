@@ -11,10 +11,10 @@ import fixture_service_client as client
 
 
 class FixtureServiceClientTests(unittest.TestCase):
-    def test_missing_binding_refuses_before_any_child_or_resource_write(self):
+    def test_missing_binding_refuses_before_any_child(self):
         with patch.object(client, "tool_binding", return_value=None), patch.object(client.subprocess, "run") as run:
             with self.assertRaisesRegex(ValueError, "缺少必需原生工具绑定"):
-                client.lifecycle(client.ROOT, "close", Path("review"), Path("environment"), None, write=True)
+                client._invoke("service-document", {"path": Path("local.json")})
             run.assert_not_called()
 
     def test_wrong_binding_digest_never_starts_child(self):
@@ -22,7 +22,7 @@ class FixtureServiceClientTests(unittest.TestCase):
         self.assertIsNotNone(binding, "本测试须由正式 run_checks 绑定工具")
         with patch.object(client, "tool_binding", return_value={**binding, "sha256": "0" * 64}), patch.object(client.subprocess, "run") as run:
             with self.assertRaises(ValueError):
-                client.lifecycle(client.ROOT, "close", Path("review"), Path("environment"), None, write=True)
+                client._invoke("service-document", {"path": Path("local.json")})
             run.assert_not_called()
 
     def invoke(self, stdout, code=0):
@@ -33,8 +33,10 @@ class FixtureServiceClientTests(unittest.TestCase):
         return result, run.call_args
 
     def test_request_uses_stdin_and_excludes_credentials_and_project_overrides(self):
-        with patch.dict(os.environ, {"APP_ENV": "prod", "APP_REDIS_PASSWORD": "secret",
-                                     "AWS_SECRET_ACCESS_KEY": "secret", "RYFRAME_CONFIG": "secret"}):
+        inherited = {**os.environ, "APP_ENV": "prod", "APP_REDIS_PASSWORD": "secret",
+                     "AWS_SECRET_ACCESS_KEY": "secret", "RYFRAME_CONFIG": "secret"}
+        # 在 Python 层替换映射，避免 Windows 还原空环境值时将它删除。
+        with patch.object(os, "environ", inherited):
             result, call = self.invoke(b'{"ok":true,"result":null}')
         self.assertIsNone(result)
         self.assertEqual(call.args[0], ["native-xtask.exe", "__fixture-service-history"])
@@ -44,21 +46,6 @@ class FixtureServiceClientTests(unittest.TestCase):
         self.assertEqual(request["arguments"], {"path": "local.json"})
         self.assertEqual(call.kwargs["stderr"], subprocess.DEVNULL)
         self.assertNotIn("shell", call.kwargs)
-
-    def test_lifecycle_bridge_passes_exact_native_request_and_explicit_write(self):
-        with (patch.object(client, "verified_tool", return_value=nullcontext("native-xtask.exe")),
-              patch.object(client.subprocess, "run", return_value=subprocess.CompletedProcess(
-                  [], 0, b'{"ok":true,"result":{"status":"services_closed"}}', b"")) as run):
-            result = client.lifecycle(client.ROOT, "close", Path("review"), Path("environment"),
-                                      None, write=True)
-        self.assertEqual(result["status"], "services_closed")
-        self.assertEqual(run.call_args.args[0], ["native-xtask.exe", "__fixture-service-lifecycle"])
-        payload = json.loads(run.call_args.kwargs["input"])
-        self.assertEqual(set(payload), {"format_version", "backend", "operation", "review",
-                                       "environment", "owner", "write"})
-        self.assertIs(payload["write"], True)
-        self.assertIsNone(payload["owner"])
-        self.assertEqual(run.call_args.kwargs["stderr"], subprocess.DEVNULL)
 
     def test_path_protocol_preserves_json_types_and_rejects_arbitrary_objects(self):
         with (patch.object(client, "verified_tool", return_value=nullcontext("native-xtask.exe")),
