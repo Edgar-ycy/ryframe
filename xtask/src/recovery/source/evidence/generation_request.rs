@@ -155,7 +155,8 @@ fn build(args: &Value) -> Result<Value> {
     configuration::execution_source(backend, &value)?;
     let build = running::builds::verify(backend, &value)?;
     let execution = Path::new(document::text(&value["execution_backend"], "来源执行根")?);
-    if build["build"] != bridge::build_context::current(execution)? {
+    let current = bridge::build_context::current(execution)?;
+    if !matches_build_context(&build["build"], &current, &value, &source) {
         return Err("当前来源构建与实际工具链或构建环境不符".into());
     }
     let physical = binding::physical(&json!({"backend":execution,"evidence_root":backend,
@@ -171,6 +172,49 @@ fn build(args: &Value) -> Result<Value> {
     configuration::verify(backend, &value)?;
     configuration::execution_source(backend, &value)?;
     Ok(value)
+}
+
+fn matches_build_context(
+    recorded: &Value,
+    current: &Value,
+    request: &Value,
+    source: &Value,
+) -> bool {
+    if recorded == current {
+        return true;
+    }
+
+    // 原来源已有编译和实际运行证明，允许调用环境变化时继续使用同一组冻结输入。
+    let Some(root) = source["seed_target"]["execution_backend"]["path"].as_str() else {
+        return false;
+    };
+    let original_inputs = [
+        ("backend_build", &source["request"]["backend_build"]),
+        ("maintenance_build", &source["request"]["maintenance_build"]),
+        (
+            "source_environment",
+            &source["registration"]["source_environment"],
+        ),
+    ];
+    if request["execution_backend"].as_str() != Some(root)
+        || !request["adapter_contract"].is_null()
+        || !request["product_backend"].is_null()
+        || !original_inputs
+            .into_iter()
+            .all(|(field, binding)| binding.is_object() && &request[field] == binding)
+    {
+        return false;
+    }
+
+    let Some((recorded, current)) = recorded.as_object().zip(current.as_object()) else {
+        return false;
+    };
+    recorded.len() == current.len()
+        && recorded.get("environment").is_some_and(Value::is_object)
+        && current.get("environment").is_some_and(Value::is_object)
+        && recorded
+            .iter()
+            .all(|(key, value)| key == "environment" || current.get(key) == Some(value))
 }
 
 fn publish(backend: &Path, output: &Path, args: &Value, request: &Value) -> Result<()> {
@@ -205,4 +249,90 @@ fn publish(backend: &Path, output: &Path, args: &Value, request: &Value) -> Resu
     }
     std::fs::remove_file(pending)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frozen_inputs() -> (Value, Value, Value) {
+        let root = "D:/frozen/backend";
+        let binding = |file: &str, digit: &str| json!({"path":format!("{root}/.local-tests/{file}"),"bytes":100,"sha256":digit.repeat(64)});
+        let request = json!({"execution_backend":root,"adapter_contract":null,"product_backend":null,
+            "backend_build":binding("backend-build.json","a"),
+            "maintenance_build":binding("maintenance.json","b"),
+            "source_environment":binding("source-environment.json","c")});
+        let source = json!({"request":{"backend_build":request["backend_build"],
+            "maintenance_build":request["maintenance_build"]},
+            "registration":{"source_environment":request["source_environment"]},
+            "seed_target":{"execution_backend":{"path":root}}});
+        let context = json!({"commands":{"api":["cargo","build"],"worker":["cargo","build"]},
+            "profile":"dev","target":"x86_64-pc-windows-msvc","jobs":"1",
+            "toolchain":{"cargo":"cargo 1.98.1","rustc":"rustc 1.98.1"},
+            "environment":{"variables":["Path"],"sha256":"d".repeat(64)}});
+        (request, source, context)
+    }
+
+    #[test]
+    fn matches_original_frozen_generation_when_only_the_environment_changes() {
+        let (request, source, recorded) = frozen_inputs();
+        let mut current = recorded.clone();
+        current["environment"] =
+            json!({"variables":["LIBCLANG_PATH","Path"],"sha256":"e".repeat(64)});
+        assert!(matches_build_context(
+            &recorded, &current, &request, &source
+        ));
+
+        for field in ["backend_build", "maintenance_build", "source_environment"] {
+            let mut invalid = request.clone();
+            invalid[field]["sha256"] = json!("f".repeat(64));
+            assert!(
+                !matches_build_context(&recorded, &current, &invalid, &source),
+                "{field}"
+            );
+            invalid.as_object_mut().unwrap().remove(field);
+            assert!(
+                !matches_build_context(&recorded, &current, &invalid, &source),
+                "{field}"
+            );
+        }
+        for field in ["execution_backend", "adapter_contract", "product_backend"] {
+            let mut invalid = request.clone();
+            invalid[field] = json!("different");
+            assert!(
+                !matches_build_context(&recorded, &current, &invalid, &source),
+                "{field}"
+            );
+        }
+    }
+
+    #[test]
+    fn matches_exact_context_and_rejects_other_context_changes() {
+        let (request, source, recorded) = frozen_inputs();
+        assert!(matches_build_context(
+            &recorded,
+            &recorded,
+            &Value::Null,
+            &Value::Null
+        ));
+
+        for field in ["commands", "profile", "target", "jobs"] {
+            let mut current = recorded.clone();
+            current["environment"]["sha256"] = json!("e".repeat(64));
+            current[field] = json!("different");
+            assert!(
+                !matches_build_context(&recorded, &current, &request, &source),
+                "{field}"
+            );
+        }
+        for tool in ["cargo", "rustc"] {
+            let mut current = recorded.clone();
+            current["environment"]["sha256"] = json!("e".repeat(64));
+            current["toolchain"][tool] = json!("1.100.0");
+            assert!(
+                !matches_build_context(&recorded, &current, &request, &source),
+                "{tool}"
+            );
+        }
+    }
 }

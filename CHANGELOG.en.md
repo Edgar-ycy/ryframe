@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Reuse the frozen builds of the same published source in generation requests. Keep the live toolchain and build parameter checks, and retain the original build environment digest with its receipt.
+
 - Use the detached controller for target RustFS restarts on Windows so the restart command can return while RustFS continues serving.
 
 - Verify native post-copy receipts during source registration and include each published API successor in producer lineage and shutdown evidence.
