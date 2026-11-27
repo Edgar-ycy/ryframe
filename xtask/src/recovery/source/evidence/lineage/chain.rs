@@ -6,15 +6,32 @@ use crate::{
     },
 };
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+};
 
-pub(super) fn endpoint(value: &Value) -> Result<()> {
-    let url =
-        url::Url::parse(value.as_str().ok_or("血缘端点必须是文本")?).map_err(|_| "血缘端点无效")?;
+pub(super) fn endpoint(value: &Value) -> Result<SocketAddr> {
+    loopback_endpoint(value, false)
+}
+
+pub(super) fn worker_endpoint(value: &Value) -> Result<SocketAddr> {
+    loopback_endpoint(value, true)
+}
+
+fn loopback_endpoint(value: &Value, allow_ready: bool) -> Result<SocketAddr> {
+    let raw = value.as_str().ok_or("血缘端点必须是文本")?;
+    let url = url::Url::parse(raw).map_err(|_| "血缘端点无效")?;
+    let ip = match url.host() {
+        Some(url::Host::Ipv4(ip)) if ip == Ipv4Addr::LOCALHOST => IpAddr::V4(ip),
+        Some(url::Host::Ipv6(ip)) if ip == Ipv6Addr::LOCALHOST => IpAddr::V6(ip),
+        _ => return Err("血缘端点必须是明确本机根地址".into()),
+    };
+    let port = url
+        .port_or_known_default()
+        .filter(|port| *port != 0)
+        .ok_or("血缘端点必须是明确本机根地址")?;
     if !matches!(url.scheme(), "http" | "https")
-        || !matches!(url.host_str(), Some("127.0.0.1" | "[::1]" | "::1"))
-        || url.port_or_known_default().is_none_or(|port| port == 0)
-        || url.path() != "/"
         || !url.username().is_empty()
         || url.password().is_some()
         || url.query().is_some()
@@ -22,14 +39,14 @@ pub(super) fn endpoint(value: &Value) -> Result<()> {
     {
         return Err("血缘端点必须是明确本机根地址".into());
     }
-    // URL解析会折叠默认端口，仍要求原始文本显式写出端口。
-    let authority = value
-        .as_str()
-        .ok_or("血缘端点缺失")?
-        .split("://")
-        .nth(1)
-        .ok_or("血缘端点缺少协议")?
-        .trim_end_matches('/');
+    // 从原文检验路径和显式端口，防止 URL 解析折叠不允许的路径或省略默认端口。
+    let (_, address) = raw.split_once("://").ok_or("血缘端点缺少协议")?;
+    let (authority, path) = address.split_once('/').unwrap_or((address, ""));
+    let root = path.is_empty() && url.path() == "/";
+    let ready = allow_ready && path == "readyz" && url.path() == "/readyz";
+    if !root && !ready {
+        return Err("血缘端点必须是明确本机根地址".into());
+    }
     if authority.contains('@')
         || authority.rsplit_once(':').is_none_or(|(_, port)| {
             port.is_empty() || !port.bytes().all(|byte| byte.is_ascii_digit())
@@ -37,7 +54,7 @@ pub(super) fn endpoint(value: &Value) -> Result<()> {
     {
         return Err("血缘端点必须显式声明端口".into());
     }
-    Ok(())
+    Ok(SocketAddr::new(ip, port))
 }
 
 pub(super) fn load(context: &mut Context, args: &Value) -> Result<Value> {

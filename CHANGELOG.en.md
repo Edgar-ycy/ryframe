@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Recovery source lineage accepts `/readyz` for the Worker and rejects a Worker that shares the target API's listening address and port.
+
 - Data placement and migration stage records use UTC time and preserve the public response format, database clocks, write precision, and backup window validation.
 
 - Tenant configuration package and transfer records use UTC time and preserve archive manifest digests, public response formats, and database microsecond precision.

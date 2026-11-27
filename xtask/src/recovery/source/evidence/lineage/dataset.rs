@@ -95,12 +95,13 @@ fn plan(context: &mut Context, value: &Value, descriptor: &Value) -> Result<bool
             .as_str()
             .ok_or("参考计划scope缺失")?;
         domain::scope_identifier(scope)?;
-        for key in if side == "source" {
-            &["api_url"][..]
-        } else {
-            &["api_url", "worker_ready_url", "frontend_url"][..]
-        } {
-            super::chain::endpoint(&value[side][key])?;
+        let api = super::chain::endpoint(&value[side]["api_url"])?;
+        if side == "target" {
+            let worker = super::chain::worker_endpoint(&value[side]["worker_ready_url"])?;
+            super::chain::endpoint(&value[side]["frontend_url"])?;
+            if api == worker {
+                return Err("源与目标必须逻辑相同、物理分离且探针不重叠".into());
+            }
         }
         let runtime = super::super::binding::path(&value[side]["runtime_dir"])?;
         crate::local_test_path::validate_local_test_path(
@@ -142,14 +143,6 @@ fn plan(context: &mut Context, value: &Value, descriptor: &Value) -> Result<bool
             .addresses
             .is_disjoint(&identities[1].addresses)
         || identities[0].modes != identities[1].modes
-        || value["target"]["worker_ready_url"]
-            == format!(
-                "{}/readyz",
-                value["target"]["api_url"]
-                    .as_str()
-                    .unwrap_or("")
-                    .trim_end_matches('/')
-            )
     {
         return Err("源与目标必须逻辑相同、物理分离且探针不重叠".into());
     }

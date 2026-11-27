@@ -91,7 +91,7 @@ fn origin(root: &Path) -> Origin {
                 "defaults_file":defaults,"defaults_sha256":digest::file(&defaults).unwrap().sha256,
                 "kind":if *key=="shared-control" {"combined"} else {"tenant"},"mode":if key.starts_with("dedicated") {"dedicated"} else {"shared"}})).collect::<Vec<_>>();
         plan[side] = json!({"scope_id":if side=="source" {"restore-source-unit"} else {"restore-target-unit"},
-                "api_url":"http://127.0.0.1:18210","frontend_url":"http://127.0.0.1:4190","worker_ready_url":"http://127.0.0.1:18211",
+                "api_url":"http://127.0.0.1:18210","frontend_url":"http://127.0.0.1:4190","worker_ready_url":"http://127.0.0.1:18211/readyz",
                 "runtime_dir":root.join(".local-tests").join(format!("{side}-runtime")),"databases":databases,
                 "s3":{"endpoint":"http://127.0.0.1:29000","region":"us-east-1","configuration":binding}});
     }
@@ -404,8 +404,98 @@ fn lineage_rejects_ancestor_replacement_unknown_fields_and_changed_endpoints() {
         "http://@127.0.0.1:18210",
         "http://user:secret@127.0.0.1:18210",
         "http://127.0.0.1:18210/?query=1",
+        "http://127.0.0.1:18210/#fragment",
     ] {
         assert!(chain::endpoint(&json!(endpoint)).is_err());
+        assert!(chain::worker_endpoint(&json!(endpoint)).is_err());
+    }
+    for endpoint in [
+        "http://127.0.0.1/readyz",
+        "http://127.0.0.1:18211//readyz",
+        "http://127.0.0.1:18211/other/../readyz",
+        "http://127.0.0.1:18211/%2e/readyz",
+        "http://127.0.0.1:18211/%72eadyz",
+        "http://127.0.0.1:18211/readyz/",
+        "http://127.0.0.1:18211/readyz?query=1",
+        "http://127.0.0.1:18211/readyz#fragment",
+        "http://127.0.0.1:18211/gateway/readyz",
+    ] {
+        assert!(chain::worker_endpoint(&json!(endpoint)).is_err());
+    }
+}
+
+#[test]
+fn reference_plan_reserves_readyz_for_worker_and_rejects_api_socket_overlap() {
+    let f = Fixture::new();
+    let load = |name: &str, plan: &Value| -> Result<Value> {
+        let mut data = f.dataset.clone();
+        data["plan_sha256"] = json!(digest::plan_hash(plan)?);
+        let request = json!({
+            "reference_plan": write(&f.root, &format!("{name}-plan.json"), plan),
+            "dataset": write(&f.root, &format!("{name}-dataset.json"), &data),
+        });
+        dataset::load(
+            &mut Context {
+                root: f.root.clone(),
+                snapshots: Vec::new(),
+            },
+            &request,
+        )
+        .map(|dataset| dataset.plan)
+    };
+    for (name, endpoint) in [
+        ("implicit-root", "http://127.0.0.1:18211"),
+        ("explicit-root", "http://127.0.0.1:18211/"),
+    ] {
+        let mut plan = f.plan.clone();
+        plan["target"]["worker_ready_url"] = json!(endpoint);
+        assert_eq!(load(name, &plan).unwrap(), plan);
+    }
+    for (index, field) in [
+        "/source/api_url",
+        "/target/api_url",
+        "/target/frontend_url",
+        "/source/s3/endpoint",
+        "/target/s3/endpoint",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut plan = f.plan.clone();
+        *plan.pointer_mut(field).unwrap() = json!("http://127.0.0.1:18211/readyz");
+        assert_eq!(
+            load(&format!("wrong-role-{index}"), &plan)
+                .unwrap_err()
+                .to_string(),
+            "血缘端点必须是明确本机根地址"
+        );
+    }
+    for (name, api, worker) in [
+        (
+            "overlap-ipv4-root",
+            "http://127.0.0.1:18210/",
+            "http://127.0.0.1:18210/",
+        ),
+        (
+            "overlap-ipv4-readyz",
+            "http://127.0.0.1:18210",
+            "http://127.0.0.1:018210/readyz",
+        ),
+        (
+            "overlap-ipv6-readyz",
+            "https://[::1]:443/",
+            "http://[0:0:0:0:0:0:0:1]:443/readyz",
+        ),
+    ] {
+        let mut plan = f.plan.clone();
+        plan["target"]["api_url"] = json!(api);
+        plan["target"]["worker_ready_url"] = json!(worker);
+        assert!(
+            load(name, &plan)
+                .unwrap_err()
+                .to_string()
+                .contains("探针不重叠")
+        );
     }
 }
 
