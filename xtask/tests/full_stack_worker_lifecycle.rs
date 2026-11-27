@@ -476,20 +476,7 @@ fn api_survives_controller_exit_and_stops_its_complete_role_tree() {
     assert!(verified["identity"].is_null());
     assert_eq!(fs::read(&proof_path).unwrap(), proof_bytes);
     let proof = read(proof_path);
-    assert_eq!(proof["role"], "api");
-    assert_eq!(proof["scope_id"], runtime["scope_id"]);
-    assert_eq!(proof["supervisor"], tree["supervisor"]);
-    assert_eq!(proof["monitor"], tree["monitor"]);
-    assert_eq!(proof["status"], "stopped");
-    assert!(proof["error_type"].is_null());
-    let members = proof["members"].as_array().unwrap();
-    assert!(members.contains(&tree["supervisor"]));
-    assert!(members.contains(&tree["process"]));
-    assert!(
-        members
-            .iter()
-            .any(|identity| identity["pid"].as_u64() == Some(u64::from(descendant)))
-    );
+    assert_api_stopped_members(&proof, &runtime["scope_id"], &tree, descendant);
     for field in ["process", "supervisor", "monitor"] {
         fixture.gone(tree[field]["pid"].as_u64().unwrap() as u32);
     }
@@ -503,6 +490,20 @@ fn api_survives_controller_exit_and_stops_its_complete_role_tree() {
     ] {
         assert!(!fixture.run.join(name).exists());
     }
+}
+
+fn assert_api_stopped_members(proof: &Value, scope_id: &Value, tree: &Value, descendant: u32) {
+    assert_eq!(proof["role"], "api");
+    assert_eq!(&proof["scope_id"], scope_id);
+    assert_eq!(proof["supervisor"], tree["supervisor"]);
+    assert_eq!(proof["monitor"], tree["monitor"]);
+    assert_eq!(proof["status"], "stopped");
+    assert!(proof["error_type"].is_null());
+    let members = proof["members"].as_array().unwrap();
+    assert!(members.contains(&tree["supervisor"]));
+    assert!(members.contains(&tree["process"]));
+    let is_descendant = |member: &Value| member["pid"].as_u64() == Some(u64::from(descendant));
+    assert!(members.iter().any(is_descendant));
 }
 
 #[test]

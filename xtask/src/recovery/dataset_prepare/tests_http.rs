@@ -223,6 +223,10 @@ fn existing_verification_reads_all_tenants_collects_subjects_and_clears_bearer_f
             .iter()
             .all(|subject| subject["user_authorization_version"] == 7)
     );
+    assert_existing_verification_requests(&server);
+}
+
+fn assert_existing_verification_requests(server: &Server) {
     let calls = server.requests.lock().unwrap();
     assert!(
         !calls
