@@ -86,7 +86,7 @@ pub(super) fn parse_seed_runtime(args: &[String]) -> Result<CloneCommand, CliErr
         Some("held") if SeedRuntimeOperation::supports_held_originals(operation.as_str()) => true,
         Some(_) => {
             return Err(CliError::new(
-                "seed-runtime --originals 只接受 held，且仅适用于 Windows 上的 quotas-plan、quotas-apply、departments-plan、departments-apply、departments-verify 和 identities-verify",
+                "seed-runtime --originals 只接受 held，且仅适用于 Windows 上的 quotas-plan、quotas-apply、departments-plan、departments-apply、departments-verify、identities-verify、start 和 close",
             ));
         }
     };

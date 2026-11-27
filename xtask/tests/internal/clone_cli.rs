@@ -661,6 +661,12 @@ fn seed_runtime_held_originals_require_supported_modes_on_windows() {
         ("identities-reconcile", "held", false),
         ("identities-verify", "held", true),
         ("identities-verify", "full", false),
+        ("prepare", "held", false),
+        ("start", "held", true),
+        ("start", "full", false),
+        ("close", "held", true),
+        ("close", "full", false),
+        ("stop", "held", false),
         ("recover", "held", false),
     ] {
         let request = matches!(mode, "identities-reconcile" | "identities-verify")

@@ -73,6 +73,8 @@ fn held_seed_modes_require_a_windows_seed_runtime_from_source_to_seed() {
         "departments-apply",
         "departments-verify",
         "identities-verify",
+        "start",
+        "close",
     ] {
         assert_eq!(
             supports("seed-runtime", mode, &source_to_seed),
@@ -85,6 +87,8 @@ fn held_seed_modes_require_a_windows_seed_runtime_from_source_to_seed() {
         "departments-reconcile",
         "identities-apply",
         "identities-reconcile",
+        "prepare",
+        "stop",
     ] {
         assert!(!supports("seed-runtime", mode, &source_to_seed));
     }

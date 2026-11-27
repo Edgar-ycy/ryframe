@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Allow seed-runtime startup and drain shutdown on Windows to explicitly hold the registered originals. Keep full checks at the stage boundaries and verify live ports, configuration, process identities, and the outbox.
+
 - Compare configuration package and rollback snapshot retention deadlines in UTC, preserving MySQL microsecond precision, active job protections, and the cleanup grace period after the last file reference is released.
 
 - Use UTC time types for message and inbox storage. Preserve MySQL microsecond precision, expiry boundaries, and the shared transaction for messages, recipients, and outbox entries.
