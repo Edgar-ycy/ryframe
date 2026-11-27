@@ -599,15 +599,24 @@ fn source_lineage_collects_published_post_and_seed_contracts_for_the_external_pr
             &fixture.backend,
             run,
             &Value::Null,
-            product,
             &saved,
-            &post,
-            &inputs,
+            super::super::RuntimeInputs {
+                product,
+                post: &post,
+                seed: &inputs,
+                api_successors: Vec::new(),
+            },
         )
     };
     let records = collect(&product).unwrap();
+    assert_eq!(records["runtimes"].as_array().unwrap().len(), 2);
     assert_eq!(records["runtimes"][0]["runtime"], runtime);
     assert_eq!(records["runtimes"][1]["runtime"], seed_contract);
+    assert_eq!(records["identities"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        records["identities"][0]["identity"],
+        fixture.role["identity"]
+    );
     assert!(collect(&fixture.backend).is_err());
     fs::write(inputs.runtime.join("runtime.json"), "{}").unwrap();
     assert!(collect(&product).is_err());

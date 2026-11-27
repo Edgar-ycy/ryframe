@@ -75,15 +75,25 @@ impl Fixture {
             tool,
         }
     }
-    fn session(&mut self, descriptor: &Value) {
-        let script = command::source(&self.backend, "session").unwrap();
+    fn post_copy(&mut self, descriptor: &Value, kind: &str) {
+        let script = command::source(&self.backend, kind).unwrap();
         fs::create_dir_all(script.parent().unwrap()).unwrap();
-        fs::write(&script, "// session 历史来源\n").unwrap();
+        fs::write(&script, "// post-copy 历史来源\n").unwrap();
         let source = common::binding(&script).unwrap();
+        let relative = script
+            .strip_prefix(&self.backend)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .replace('\\', "/");
         let mut sources = self.registered["attempt"]["sources"].clone();
-        sources["snapshot"]["files"] = json!([{"path":"xtask/src/recovery/clone/native/session.rs","sha256":source["sha256"]}]);
-        let (number, running) =
-            state::begin(&self.run, "post-copy", "schedules", &sources).unwrap();
+        sources["snapshot"]["files"] = json!([{"path":relative,"sha256":source["sha256"]}]);
+        let mode = if kind == "existing" {
+            "verify"
+        } else {
+            "schedules"
+        };
+        let (number, running) = state::begin(&self.run, "post-copy", mode, &sources).unwrap();
         let previous = PathBuf::from(self.registered["controller"]["path"].as_str().unwrap());
         let mut controller = json_io::read(&previous).unwrap();
         controller["attempt"] = json!(number);
@@ -105,12 +115,24 @@ impl Fixture {
             true,
         )
         .unwrap();
-        let plan = command::build(&json!({"backend":self.backend,"run_dir":self.run,"attempt":number,"kind":"session","output":self.output,"tool":self.tool,"registration":request,"configuration":null})).unwrap();
-        let launch = json!({"format_version":1,"kind":"devex-post-producer-launch","run_manifest":common::binding(&self.run.join("manifest.json")).unwrap(),
-            "registration":descriptor,"controller":controller_binding,"attempt":number,"producer_kind":"session","command":plan["argv"],"tool":self.tool,"source":source});
+        let configuration = (kind == "existing").then(|| {
+            let path = self.output.join("existing-configuration.json");
+            json_io::write_new(&path, &json!({"fixture":1})).unwrap();
+            path
+        });
+        let plan = command::build(&json!({"backend":self.backend,"run_dir":self.run,"attempt":number,"kind":kind,"output":self.output,"tool":self.tool,"registration":request,"configuration":configuration})).unwrap();
+        let mut launch = json!({"format_version":1,"kind":"devex-post-producer-launch","run_manifest":common::binding(&self.run.join("manifest.json")).unwrap(),
+            "registration":descriptor,"controller":controller_binding,"attempt":number,"producer_kind":kind,"command":plan["argv"],"tool":self.tool,"source":source});
+        let mut process = json!({"format_version":1,"kind":"devex-post-producer",
+            "identity":controller["owner"]["identity"]});
+        if let Some(configuration) = configuration {
+            launch["configuration"] = common::binding(&configuration).unwrap();
+        } else {
+            process["producer_owner"] = json!("abcdefab-1234-4234-8234-abcdefabcdef");
+        }
         self.rewrite("session-launch.json", &launch);
-        self.rewrite("session-process.json",&json!({"format_version":1,"kind":"devex-post-producer","launch":common::binding(&self.output.join("session-launch.json")).unwrap(),
-            "identity":controller["owner"]["identity"],"producer_owner":"abcdefab-1234-4234-8234-abcdefabcdef"}));
+        process["launch"] = common::binding(&self.output.join("session-launch.json")).unwrap();
+        self.rewrite("session-process.json", &process);
         state::finish(
             &self.run,
             number,
@@ -121,6 +143,23 @@ impl Fixture {
         let saved = state::load(&self.run, true).unwrap();
         let attempt = state::attempts(&saved).unwrap().last().unwrap().clone();
         self.registered = json!({"attempt":attempt,"controller":common::binding(&path).unwrap()});
+    }
+    fn existing() -> Self {
+        let mut fixture = Self::new();
+        let path = fixture.run.join("post-copy.json");
+        let request = json!({"reference_plan":{"path":fixture.run.join("reference-plan.json")},"dataset":{"path":fixture.run.join("dataset.json")}});
+        json_io::write_new(&path, &request).unwrap();
+        let descriptor = common::binding(&path).unwrap();
+        let (number, _) = state::begin(&fixture.run, "post-copy", "register", &json!({})).unwrap();
+        state::finish(
+            &fixture.run,
+            number,
+            Some(&json!({"status":"post_copy_registered","registration":descriptor})),
+            None,
+        )
+        .unwrap();
+        fixture.post_copy(&descriptor, "existing");
+        fixture
     }
     fn collect(&self) -> Result<Option<Value>> {
         super::collect(&self.backend, &self.run, &self.registered, &self.tool)
@@ -309,7 +348,7 @@ fn historical_amendment_uses_the_requested_descriptor() {
         .unwrap(),
         original
     );
-    fixture.session(&base);
+    fixture.post_copy(&base, "session");
     fixture.tool =
         json!({"path":fixture.backend.join("different-coordinator.exe"),"sha256":"0".repeat(64)});
     let record = fixture.collect().unwrap().unwrap();
@@ -321,4 +360,62 @@ fn historical_amendment_uses_the_requested_descriptor() {
         fixture.collect().unwrap().unwrap()["registration"],
         descriptor
     );
+}
+
+#[test]
+fn native_existing_history_uses_its_controller_and_is_independent_of_current_tool() {
+    let mut fixture = Fixture::existing();
+    let original = fixture.tool.clone();
+    let current = fixture.backend.join("current-coordinator.exe");
+    fs::write(&current, b"current coordinator").unwrap();
+    fixture.tool = json!({"path":current,"sha256":digest::file(&current).unwrap().sha256});
+
+    let record = fixture.collect().unwrap().unwrap();
+    assert_eq!(record["producer_kind"], "existing");
+    assert_eq!(record["mode"], "verify");
+    assert_eq!(record["identity"]["executable"], original["path"]);
+    assert_eq!(record["controller"], fixture.registered["controller"]);
+}
+
+#[test]
+fn native_existing_history_rejects_configuration_and_controller_drift() {
+    for change in [
+        "configuration-path",
+        "configuration-content",
+        "controller-tool",
+    ] {
+        let mut fixture = Fixture::existing();
+        let mut launch = json_io::read(&fixture.output.join("session-launch.json")).unwrap();
+        let configuration = fixture.output.join("existing-configuration.json");
+        match change {
+            "configuration-path" => {
+                let replacement = fixture.output.join("replacement-configuration.json");
+                fs::copy(&configuration, &replacement).unwrap();
+                launch["configuration"] = common::binding(&replacement).unwrap();
+                let index = launch["command"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .position(|value| value == "--configuration")
+                    .unwrap();
+                launch["command"][index + 1] = json!(replacement);
+                fixture.relaunch(&launch);
+            }
+            "configuration-content" => {
+                fixture.rewrite("existing-configuration.json", &json!({"fixture":2}));
+            }
+            _ => {
+                let other = fixture.backend.join("other-controller.exe");
+                fs::copy(fixture.backend.join("tool.exe"), &other).unwrap();
+                let path = source::binding_path(&fixture.registered["controller"]).unwrap();
+                let mut controller = json_io::read(&path).unwrap();
+                controller["owner"]["identity"]["executable"] = json!(other);
+                fs::write(&path, serde_json::to_vec(&controller).unwrap()).unwrap();
+                fixture.registered["controller"] = common::binding(&path).unwrap();
+                launch["controller"] = fixture.registered["controller"].clone();
+                fixture.relaunch(&launch);
+            }
+        }
+        assert!(fixture.collect().is_err(), "{change}");
+    }
 }

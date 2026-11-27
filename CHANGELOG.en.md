@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Verify native post-copy receipts during source registration and include each published API successor in producer lineage and shutdown evidence.
+
 - Share RFC3339 validation across backup inventory, recovery inputs, save measurements, and runtime receipts while preserving each entry point's timestamp precision and format rules.
 
 - Fix the original runtime record lookup during RustFS-only handoff. Verify API and Worker exit evidence from the registered post-copy directory.

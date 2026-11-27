@@ -1,6 +1,6 @@
 //! 从固定阶段记录派生完整历史集合；正文只在原生登记闭环内流转。
 use std::{
-    collections::BTreeSet,
+    collections::BTreeMap,
     path::{Path, PathBuf},
 };
 
@@ -28,31 +28,74 @@ pub(crate) mod runtime;
 #[path = "../../../../../../tests/unit/recovery/clone/native/seed/source_registration/lineage.rs"]
 mod tests;
 
+pub(super) struct RuntimeInputs<'a> {
+    pub(super) product: &'a Path,
+    pub(super) post: &'a history::Post,
+    pub(super) seed: &'a runtime_model::Inputs,
+    pub(super) api_successors: Vec<Value>,
+}
+
 pub(super) fn collect(
     backend: &Path,
     run: &Path,
     coordinator_tool: &Value,
-    product: &Path,
     saved: &Value,
-    post: &history::Post,
-    seed: &runtime_model::Inputs,
+    inputs: RuntimeInputs<'_>,
 ) -> Result<Value> {
     let run = common::local_directory(backend, run, "来源历史运行")?;
-    let inputs = runtime_bindings(backend, &run, saved, post, seed)?;
-    let mut identities = identities::Identities::default();
-    let mut seen = BTreeSet::new();
-    let mut runtimes = Vec::new();
-    for (rank, (path, binding)) in inputs.iter().enumerate() {
-        let record = runtime::collect_bound(backend, product, path, binding)?;
-        let recorded = Path::new(documents::text(
-            &record["runtime_directory"],
-            "历史运行目录",
-        )?);
-        common::local_directory(backend, recorded, "历史运行目录")?;
-        let canonical = recorded.canonicalize()?;
-        if canonical != path.canonicalize()? || !seen.insert(canonical) {
+    let bindings = runtime_bindings(backend, &run, saved, inputs.post, inputs.seed)?;
+    let mut records = inputs.api_successors;
+    for (path, binding) in bindings {
+        let record = runtime::collect_bound(backend, inputs.product, &path, &binding)?;
+        if recorded_runtime(&record)?.canonicalize()? != path.canonicalize()? {
+            return Err("历史运行目录不属于权威集合".into());
+        }
+        records.push(record);
+    }
+    let (runtimes, mut identities) = merge_runtime_history(backend, &run, records)?;
+    let producers = collect_producers(backend, &run, saved, coordinator_tool, &mut identities)?;
+    if state::load(&run, true)? != *saved || state::manifest_binding(&run)? != saved["manifest"] {
+        return Err("收集来源历史期间阶段记录或运行清单变化；保留证据，禁止自动重放".into());
+    }
+    Ok(json!({
+        "format_version":1,"kind":"devex-clone-producer-lineage",
+        "run_directory":run,"run_manifest":saved["manifest"],
+        "runtimes":runtimes,"node_producers":producers,"identities":identities.into_value()
+    }))
+}
+
+fn recorded_runtime(record: &Value) -> Result<&Path> {
+    Ok(Path::new(documents::text(
+        &record["runtime_directory"],
+        "历史运行目录",
+    )?))
+}
+
+fn merge_runtime_history(
+    backend: &Path,
+    run: &Path,
+    records: Vec<Value>,
+) -> Result<(Vec<Value>, identities::Identities)> {
+    let canonical_run = run.canonicalize()?;
+    let mut ordered = BTreeMap::new();
+    for record in records {
+        let path = common::local_directory(backend, recorded_runtime(&record)?, "历史运行目录")?;
+        let canonical = path.canonicalize()?;
+        let relative = canonical.strip_prefix(&canonical_run)?;
+        let relative = relative.to_str().ok_or("历史运行相对目录必须为 UTF-8")?;
+        // 已核验的运行目录使用固定 ASCII 段；统一分隔符后排序与平台无关。
+        if relative.is_empty()
+            || ordered
+                .insert(relative.replace('\\', "/"), record)
+                .is_some()
+        {
             return Err("历史运行目录不属于权威集合或重复登记".into());
         }
+    }
+    let runtimes: Vec<Value> = ordered.into_values().collect();
+    let mut identities = identities::Identities::default();
+    for (rank, record) in runtimes.iter().enumerate() {
+        let recorded = recorded_runtime(record)?;
         for generation in documents::array(&record["generations"], "完整运行代次")? {
             let sequence = generation["sequence"]
                 .as_u64()
@@ -65,17 +108,8 @@ pub(super) fn collect(
                 sequence,
             )?;
         }
-        runtimes.push(record);
     }
-    let producers = collect_producers(backend, &run, saved, coordinator_tool, &mut identities)?;
-    if state::load(&run, true)? != *saved || state::manifest_binding(&run)? != saved["manifest"] {
-        return Err("收集来源历史期间阶段记录或运行清单变化；保留证据，禁止自动重放".into());
-    }
-    Ok(json!({
-        "format_version":1,"kind":"devex-clone-producer-lineage",
-        "run_directory":run,"run_manifest":saved["manifest"],
-        "runtimes":runtimes,"node_producers":producers,"identities":identities.into_value()
-    }))
+    Ok((runtimes, identities))
 }
 
 fn runtime_bindings(

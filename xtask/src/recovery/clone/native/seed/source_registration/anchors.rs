@@ -6,6 +6,7 @@ use crate::{
         bridge::scope::Scope,
         json as document,
         lifecycle::{manifest as manifests, state},
+        post_process::api_successor,
         resources::common,
         seed::{Registration, capacity, history, latest, runtime_model},
     },
@@ -69,14 +70,18 @@ pub(super) fn collect(
     let build_path = common::bound_file(backend, build_binding, "来源登记原产品构建")?;
     let build = common::read_bound(backend, build_binding, "来源登记原产品构建")?;
     let product = scope.registered_product_root(&build_path, &build)?;
+    let api_successors = api_successor::runtime_history(backend, run, &post.descriptor)?;
     let lineage = lineage::collect(
         backend,
         run,
         coordinator_tool,
-        &product,
         &saved,
-        &post,
-        &inputs,
+        lineage::RuntimeInputs {
+            product: &product,
+            post: &post,
+            seed: &inputs,
+            api_successors,
+        },
     )?;
     common::bound_file(backend, build_binding, "来源登记原产品构建后像")?;
     require_quiet(&lineage, quiet)?;

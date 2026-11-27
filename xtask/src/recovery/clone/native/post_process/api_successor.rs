@@ -20,7 +20,7 @@ use crate::{
             resources::common,
             seed::{
                 history::{self, Post},
-                source_registration::lineage,
+                source_registration::lineage::runtime as lineage_runtime,
             },
             target_verify::guard::Inputs,
         },
@@ -32,7 +32,9 @@ use crate::{
 const RECEIPTS: [&str; 2] = ["binaries.json", "runtime.json"];
 const MAX_RECEIPT_BYTES: u64 = 64 * 1024;
 
-pub(in crate::recovery::clone::native) use publication::{Selected, select, select_before};
+pub(in crate::recovery::clone::native) use publication::{
+    Selected, runtime_history, select, select_before,
+};
 
 pub(in crate::recovery::clone::native) fn prepare_frozen_runtime(
     backend: &Path,
@@ -220,7 +222,7 @@ fn verify_generation(
     publication: &Value,
     intent: &Value,
     executor: &Value,
-) -> Result<()> {
+) -> Result<Value> {
     for (field, filename) in [("runtime", "runtime.json"), ("binaries", "binaries.json")] {
         let successor = &publication[field];
         bound_at(backend, successor, &directory.join(filename))?;
@@ -238,7 +240,7 @@ fn verify_generation(
     )?;
     let product = runtime::product_root(backend, &contract)?;
     let generation =
-        lineage::runtime::collect_bound(backend, &product, directory, &publication["runtime"])?;
+        lineage_runtime::collect_bound(backend, &product, directory, &publication["runtime"])?;
     let api = read_at(backend, &publication["api"], &directory.join("api.json"))?;
     let role_tree = read_at(
         backend,
@@ -276,7 +278,8 @@ fn verify_generation(
         &role_tree,
         executor,
         &contract,
-    )
+    )?;
+    Ok(generation)
 }
 
 fn verify_archive(

@@ -38,10 +38,24 @@ pub(in crate::recovery::clone::native) fn select_before(
     select_at(backend, run, registration, Some(exclusive_attempt))
 }
 
+/// 按正式账本核验并返回每个已通过 API 后继的运行证据。
+pub(in crate::recovery::clone::native) fn runtime_history(
+    backend: &Path,
+    run: &Path,
+    registration: &Value,
+) -> Result<Vec<Value>> {
+    Ok(verify_at(backend, run, registration, None)?
+        .into_iter()
+        .flatten()
+        .map(|generation| generation.runtime)
+        .collect())
+}
+
 struct Verified {
     selected: Selected,
     result: Value,
     intent: Value,
+    runtime: Value,
 }
 
 fn select_at(
@@ -50,11 +64,24 @@ fn select_at(
     registration: &Value,
     exclusive_attempt: Option<u64>,
 ) -> Result<Option<Selected>> {
+    Ok(verify_at(backend, run, registration, exclusive_attempt)?
+        .into_iter()
+        .flatten()
+        .next_back()
+        .map(|generation| generation.selected))
+}
+
+fn verify_at(
+    backend: &Path,
+    run: &Path,
+    registration: &Value,
+    exclusive_attempt: Option<u64>,
+) -> Result<[Option<Verified>; 2]> {
     let saved = state::load(run, false)?;
     let attempts = state::attempts(&saved)?;
     let parent = run.join("post-copy").join("api-successors");
     let [first, second] = completed(attempts, exclusive_attempt)?;
-    let selected = if let Some(first) = first {
+    let verified = if let Some(first) = first {
         let post = history::post(backend, run, Some(registration), None, false)?;
         let first = verify(backend, run, &parent, attempts, &post, first, None)?;
         let second = second
@@ -63,17 +90,17 @@ fn select_at(
         if exclusive_attempt.is_none() {
             check_paths(backend, &parent, true, second.as_ref())?;
         }
-        Some(second.unwrap_or(first).selected)
+        [Some(first), second]
     } else {
         if exclusive_attempt.is_none() {
             check_paths(backend, &parent, false, None)?;
         }
-        None
+        [None, None]
     };
     if state::load(run, false)? != saved {
         return Err("API 后继账本在读取期间发生变化".into());
     }
-    Ok(selected)
+    Ok(verified)
 }
 
 fn completed(attempts: &[Value], exclusive_attempt: Option<u64>) -> Result<[Option<&Value>; 2]> {
@@ -142,7 +169,7 @@ fn verify(
     } else {
         verify_incident(backend, attempts, restart_attempt, post, &intent)?;
     }
-    verify_generation(backend, post, &directory, &publication, &intent, &executor)?;
+    let runtime = verify_generation(backend, post, &directory, &publication, &intent, &executor)?;
     if read_at(backend, &binding, &path)? != publication
         || read_at(backend, &publication["intent"], &intent_path)? != intent
     {
@@ -162,6 +189,7 @@ fn verify(
         },
         result: result_binding.clone(),
         intent,
+        runtime,
     })
 }
 

@@ -51,7 +51,7 @@ pub(super) fn validate(registered: &Value) -> Result<&Value> {
     }
     Ok(attempt)
 }
-pub(super) fn controller(run: &Path, attempt: &Value, expected: &Value) -> Result<Value> {
+pub(super) fn controller(run: &Path, attempt: &Value, expected: &Value) -> Result<(Value, Value)> {
     let number = attempt["number"].as_u64().ok_or("attempt number 无效")?;
     let path = run.join(format!("controller-{number:04}.json"));
     let binding = source::bound(&path, run, Some(expected))?;
@@ -73,7 +73,7 @@ pub(super) fn controller(run: &Path, attempt: &Value, expected: &Value) -> Resul
         &["format_version", "identity", "directory", "manifest_sha256"],
         "控制器 owner",
     )?;
-    source::identity(&owner["identity"], None)?;
+    let identity = source::identity(&owner["identity"], None)?;
     let manifest = source::bound(&run.join("manifest.json"), run, None)?;
     let mut original = attempt.clone();
     original["status"] = json!("running");
@@ -91,15 +91,18 @@ pub(super) fn controller(run: &Path, attempt: &Value, expected: &Value) -> Resul
         return Err("Node controller 与 attempt 不一致".into());
     }
     source::bound(&path, run, Some(&binding))?;
-    Ok(binding)
+    Ok((binding, identity))
 }
 pub(super) fn owner(process: &Value, kind: &str) -> Result<()> {
+    let mut fields = vec!["format_version", "kind", "launch", "identity"];
+    if kind == "existing" {
+        return json_io::exact(process, &fields, "生产者进程收据").map(|_| ());
+    }
     let key = if kind.starts_with("identity-") {
         "identity_lock_owner"
     } else {
         "producer_owner"
     };
-    let mut fields = vec!["format_version", "kind", "launch", "identity"];
     if process.get(key).is_some() {
         fields.push(key);
         let text = process[key].as_str().ok_or("生产者 owner 无效")?;
@@ -117,7 +120,7 @@ pub(super) fn owner(process: &Value, kind: &str) -> Result<()> {
         {
             return Err("原生生产者 owner 格式无效".into());
         }
-    } else if kind != "existing" {
+    } else {
         return Err("原生生产者收据必须记录 owner".into());
     }
     json_io::exact(process, &fields, "生产者进程收据")?;
