@@ -2,12 +2,12 @@ use super::{Context, documents, fields};
 use crate::{
     Result,
     recovery::{
-        clone::native::{digest, s3::app_configuration},
+        clone::native::{digest, resources::common, s3::app_configuration},
         inputs::domain,
     },
 };
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) struct Dataset {
     pub plan: Value,
@@ -235,7 +235,11 @@ pub(super) fn load(context: &mut Context, request: &Value) -> Result<Dataset> {
     let reference = context.read(&request["reference_plan"])?;
     let value = context.read(&request["dataset"])?;
     let historical = plan(context, &reference, &request["reference_plan"])?;
-    documents::exact(&value, fields::DATASET_FIELDS, "原始数据集")?;
+    let mut dataset_fields = fields::DATASET_FIELDS.to_vec();
+    if !historical {
+        dataset_fields.push("post_batch");
+    }
+    documents::exact(&value, &dataset_fields, "原始数据集")?;
     let scope = reference["source"]["scope_id"]
         .as_str()
         .ok_or("原参考计划缺少租户scope")?;
@@ -254,24 +258,57 @@ pub(super) fn load(context: &mut Context, request: &Value) -> Result<Dataset> {
     {
         return Err("原数据集没有绑定原计划或未达到正式恢复规模".into());
     }
+    let production = (!historical)
+        .then(|| BatchPlan::load(&reference, &value))
+        .transpose()?;
+    let counts = counts(targets, scope, production.as_ref())?;
+    if Some(counts.records) != value["records"].as_u64()
+        || Some(counts.bytes) != value["object_bytes"].as_u64()
+    {
+        return Err("原数据集租户集合、记录总数或对象字节不一致".into());
+    }
+    if let Some(production) = production {
+        production.verify_batch(context, &request["dataset"], &value, counts.batch_rows)?;
+    }
+    Ok(Dataset {
+        plan: reference,
+        value,
+        post_samples: counts.posts,
+        files: counts.files,
+    })
+}
+
+#[derive(Default)]
+struct Counts {
+    bytes: u64,
+    records: u64,
+    files: u64,
+    posts: u64,
+    batch_rows: u64,
+}
+
+fn counts(targets: &[Value], scope: &str, production: Option<&BatchPlan>) -> Result<Counts> {
     let mut expected = (1..=10)
-        .map(|index| format!("{scope}-{index:02}"))
-        .collect::<BTreeSet<_>>();
-    expected.insert("system".into());
-    let mut bytes = 0_u64;
-    let mut records = 0_u64;
-    let mut files = 0_u64;
-    let mut posts = 0_u64;
+        .map(|index| (format!("{scope}-{index:02}"), index))
+        .collect::<BTreeMap<_, _>>();
+    expected.insert("system".into(), 0);
+    let mut counts = Counts::default();
     let mut seen = BTreeSet::new();
     for tenant in targets {
-        tenant_fields(tenant, historical)?;
+        tenant_fields(tenant, production.is_none())?;
         let id = tenant["tenant_id"].as_str().ok_or("数据集租户身份无效")?;
-        if !expected.remove(id) || tenant["username"].as_str().is_none_or(str::is_empty) {
+        let index = expected.remove(id).ok_or("原数据集租户集合重复或不完整")?;
+        if tenant["username"].as_str().is_none_or(str::is_empty) {
             return Err("原数据集租户集合重复或不完整".into());
         }
-        records = records
-            .checked_add(tenant["records"].as_u64().ok_or("租户记录数无效")?)
-            .ok_or("记录数溢出")?;
+        let records = tenant["records"].as_u64().ok_or("租户记录数无效")?;
+        counts.records = counts.records.checked_add(records).ok_or("记录数溢出")?;
+        if let Some(production) = production {
+            counts.batch_rows = counts
+                .batch_rows
+                .checked_add(production.tenant_batch_rows(tenant, index, records)?)
+                .ok_or("岗位批次总数溢出")?;
+        }
         let samples = documents::array(&tenant["posts"], "岗位样本")?;
         if samples.len() < 3 {
             return Err("原数据集岗位样本不足".into());
@@ -279,7 +316,7 @@ pub(super) fn load(context: &mut Context, request: &Value) -> Result<Dataset> {
         for post in samples {
             documents::exact(post, fields::POST_FIELDS, "岗位样本")?;
         }
-        posts += samples.len() as u64;
+        counts.posts += samples.len() as u64;
         let objects = documents::array(&tenant["files"], "业务对象样本")?;
         if objects.is_empty() {
             return Err("原数据集业务对象缺失".into());
@@ -298,30 +335,114 @@ pub(super) fn load(context: &mut Context, request: &Value) -> Result<Dataset> {
             {
                 return Err("原数据集对象样本重复或摘要无效".into());
             }
-            bytes = bytes
+            counts.bytes = counts
+                .bytes
                 .checked_add(file["bytes"].as_u64().ok_or("对象字节数无效")?)
                 .ok_or("对象字节溢出")?;
-            files += 1;
+            counts.files += 1;
         }
     }
-    if !expected.is_empty()
-        || Some(records) != value["records"].as_u64()
-        || Some(bytes) != value["object_bytes"].as_u64()
-    {
+    if !expected.is_empty() {
         return Err("原数据集租户集合、记录总数或对象字节不一致".into());
     }
-    Ok(Dataset {
-        plan: reference,
-        value,
-        post_samples: posts,
-        files,
-    })
+    Ok(counts)
+}
+
+struct BatchPlan {
+    records: u64,
+    api_per_tenant: u64,
+    batch_size: u64,
+}
+
+impl BatchPlan {
+    fn load(reference: &Value, dataset: &Value) -> Result<Self> {
+        let settings = &reference["dataset"];
+        let records = settings["records"]
+            .as_u64()
+            .filter(|value| (100_000..=1_000_000).contains(value))
+            .ok_or("参考数据集计划的记录数无效")?;
+        let api_per_tenant = settings["api_validation_posts"]
+            .as_u64()
+            .filter(|value| (1..=10).contains(value))
+            .ok_or("参考数据集计划的 API 岗位数无效")?;
+        let batch_size = settings["post_batch_rows"]
+            .as_u64()
+            .filter(|value| (100..=2000).contains(value))
+            .ok_or("参考数据集计划的岗位批次大小无效")?;
+        if dataset["records"] != records
+            || dataset["request_interval_ms"] != settings["request_interval_ms"]
+            || dataset["post_concurrency"] != 11
+        {
+            return Err("原数据集记录数、节拍或并发没有绑定参考计划".into());
+        }
+        Ok(Self {
+            records,
+            api_per_tenant,
+            batch_size,
+        })
+    }
+
+    fn tenant_batch_rows(&self, tenant: &Value, index: u64, records: u64) -> Result<u64> {
+        let expected = self.records / 11 + u64::from(index < self.records % 11);
+        let rows = expected - self.api_per_tenant;
+        if records != expected
+            || tenant["api_records"] != self.api_per_tenant
+            || tenant["batch_records"] != rows
+        {
+            return Err("原数据集租户的 API 或批次岗位数与计划分配不同".into());
+        }
+        Ok(rows)
+    }
+
+    fn verify_batch(
+        &self,
+        context: &mut Context,
+        dataset: &Value,
+        value: &Value,
+        rows: u64,
+    ) -> Result<()> {
+        let receipt = &value["post_batch"];
+        documents::exact(receipt, fields::POST_BATCH_FIELDS, "原岗位批次收据")?;
+        let (_, declared_rows) = crate::recovery::dataset_prepare::post_batch_range(receipt)?;
+        let canonical_ids = ["first_id", "last_id"].into_iter().all(|field| {
+            receipt[field]
+                .as_str()
+                .is_some_and(|id| id.bytes().all(|byte| byte.is_ascii_digit()))
+        });
+        if receipt["format_version"] != 1
+            || !canonical_ids
+            || receipt["plan_sha256"] != value["plan_sha256"]
+            || declared_rows != rows
+            || receipt["batch_rows"] != self.batch_size
+            || receipt["batches"] != rows.div_ceil(self.batch_size)
+        {
+            return Err("原岗位批次收据没有绑定参考计划和完整行数".into());
+        }
+        let dataset = common::bound_file(&context.root, dataset, "原始数据集")?;
+        let path = common::common_file(
+            &context.root,
+            &dataset.with_file_name("post-batch.ndjson"),
+            "原岗位批次输入",
+        )?;
+        let metadata = std::fs::symlink_metadata(&path)?;
+        let actual = digest::file(&path)?;
+        if common::link_count_for(&path, &metadata)? != 1
+            || actual.bytes == 0
+            || receipt["input_sha256"] != actual.sha256
+        {
+            return Err("原岗位批次输入没有绑定同目录原件及其摘要".into());
+        }
+        context.snapshots.push((path, actual));
+        Ok(())
+    }
 }
 
 fn tenant_fields(tenant: &Value, historical: bool) -> Result<()> {
     let mut fields = fields::TENANT_FIELDS.to_vec();
     if historical {
         fields.push("password_env");
+    } else {
+        fields.extend(["api_records", "batch_records"]);
     }
     documents::exact(tenant, &fields, "原数据集租户")?;
     if historical

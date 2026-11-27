@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use std::{io::Read, path::Path};
 #[path = "dataset_prepare/batch.rs"]
 mod batch;
+pub(in crate::recovery) use batch::post_batch_range;
 #[path = "dataset_prepare/configuration.rs"]
 pub(in crate::recovery) mod configuration;
 #[path = "dataset_prepare/existing.rs"]

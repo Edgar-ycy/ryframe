@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Recovery source lineage verifies the reference dataset's tenant post allocations, post batch receipt, and original batch input digest.
+
 - Recovery source lineage accepts `/readyz` for the Worker and rejects a Worker that shares the target API's listening address and port.
 
 - Data placement and migration stage records use UTC time and preserve the public response format, database clocks, write precision, and backup window validation.

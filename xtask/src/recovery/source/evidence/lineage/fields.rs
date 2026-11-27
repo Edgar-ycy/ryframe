@@ -11,6 +11,17 @@ pub(super) const DATASET_FIELDS: &[&str] = &[
     "tenants",
 ];
 pub(super) const TENANT_FIELDS: &[&str] = &["files", "posts", "records", "tenant_id", "username"];
+pub(super) const POST_BATCH_FIELDS: &[&str] = &[
+    "batch_rows",
+    "batches",
+    "first_id",
+    "format_version",
+    "input_sha256",
+    "kind",
+    "last_id",
+    "plan_sha256",
+    "rows",
+];
 pub(super) const POST_FIELDS: &[&str] = &["code", "id", "name"];
 pub(super) const FILE_FIELDS: &[&str] = &[
     "bytes",

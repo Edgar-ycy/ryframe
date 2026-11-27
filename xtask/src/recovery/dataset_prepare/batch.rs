@@ -155,7 +155,7 @@ fn execute(
 pub(super) fn row(plan: &Value, index: usize, row: u64) -> Value {
     json!({"tenant_id":model::tenant(plan,index),"index":row,"code":format!("{}-{row}",plan["id"].as_str().unwrap_or("")),"name":format!("恢复样本{row}"),"sort":row%1000})
 }
-pub(super) fn resolve_samples(samples: &[Value], result: &Value) -> Result<Vec<Value>> {
+pub(in crate::recovery) fn post_batch_range(result: &Value) -> Result<(i64, u64)> {
     let first = model::positive_id(&result["first_id"])?.parse::<i64>()?;
     let last = model::positive_id(&result["last_id"])?.parse::<i64>()?;
     let rows = model::integer(&result["rows"], 1, 1_000_000, "批次行数")?;
@@ -164,6 +164,11 @@ pub(super) fn resolve_samples(samples: &[Value], result: &Value) -> Result<Vec<V
     {
         return Err("岗位批次结果不完整".into());
     }
+    Ok((first, rows))
+}
+
+pub(super) fn resolve_samples(samples: &[Value], result: &Value) -> Result<Vec<Value>> {
+    let (first, rows) = post_batch_range(result)?;
     samples.iter().map(|sample| {
         let position=sample["position"].as_u64().filter(|v|*v<rows).ok_or("样本位置越界")?;
         Ok(json!({"identityIndex":sample["identityIndex"],"id":(first+position as i64).to_string(),"code":sample["row"]["code"],"name":sample["row"]["name"]}))

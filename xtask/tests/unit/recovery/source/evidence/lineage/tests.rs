@@ -1,6 +1,6 @@
 use super::*;
 use serde_json::Map;
-use std::fs;
+use std::{fs, io::Write, sync::OnceLock};
 
 fn write(root: &Path, name: &str, value: &Value) -> Value {
     let file = root.join(".local-tests").join(name);
@@ -83,7 +83,7 @@ fn origin(root: &Path) -> Origin {
         "dedicated-b",
     ];
     let mut plan = json!({"format_version":1,"id":"lineage-unit","target_side":"base","work_dir":root.join(".local-tests/origin"),
-            "dataset":{"tenant_targets":targets,"timeout_seconds":21600},
+            "dataset":{"tenant_targets":targets,"timeout_seconds":21600,"records":100000,"request_interval_ms":1000,"api_validation_posts":2,"post_batch_rows":1000},
             "tools":{"mysql":{"path":tool,"sha256":tool_hash},"mysqldump":{"path":tool,"sha256":tool_hash}}});
     for side in ["source", "target"] {
         let databases=["shared-control","shared","dedicated-a","dedicated-b"].iter().map(|key|json!({"key":key,
@@ -96,9 +96,14 @@ fn origin(root: &Path) -> Origin {
                 "s3":{"endpoint":"http://127.0.0.1:29000","region":"us-east-1","configuration":binding}});
     }
     let plan_descriptor = write(root, "origin/plan.json", &plan);
-    let mut tenants=(0..11).map(|index|json!({"tenant_id":if index==0 {"system".into()} else {format!("restore-source-unit-{index:02}")},
-            "username":format!("user-{index}"),"records":if index<10 {9091} else {9090},
-            "posts":(0..3).map(|p|json!({"id":(1000+index*3+p).to_string(),"code":format!("P{p}"),"name":"岗位"})).collect::<Vec<_>>(),"files":[]})).collect::<Vec<_>>();
+    let mut tenants = (0..11)
+        .map(|index| {
+            let records = if index < 10 { 9091 } else { 9090 };
+            json!({"tenant_id":if index==0 {"system".into()} else {format!("restore-source-unit-{index:02}")},
+                "username":format!("user-{index}"),"records":records,"api_records":2,"batch_records":records-2,
+                "posts":(0..3).map(|p|json!({"id":(1000+index*3+p).to_string(),"code":format!("P{p}"),"name":"岗位"})).collect::<Vec<_>>(),"files":[]})
+        })
+        .collect::<Vec<_>>();
     let mut objects = Vec::new();
     for index in 0..256 {
         let id = tenants[index % 11]["tenant_id"].as_str().unwrap();
@@ -114,8 +119,13 @@ fn origin(root: &Path) -> Origin {
     }
     objects.push(json!({"bucket":"uploads","source_key":"restore-source-unit/system/probe.txt","target_key":"perf-seed-unit/system/probe.txt",
             "artifact":{"bytes":7,"sha256":"f".repeat(64)},"metadata":{}}));
-    let dataset = json!({"format_version":1,"plan_sha256":digest::plan_hash(&plan).unwrap(),"source_scope_id":"restore-source-unit",
-            "started_at":"2026-09-01T00:00:00Z","records":100000,"object_bytes":1024*1024*1024,"tenants":tenants,"request_interval_ms":1000,"post_concurrency":4,"completed_at":"2026-09-03T00:00:00Z"});
+    let batch = root.join(".local-tests/origin/post-batch.ndjson");
+    fs::write(&batch, batch_input(&tenants)).unwrap();
+    let plan_sha = digest::plan_hash(&plan).unwrap();
+    let dataset = json!({"format_version":1,"plan_sha256":plan_sha,"source_scope_id":"restore-source-unit",
+            "started_at":"2026-09-01T00:00:00Z","records":100000,"object_bytes":1024*1024*1024,"tenants":tenants,"request_interval_ms":1000,"post_concurrency":11,"completed_at":"2026-09-03T00:00:00Z",
+            "post_batch":{"format_version":1,"kind":"restore-reference-post-batch","plan_sha256":plan_sha,"input_sha256":digest::file(&batch).unwrap().sha256,
+                "rows":99978,"batch_rows":1000,"batches":100,"first_id":"9007199254740993","last_id":"9007199254840970"}});
     let dataset_descriptor = write(root, "origin/result.json", &dataset);
     Origin {
         plan,
@@ -124,6 +134,25 @@ fn origin(root: &Path) -> Origin {
         plan_descriptor,
         dataset_descriptor,
     }
+}
+
+fn batch_input(tenants: &[Value]) -> &'static [u8] {
+    static INPUT: OnceLock<Vec<u8>> = OnceLock::new();
+    INPUT.get_or_init(|| {
+        let mut bytes = Vec::new();
+        for tenant in tenants {
+            for row in 2..tenant["records"].as_u64().unwrap() {
+                serde_json::to_writer(
+                    &mut bytes,
+                    &json!({"tenant_id":tenant["tenant_id"],"index":row,"code":format!("lineage-unit-{row}"),
+                        "name":format!("恢复样本{row}"),"sort":row%1000}),
+                )
+                .unwrap();
+                bytes.push(b'\n');
+            }
+        }
+        bytes
+    })
 }
 
 struct Fixture {
@@ -236,6 +265,13 @@ impl Fixture {
     fn derive(&self) -> Result<Value> {
         derive_with(&self.args, &|_, _, _| Ok(()))
     }
+    fn dataset_for_plan(&self, plan: &Value) -> Value {
+        let mut dataset = self.dataset.clone();
+        let sha = json!(digest::plan_hash(plan).unwrap());
+        dataset["plan_sha256"] = sha.clone();
+        dataset["post_batch"]["plan_sha256"] = sha;
+        dataset
+    }
     fn image(&mut self, change: impl FnOnce(&mut Value)) {
         change(&mut self.args["verified_image"]);
         let path = PathBuf::from(self.args["image_descriptor"]["path"].as_str().unwrap());
@@ -319,7 +355,7 @@ fn formal_dataset_requires_counts_sums_pacing_current_fields_and_unique_objects(
         *dataset.pointer_mut(pointer).unwrap() = value;
         let descriptor = write(
             &f.root,
-            &format!("invalid-{}.json", uuid::Uuid::new_v4().simple()),
+            &format!("origin/invalid-{}.json", uuid::Uuid::new_v4().simple()),
             &dataset,
         );
         let mut request = f.args["post_request"].clone();
@@ -332,7 +368,7 @@ fn formal_dataset_requires_counts_sums_pacing_current_fields_and_unique_objects(
     }
     let mut dataset = f.dataset.clone();
     dataset["tenants"][0]["password_env"] = json!("LEGACY");
-    let descriptor = write(&f.root, "unexpected-password.json", &dataset);
+    let descriptor = write(&f.root, "origin/unexpected-password.json", &dataset);
     let mut request = f.args["post_request"].clone();
     request["dataset"] = descriptor;
     assert!(
@@ -345,6 +381,121 @@ fn formal_dataset_requires_counts_sums_pacing_current_fields_and_unique_objects(
         )
         .is_err()
     );
+}
+
+#[test]
+fn current_dataset_checks_batch_fields_allocations_range_and_input_digest() {
+    let f = Fixture::new();
+    let rejection = |name: &str, candidate: &Value| {
+        let mut request = f.args["post_request"].clone();
+        request["dataset"] = write(&f.root, &format!("origin/{name}.json"), candidate);
+        dataset::load(
+            &mut Context {
+                root: f.root.clone(),
+                snapshots: Vec::new(),
+            },
+            &request,
+        )
+        .err()
+        .unwrap()
+        .to_string()
+    };
+    for (field, owner, message) in [
+        ("post_batch", "", "原始数据集字段"),
+        ("api_records", "/tenants/0", "原数据集租户字段"),
+        ("batch_records", "/tenants/0", "原数据集租户字段"),
+        ("batches", "/post_batch", "原岗位批次收据字段"),
+    ] {
+        let mut candidate = f.dataset.clone();
+        candidate
+            .pointer_mut(owner)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove(field)
+            .unwrap();
+        assert!(rejection(field, &candidate).contains(message));
+    }
+    for (name, pointer, changed, message) in [
+        (
+            "api-allocation",
+            "/tenants/0/api_records",
+            json!(3),
+            "计划分配",
+        ),
+        (
+            "batch-allocation",
+            "/tenants/0/batch_records",
+            json!(1),
+            "计划分配",
+        ),
+        ("concurrency", "/post_concurrency", json!(4), "节拍或并发"),
+        (
+            "plan-digest",
+            "/post_batch/plan_sha256",
+            json!("0".repeat(64)),
+            "完整行数",
+        ),
+        (
+            "batch-size",
+            "/post_batch/batch_rows",
+            json!(999),
+            "完整行数",
+        ),
+        ("batch-count", "/post_batch/batches", json!(99), "完整行数"),
+        (
+            "batch-range",
+            "/post_batch/last_id",
+            json!("9007199254840971"),
+            "岗位批次结果不完整",
+        ),
+        (
+            "batch-id-with-sign",
+            "/post_batch/first_id",
+            json!("+9007199254740993"),
+            "完整行数",
+        ),
+        (
+            "input-digest",
+            "/post_batch/input_sha256",
+            json!("0".repeat(64)),
+            "同目录原件及其摘要",
+        ),
+    ] {
+        let mut candidate = f.dataset.clone();
+        *candidate.pointer_mut(pointer).unwrap() = changed;
+        assert!(rejection(name, &candidate).contains(message), "{pointer}");
+    }
+    let mut candidate = f.dataset.clone();
+    candidate["tenants"][0]["records"] = json!(9090);
+    candidate["tenants"][0]["batch_records"] = json!(9088);
+    candidate["tenants"][10]["records"] = json!(9091);
+    candidate["tenants"][10]["batch_records"] = json!(9089);
+    assert!(rejection("swapped-allocation", &candidate).contains("计划分配"));
+}
+
+#[test]
+fn original_post_batch_bytes_remain_bound_until_lineage_publication() {
+    let f = Fixture::new();
+    let input = f.root.join(".local-tests/origin/post-batch.ndjson");
+    let elsewhere = f.root.join(".local-tests/post-batch.ndjson");
+    fs::rename(&input, &elsewhere).unwrap();
+    assert!(
+        f.derive()
+            .unwrap_err()
+            .to_string()
+            .contains("原岗位批次输入")
+    );
+    fs::rename(&elsewhere, &input).unwrap();
+    let error = derive_with(&f.args, &|_, _, _| {
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&input)?
+            .write_all(b"!")?;
+        Ok(())
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("核验期间祖先或当前像发生变化"));
 }
 
 #[test]
@@ -428,11 +579,10 @@ fn lineage_rejects_ancestor_replacement_unknown_fields_and_changed_endpoints() {
 fn reference_plan_reserves_readyz_for_worker_and_rejects_api_socket_overlap() {
     let f = Fixture::new();
     let load = |name: &str, plan: &Value| -> Result<Value> {
-        let mut data = f.dataset.clone();
-        data["plan_sha256"] = json!(digest::plan_hash(plan)?);
+        let data = f.dataset_for_plan(plan);
         let request = json!({
             "reference_plan": write(&f.root, &format!("{name}-plan.json"), plan),
-            "dataset": write(&f.root, &format!("{name}-dataset.json"), &data),
+            "dataset": write(&f.root, &format!("origin/{name}-dataset.json"), &data),
         });
         dataset::load(
             &mut Context {
@@ -586,9 +736,8 @@ fn same_database_names_on_different_servers_are_distinct_and_aliases_cannot_dupl
     }
     let mut request = f.args["post_request"].clone();
     request["reference_plan"] = write(&f.root, "same-names-plan.json", &plan);
-    let mut dataset = f.dataset.clone();
-    dataset["plan_sha256"] = json!(digest::plan_hash(&plan).unwrap());
-    request["dataset"] = write(&f.root, "same-names-dataset.json", &dataset);
+    let dataset = f.dataset_for_plan(&plan);
+    request["dataset"] = write(&f.root, "origin/same-names-dataset.json", &dataset);
     assert!(
         dataset::load(
             &mut Context {
@@ -661,9 +810,12 @@ fn reference_resource_names_preserve_one_to_sixty_four_characters_without_clone_
         plan["source"]["databases"][0]["database"] = json!("d".repeat(length));
         let mut request = f.args["post_request"].clone();
         request["reference_plan"] = write(&f.root, &format!("names-{length}-plan.json"), &plan);
-        let mut dataset = f.dataset.clone();
-        dataset["plan_sha256"] = json!(digest::plan_hash(&plan).unwrap());
-        request["dataset"] = write(&f.root, &format!("names-{length}-data.json"), &dataset);
+        let dataset = f.dataset_for_plan(&plan);
+        request["dataset"] = write(
+            &f.root,
+            &format!("origin/names-{length}-data.json"),
+            &dataset,
+        );
         assert!(
             dataset::load(
                 &mut Context {
