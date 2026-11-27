@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Share RFC3339 validation for recovery target initialization receipts and inventory continuation history, preserving the original input formats, time boundaries, and digests.
+
 - Share UTC timestamp ordering for source inventory, shutdown evidence, and identity activation while preserving the original cutoff boundaries and subsecond precision.
 
 - Reuse the frozen builds of the same published source in generation requests. Keep the live toolchain and build parameter checks, and retain the original build environment digest with its receipt.

@@ -1,6 +1,5 @@
 use std::path::Path;
 
-use chrono::DateTime;
 use serde_json::{Value, json};
 
 use super::super::super::{
@@ -8,7 +7,7 @@ use super::super::super::{
     json::{self as json_io, exact, text},
     lifecycle::manifest,
 };
-use crate::Result;
+use crate::{Result, utc_timestamp::rfc3339_order_key};
 
 const GENERATION_FIELDS: &[&str] = &[
     "execution",
@@ -118,7 +117,6 @@ fn validate_absence(prepared: &Value, request: &Value) -> Result<()> {
     Ok(())
 }
 
-fn timestamp(value: &Value) -> Result<DateTime<chrono::FixedOffset>> {
-    DateTime::parse_from_rfc3339(text(value, "目标证据时间")?)
-        .map_err(|_| "目标证据时间无效".into())
+fn timestamp(value: &Value) -> Result<(i64, u32)> {
+    rfc3339_order_key(text(value, "目标证据时间")?).map_err(|_| "目标证据时间无效".into())
 }

@@ -3,8 +3,8 @@ use super::super::{digest, json as json_io, lifecycle::manifest};
 use crate::{
     Result,
     local_test_path::{LocalTestPathKind, validate_local_test_path},
+    utc_timestamp::rfc3339_order_key,
 };
-use chrono::{DateTime, FixedOffset};
 use regex::Regex;
 use serde_json::{Value, json};
 use std::{
@@ -56,13 +56,13 @@ pub(super) fn names(target: &Path, pattern: &str) -> Result<BTreeSet<String>> {
     Ok(names)
 }
 
-pub(super) fn timestamp(value: &Value) -> Result<DateTime<FixedOffset>> {
+pub(super) fn timestamp(value: &Value) -> Result<(i64, u32)> {
     let value = json_io::text(value, "目标证据时间")?;
     check(
         !value.is_empty() && value.trim() == value,
         "目标证据时间无效",
     )?;
-    DateTime::parse_from_rfc3339(value).map_err(|_| "目标证据时间无效".into())
+    rfc3339_order_key(value).map_err(|_| "目标证据时间无效".into())
 }
 
 pub(super) fn ordered(values: &[&Value]) -> bool {
