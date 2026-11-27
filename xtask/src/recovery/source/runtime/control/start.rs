@@ -186,7 +186,8 @@ pub(super) fn preflight(
 
 fn partial_request(archive: &Value, descriptor: &Value) -> Result<()> {
     let receipt = &archive["receipt"];
-    if receipt["status"] == "seed_source_partial_prelaunch_closed"
+    if (receipt["status"] == "seed_source_partial_prelaunch_closed"
+        || receipt["status"] == super::super::running::history::prelaunch::revalidated::STATUS)
         && receipt["request"] != *descriptor
     {
         return Err("部分启动前封存后的实际 START 必须使用同一正式请求".into());
@@ -264,10 +265,15 @@ mod tests {
         let request = json!({"path":"original.json","bytes":12,"sha256":"digest"});
         let mut other = request.clone();
         other["path"] = json!("identical-copy.json");
-        let mut archive = json!({"receipt":{"status":"seed_source_partial_prelaunch_closed",
-            "request":request}});
-        assert!(partial_request(&archive, &request).is_ok());
-        assert!(partial_request(&archive, &other).is_err());
+        let mut archive = json!({"receipt":{"request":request}});
+        for status in [
+            "seed_source_partial_prelaunch_closed",
+            super::super::super::running::history::prelaunch::revalidated::STATUS,
+        ] {
+            archive["receipt"]["status"] = json!(status);
+            assert!(partial_request(&archive, &request).is_ok());
+            assert!(partial_request(&archive, &other).is_err());
+        }
         archive["receipt"]["status"] = json!("seed_source_prelaunch_closed");
         assert!(partial_request(&archive, &other).is_ok());
     }
