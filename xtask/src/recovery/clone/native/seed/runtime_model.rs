@@ -14,6 +14,7 @@ use std::{
 
 pub(crate) struct Inputs {
     pub(crate) runtime: PathBuf,
+    pub(crate) post_copy_runtime: PathBuf,
     pub(crate) handoff: Value,
     pub(crate) environment: Value,
 }
@@ -62,6 +63,7 @@ pub(crate) fn inputs(backend: &Path, run: &Path) -> Result<Inputs> {
     }
     Ok(Inputs {
         runtime,
+        post_copy_runtime: post.runtime,
         handoff,
         environment,
     })

@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Fix the original runtime record lookup during RustFS-only handoff. Verify API and Worker exit evidence from the registered post-copy directory.
+
 - Share RFC3339 parsing between DevEx reports and targeted resource source receipts, preserving historical offsets, subsecond precision, and ABBA sample order checks.
 
 - Allow seed-runtime startup and drain shutdown on Windows to explicitly hold the registered originals. Keep full checks at the stage boundaries and verify live ports, configuration, process identities, and the outbox.

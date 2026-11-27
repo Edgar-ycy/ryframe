@@ -15,6 +15,7 @@ fn values() -> (Value, Value, Value, runtime_model::Inputs) {
         "identity":identity,"capacity":capacity,"seed_handoff":binding("handoff"),"seed_close":binding("close"),"lineage":{"identities":[]},"storage":{"bound":true}});
     let inputs = runtime_model::Inputs {
         runtime: PathBuf::from("runtime-fixture"),
+        post_copy_runtime: PathBuf::from("post-copy/runtime"),
         handoff: json!({"identity":identity,"capacity":capacity}),
         environment: json!({"APP_ENV":"test"}),
     };

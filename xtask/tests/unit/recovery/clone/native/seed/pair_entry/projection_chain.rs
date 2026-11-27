@@ -97,6 +97,7 @@ impl<'a> Fixture<'a> {
             controller,
             runtime: runtime_model::Inputs {
                 runtime: self.runtime.clone(),
+                post_copy_runtime: self.run.join("post-copy/runtime"),
                 handoff: self.handoff.clone(),
                 environment: json!({"APP_ENV":"test"}),
             },

@@ -6,7 +6,7 @@ use std::{
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
-use super::latest;
+use super::{latest, require_original_api_binding};
 use crate::recovery::clone::native::{json as document, resources::common};
 
 struct Fixture {
@@ -111,6 +111,50 @@ fn closed_result(runtime: &Path) -> Value {
         "stopped_evidence":{"original":identities},"worker_preserved":false,
         "reason":null,"error_type":null,"outbox_drained":true,"direct_remote_writes":0,
         "worker_drain_writes":true,"restore_qualified":false})
+}
+
+#[test]
+fn original_api_binding_uses_the_registered_post_copy_runtime() {
+    let fixture = Fixture::new();
+    let initial_runtime = fixture.run.join("initial-target/runtime-seed");
+    let post_copy_runtime = fixture.run.join("post-copy/runtime");
+    let receipt = json!({"role":"api","scope_id":"seed-fixture"});
+    for directory in [&initial_runtime, &post_copy_runtime] {
+        fs::create_dir_all(directory).unwrap();
+        document::write_new(&directory.join("api.json"), &receipt).unwrap();
+    }
+    let original = common::binding(&post_copy_runtime.join("api.json")).unwrap();
+    let initial = common::binding(&initial_runtime.join("api.json")).unwrap();
+    assert_eq!(initial["sha256"], original["sha256"]);
+    let selected = json!({
+        "runtime_dir":initial_runtime,
+        "scope_id":"seed-fixture",
+        "api_url":"http://127.0.0.1:18888",
+    });
+    let handoff = json!({
+        "scope_id":selected["scope_id"],
+        "api_url":selected["api_url"],
+        "original_api":original,
+    });
+    let check = |handoff: &Value| {
+        require_original_api_binding(&fixture.backend, &selected, &post_copy_runtime, handoff)
+    };
+    check(&handoff).unwrap();
+    for (field, invalid) in [
+        ("original_api", initial),
+        ("scope_id", json!("other-seed")),
+        ("api_url", json!("http://127.0.0.1:18889")),
+    ] {
+        let mut changed = handoff.clone();
+        changed[field] = invalid;
+        assert!(
+            check(&changed)
+                .unwrap_err()
+                .to_string()
+                .contains("业务运行范围或原 API 收据不一致"),
+            "{field}"
+        );
+    }
 }
 
 #[test]

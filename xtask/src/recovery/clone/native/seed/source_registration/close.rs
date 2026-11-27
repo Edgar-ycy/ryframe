@@ -312,22 +312,15 @@ fn require_quiet(
     seed: &runtime_model::Inputs,
     close: &Value,
 ) -> Result<()> {
-    let original = origin::runtime_directory(backend, selected)?;
     let scope = document::text(&selected["scope_id"], "RustFS 交接业务 scope")?;
+    require_original_api_binding(backend, selected, &seed.post_copy_runtime, &seed.handoff)?;
     let original_api = &seed.handoff["original_api"];
-    if seed.handoff["scope_id"] != scope
-        || seed.handoff["api_url"] != selected["api_url"]
-        || common::bound_file(backend, original_api, "原 post-copy API 收据")?
-            != original.join("api.json")
-    {
-        return Err("RustFS 交接的业务运行范围或原 API 收据不一致".into());
-    }
     require_stopped_role(
         &common::read_bound(backend, original_api, "原 post-copy API 收据")?,
         "api",
         scope,
     )?;
-    if let Some(worker) = origin::receipt_file(&original.join("worker.json"))? {
+    if let Some(worker) = origin::receipt_file(&seed.post_copy_runtime.join("worker.json"))? {
         require_stopped_role(&worker, "worker", scope)?;
     }
     require_stopped_successor(backend, run, seed)?;
@@ -347,6 +340,22 @@ fn require_quiet(
         authority::require_closed(document::text(&selected[field], "RustFS 交接业务端口")?)?;
     }
     common::bound_file(backend, original_api, "原 post-copy API 收据后像")?;
+    Ok(())
+}
+
+fn require_original_api_binding(
+    backend: &Path,
+    selected: &Value,
+    post_copy_runtime: &Path,
+    handoff: &Value,
+) -> Result<()> {
+    if handoff["scope_id"] != selected["scope_id"]
+        || handoff["api_url"] != selected["api_url"]
+        || common::bound_file(backend, &handoff["original_api"], "原 post-copy API 收据")?
+            != post_copy_runtime.join("api.json")
+    {
+        return Err("RustFS 交接的业务运行范围或原 API 收据不一致".into());
+    }
     Ok(())
 }
 

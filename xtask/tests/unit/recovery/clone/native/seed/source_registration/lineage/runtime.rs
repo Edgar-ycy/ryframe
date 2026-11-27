@@ -590,6 +590,7 @@ fn source_lineage_collects_published_post_and_seed_contracts_for_the_external_pr
     let post = seed::history::post(&fixture.backend, run, None, None, true).unwrap();
     let inputs = seed::runtime_model::Inputs {
         runtime: seed_runtime,
+        post_copy_runtime: post.runtime.clone(),
         handoff: json!({"backend_build":build,"runtime":seed_contract}),
         environment: json!({"APP_ENV":"test"}),
     };
