@@ -162,13 +162,31 @@ reason = "ESLint 门禁策略变化"
 [[full_invalidation_paths]]
 repository = "frontend"
 match = "exact"
+path = "eslint.config.ts"
+reason = "ESLint 门禁策略变化"
+
+[[full_invalidation_paths]]
+repository = "frontend"
+match = "exact"
 path = "stylelint.config.js"
 reason = "Stylelint 门禁策略变化"
 
 [[full_invalidation_paths]]
 repository = "frontend"
 match = "exact"
+path = "stylelint.config.ts"
+reason = "Stylelint 门禁策略变化"
+
+[[full_invalidation_paths]]
+repository = "frontend"
+match = "exact"
 path = "prettier.config.mjs"
+reason = "格式化策略变化"
+
+[[full_invalidation_paths]]
+repository = "frontend"
+match = "exact"
+path = "prettier.config.ts"
 reason = "格式化策略变化"
 
 [[full_invalidation_paths]]

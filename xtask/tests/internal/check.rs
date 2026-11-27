@@ -907,6 +907,21 @@ fn workspace_change_surface_policy_is_valid_and_versioned() {
             .full_invalidation_reason(RepositoryKind::Backend, "catalog/resources/post.toml")
             .is_none()
     );
+    for path in [
+        "eslint.config.js",
+        "eslint.config.ts",
+        "prettier.config.mjs",
+        "prettier.config.ts",
+        "stylelint.config.js",
+        "stylelint.config.ts",
+    ] {
+        assert!(
+            policy
+                .full_invalidation_reason(RepositoryKind::Frontend, path)
+                .is_some(),
+            "{path}"
+        );
+    }
 }
 
 #[test]
