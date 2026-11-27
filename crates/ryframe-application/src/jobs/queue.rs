@@ -25,13 +25,6 @@ use filters::{manual_retry_permission, normalize_job_type_filter, normalize_sche
 pub use filters::{normalize_job_status_filter, public_job_error};
 pub use model::*;
 
-pub(crate) fn queue_time_from_database(
-    now: chrono::DateTime<chrono::Utc>,
-) -> AppResult<OffsetDateTime> {
-    crate::ports::utc_timestamp::from_chrono(now)
-        .map_err(|_| AppError::Database("后台任务数据库时间无法精确表示为 UTC".into()))
-}
-
 /// 持久化任务的业务层入口。
 #[derive(Clone)]
 pub struct JobQueue {

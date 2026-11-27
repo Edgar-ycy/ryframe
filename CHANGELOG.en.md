@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Tenant configuration package and transfer records use UTC time and preserve archive manifest digests, public response formats, and database microsecond precision.
+
 - Rust process tests now cover fixture service recovery after partial startup, interrupted shutdown, and a held controller lock. Read-only history and context queries remain available to Python.
 
 - Recovery job timing, schedule row digests, and disable verification share UTC microsecond encoding and preserve each entry point’s time range.

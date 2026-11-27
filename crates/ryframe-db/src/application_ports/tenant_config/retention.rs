@@ -5,7 +5,6 @@ use crate::{
     ControlDatabaseCluster, FileRepository, TenantRepository,
     tenant::{config_bundle as tenant_config_bundle, config_transfer as tenant_config_transfer},
 };
-use chrono::Duration;
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait,
@@ -14,7 +13,7 @@ use sea_orm::{
     TransactionTrait,
     sea_query::{Expr, LockType, SimpleExpr},
 };
-use time::{OffsetDateTime, UtcOffset};
+use time::{Duration, OffsetDateTime, UtcOffset};
 
 use ryframe_application::ports::{
     retention::RetentionCleanupResult,
@@ -180,7 +179,7 @@ impl DatabaseTenantConfigRetentionPersistence {
         let mut active: tenant_config_bundle::ActiveModel = current.into();
         active.file_id = Set(None);
         active.status = Set(tenant_config_bundle::Model::STATUS_EXPIRED.to_owned());
-        let now = crate::repositories::database_utc_now(&transaction).await?;
+        let now = crate::repositories::database_utc_now_time(&transaction).await?;
         active.updated_at = Set(now);
         active.update(&transaction).await.db()?;
         // 配置包与快照可能共享文件；仅最后一个引用消失的事务创建清理墓碑。
@@ -189,8 +188,8 @@ impl DatabaseTenantConfigRetentionPersistence {
                 &transaction,
                 &candidate.tenant_id,
                 file_id,
-                crate::application_ports::files::utc_time_from_chrono(now)?,
-                crate::application_ports::files::utc_time_from_chrono(now + Duration::minutes(15))?,
+                now,
+                config_artifact_cleanup_deadline(now)?,
             )
             .await?;
         transaction.commit().await.db()?;
@@ -271,7 +270,7 @@ impl DatabaseTenantConfigRetentionPersistence {
         };
         let mut active: tenant_config_transfer::ActiveModel = current.into();
         active.snapshot_file_id = Set(None);
-        let now = crate::repositories::database_utc_now(&transaction).await?;
+        let now = crate::repositories::database_utc_now_time(&transaction).await?;
         active.updated_at = Set(now);
         active.update(&transaction).await.db()?;
         // 回滚快照沿用同一引用计数规则，避免误删仍被其他记录使用的文件。
@@ -280,8 +279,8 @@ impl DatabaseTenantConfigRetentionPersistence {
                 &transaction,
                 &candidate.tenant_id,
                 file_id,
-                crate::application_ports::files::utc_time_from_chrono(now)?,
-                crate::application_ports::files::utc_time_from_chrono(now + Duration::minutes(15))?,
+                now,
+                config_artifact_cleanup_deadline(now)?,
             )
             .await?;
         transaction.commit().await.db()?;
@@ -293,6 +292,11 @@ fn utc_cutoff(instant: OffsetDateTime) -> AppResult<OffsetDateTime> {
     instant
         .checked_to_offset(UtcOffset::UTC)
         .ok_or_else(|| AppError::Database("租户配置保留时间无法精确表示为 UTC".into()))
+}
+
+fn config_artifact_cleanup_deadline(now: OffsetDateTime) -> AppResult<OffsetDateTime> {
+    now.checked_add(Duration::minutes(15))
+        .ok_or_else(|| AppError::Database("文件时间无法精确表示为 UTC".into()))
 }
 
 fn config_bundle_not_required_by_active_transfer() -> SimpleExpr {

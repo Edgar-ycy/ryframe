@@ -24,7 +24,7 @@ pub(super) fn build_preview_plan(
     registered_permissions: &BTreeMap<String, String>,
     configuration_version: i64,
     authorization_epoch: i32,
-    calculated_at: DateTime<Utc>,
+    calculated_at: OffsetDateTime,
 ) -> AppResult<PreviewPlan> {
     let target_canonical = canonical_resources(target)?;
     let plan_hash = sha256_json(&PlanHashInput {

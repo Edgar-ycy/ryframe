@@ -33,6 +33,10 @@ pub(super) fn build_package_blocking(
         .map_err(|error| AppError::Internal(format!("配置资源序列化失败: {error}")))?;
     let counts = resources.counts();
     let item_count = counts.total()?;
+    // 归档清单沿用已发布的生成时间编码，清单字节参与整包摘要。
+    let generated_at =
+        chrono::DateTime::from_timestamp(generated_at.unix_timestamp(), generated_at.nanosecond())
+            .ok_or_else(|| AppError::Internal("配置包清单的生成时间超出 UTC 范围".into()))?;
     let manifest = TenantConfigPackageManifest {
         schema: TENANT_CONFIG_PACKAGE_SCHEMA.to_owned(),
         source_app_version,
@@ -218,4 +222,64 @@ fn validate_uncompressed_size(
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ports::tenant_config::{TenantConfigArchiveContents, TenantConfigArchivePort};
+    use time::macros::datetime;
+
+    struct ManifestBytes;
+
+    impl TenantConfigArchivePort for ManifestBytes {
+        fn build(
+            &self,
+            manifest_name: &str,
+            manifest: &[u8],
+            resources_name: &str,
+            _: &[u8],
+            _: usize,
+        ) -> AppResult<Vec<u8>> {
+            assert_eq!(manifest_name, MANIFEST_FILE_NAME);
+            assert_eq!(resources_name, RESOURCES_FILE_NAME);
+            Ok(manifest.to_vec())
+        }
+
+        fn parse(
+            &self,
+            _: &[u8],
+            _: &str,
+            _: &str,
+            _: usize,
+            _: u64,
+        ) -> AppResult<TenantConfigArchiveContents> {
+            Err(AppError::Internal("该用例只检查生成时的归档字节".into()))
+        }
+    }
+
+    #[test]
+    fn generated_package_keeps_legacy_utc_manifest_bytes_and_digest() {
+        let generated = build_package_blocking(
+            &ManifestBytes,
+            TenantConfigPackageResources::default(),
+            Vec::new(),
+            TenantConfigPackageSource {
+                tenant_key: "tenant-source".into(),
+                tenant_name: "来源租户".into(),
+                app_version: "0.13.1".into(),
+                generated_at: datetime!(2026-11-07 03:29:59.123400 +05:30),
+            },
+            TenantConfigPackageLimits::new(64 * 1024, 64 * 1024, 16).unwrap(),
+        )
+        .unwrap();
+        let mut expected_manifest = generated.manifest.clone();
+        expected_manifest.generated_at =
+            chrono::DateTime::parse_from_rfc3339("2026-11-06T21:59:59.123400Z")
+                .unwrap()
+                .to_utc();
+        let expected = serde_json::to_vec(&expected_manifest).unwrap();
+        assert_eq!(generated.data, expected);
+        assert_eq!(generated.package_sha256, sha256_hex(&expected));
+    }
 }

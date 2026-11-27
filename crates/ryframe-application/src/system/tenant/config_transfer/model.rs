@@ -13,9 +13,12 @@ pub struct TenantConfigBundleVo {
     pub item_count: i32,
     pub status: String,
     pub error_summary: Option<String>,
-    pub expires_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize_optional")]
+    pub expires_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize")]
+    pub created_at: OffsetDateTime,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize")]
+    pub updated_at: OffsetDateTime,
 }
 
 impl From<TenantConfigBundleRecord> for TenantConfigBundleVo {
@@ -51,8 +54,10 @@ pub struct TenantConfigBundleSummaryVo {
     pub resource_counts: BTreeMap<String, u64>,
     pub item_count: i32,
     pub status: String,
-    pub expires_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize_optional")]
+    pub expires_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize")]
+    pub created_at: OffsetDateTime,
 }
 
 impl From<&TenantConfigBundleRecord> for TenantConfigBundleSummaryVo {
@@ -81,14 +86,18 @@ pub struct TenantConfigTransferVo {
     pub target_configuration_version: i64,
     pub target_authorization_epoch: i32,
     pub plan_hash: Option<String>,
-    pub preview_calculated_at: Option<DateTime<Utc>>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize_optional")]
+    pub preview_calculated_at: Option<OffsetDateTime>,
     pub change_counts: BTreeMap<String, u64>,
     pub error_summary: Option<String>,
     pub applied_configuration_version: Option<i64>,
     pub applied_authorization_epoch: Option<i32>,
-    pub rollback_expires_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize_optional")]
+    pub rollback_expires_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize")]
+    pub created_at: OffsetDateTime,
+    #[serde(serialize_with = "crate::ports::utc_timestamp::serialize")]
+    pub updated_at: OffsetDateTime,
 }
 
 impl TenantConfigTransferVo {

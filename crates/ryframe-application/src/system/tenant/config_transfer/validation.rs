@@ -1,5 +1,10 @@
 use super::*;
 
+pub(super) fn configuration_expiry(now: OffsetDateTime, hours: u32) -> AppResult<OffsetDateTime> {
+    now.checked_add(time::Duration::hours(i64::from(hours)))
+        .ok_or_else(|| AppError::Database("配置包或回滚快照到期时间无法精确表示为 UTC".into()))
+}
+
 pub(super) fn ensure_preview_identity(
     transfer: &TenantConfigTransferRecord,
     source: &ParsedTenantConfigPackage,
@@ -68,7 +73,7 @@ pub(super) fn new_transfer_model(
     requested_by: i64,
     configuration_version: i64,
     authorization_epoch: i32,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<TenantConfigTransferRecord> {
     Ok(TenantConfigTransferRecord {
         id: next_id()?,
@@ -99,7 +104,7 @@ pub(super) fn new_transfer_model(
 
 pub(super) fn ensure_bundle_available(
     bundle: &TenantConfigBundleRecord,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<()> {
     if bundle.status != TenantConfigBundleRecord::STATUS_SUCCEEDED {
         return Err(AppError::Conflict("配置包尚未生成成功".into()));

@@ -59,11 +59,7 @@ impl TenantConfigTransferTransaction for DatabaseTenantConfigTransferTransaction
         &self.transaction
     }
 
-    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
-        crate::repositories::database_utc_now(&self.transaction).await
-    }
-
-    async fn lease_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime> {
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime> {
         crate::repositories::database_utc_now_time(&self.transaction).await
     }
 
@@ -267,7 +263,7 @@ impl TenantConfigTransferTransaction for DatabaseTenantConfigTransferTransaction
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<()> {
         super::transfer_sql::ensure_config_package_file_ready_in_txn(
             &self.transaction,
@@ -292,7 +288,7 @@ impl TenantConfigTransferTransaction for DatabaseTenantConfigTransferTransaction
         tenant_id: &'a str,
         resources: &'a ryframe_application::system::platform::TenantConfigPackageResources,
         plan_items: &'a [TenantConfigTransferItemRecord],
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<()> {
         super::transfer_sql::apply_resources_in_transaction(
             &self.transaction,
@@ -323,7 +319,7 @@ impl TenantConfigTransferTransaction for DatabaseTenantConfigTransferTransaction
         snapshot: &'a ryframe_application::system::platform::TenantConfigPackageResources,
         transfer_id: i64,
         target_catalog: &'a ryframe_application::system::platform::TenantConfigTargetCatalog,
-        now: chrono::DateTime<chrono::Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<()> {
         super::transfer_sql::restore_snapshot_in_transaction(
             &self.transaction,
@@ -341,7 +337,7 @@ impl TenantConfigTransferTransaction for DatabaseTenantConfigTransferTransaction
         tenant_id: &'a str,
         requester: TenantConfigRequesterRecord,
         fence: TenantConfigurationFenceRecord,
-        database_now: chrono::DateTime<chrono::Utc>,
+        database_now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<()> {
         super::transfer_sql::ensure_requester_snapshot_in_txn(
             &self.transaction,

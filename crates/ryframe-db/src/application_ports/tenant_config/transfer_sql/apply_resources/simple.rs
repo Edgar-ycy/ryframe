@@ -5,9 +5,8 @@ pub(super) async fn upsert_posts(
     tenant_id: &str,
     resources: &TenantConfigPackageResources,
     changed: &BTreeSet<(String, String)>,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<()> {
-    let now = crate::repositories::utc_time_from_chrono(now).db_context("岗位配置应用时间")?;
     for item in &resources.posts {
         if !changed.contains(&("post".to_owned(), normalize_stable_key(&item.code))) {
             continue;
@@ -48,9 +47,8 @@ pub(super) async fn upsert_dict_types(
     tenant_id: &str,
     resources: &TenantConfigPackageResources,
     changed: &BTreeSet<(String, String)>,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<()> {
-    let now = crate::repositories::utc_time_from_chrono(now).db_context("字典类型配置应用时间")?;
     for item in &resources.dict_types {
         if !changed.contains(&("dict_type".to_owned(), normalize_stable_key(&item.code))) {
             continue;
@@ -90,9 +88,8 @@ pub(super) async fn upsert_dict_data(
     tenant_id: &str,
     resources: &TenantConfigPackageResources,
     changed: &BTreeSet<(String, String)>,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<()> {
-    let now = crate::repositories::utc_time_from_chrono(now).db_context("字典数据配置应用时间")?;
     for item in &resources.dict_data {
         let key = format!("{}:{}:{}", item.type_code.len(), item.type_code, item.value);
         if !changed.contains(&("dict_data".to_owned(), normalize_stable_key(&key))) {
@@ -137,7 +134,7 @@ pub(super) async fn upsert_configs(
     tenant_id: &str,
     resources: &TenantConfigPackageResources,
     changed: &BTreeSet<(String, String)>,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<()> {
     for item in &resources.configs {
         if !changed.contains(&("config".to_owned(), normalize_stable_key(&item.key))) {
@@ -155,7 +152,6 @@ pub(super) async fn upsert_configs(
             .find(|candidate| {
                 normalize_stable_key(&candidate.key) == normalize_stable_key(&item.key)
             });
-        let now = crate::repositories::utc_time_from_chrono(now).db_context("参数配置应用时间")?;
         let model = config::Model {
             id: existing.as_ref().map(|item| item.id).unwrap_or(next_id()?),
             tenant_id: tenant_id.to_owned(),

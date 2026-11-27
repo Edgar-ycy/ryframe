@@ -1,6 +1,5 @@
 use super::*;
 use crate::DbResultExt;
-use time::OffsetDateTime;
 
 pub(crate) async fn ensure_rollback_references_safe(
     transaction: &sea_orm::DatabaseTransaction,
@@ -147,7 +146,7 @@ pub(crate) async fn restore_snapshot_in_transaction(
     snapshot: &TenantConfigPackageResources,
     transfer_id: i64,
     target_catalog: &TenantConfigTargetCatalog,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<()> {
     let current = load_resources_on(transaction, tenant_id).await?;
     let mut descriptions = Vec::new();
@@ -187,8 +186,6 @@ pub(crate) async fn restore_snapshot_in_transaction(
         })
         .collect::<Vec<_>>();
     apply_resources_in_transaction(transaction, tenant_id, snapshot, &plan_items, now).await?;
-    let utc_now =
-        crate::repositories::utc_time_from_chrono(now).db_context("配置迁移资源回滚时间")?;
     let created = load_created_item_keys(transaction, tenant_id, transfer_id).await?;
 
     let created_role_codes = created_keys(&created, "role").collect::<BTreeSet<_>>();
@@ -215,7 +212,7 @@ pub(crate) async fn restore_snapshot_in_transaction(
             .db()?;
         let mut model = item;
         model.del_flag = role::Model::DEL_FLAG_DELETED.to_owned();
-        model.updated_at = utc_now;
+        model.updated_at = now;
         role::ActiveModel::from(model)
             .reset_all()
             .update(transaction)
@@ -245,7 +242,7 @@ pub(crate) async fn restore_snapshot_in_transaction(
             .is_some_and(|key| created_menu_keys.contains(&normalize_stable_key(key)))
         {
             item.del_flag = menu::Model::DEL_FLAG_DELETED.to_owned();
-            item.updated_at = utc_now;
+            item.updated_at = now;
             menu::ActiveModel::from(item)
                 .reset_all()
                 .update(transaction)
@@ -288,17 +285,16 @@ pub(crate) async fn restore_snapshot_in_transaction(
     }
 
     soft_delete_simple_extras(transaction, tenant_id, &created, now).await?;
-    soft_delete_department_extras(transaction, tenant_id, &created, utc_now).await
+    soft_delete_department_extras(transaction, tenant_id, &created, now).await
 }
 
 async fn soft_delete_simple_extras(
     transaction: &sea_orm::DatabaseTransaction,
     tenant_id: &str,
     created: &BTreeMap<String, BTreeSet<String>>,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<()> {
     let post_codes = created_keys(created, "post").collect::<BTreeSet<_>>();
-    let utc_now = crate::repositories::utc_time_from_chrono(now).db_context("岗位配置回滚时间")?;
     for mut item in post::Entity::find()
         .filter(post::Column::TenantId.eq(tenant_id))
         .filter(post::Column::DelFlag.eq(post::SOFT_DELETE_ACTIVE))
@@ -308,7 +304,7 @@ async fn soft_delete_simple_extras(
     {
         if post_codes.contains(&normalize_stable_key(&item.code)) {
             item.del_flag = post::SOFT_DELETE_DELETED.to_owned();
-            item.updated_at = utc_now;
+            item.updated_at = now;
             post::ActiveModel::from(item)
                 .reset_all()
                 .update(transaction)
@@ -327,7 +323,7 @@ async fn soft_delete_simple_extras(
         let stable_key = format!("{}:{}:{}", item.type_code.len(), item.type_code, item.value);
         if data_keys.contains(&normalize_stable_key(&stable_key)) {
             item.del_flag = dict_data::Model::DEL_FLAG_DELETED.to_owned();
-            item.updated_at = utc_now;
+            item.updated_at = now;
             dict_data::ActiveModel::from(item)
                 .reset_all()
                 .update(transaction)
@@ -345,7 +341,7 @@ async fn soft_delete_simple_extras(
     {
         if type_codes.contains(&normalize_stable_key(&item.code)) {
             item.del_flag = dict_type::Model::DEL_FLAG_DELETED.to_owned();
-            item.updated_at = utc_now;
+            item.updated_at = now;
             dict_type::ActiveModel::from(item)
                 .reset_all()
                 .update(transaction)
@@ -364,8 +360,7 @@ async fn soft_delete_simple_extras(
     {
         if config_keys.contains(&normalize_stable_key(&item.key)) {
             item.del_flag = config::Model::DEL_FLAG_DELETED.to_owned();
-            item.updated_at =
-                crate::repositories::utc_time_from_chrono(now).db_context("参数配置回滚时间")?;
+            item.updated_at = now;
             config::ActiveModel::from(item)
                 .reset_all()
                 .update(transaction)

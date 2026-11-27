@@ -244,7 +244,7 @@ impl TenantConfigTransferService {
         operation: &str,
     ) -> AppResult<OperationLease> {
         let transaction = self.persistence.begin().await?;
-        let now = transaction.lease_now().await?;
+        let now = transaction.database_now().await?;
         transaction
             .acquire_lease(TenantConfigOperationLeaseRecord {
                 tenant_id: tenant_id.to_owned(),
@@ -285,7 +285,7 @@ impl TenantConfigTransferService {
     ) -> AppResult<()> {
         let transaction = self.persistence.begin().await?;
         let operation = async {
-            let now = transaction.lease_now().await?;
+            let now = transaction.database_now().await?;
             let renewed = transaction
                 .renew_lease(
                     tenant_id,

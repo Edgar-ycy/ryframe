@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Utc};
 use ryframe_application::ports::utc_timestamp;
 use ryframe_application::system::platform::{
     TenantConfigBundleSummaryVo as ServiceBundleSummary, TenantConfigBundleVo as ServiceBundle,
@@ -8,7 +7,7 @@ use ryframe_application::system::platform::{
 };
 use ryframe_kernel::AppError;
 use serde::Serialize;
-use time::OffsetDateTime;
+use time::{OffsetDateTime, UtcOffset};
 use utoipa::ToSchema;
 
 /// 配置包的安全公开视图，不包含对象路径或数据库内部标识。
@@ -183,13 +182,14 @@ impl From<ServiceItem> for TenantConfigTransferItemVo {
     }
 }
 
-fn response_timestamp(value: DateTime<Utc>, field: &str) -> Result<OffsetDateTime, AppError> {
-    utc_timestamp::from_chrono(value)
-        .map_err(|_| AppError::Internal(format!("租户配置响应的 {field} 无法精确表示为 UTC")))
+fn response_timestamp(value: OffsetDateTime, field: &str) -> Result<OffsetDateTime, AppError> {
+    value
+        .checked_to_offset(UtcOffset::UTC)
+        .ok_or_else(|| AppError::Internal(format!("租户配置响应的 {field} 无法精确表示为 UTC")))
 }
 
 fn optional_response_timestamp(
-    value: Option<DateTime<Utc>>,
+    value: Option<OffsetDateTime>,
     field: &str,
 ) -> Result<Option<OffsetDateTime>, AppError> {
     value
@@ -252,16 +252,18 @@ mod tests {
             assert_eq!(actual.get(field), Some(&Value::Null), "{field}");
         }
 
-        let leap_second = DateTime::from_timestamp(1_483_228_799, 1_123_456_000).unwrap();
-        bundle.expires_at = Some(leap_second);
+        let out_of_range = time::Date::MIN
+            .midnight()
+            .assume_offset(UtcOffset::from_hms(1, 0, 0).unwrap());
+        bundle.expires_at = Some(out_of_range);
         assert_timestamp_error(TenantConfigBundleVo::try_from(bundle), "expires_at");
         let mut invalid_summary = transfer.clone();
-        invalid_summary.bundle_summary.created_at = leap_second;
+        invalid_summary.bundle_summary.created_at = out_of_range;
         assert_timestamp_error(
             TenantConfigTransferVo::try_from(invalid_summary),
             "bundle_summary.created_at",
         );
-        transfer.updated_at = leap_second;
+        transfer.updated_at = out_of_range;
         assert_timestamp_error(TenantConfigTransferVo::try_from(transfer), "updated_at");
 
         let snapshot: Value =
@@ -301,6 +303,13 @@ mod tests {
         assert!(matches!(result.unwrap_err(), AppError::Internal(message) if message == expected));
     }
 
+    fn fixture_timestamp(seconds: i64, nanos: u32) -> OffsetDateTime {
+        OffsetDateTime::from_unix_timestamp(seconds)
+            .unwrap()
+            .replace_nanosecond(nanos)
+            .unwrap()
+    }
+
     fn bundle_fixture() -> ServiceBundle {
         ServiceBundle {
             id: "7".into(),
@@ -314,9 +323,10 @@ mod tests {
             item_count: 2,
             status: "succeeded".into(),
             error_summary: None,
-            expires_at: DateTime::from_timestamp(6, 123_400_000),
-            created_at: DateTime::from_timestamp(-1, 0).unwrap(),
-            updated_at: DateTime::from_timestamp(1, 120_000_000).unwrap(),
+            expires_at: Some(fixture_timestamp(6, 123_400_000)),
+            created_at: fixture_timestamp(-1, 0),
+            updated_at: fixture_timestamp(1, 120_000_000)
+                .to_offset(UtcOffset::from_hms(5, 30, 0).unwrap()),
         }
     }
 
@@ -340,14 +350,14 @@ mod tests {
             target_configuration_version: 13,
             target_authorization_epoch: 14,
             plan_hash: Some("b".repeat(64)),
-            preview_calculated_at: DateTime::from_timestamp(3, 120_000_000),
+            preview_calculated_at: Some(fixture_timestamp(3, 120_000_000)),
             change_counts: BTreeMap::from([("create".into(), 2)]),
             error_summary: None,
             applied_configuration_version: Some(15),
             applied_authorization_epoch: Some(16),
-            rollback_expires_at: DateTime::from_timestamp(8, 123_400_000),
-            created_at: DateTime::from_timestamp(2, 0).unwrap(),
-            updated_at: DateTime::from_timestamp(4, 123_456_700).unwrap(),
+            rollback_expires_at: Some(fixture_timestamp(8, 123_400_000)),
+            created_at: fixture_timestamp(2, 0),
+            updated_at: fixture_timestamp(4, 123_456_700),
         }
     }
 }

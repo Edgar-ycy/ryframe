@@ -29,7 +29,6 @@ impl TenantConfigTransferService {
                 return Ok::<_, AppError>((bundle, false));
             }
             let proposed_bundle_id = next_id()?;
-            let queue_now = crate::jobs::queue_time_from_database(now)?;
             let trace = crate::trace_context::current_trace_context();
             let enqueued = self
                 .queue
@@ -38,12 +37,12 @@ impl TenantConfigTransferService {
                     EnqueueJob {
                         tenant_id: Some(tenant_id.to_owned()),
                         schedule_id: None,
-                        scheduled_for: Some(queue_now),
+                        scheduled_for: Some(now),
                         max_runtime_seconds: Some(self.max_runtime_seconds()?),
                         job_type: TENANT_CONFIG_EXPORT_JOB_TYPE.to_owned(),
                         payload: json!({ "bundle_id": proposed_bundle_id.to_string() }),
                         priority: -5,
-                        available_at: queue_now,
+                        available_at: now,
                         max_attempts: MAX_ATTEMPTS,
                         dedupe_key: Some(format!(
                             "{tenant_id}:{}:export:{idempotency_key_hash}",
@@ -73,9 +72,7 @@ impl TenantConfigTransferService {
                         idempotency_key_hash: Some(idempotency_key_hash.to_owned()),
                         created_by: actor.user_id,
                         error_summary: None,
-                        expires_at: Some(
-                            now + Duration::hours(i64::from(self.config.artifact_hours)),
-                        ),
+                        expires_at: Some(configuration_expiry(now, self.config.artifact_hours)?),
                         created_at: now,
                         updated_at: now,
                     })
@@ -416,7 +413,6 @@ impl TenantConfigTransferService {
                 return Err(AppError::Authorization("只能操作本人创建的配置迁移".into()));
             }
             let now = transaction.database_now().await?;
-            let queue_now = crate::jobs::queue_time_from_database(now)?;
             let trace = crate::trace_context::current_trace_context();
             let enqueued = self
                 .queue
@@ -425,12 +421,12 @@ impl TenantConfigTransferService {
                     EnqueueJob {
                         tenant_id: Some(tenant_id.to_owned()),
                         schedule_id: None,
-                        scheduled_for: Some(queue_now),
+                        scheduled_for: Some(now),
                         max_runtime_seconds: Some(self.max_runtime_seconds()?),
                         job_type: job_type.to_owned(),
                         payload: json!({ "transfer_id": transfer_id.to_string() }),
                         priority: -5,
-                        available_at: queue_now,
+                        available_at: now,
                         max_attempts: MAX_ATTEMPTS,
                         dedupe_key: Some(format!(
                             "{tenant_id}:{}:{transfer_id}:{idempotency_key_hash}",

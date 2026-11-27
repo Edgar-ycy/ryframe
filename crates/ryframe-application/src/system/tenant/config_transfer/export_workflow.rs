@@ -74,16 +74,19 @@ impl TenantConfigTransferService {
             self.package_limits(),
         )
         .await?;
+        let generated_at_label = generated_at
+            .checked_to_offset(time::UtcOffset::UTC)
+            .ok_or_else(|| AppError::Internal("配置包文件名的生成时间超出 UTC 范围".into()))?
+            .format(time::macros::format_description!(
+                "[year][month][day][hour][minute][second]"
+            ))
+            .map_err(|error| AppError::Internal(format!("配置包文件名的生成时间无效：{error}")))?;
         let uploaded = self
             .file
             .upload_config_package_unbound(
                 tenant_id,
                 "config-transfer-worker",
-                format!(
-                    "{}-{}.ryframe-config.zip",
-                    tenant_id,
-                    generated_at.format("%Y%m%d%H%M%S")
-                ),
+                format!("{tenant_id}-{generated_at_label}.ryframe-config.zip"),
                 generated.data,
                 u64::try_from(self.config.max_package_bytes).unwrap_or(u64::MAX),
             )
@@ -133,7 +136,7 @@ impl TenantConfigTransferService {
                 .map_err(|_| AppError::PayloadTooLarge("配置包项目数量超限".into()))?;
             bundle.status = TenantConfigBundleRecord::STATUS_SUCCEEDED.to_owned();
             bundle.error_summary = None;
-            bundle.expires_at = Some(now + Duration::hours(i64::from(self.config.artifact_hours)));
+            bundle.expires_at = Some(configuration_expiry(now, self.config.artifact_hours)?);
             bundle.updated_at = now;
             transaction.update_bundle(bundle).await
         }

@@ -3,8 +3,8 @@ use crate::DbResultExt;
 
 #[async_trait::async_trait]
 impl TenantConfigTransferPersistencePort for DatabaseTenantConfigTransferPersistence {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
-        crate::repositories::database_utc_now(self.database.write()).await
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime> {
+        crate::repositories::database_utc_now_time(self.database.write()).await
     }
 
     async fn bundle_page<'a>(

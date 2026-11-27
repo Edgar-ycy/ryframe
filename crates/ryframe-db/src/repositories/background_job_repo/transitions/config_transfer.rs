@@ -1,6 +1,5 @@
 use super::*;
 use crate::DbResultExt;
-use chrono::{DateTime, Utc};
 
 impl BackgroundJobRepository {
     pub(super) async fn is_tenant_config_job_owner<C>(
@@ -66,7 +65,7 @@ impl BackgroundJobRepository {
         job: &background_job::Model,
         disposition: LinkedJobDisposition,
         error: Option<String>,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
         kind: ConfigTransferJobKind,
     ) -> AppResult<LinkedJobSyncResult>
     where

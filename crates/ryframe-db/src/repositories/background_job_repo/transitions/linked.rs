@@ -1,6 +1,5 @@
 use super::*;
 use crate::DbResultExt;
-use chrono::{DateTime, Utc};
 use ryframe_kernel::AppError;
 use time::UtcOffset;
 
@@ -17,26 +16,20 @@ impl BackgroundJobRepository {
     {
         let error = error_message.map(truncate_error);
         let job_type = job.job_type.as_str();
-        if matches!(
-            job_type,
-            USER_IMPORT_JOB_TYPE | DATA_RETENTION_JOB_TYPE | EXPORT_JOB_TYPE
-        ) {
-            let now = now
-                .checked_to_offset(UtcOffset::UTC)
-                .ok_or_else(|| AppError::Internal("关联任务状态时间超出 UTC 表示范围".into()))?;
-            return match job_type {
-                USER_IMPORT_JOB_TYPE => {
-                    Self::sync_import_job(db, job, disposition, error, now).await
-                }
-                EXPORT_JOB_TYPE => Self::sync_export_job(db, job, disposition, error, now).await,
-                _ => Self::sync_retention_job(db, job, disposition, error, now).await,
-            };
-        }
-        let now = DateTime::from_timestamp(now.unix_timestamp(), now.nanosecond())
-            .ok_or_else(|| AppError::Internal("关联任务状态时间超出 UTC 表示范围".into()))?;
+        let utc_now = || {
+            now.checked_to_offset(UtcOffset::UTC)
+                .ok_or_else(|| AppError::Internal("关联任务状态时间超出 UTC 表示范围".into()))
+        };
         match job_type {
+            USER_IMPORT_JOB_TYPE => {
+                Self::sync_import_job(db, job, disposition, error, utc_now()?).await
+            }
+            EXPORT_JOB_TYPE => Self::sync_export_job(db, job, disposition, error, utc_now()?).await,
+            DATA_RETENTION_JOB_TYPE => {
+                Self::sync_retention_job(db, job, disposition, error, utc_now()?).await
+            }
             TENANT_CONFIG_EXPORT_JOB_TYPE => {
-                Self::sync_config_bundle(db, job, disposition, error, now).await
+                Self::sync_config_bundle(db, job, disposition, error, utc_now()?).await
             }
             TENANT_CONFIG_PREVIEW_JOB_TYPE => {
                 Self::sync_config_transfer_state(
@@ -44,7 +37,7 @@ impl BackgroundJobRepository {
                     job,
                     disposition,
                     error,
-                    now,
+                    utc_now()?,
                     ConfigTransferJobKind::Preview,
                 )
                 .await
@@ -55,7 +48,7 @@ impl BackgroundJobRepository {
                     job,
                     disposition,
                     error,
-                    now,
+                    utc_now()?,
                     ConfigTransferJobKind::Apply,
                 )
                 .await
@@ -66,7 +59,7 @@ impl BackgroundJobRepository {
                     job,
                     disposition,
                     error,
-                    now,
+                    utc_now()?,
                     ConfigTransferJobKind::Rollback,
                 )
                 .await
@@ -312,7 +305,7 @@ impl BackgroundJobRepository {
         job: &background_job::Model,
         disposition: LinkedJobDisposition,
         error: Option<String>,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> AppResult<LinkedJobSyncResult> {
         let (status, statuses): (&str, &[&str]) = match disposition {
             LinkedJobDisposition::Retried => (

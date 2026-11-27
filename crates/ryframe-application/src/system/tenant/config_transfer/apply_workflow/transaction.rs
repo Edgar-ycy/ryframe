@@ -3,7 +3,7 @@ use super::*;
 struct TransactionApplyPlan {
     transfer: TenantConfigTransferRecord,
     plan: PreviewPlan,
-    mutation_time: DateTime<Utc>,
+    mutation_time: OffsetDateTime,
 }
 
 impl TenantConfigTransferService {
@@ -134,7 +134,7 @@ impl TenantConfigTransferService {
         apply.transfer.applied_configuration_version = Some(configuration_version);
         apply.transfer.applied_authorization_epoch = Some(authorization_epoch);
         apply.transfer.rollback_expires_at =
-            Some(now + Duration::hours(i64::from(self.config.rollback_hours)));
+            Some(configuration_expiry(now, self.config.rollback_hours)?);
         apply.transfer.error_summary = None;
         apply.transfer.updated_at = now;
         transaction.update_transfer(apply.transfer).await?;
@@ -297,7 +297,7 @@ mod tests {
     }
 
     fn applying_transfer() -> TenantConfigTransferRecord {
-        let now = Utc::now();
+        let now = OffsetDateTime::now_utc();
         TenantConfigTransferRecord {
             id: 1,
             tenant_id: "tenant-a".to_owned(),

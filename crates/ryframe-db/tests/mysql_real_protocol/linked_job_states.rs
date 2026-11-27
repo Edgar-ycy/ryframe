@@ -446,6 +446,7 @@ async fn config_artifact_retention_uses_utc_cutoff_and_releases_last_reference()
         let retention =
             application_ports::tenant_config::retention(ControlDatabaseCluster::single(database.clone()));
         let cutoff = datetime!(2026-11-27 05:29:59.123456 +05:30);
+        require_config_transfer_utc_models(&database, cutoff).await?;
         let eligible = retention.preview(cutoff).await.map_err(|error| error.to_string())?;
         assert_eq!((eligible.packages, eligible.snapshots), (1, 1));
         assert_eq!(
@@ -479,6 +480,81 @@ async fn config_artifact_retention_uses_utc_cutoff_and_releases_last_reference()
         require_config_artifact_retention_images(&database, before_detach).await
     })
     .await;
+}
+
+#[cfg(feature = "migration")]
+async fn require_config_transfer_utc_models(
+    database: &DatabaseConnection,
+    cutoff: OffsetDateTime,
+) -> Result<(), String> {
+    use ryframe_application::{
+        TransactionAuditMode, ports::tenant_config::TenantConfigTransferItemRecord,
+    };
+    use time::UtcOffset;
+
+    let port = application_ports::tenant_config::transfer(ControlDatabaseCluster::single(
+        database.clone(),
+    ));
+    let transaction = port.begin().await.map_err(|error| error.to_string())?;
+    let bundle = transaction
+        .lock_bundle("system", 55101)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or("缺少配置包夹具")?;
+    let transfer = transaction
+        .lock_transfer("system", 55201)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or("缺少配置迁移夹具")?;
+    for timestamp in [bundle.expires_at, transfer.rollback_expires_at] {
+        let timestamp = timestamp.ok_or("缺少配置时间读回值")?;
+        assert_eq!(timestamp, cutoff);
+        assert_eq!(timestamp.offset(), UtcOffset::UTC);
+    }
+    assert_eq!(transfer.preview_calculated_at, None);
+    transaction
+        .replace_items(
+            "system",
+            55201,
+            vec![TenantConfigTransferItemRecord {
+                id: 55301,
+                tenant_id: "system".into(),
+                transfer_id: 55201,
+                resource_type: "config".into(),
+                stable_key: "utc.transfer.fixture".into(),
+                display_name: "配置时间夹具".into(),
+                action: TenantConfigTransferItemRecord::ACTION_CREATE.into(),
+                outcome: TenantConfigTransferItemRecord::OUTCOME_PENDING.into(),
+                detail_code: None,
+                detail: None,
+                created_at: cutoff,
+                updated_at: cutoff,
+            }],
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    let items = transaction
+        .list_items("system", 55201)
+        .await
+        .map_err(|error| error.to_string())?;
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].id, 55301);
+    for timestamp in [items[0].created_at, items[0].updated_at] {
+        assert_eq!(timestamp, cutoff);
+        assert_eq!(timestamp.offset(), UtcOffset::UTC);
+    }
+    transaction
+        .commit(TransactionAuditMode::Skip)
+        .await
+        .map_err(|error| error.to_string())?;
+    require_count(
+        database,
+        "SELECT COUNT(*) AS value FROM sys_tenant_config_transfer_item
+         WHERE tenant_id = 'system' AND transfer_id = 55201 AND id = 55301
+           AND created_at = '2026-11-26 23:59:59.123456' AND updated_at = created_at",
+        1,
+    )
+    .await
 }
 
 #[cfg(feature = "migration")]

@@ -7,7 +7,7 @@ pub(crate) async fn ensure_config_package_file_ready_in_txn(
     transaction: &sea_orm::DatabaseTransaction,
     tenant_id: &str,
     file_id: i64,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
 ) -> AppResult<()> {
     let file = FileRepository
         .find_by_id_any_status_for_update(transaction, tenant_id, file_id)
@@ -26,7 +26,7 @@ pub(crate) async fn ensure_config_package_file_ready_in_txn(
                 tenant_id,
                 file_id,
                 CONFIG_PACKAGE_BUCKET,
-                crate::application_ports::files::utc_time_from_chrono(now)?,
+                now,
             )
             .await?
     {

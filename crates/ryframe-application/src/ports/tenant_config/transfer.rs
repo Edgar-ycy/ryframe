@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
 use serde_json::Value as JsonValue;
 use std::collections::BTreeSet;
@@ -35,9 +34,9 @@ pub struct TenantConfigBundleRecord {
     pub idempotency_key_hash: Option<String>,
     pub created_by: i64,
     pub error_summary: Option<String>,
-    pub expires_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub expires_at: Option<OffsetDateTime>,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
 }
 
 impl TenantConfigBundleRecord {
@@ -62,7 +61,7 @@ pub struct TenantConfigTransferRecord {
     pub target_configuration_version: i64,
     pub target_authorization_epoch: i32,
     pub plan_hash: Option<String>,
-    pub preview_calculated_at: Option<DateTime<Utc>>,
+    pub preview_calculated_at: Option<OffsetDateTime>,
     pub preview_background_job_id: Option<i64>,
     pub apply_background_job_id: Option<i64>,
     pub rollback_background_job_id: Option<i64>,
@@ -72,9 +71,9 @@ pub struct TenantConfigTransferRecord {
     pub change_counts: JsonValue,
     pub error_summary: Option<String>,
     pub requested_by: i64,
-    pub rollback_expires_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub rollback_expires_at: Option<OffsetDateTime>,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
 }
 
 impl TenantConfigTransferRecord {
@@ -103,8 +102,8 @@ pub struct TenantConfigTransferItemRecord {
     pub outcome: String,
     pub detail_code: Option<String>,
     pub detail: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
 }
 
 impl TenantConfigTransferItemRecord {
@@ -151,9 +150,8 @@ pub trait TenantConfigTransferTransaction:
 
     fn authorization_mirror(&self) -> &dyn AuthorizationMirrorTransaction;
 
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
-    /// 在同一控制库事务中读取操作租约使用的 UTC 时间。
-    async fn lease_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime>;
+    /// 在同一控制库事务中读取配置操作及租约使用的 UTC 时钟。
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime>;
 
     async fn lock_tenant_configuration<'a>(
         &'a self,
@@ -254,7 +252,7 @@ pub trait TenantConfigTransferTransaction:
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<()>;
 
     async fn load_resources<'a>(
@@ -267,7 +265,7 @@ pub trait TenantConfigTransferTransaction:
         tenant_id: &'a str,
         resources: &'a TenantConfigPackageResources,
         plan_items: &'a [TenantConfigTransferItemRecord],
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<()>;
 
     async fn ensure_rollback_references_safe<'a>(
@@ -282,7 +280,7 @@ pub trait TenantConfigTransferTransaction:
         snapshot: &'a TenantConfigPackageResources,
         transfer_id: i64,
         target_catalog: &'a TenantConfigTargetCatalog,
-        now: DateTime<Utc>,
+        now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<()>;
 
     async fn ensure_requester_snapshot<'a>(
@@ -290,7 +288,7 @@ pub trait TenantConfigTransferTransaction:
         tenant_id: &'a str,
         requester: TenantConfigRequesterRecord,
         fence: TenantConfigurationFenceRecord,
-        database_now: DateTime<Utc>,
+        database_now: OffsetDateTime,
     ) -> ryframe_kernel::AppResult<()>;
 
     async fn ensure_role_quota<'a>(
@@ -316,7 +314,7 @@ pub trait TenantConfigTransferTransaction:
 /// 租户配置迁移用例所需的控制库持久化端口。
 #[async_trait::async_trait]
 pub trait TenantConfigTransferPersistencePort: Send + Sync {
-    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<OffsetDateTime>;
 
     async fn bundle_page<'a>(
         &'a self,

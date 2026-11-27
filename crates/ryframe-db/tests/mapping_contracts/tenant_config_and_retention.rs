@@ -1,4 +1,3 @@
-use chrono::{TimeZone, Utc};
 use ryframe_application::ports::{
     retention::{RetentionResource, RetentionRunRecord},
     tenant_config::{
@@ -18,6 +17,7 @@ use ryframe_db::{
     repositories::{RetentionResource as DatabaseRetentionResource, TenantConfigurationFence},
 };
 use serde_json::json;
+use time::{UtcOffset, macros::datetime};
 
 #[test]
 fn active_transfer_predicate_fails_closed_for_every_running_state() {
@@ -44,7 +44,7 @@ fn active_rollback_predicate_protects_pending_and_running_snapshots() {
 
 #[test]
 fn bundle_mapping_preserves_every_field() {
-    let now = Utc.with_ymd_and_hms(2026, 8, 21, 2, 3, 4).unwrap();
+    let now = datetime!(2026-08-21 07:33:04.123456 +05:30);
     let expected = tenant_config_bundle::Model {
         id: 7,
         tenant_id: "tenant-a".into(),
@@ -70,11 +70,18 @@ fn bundle_mapping_preserves_every_field() {
     let restored: tenant_config_bundle::Model =
         TenantConfigBundleRecord::from(expected.clone()).into();
     assert_eq!(restored, expected);
+    let encoded = serde_json::to_value(&restored).unwrap();
+    assert_eq!(encoded["expires_at"], "2026-08-21T02:03:04.123456Z");
+    assert_eq!(encoded["created_at"], encoded["expires_at"]);
+    assert_eq!(encoded["updated_at"], encoded["expires_at"]);
+    let decoded: tenant_config_bundle::Model = serde_json::from_value(encoded).unwrap();
+    assert_eq!(decoded, expected);
+    assert_eq!(decoded.expires_at.unwrap().offset(), UtcOffset::UTC);
 }
 
 #[test]
 fn transfer_mapping_preserves_every_field() {
-    let now = Utc.with_ymd_and_hms(2026, 8, 21, 3, 4, 5).unwrap();
+    let now = datetime!(2026-08-21 03:04:05 UTC);
     let expected = tenant_config_transfer::Model {
         id: 11,
         tenant_id: "tenant-a".into(),
@@ -104,11 +111,25 @@ fn transfer_mapping_preserves_every_field() {
     let restored: tenant_config_transfer::Model =
         TenantConfigTransferRecord::from(expected.clone()).into();
     assert_eq!(restored, expected);
+    let mut encoded = serde_json::to_value(&restored).unwrap();
+    assert_eq!(encoded["preview_calculated_at"], "2026-08-21T03:04:05Z");
+    assert_eq!(
+        encoded["rollback_expires_at"],
+        encoded["preview_calculated_at"]
+    );
+    encoded["preview_calculated_at"] = serde_json::Value::Null;
+    encoded
+        .as_object_mut()
+        .unwrap()
+        .remove("rollback_expires_at");
+    let decoded: tenant_config_transfer::Model = serde_json::from_value(encoded).unwrap();
+    assert_eq!(decoded.preview_calculated_at, None);
+    assert_eq!(decoded.rollback_expires_at, None);
 }
 
 #[test]
 fn item_and_fence_mapping_preserve_boundaries() {
-    let now = Utc.with_ymd_and_hms(2026, 8, 21, 4, 5, 6).unwrap();
+    let now = datetime!(2026-08-21 04:05:06.123 UTC);
     let expected = tenant_config_transfer_item::Model {
         id: 22,
         tenant_id: "tenant-a".into(),
@@ -131,6 +152,9 @@ fn item_and_fence_mapping_preserve_boundaries() {
     });
 
     assert_eq!(restored, expected);
+    let encoded = serde_json::to_value(&restored).unwrap();
+    assert_eq!(encoded["created_at"], "2026-08-21T04:05:06.123Z");
+    assert_eq!(encoded["updated_at"], encoded["created_at"]);
     assert_eq!(fence.configuration_version, 24);
     assert_eq!(fence.authorization_epoch, 25);
 }

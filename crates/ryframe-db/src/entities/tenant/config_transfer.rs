@@ -1,8 +1,8 @@
 //! 租户配置迁移实体。
 
-use chrono::{DateTime, Utc};
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 /// 一次面向目标租户的配置预览、应用或回滚。
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
@@ -19,7 +19,12 @@ pub struct Model {
     pub target_configuration_version: i64,
     pub target_authorization_epoch: i32,
     pub plan_hash: Option<String>,
-    pub preview_calculated_at: Option<DateTime<Utc>>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub preview_calculated_at: Option<OffsetDateTime>,
     pub preview_background_job_id: Option<i64>,
     pub apply_background_job_id: Option<i64>,
     pub rollback_background_job_id: Option<i64>,
@@ -29,9 +34,16 @@ pub struct Model {
     pub change_counts: Json,
     pub error_summary: Option<String>,
     pub requested_by: i64,
-    pub rollback_expires_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub rollback_expires_at: Option<OffsetDateTime>,
+    #[serde(with = "ryframe_application::ports::utc_timestamp")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "ryframe_application::ports::utc_timestamp")]
+    pub updated_at: OffsetDateTime,
 }
 
 impl Model {

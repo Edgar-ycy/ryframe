@@ -125,7 +125,7 @@ mod tests {
     }
 
     fn transfer(job_id: Option<i64>, status: &str) -> TenantConfigTransferRecord {
-        let now = Utc::now();
+        let now = OffsetDateTime::now_utc();
         TenantConfigTransferRecord {
             id: 1,
             tenant_id: "tenant-a".to_owned(),

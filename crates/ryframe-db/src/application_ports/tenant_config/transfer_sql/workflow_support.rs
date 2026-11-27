@@ -1,16 +1,20 @@
 use super::*;
 use crate::DbResultExt;
+use chrono::DateTime;
 
 pub(crate) async fn ensure_requester_snapshot_in_txn(
     transaction: &sea_orm::DatabaseTransaction,
     tenant_id: &str,
     requester: TenantConfigRequesterRecord,
     fence: TenantConfigurationFenceRecord,
-    database_now: DateTime<Utc>,
+    database_now: OffsetDateTime,
 ) -> AppResult<()> {
     if requester.tenant_id != "system" {
         return Err(AppError::Conflict("配置迁移申请人必须属于系统租户".into()));
     }
+    let database_now =
+        DateTime::from_timestamp(database_now.unix_timestamp(), database_now.nanosecond())
+            .ok_or_else(|| AppError::Database("租户配置申请人校验时间超出 UTC 表示范围".into()))?;
     let target = tenant::Entity::find()
         .filter(tenant::Column::TenantId.eq(tenant_id))
         .one(transaction)

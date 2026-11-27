@@ -32,7 +32,7 @@ struct RollbackSnapshotSource {
     resources: TenantConfigPackageResources,
     capabilities: Vec<CapabilityRequirement>,
     tenant_name: String,
-    generated_at: DateTime<Utc>,
+    generated_at: OffsetDateTime,
 }
 
 struct AppliedCacheVersions {

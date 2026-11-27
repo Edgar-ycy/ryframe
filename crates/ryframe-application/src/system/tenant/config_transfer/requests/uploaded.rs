@@ -5,7 +5,7 @@ pub(super) fn bundle_model(
     user_id: i64,
     file_id: i64,
     parsed: &ParsedTenantConfigPackage,
-    now: DateTime<Utc>,
+    now: OffsetDateTime,
     artifact_hours: u32,
 ) -> AppResult<TenantConfigBundleRecord> {
     let bundle_id = next_id()?;
@@ -29,7 +29,7 @@ pub(super) fn bundle_model(
         idempotency_key_hash: None,
         created_by: user_id,
         error_summary: None,
-        expires_at: Some(now + Duration::hours(i64::from(artifact_hours))),
+        expires_at: Some(configuration_expiry(now, artifact_hours)?),
         created_at: now,
         updated_at: now,
     })

@@ -1,8 +1,8 @@
 use std::{collections::BTreeSet, sync::Arc};
 
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sha2::{Digest, Sha256};
+use time::OffsetDateTime;
 
 use super::super::super::{
     product::CapabilityRequirement, product_capability_catalog::CAPABILITY_CATALOG,
@@ -38,7 +38,7 @@ pub struct TenantConfigPackageSource {
     pub tenant_key: String,
     pub tenant_name: String,
     pub app_version: String,
-    pub generated_at: DateTime<Utc>,
+    pub generated_at: OffsetDateTime,
 }
 
 /// 在阻塞线程中构造只含两个受控文件的配置包。
