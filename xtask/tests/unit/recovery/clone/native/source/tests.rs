@@ -162,6 +162,7 @@ fn frontend_domains_keep_documents_tools_and_unknown_product_inputs() {
         "scripts/frontend-tool-config.mjs",
         "scripts/build-identity.mjs",
         "scripts/resource-render/json.mjs",
+        "scripts/resource-render/json.ts",
         ".gitignore",
     ]);
     let domains = request("domains", &value, "frontend").unwrap();
@@ -184,6 +185,7 @@ fn frontend_domains_keep_documents_tools_and_unknown_product_inputs() {
         "scripts/frontend-tool-config.mjs",
         "scripts/build-identity.mjs",
         "scripts/resource-render/json.mjs",
+        "scripts/resource-render/json.ts",
     ] {
         assert!(product.contains(&json!(path)), "{path}");
     }
@@ -229,6 +231,37 @@ fn frontend_domains_keep_documents_tools_and_unknown_product_inputs() {
         } else {
             assert_ne!(domains["product"], after["product"], "{path}");
         }
+    }
+}
+
+#[test]
+fn frontend_lint_configs_preserve_frozen_and_current_tool_domains() {
+    for configs in [
+        [
+            "eslint.config.js",
+            "prettier.config.mjs",
+            "stylelint.config.js",
+        ],
+        [
+            "eslint.config.ts",
+            "prettier.config.ts",
+            "stylelint.config.ts",
+        ],
+    ] {
+        let value = inventory(&[configs[0], configs[1], configs[2], "src/app.vue"]);
+        let domains = request("domains", &value, "frontend").unwrap();
+        assert_eq!(
+            domains["product"]["frontend"]["files"],
+            json!(["src/app.vue"])
+        );
+        assert_eq!(domains["tools"]["files"], json!(configs));
+        assert_eq!(domains["full"], value);
+        assert_eq!(
+            protocol::request(&json!({"action":"validate-domains","value":domains,
+                "repository":"frontend"}))
+            .unwrap(),
+            domains
+        );
     }
 }
 

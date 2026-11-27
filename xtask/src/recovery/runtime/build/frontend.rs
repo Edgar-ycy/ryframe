@@ -8,14 +8,21 @@ use crate::{
     },
 };
 use serde_json::{Value, json};
-use std::path::Path;
+use std::{fs, io::ErrorKind, path::Path};
+
+const INVENTORY_TOOL: &str = "scripts/build-source-inventory.ts";
+const DOMAINS_TOOL: &str = "scripts/build-source-domains.ts";
+const LEGACY_INVENTORY_TOOL: &str = "scripts/build-source-inventory.mjs";
+const JSON_TOOL: &str = "scripts/resource-render/json.ts";
+const LEGACY_JSON_TOOL: &str = "scripts/resource-render/json.mjs";
 
 pub(super) const TOOL_FILES: &[&str] = &[
     "package.json",
     "pnpm-lock.yaml",
     "pnpm-workspace.yaml",
     "vite.config.ts",
-    "scripts/build-source-inventory.mjs",
+    INVENTORY_TOOL,
+    DOMAINS_TOOL,
     "scripts/build-source.mjs",
     "scripts/build-context-schema.mjs",
     "scripts/application-config.mjs",
@@ -24,7 +31,7 @@ pub(super) const TOOL_FILES: &[&str] = &[
     "scripts/application-config-paths.mjs",
     "scripts/frontend-tool-config.mjs",
     "scripts/build-identity.mjs",
-    "scripts/resource-render/json.mjs",
+    JSON_TOOL,
     "src/shared/config/apiEndpoint.ts",
     "scripts/restore-build.mjs",
 ];
@@ -43,7 +50,7 @@ struct Current {
     proof: frontend_build::Proof,
     tools: std::path::PathBuf,
     inventory: inventory::Inventory,
-    files: Vec<digest::FileDigest>,
+    files: Vec<(&'static str, digest::FileDigest)>,
 }
 impl Built {
     pub(super) fn verify(&self) -> Result<()> {
@@ -59,12 +66,58 @@ impl Current {
         if inventory::capture(&self.tools)? != self.inventory {
             return Err("前端构建工具来源在后续构建窗口发生漂移".into());
         }
-        for (name, before) in TOOL_FILES.iter().zip(&self.files) {
-            if digest::file(&digest::safe_file(&self.tools, name)?)? != *before {
-                return Err("前端构建工具文件发生漂移".into());
-            }
+        if capture_tool_files(&self.tools, &self.inventory)? != self.files {
+            return Err("前端构建工具文件发生漂移".into());
         }
         self.proof.verify()
+    }
+}
+
+fn capture_tool_files(
+    tools: &Path,
+    source: &inventory::Inventory,
+) -> Result<Vec<(&'static str, digest::FileDigest)>> {
+    let present = |path| source.files.iter().any(|file| file.path == path);
+    // 以已复核的工具检出确定入口，执行检出可能来自另一代。
+    let (legacy, unbound): (bool, &[&str]) = match (
+        present(INVENTORY_TOOL),
+        present(DOMAINS_TOOL),
+        present(LEGACY_INVENTORY_TOOL),
+    ) {
+        (true, true, false) => (false, &[LEGACY_INVENTORY_TOOL]),
+        (false, false, true) => (true, &[INVENTORY_TOOL, DOMAINS_TOOL]),
+        _ => return Err("前端构建工具来源必须匹配完整且唯一的来源清单布局".into()),
+    };
+    for &path in unbound {
+        require_absent_tool(tools, path, "前端构建工具目录存在未绑定的来源清单文件")?;
+    }
+    let (json_tool, other_json_tool) = match (present(JSON_TOOL), present(LEGACY_JSON_TOOL)) {
+        (true, false) => (JSON_TOOL, LEGACY_JSON_TOOL),
+        (false, true) => (LEGACY_JSON_TOOL, JSON_TOOL),
+        _ => return Err("前端构建工具来源必须绑定唯一的 JSON 解析入口".into()),
+    };
+    require_absent_tool(
+        tools,
+        other_json_tool,
+        "前端构建工具目录存在未绑定的 JSON 解析文件",
+    )?;
+    TOOL_FILES
+        .iter()
+        .filter_map(|&path| match (legacy, path) {
+            (true, INVENTORY_TOOL) => Some(LEGACY_INVENTORY_TOOL),
+            (true, DOMAINS_TOOL) => None,
+            (_, JSON_TOOL) => Some(json_tool),
+            _ => Some(path),
+        })
+        .map(|path| Ok((path, digest::file(&digest::safe_file(tools, path)?)?)))
+        .collect()
+}
+
+fn require_absent_tool(root: &Path, path: &str, duplicate: &'static str) -> Result<()> {
+    match fs::symlink_metadata(root.join(path)) {
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+        Ok(_) => Err(duplicate.into()),
     }
 }
 
@@ -106,10 +159,7 @@ pub(super) fn run(
     {
         return Err("前端工具与执行源码必须是干净来源，执行提交必须精确匹配".into());
     }
-    let files = TOOL_FILES
-        .iter()
-        .map(|name| digest::safe_file(&tools, name).and_then(|path| digest::file(&path)))
-        .collect::<Result<Vec<_>>>()?;
+    let files = capture_tool_files(&tools, &tools_before)?;
     for name in [
         "vite.config.ts",
         "scripts/application-config.mjs",
@@ -151,10 +201,8 @@ pub(super) fn run(
     if inventory::capture(&tools)? != tools_before || inventory::capture(&root)? != before {
         return Err("前端构建期间登记源码或受控工具变化".into());
     }
-    for (name, before) in TOOL_FILES.iter().zip(&files) {
-        if digest::file(&digest::safe_file(&tools, name)?)? != *before {
-            return Err("前端构建工具文件在使用窗口发生漂移".into());
-        }
+    if capture_tool_files(&tools, &tools_before)? != files {
+        return Err("前端构建工具文件在使用窗口发生漂移".into());
     }
     proof.verify()?;
     Ok(Built {

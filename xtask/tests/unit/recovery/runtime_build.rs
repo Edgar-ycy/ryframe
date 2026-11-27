@@ -2,6 +2,12 @@ use super::*;
 use crate::{cli::RuntimeSources, recovery::frontend_build};
 use std::{collections::BTreeMap, process::Command};
 
+const INVENTORY_TOOL: &str = "scripts/build-source-inventory.ts";
+const DOMAINS_TOOL: &str = "scripts/build-source-domains.ts";
+const LEGACY_INVENTORY_TOOL: &str = "scripts/build-source-inventory.mjs";
+const JSON_TOOL: &str = "scripts/resource-render/json.ts";
+const LEGACY_JSON_TOOL: &str = "scripts/resource-render/json.mjs";
+
 fn git(root: &Path, args: &[&str]) {
     let output = Command::new("git")
         .arg("-C")
@@ -353,6 +359,110 @@ fn frontend_reuses_exact_existing_receipt_and_rejects_legacy_layout_or_wrong_hea
         .head;
     assert!(frontend::run(fixture.frontend(), fixture.frontend(), &head, &mut port).is_err());
     assert!(port.calls.is_empty());
+}
+
+fn use_legacy_frontend_tools(root: &Path) {
+    fs::rename(root.join(INVENTORY_TOOL), root.join(LEGACY_INVENTORY_TOOL)).unwrap();
+    fs::remove_file(root.join(DOMAINS_TOOL)).unwrap();
+    fs::rename(root.join(JSON_TOOL), root.join(LEGACY_JSON_TOOL)).unwrap();
+}
+
+#[test]
+fn frontend_inventory_binding_uses_tool_checkout_and_preserves_existing_receipt() {
+    let current = Fixture::new();
+    let legacy = Fixture::new();
+    use_legacy_frontend_tools(legacy.frontend());
+    commit(legacy.frontend());
+    for (tools, root) in [
+        (current.frontend(), legacy.frontend()),
+        (legacy.frontend(), current.frontend()),
+    ] {
+        let observed = inventory::capture(root).unwrap();
+        let head = &observed.source.snapshot.head;
+        frontend_build::tests::write_receipt(root, head, &inventory::inventory_value(&observed));
+        let receipt = root.join("dist/.vite/restore-build.json");
+        let before = fs::read(&receipt).unwrap();
+        let mut port = Commands::default();
+        let result = frontend::run(tools, root, head, &mut port).unwrap();
+        assert_eq!(result.result["frontend_action"], "verified");
+        assert!(port.calls.is_empty());
+        result.verify().unwrap();
+        assert_eq!(fs::read(receipt).unwrap(), before);
+    }
+}
+
+#[test]
+fn frontend_inventory_binding_rejects_mixed_incomplete_and_unknown_git_layouts() {
+    for (absent, extra) in [
+        (&[][..], Some(LEGACY_INVENTORY_TOOL)),
+        (&[DOMAINS_TOOL][..], None),
+        (&[INVENTORY_TOOL][..], Some(LEGACY_INVENTORY_TOOL)),
+        (
+            &[INVENTORY_TOOL, DOMAINS_TOOL][..],
+            Some("scripts/other-inventory.ts"),
+        ),
+    ] {
+        let fixture = Fixture::new();
+        let root = fixture.frontend();
+        for path in absent {
+            fs::remove_file(root.join(path)).unwrap();
+        }
+        if let Some(path) = extra {
+            fs::write(root.join(path), "fixture unregistered layout").unwrap();
+        }
+        commit(root);
+        let observed = inventory::capture(root).unwrap();
+        assert!(observed.source.snapshot.clean);
+        let mut port = Commands::default();
+        let error = frontend::run(root, root, &observed.source.snapshot.head, &mut port)
+            .err()
+            .expect("不完整或混合的工具布局必须拒绝");
+        assert!(error.to_string().contains("完整且唯一的来源清单布局"));
+        assert!(port.calls.is_empty());
+        assert!(!root.join("dist/.vite/restore-build.json").exists());
+    }
+}
+
+#[test]
+fn frontend_inventory_binding_rechecks_alternate_paths_outside_the_git_inventory() {
+    for (legacy, extra, diagnostic) in [
+        (false, LEGACY_INVENTORY_TOOL, "未绑定的来源清单文件"),
+        (true, INVENTORY_TOOL, "未绑定的来源清单文件"),
+        (true, DOMAINS_TOOL, "未绑定的来源清单文件"),
+        (false, LEGACY_JSON_TOOL, "未绑定的 JSON 解析文件"),
+        (true, JSON_TOOL, "未绑定的 JSON 解析文件"),
+    ] {
+        let fixture = Fixture::new();
+        let root = fixture.frontend();
+        if legacy {
+            use_legacy_frontend_tools(root);
+        }
+        let ignore = root.join(".gitignore");
+        let original = fs::read_to_string(&ignore).unwrap();
+        fs::write(ignore, format!("{original}\n/{extra}\n")).unwrap();
+        commit(root);
+        let observed = inventory::capture(root).unwrap();
+        let head = &observed.source.snapshot.head;
+        let mut port = Commands::default();
+        let result = frontend::run(root, root, head, &mut port).unwrap();
+        assert_eq!(port.calls, ["node"]);
+        result.verify().unwrap();
+
+        fs::write(root.join(extra), "ignored alternate tool").unwrap();
+        assert_eq!(inventory::capture(root).unwrap(), observed);
+        let error = result.verify().unwrap_err();
+        assert!(error.to_string().contains(diagnostic));
+        let before = fs::read(root.join("dist/.vite/restore-build.json")).unwrap();
+        let error = frontend::run(root, root, head, &mut port)
+            .err()
+            .expect("初始绑定也必须拒绝被 Git 忽略的路径");
+        assert!(error.to_string().contains(diagnostic));
+        assert_eq!(port.calls, ["node"]);
+        assert_eq!(
+            fs::read(root.join("dist/.vite/restore-build.json")).unwrap(),
+            before
+        );
+    }
 }
 
 #[test]

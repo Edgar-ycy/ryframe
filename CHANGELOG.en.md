@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Recovery tools verify the source inventory and JSON parser from the registered frontend tools checkout, preserving the respective sources for historical build receipts and the current TypeScript layout.
+
 - Backend planning and execution use the same TypeScript entry for frontend documentation-only checks and retain bilingual validation.
 
 - Reference recovery backups verify the clean coordinating worktree and the product build source recorded in the inventory independently, allowing each to use its own commit.

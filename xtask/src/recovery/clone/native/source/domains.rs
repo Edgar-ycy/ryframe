@@ -135,18 +135,22 @@ fn windows_drive(relative: &str) -> bool {
 }
 
 pub(super) fn frontend_tool(relative: &str) -> bool {
+    // 冻结的前端构建收据仍按旧配置路径复核工具域。
     matches!(
         relative.split('/').next(),
         Some("scripts" | "tests" | ".github")
     ) || matches!(
         relative,
         "eslint.config.js"
+            | "eslint.config.ts"
             | "playwright.config.ts"
             | "playwright.real.config.ts"
             | "playwright.generated.config.ts"
             | "tsconfig.test.json"
             | "prettier.config.mjs"
+            | "prettier.config.ts"
             | "stylelint.config.js"
+            | "stylelint.config.ts"
             | "vitest.config.ts"
             | "config/tools.json"
     )
@@ -163,6 +167,7 @@ pub(super) fn frontend_product(relative: &str) -> bool {
             | "scripts/frontend-tool-config.mjs"
             | "scripts/build-identity.mjs"
             | "scripts/resource-render/json.mjs"
+            | "scripts/resource-render/json.ts"
             | "tsconfig.test.json"
     ) {
         return true;
