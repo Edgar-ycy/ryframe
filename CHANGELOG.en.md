@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Verify published source receipts with the producer executable and managed intent bound to the original run.
+
 - Reuse the Redis generation retained by the RustFS handoff, close audited failures before startup, and verify the exact expiry times of existing sessions and logout records created during source verification.
 
 - Keep the access token for post queries and file downloads during source business verification, then clear it before logging out with the refresh cookie.

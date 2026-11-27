@@ -38,7 +38,7 @@ pub(super) fn resolve(backend: &Path, source: &Value, state: &Value) -> Result<V
     }
     let value = common::read_bound(backend, &record["result"], "STOP 发布")?;
     bindings(backend, &value)?;
-    let verified = execution::saved::verify(backend, &value["source_runtime"], false)?;
+    let verified = execution::saved::verify_published(backend, &value["source_runtime"])?;
     let facts = &verified["facts"];
     let request = &facts["request"];
     let descriptor = &source["review_successor"]["source_result"];
