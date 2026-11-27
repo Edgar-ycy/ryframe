@@ -1,13 +1,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use chrono::{DateTime, Utc};
 use regex::Regex;
 use serde_json::Value;
 
 use super::super::json::{exact, text};
 use super::database::Models;
 use super::inventory::EXCLUDED;
-use crate::Result;
+use crate::{
+    Result,
+    utc_timestamp::{now_order_key, rfc3339_order_key},
+};
 
 pub(super) fn header(
     root: &serde_json::Map<String, Value>,
@@ -26,18 +28,16 @@ pub(super) fn header(
         .ok_or("源库存缺少观察时间")?;
     if root.get("scope_id").and_then(Value::as_str) != Some(scope)
         || root.get("source_sha").and_then(Value::as_str) != Some(source_sha)
-        || DateTime::parse_from_rfc3339(time)?.to_utc()
-            != DateTime::parse_from_rfc3339(quiesced_at)?.to_utc()
+        || rfc3339_order_key(time)? != rfc3339_order_key(quiesced_at)?
     {
         return Err("实际 inventory 与源 scope、构建或明确观察类型不同".into());
     }
-    let captured = DateTime::parse_from_rfc3339(
+    let captured = rfc3339_order_key(
         root.get("captured_at")
             .and_then(Value::as_str)
             .ok_or("源库存缺少采集时间")?,
-    )?
-    .to_utc();
-    if DateTime::parse_from_rfc3339(quiesced_at)?.to_utc() > captured || captured > Utc::now() {
+    )?;
+    if rfc3339_order_key(quiesced_at)? > captured || captured > now_order_key() {
         return Err("实际 inventory 采集时间与观察顺序不符".into());
     }
     let fingerprint_value = serde_json::json!({

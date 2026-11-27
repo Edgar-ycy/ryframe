@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Share UTC timestamp ordering for source inventory, shutdown evidence, and identity activation while preserving the original cutoff boundaries and subsecond precision.
+
 - Reuse the frozen builds of the same published source in generation requests. Keep the live toolchain and build parameter checks, and retain the original build environment digest with its receipt.
 
 - Use the detached controller for target RustFS restarts on Windows so the restart command can return while RustFS continues serving.

@@ -5,6 +5,7 @@ use crate::{
     recovery::{
         fixture_control::services::lifecycle::readonly::NativeRuntime, source::evidence::running,
     },
+    utc_timestamp::{now_order_key, rfc3339_order_key},
 };
 use serde_json::{Value, json};
 use std::path::Path;
@@ -32,11 +33,8 @@ pub(super) fn verify(
         ],
         "源停止证明",
     )?;
-    let observed = chrono::DateTime::parse_from_rfc3339(document::text(
-        &value["observed_stopped_at"],
-        "源停止时间",
-    )?)?;
-    if observed > chrono::Utc::now() {
+    let observed = rfc3339_order_key(document::text(&value["observed_stopped_at"], "源停止时间")?)?;
+    if observed > now_order_key() {
         return Err("源停止观察不能来自未来".into());
     }
     let intent = common::read_bound(backend, &value["intent"], "源启动意图")?;

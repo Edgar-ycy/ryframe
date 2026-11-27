@@ -18,6 +18,11 @@ pub(crate) fn now_rfc3339() -> String {
     rfc3339(time::OffsetDateTime::now_utc())
 }
 
+pub(crate) fn now_order_key() -> (i64, u32) {
+    let now = OffsetDateTime::now_utc();
+    (now.unix_timestamp(), now.nanosecond())
+}
+
 pub(crate) fn rfc3339_order_key(value: &str) -> crate::Result<(i64, u32)> {
     let bytes = value.as_bytes();
     if !matches!(bytes.get(10), Some(b'T' | b't' | b' ')) {

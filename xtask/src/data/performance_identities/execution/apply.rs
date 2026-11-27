@@ -1,7 +1,10 @@
 use super::{
     Context, IdentitySession, Ledger, array, close, permission_ids, request, same_set, text,
 };
-use crate::Result;
+use crate::{
+    Result,
+    utc_timestamp::{now_order_key, rfc3339_order_key},
+};
 use serde_json::{Value, json};
 
 const ADMIN: &[&str] = &[
@@ -364,8 +367,8 @@ pub(super) fn activation(response: &Value, environment: &Value, group: &Value) -
             .find(|(name, _)| name == key)
             .map(|(_, value)| value.as_str())
     };
-    let future = chrono::DateTime::parse_from_rfc3339(text(data, "expires_at")?)
-        .is_ok_and(|value| value > chrono::Utc::now());
+    let future =
+        rfc3339_order_key(text(data, "expires_at")?).is_ok_and(|value| value > now_order_key());
     if url.origin() != base.origin()
         || url.path() != "/reset-password"
         || url.query().is_some()
