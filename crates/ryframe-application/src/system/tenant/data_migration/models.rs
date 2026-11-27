@@ -1,5 +1,7 @@
-use chrono::{DateTime, Utc};
 use serde::Serialize;
+use time::OffsetDateTime;
+
+use crate::ports::utc_timestamp;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct DataTargetSummary {
@@ -22,7 +24,7 @@ pub struct DataTargetDetail {
     #[serde(flatten)]
     pub target: DataTargetSummary,
     #[serde(serialize_with = "crate::ports::utc_timestamp::serialize_optional")]
-    pub last_verified_at: Option<time::OffsetDateTime>,
+    pub last_verified_at: Option<OffsetDateTime>,
     pub reserved_connections: u32,
     pub max_total_connections: u32,
     pub open_targets: usize,
@@ -51,15 +53,15 @@ pub struct BackupPointView {
     pub placement_generation: Option<String>,
     pub schema_fingerprint: String,
     #[serde(serialize_with = "crate::ports::utc_timestamp::serialize")]
-    pub captured_at: time::OffsetDateTime,
+    pub captured_at: OffsetDateTime,
     pub checksum: Option<String>,
     pub validation_status: String,
     #[serde(serialize_with = "crate::ports::utc_timestamp::serialize")]
-    pub retention_until: time::OffsetDateTime,
+    pub retention_until: OffsetDateTime,
     #[serde(serialize_with = "crate::ports::utc_timestamp::serialize_optional")]
-    pub expires_at: Option<time::OffsetDateTime>,
+    pub expires_at: Option<OffsetDateTime>,
     #[serde(serialize_with = "crate::ports::utc_timestamp::serialize_optional")]
-    pub last_restore_drill_at: Option<time::OffsetDateTime>,
+    pub last_restore_drill_at: Option<OffsetDateTime>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -68,7 +70,8 @@ pub struct DataPlacementView {
     pub current_target_key: String,
     pub placement_generation: String,
     pub state: String,
-    pub updated_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    pub updated_at: OffsetDateTime,
 }
 
 #[derive(Clone, Debug)]
@@ -143,22 +146,38 @@ pub struct MigrationView {
     pub operator_id: String,
     pub retention_hours: i32,
     pub error_code: Option<String>,
-    pub prechecked_at: Option<DateTime<Utc>>,
-    pub queued_at: Option<DateTime<Utc>>,
-    pub quiesced_at: Option<DateTime<Utc>>,
-    pub frozen_at: Option<DateTime<Utc>>,
-    pub copy_started_at: Option<DateTime<Utc>>,
-    pub copy_completed_at: Option<DateTime<Utc>>,
-    pub verified_at: Option<DateTime<Utc>>,
-    pub cut_over_at: Option<DateTime<Utc>>,
-    pub activated_at: Option<DateTime<Utc>>,
-    pub succeeded_at: Option<DateTime<Utc>>,
-    pub retention_until: Option<DateTime<Utc>>,
-    pub finalized_at: Option<DateTime<Utc>>,
-    pub failed_at: Option<DateTime<Utc>>,
-    pub cancelled_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    pub prechecked_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    pub queued_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    pub quiesced_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    pub frozen_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    pub copy_started_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    pub copy_completed_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    pub verified_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    pub cut_over_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    pub activated_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    pub succeeded_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    pub retention_until: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    pub finalized_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    pub failed_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize_optional")]
+    pub cancelled_at: Option<OffsetDateTime>,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    pub created_at: OffsetDateTime,
+    #[serde(serialize_with = "utc_timestamp::serialize")]
+    pub updated_at: OffsetDateTime,
     pub can_cancel: bool,
     pub can_finalize: bool,
     pub cancel_requested: bool,

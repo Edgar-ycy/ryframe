@@ -27,8 +27,8 @@ pub use workflow::TenantDataMigrationJobHandler;
 
 use support::{
     MigrationPlanHashInput, backup_window_start, create_blocker_error, ensure_platform_actor,
-    ensure_same_create_request, migration_plan_hash, migration_record_time, sha256_hex,
-    target_summary, validate_idempotency_key, validate_migration_tenant,
+    ensure_same_create_request, migration_plan_hash, sha256_hex, target_summary,
+    validate_idempotency_key, validate_migration_tenant,
 };
 
 pub const TENANT_DATA_MIGRATION_JOB_TYPE: &str = "tenant_data_migration";
@@ -377,7 +377,6 @@ impl TenantDataMigrationService {
 
         let migration_id = crate::next_id()?;
         let now = self.persistence.database_now().await?;
-        let record_now = migration_record_time(now)?;
         let target_generation = command
             .expected_placement_generation
             .checked_add(1)
@@ -459,7 +458,7 @@ impl TenantDataMigrationService {
                 switch_token: switch_token.clone(),
                 operator_id: actor.user_id,
                 retention_hours: RETENTION_HOURS,
-                now: record_now,
+                now,
             })
             .await;
         let mut migration = match inserted {
@@ -488,7 +487,7 @@ impl TenantDataMigrationService {
             }
         };
         migration.background_job_id = Some(queued);
-        migration.updated_at = record_now;
+        migration.updated_at = now;
         migration = transaction.save_migration(migration).await?;
         transaction
             .commit(crate::TransactionAuditMode::CurrentRequest)

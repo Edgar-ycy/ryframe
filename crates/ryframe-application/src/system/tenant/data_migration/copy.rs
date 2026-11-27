@@ -1,17 +1,16 @@
 use std::collections::HashMap;
 
-use chrono::Utc;
 use ryframe_kernel::{AppError, AppResult};
 use serde_json::{Value as JsonValue, json};
 use sha2::{Digest, Sha256};
+use time::OffsetDateTime;
 
 use crate::ports::tenant_data::{
     TenantDataCatalogTable, TenantDataFence, TenantDataMigrationItemRecord,
     TenantDataMigrationRecord, TenantDataRow,
 };
 
-use super::workflow::ensure_not_cancel_requested;
-use super::{TenantDataMigrationService, migration_record_time};
+use super::{TenantDataMigrationService, workflow::ensure_not_cancel_requested};
 
 impl TenantDataMigrationService {
     pub(super) async fn copy_catalog(
@@ -31,7 +30,7 @@ impl TenantDataMigrationService {
             let mut item = if let Some(item) = existing_by_table.remove(descriptor.name) {
                 item
             } else {
-                let now = Utc::now();
+                let now = OffsetDateTime::now_utc();
                 self.persistence
                     .insert_item(TenantDataMigrationItemRecord {
                         id: crate::next_id()?,
@@ -62,15 +61,16 @@ impl TenantDataMigrationService {
                 continue;
             }
             item.state = TenantDataMigrationItemRecord::STATE_COPYING.into();
-            item.copy_started_at.get_or_insert(Utc::now());
-            item.updated_at = Utc::now();
+            item.copy_started_at
+                .get_or_insert(OffsetDateTime::now_utc());
+            item.updated_at = OffsetDateTime::now_utc();
             item = self.persistence.save_item(item).await?;
             item = self
                 .copy_table_in_batches(migration, descriptor, item)
                 .await?;
             item.state = TenantDataMigrationItemRecord::STATE_COPIED.into();
-            item.copied_at = Some(Utc::now());
-            item.updated_at = Utc::now();
+            item.copied_at = Some(OffsetDateTime::now_utc());
+            item.updated_at = OffsetDateTime::now_utc();
             self.persistence.save_item(item).await?;
         }
         Ok(())
@@ -94,7 +94,7 @@ impl TenantDataMigrationService {
                 .remove(descriptor.name)
                 .ok_or_else(|| AppError::Conflict("迁移表级检查点缺失".into()))?;
             item.state = TenantDataMigrationItemRecord::STATE_VERIFYING.into();
-            item.updated_at = Utc::now();
+            item.updated_at = OffsetDateTime::now_utc();
             item = self.persistence.save_item(item).await?;
             let (source_count, source_digest) = self
                 .table_digest(migration, &migration.source_target_key, descriptor)
@@ -123,8 +123,8 @@ impl TenantDataMigrationService {
             item.source_digest = Some(source_digest);
             item.target_digest = Some(target_digest);
             item.state = TenantDataMigrationItemRecord::STATE_VERIFIED.into();
-            item.verified_at = Some(Utc::now());
-            item.updated_at = Utc::now();
+            item.verified_at = Some(OffsetDateTime::now_utc());
+            item.updated_at = OffsetDateTime::now_utc();
             self.persistence.save_item(item).await?;
         }
         // 摘要与外键校验可能持续较久；进入不可取消边界前重新验证目标与 fence。
@@ -206,7 +206,7 @@ impl TenantDataMigrationService {
             item.target_row_count = Some(next_count);
             item.source_digest = Some(next_digest.clone());
             item.target_digest = Some(next_digest);
-            item.updated_at = migration_record_time(progress_now)?;
+            item.updated_at = progress_now;
             item = progress_transaction.save_item(item).await?;
             progress_transaction
                 .commit(crate::TransactionAuditMode::Skip)

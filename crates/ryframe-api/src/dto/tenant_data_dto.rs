@@ -1,9 +1,8 @@
-use chrono::{DateTime, Utc};
 use ryframe_application::ports::utc_timestamp;
 use ryframe_application::system::platform as service;
 use ryframe_kernel::{AppError, ValidatedPageQuery};
 use serde::{Deserialize, Serialize};
-use time::OffsetDateTime;
+use time::{OffsetDateTime, UtcOffset};
 use utoipa::{IntoParams, ToSchema};
 use validator::Validate;
 
@@ -439,13 +438,14 @@ impl TryFrom<service::MigrationItemView> for MigrationItemView {
     }
 }
 
-fn response_timestamp(value: DateTime<Utc>, field: &str) -> Result<OffsetDateTime, AppError> {
-    utc_timestamp::from_chrono(value)
-        .map_err(|_| AppError::Internal(format!("租户数据响应的 {field} 无法精确表示为 UTC")))
+fn response_timestamp(value: OffsetDateTime, field: &str) -> Result<OffsetDateTime, AppError> {
+    value
+        .checked_to_offset(UtcOffset::UTC)
+        .ok_or_else(|| AppError::Internal(format!("租户数据响应的 {field} 无法精确表示为 UTC")))
 }
 
 fn optional_response_timestamp(
-    value: Option<DateTime<Utc>>,
+    value: Option<OffsetDateTime>,
     field: &str,
 ) -> Result<Option<OffsetDateTime>, AppError> {
     value
@@ -466,7 +466,8 @@ mod tests {
             current_target_key: "target".into(),
             placement_generation: "2".into(),
             state: "active".into(),
-            updated_at: DateTime::from_timestamp(19, 123_456_700).unwrap(),
+            updated_at: fixture_timestamp(19, 123_456_700)
+                .to_offset(UtcOffset::from_hms(5, 30, 0).unwrap()),
         };
         let response =
             serde_json::to_value(DataPlacementView::try_from(placement.clone()).unwrap()).unwrap();
@@ -505,13 +506,15 @@ mod tests {
             assert_eq!(response.get(field), Some(&Value::Null), "{field}");
         }
 
-        let leap_second = DateTime::from_timestamp(1_483_228_799, 1_123_456_000).unwrap();
-        placement.updated_at = leap_second;
+        let out_of_range = time::Date::MIN
+            .midnight()
+            .assume_offset(UtcOffset::from_hms(1, 0, 0).unwrap());
+        placement.updated_at = out_of_range;
         assert_timestamp_error(DataPlacementView::try_from(placement), "updated_at");
         let mut invalid_required = missing.clone();
-        invalid_required.created_at = leap_second;
+        invalid_required.created_at = out_of_range;
         assert_timestamp_error(MigrationView::try_from(invalid_required), "created_at");
-        missing.retention_until = Some(leap_second);
+        missing.retention_until = Some(out_of_range);
         assert_timestamp_error(MigrationView::try_from(missing), "retention_until");
 
         let snapshot: Value =
@@ -531,10 +534,15 @@ mod tests {
         assert!(matches!(result.unwrap_err(), AppError::Internal(message) if message == expected));
     }
 
+    fn fixture_timestamp(seconds: i64, nanos: u32) -> OffsetDateTime {
+        OffsetDateTime::from_unix_timestamp(seconds)
+            .unwrap()
+            .replace_nanosecond(nanos)
+            .unwrap()
+    }
+
     fn migration_fixture(with_phase_times: bool) -> service::MigrationView {
-        let phase = |seconds, nanos| {
-            with_phase_times.then(|| DateTime::from_timestamp(seconds, nanos).unwrap())
-        };
+        let phase = |seconds, nanos| with_phase_times.then(|| fixture_timestamp(seconds, nanos));
         service::MigrationView {
             id: "7".into(),
             tenant_id: "tenant-a".into(),
@@ -563,8 +571,8 @@ mod tests {
             finalized_at: phase(12, 0),
             failed_at: phase(13, 0),
             cancelled_at: phase(14, 0),
-            created_at: DateTime::from_timestamp(-1, 0).unwrap(),
-            updated_at: DateTime::from_timestamp(15, 123_456_700).unwrap(),
+            created_at: fixture_timestamp(-1, 0),
+            updated_at: fixture_timestamp(15, 123_456_700),
             can_cancel: false,
             can_finalize: false,
             cancel_requested: false,

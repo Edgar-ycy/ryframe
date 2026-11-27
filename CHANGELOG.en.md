@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Data placement and migration stage records use UTC time and preserve the public response format, database clocks, write precision, and backup window validation.
+
 - Tenant configuration package and transfer records use UTC time and preserve archive manifest digests, public response formats, and database microsecond precision.
 
 - Rust process tests now cover fixture service recovery after partial startup, interrupted shutdown, and a held controller lock. Read-only history and context queries remain available to Python.

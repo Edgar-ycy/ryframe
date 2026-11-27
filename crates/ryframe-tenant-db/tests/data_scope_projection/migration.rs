@@ -1,9 +1,20 @@
 use super::*;
 use ryframe_application::{DataScopeProjectionPublisher, ports::tenant_data::TenantDataFence};
+use ryframe_db::{
+    entities::tenant::{data_migration, data_migration_item, data_placement},
+    repositories::{CreateTenantDataMigration, TenantDataRepository},
+};
 use ryframe_kernel::AppError;
+use time::{OffsetDateTime, UtcOffset, macros::datetime};
 
 const TOKEN: &str = "migration-projection";
 const GENERATION: i64 = 3;
+const MIGRATION_ID: i64 = 901;
+const ITEM_ID: i64 = 902;
+const PLACEMENT_UPDATED_AT: OffsetDateTime = datetime!(2026-08-21 06:32:03.123456 +05:30);
+const MIGRATION_CREATED_AT: OffsetDateTime = datetime!(2026-08-21 10:35:06.234567 +05:30);
+const MIGRATION_CUT_OVER_AT: OffsetDateTime = datetime!(2026-08-22 10:35:06.987654 +05:30);
+const ITEM_VERIFIED_AT: OffsetDateTime = datetime!(2026-08-22 02:08:09.654321 -05:00);
 
 pub(super) async fn exercise(
     control: &DatabaseConnection,
@@ -19,6 +30,7 @@ pub(super) async fn exercise(
         .ok_or("缺少测试目标")?
         .key;
     prepare_activation(control, target, &target_key).await?;
+    verify_migration_timestamps(control).await?;
     verify_renewed_lease_time(control).await?;
     let publisher = ryframe_tenant_db::application_ports::data_scope_projection::publisher(
         ControlDatabaseCluster::single(control.clone()),
@@ -59,7 +71,7 @@ pub(super) async fn exercise(
 
 async fn verify_renewed_lease_time(control: &DatabaseConnection) -> Result<(), String> {
     use ryframe_application::{AuthorizationCache, TransactionAuditMode};
-    use time::{Duration, OffsetDateTime, UtcOffset};
+    use time::Duration;
 
     #[derive(FromQueryResult)]
     struct LeaseTime {
@@ -113,50 +125,12 @@ async fn prepare_activation(
     target: &DatabaseConnection,
     target_key: &str,
 ) -> Result<(), String> {
-    control
-        .execute_raw(Statement::from_sql_and_values(
-            DbBackend::MySql,
-            "UPDATE sys_tenant_data_placement SET current_target_key=?, placement_generation=3, \
-         switch_token=?, state='maintenance' WHERE tenant_id='system'",
-            [target_key.into(), TOKEN.into()],
-        ))
-        .await
-        .map_err(message)?;
+    prepare_control_rows(control, target_key).await?;
     mysql::execute(
         control,
         "UPDATE sys_tenant SET data_scope_version=4 WHERE tenant_id='system'",
     )
     .await?;
-    control
-        .execute_raw(Statement::from_sql_and_values(
-            DbBackend::MySql,
-            "INSERT INTO sys_tenant_data_migration \
-         (id,tenant_id,source_target_key,target_key,source_target_mode,source_target_kind, \
-          target_target_mode,target_target_kind,source_generation,source_switch_token, \
-          target_generation,source_schema_fingerprint,target_schema_fingerprint,plan_hash, \
-          create_idempotency_key_hash,state,switch_token,operator_id,created_at,updated_at) \
-         VALUES (901,'system','old-target',?,'dedicated','mysql',?,?,2,'old-token',3, \
-          REPEAT('a',64),REPEAT('a',64),REPEAT('b',64),REPEAT('c',64),'activating',?,1, \
-          UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))",
-            [
-                target_key.into(),
-                if target_key == TARGET {
-                    "dedicated"
-                } else {
-                    "shared"
-                }
-                .into(),
-                if target_key == TARGET {
-                    "mysql"
-                } else {
-                    "control"
-                }
-                .into(),
-                TOKEN.into(),
-            ],
-        ))
-        .await
-        .map_err(message)?;
     control.execute_raw(Statement::from_sql_and_values(DbBackend::MySql,
         "INSERT INTO sys_tenant_operation_lease \
          (tenant_id,owner_token,operation,resource_type,resource_id,expires_at,created_at,updated_at) \
@@ -168,6 +142,141 @@ async fn prepare_activation(
     if target_key == TARGET {
         mysql::execute(target, "UPDATE biz_tenant_target_slot SET placement_generation=3, switch_token='migration-projection' WHERE slot_id=1").await?;
     }
+    Ok(())
+}
+
+async fn prepare_control_rows(
+    control: &DatabaseConnection,
+    target_key: &str,
+) -> Result<(), String> {
+    let repository = TenantDataRepository;
+    let transaction = control.begin().await.map_err(message)?;
+    let mut placement = repository
+        .lock_placement_in_txn(&transaction, "system")
+        .await
+        .map_err(message)?;
+    placement.current_target_key = target_key.into();
+    placement.placement_generation = GENERATION;
+    placement.switch_token = TOKEN.into();
+    placement.state = data_placement::Model::STATE_MAINTENANCE.into();
+    placement.updated_at = PLACEMENT_UPDATED_AT;
+    repository
+        .save_placement_in_txn(&transaction, placement)
+        .await
+        .map_err(message)?;
+
+    let (target_mode, target_kind) = if target_key == TARGET {
+        ("dedicated", "mysql")
+    } else {
+        ("shared", "control")
+    };
+    let command = CreateTenantDataMigration {
+        id: MIGRATION_ID,
+        tenant_id: "system".into(),
+        source_target_key: "old-target".into(),
+        target_key: target_key.into(),
+        source_target_mode: "dedicated".into(),
+        source_target_kind: "mysql".into(),
+        target_target_mode: target_mode.into(),
+        target_target_kind: target_kind.into(),
+        source_generation: 2,
+        source_switch_token: "old-token".into(),
+        target_generation: GENERATION,
+        source_schema_fingerprint: "a".repeat(64),
+        target_schema_fingerprint: "a".repeat(64),
+        plan_hash: "b".repeat(64),
+        create_idempotency_key_hash: "c".repeat(64),
+        switch_token: TOKEN.into(),
+        operator_id: 1,
+        retention_hours: 168,
+        now: MIGRATION_CREATED_AT,
+    };
+    let mut migration = repository
+        .insert_migration_in_txn(&transaction, command)
+        .await
+        .map_err(message)?;
+    migration.state = data_migration::Model::STATE_ACTIVATING.into();
+    migration.cut_over_at = Some(MIGRATION_CUT_OVER_AT);
+    migration.updated_at = MIGRATION_CUT_OVER_AT;
+    repository
+        .save_migration_in_txn(&transaction, migration)
+        .await
+        .map_err(message)?;
+
+    let item = data_migration_item::Model {
+        id: ITEM_ID,
+        migration_id: MIGRATION_ID,
+        table_name: "biz_order".into(),
+        copy_order: 1,
+        state: data_migration_item::Model::STATE_VERIFIED.into(),
+        cursor_json: None,
+        source_row_count: Some(0),
+        target_row_count: Some(0),
+        source_digest: None,
+        target_digest: None,
+        error_code: None,
+        error_detail: None,
+        copy_started_at: None,
+        copied_at: None,
+        verified_at: Some(ITEM_VERIFIED_AT),
+        cleanup_state: data_migration_item::Model::CLEANUP_PENDING.into(),
+        cleanup_row_count: 0,
+        created_at: MIGRATION_CREATED_AT,
+        updated_at: ITEM_VERIFIED_AT,
+    };
+    repository
+        .insert_item(&transaction, item)
+        .await
+        .map_err(message)?;
+    transaction.commit().await.map_err(message)
+}
+
+async fn verify_migration_timestamps(control: &DatabaseConnection) -> Result<(), String> {
+    let repository = TenantDataRepository;
+    let placement = repository
+        .placement(control, "system")
+        .await
+        .map_err(message)?
+        .ok_or("找不到迁移放置")?;
+    let migration = repository
+        .migration(control, MIGRATION_ID)
+        .await
+        .map_err(message)?
+        .ok_or("找不到迁移主记录")?;
+    let items = repository
+        .items(control, MIGRATION_ID)
+        .await
+        .map_err(message)?;
+    let [item] = items.as_slice() else {
+        return Err("迁移只应包含一条测试表项".into());
+    };
+    assert_eq!(placement.updated_at, PLACEMENT_UPDATED_AT);
+    assert_eq!(placement.updated_at.offset(), UtcOffset::UTC);
+    assert_eq!(migration.prechecked_at, Some(MIGRATION_CREATED_AT));
+    assert_eq!(migration.created_at, MIGRATION_CREATED_AT);
+    assert_eq!(migration.cut_over_at, Some(MIGRATION_CUT_OVER_AT));
+    assert_eq!(migration.updated_at, MIGRATION_CUT_OVER_AT);
+    assert_eq!(migration.queued_at, None);
+    assert_eq!(item.verified_at, Some(ITEM_VERIFIED_AT));
+    assert_eq!(item.copied_at, None);
+    let physical = rows(
+        control,
+        "SELECT CONCAT_WS('|', DATE_FORMAT(p.updated_at,'%Y-%m-%d %H:%i:%s.%f'), \
+            DATE_FORMAT(m.prechecked_at,'%Y-%m-%d %H:%i:%s.%f'), \
+            DATE_FORMAT(m.cut_over_at,'%Y-%m-%d %H:%i:%s.%f'), \
+            DATE_FORMAT(i.verified_at,'%Y-%m-%d %H:%i:%s.%f')) AS item \
+         FROM sys_tenant_data_placement p \
+         JOIN sys_tenant_data_migration m ON m.tenant_id=p.tenant_id \
+         JOIN sys_tenant_data_migration_item i ON i.migration_id=m.id \
+         WHERE p.tenant_id='system' AND m.id=901 AND i.id=902",
+    )
+    .await?;
+    assert_eq!(
+        physical,
+        [
+            "2026-08-21 01:02:03.123456|2026-08-21 05:05:06.234567|2026-08-22 05:05:06.987654|2026-08-22 07:08:09.654321"
+        ]
+    );
     Ok(())
 }
 

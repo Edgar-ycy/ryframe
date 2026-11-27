@@ -12,11 +12,12 @@ use ryframe_tenant_db::{
         map_migration_model, map_placement, map_placement_model,
     },
 };
+use time::{UtcOffset, macros::datetime};
 
 #[test]
 fn migration_mapping_preserves_every_field() {
-    let now = "2026-08-21T01:02:03Z".parse().unwrap();
-    let later = "2026-08-22T04:05:06Z".parse().unwrap();
+    let now = datetime!(2026-08-21 06:32:03 +05:30);
+    let later = datetime!(2026-08-22 04:05:06.123456 UTC);
     let model = tenant_data_migration::Model {
         id: 1,
         tenant_id: "tenant-a".into(),
@@ -65,13 +66,29 @@ fn migration_mapping_preserves_every_field() {
         updated_at: later,
     };
 
-    assert_eq!(map_migration_model(map_migration(model.clone())), model);
+    let record = map_migration(model.clone());
+    assert_eq!(record.created_at.offset(), now.offset());
+    assert_eq!(map_migration_model(record), model);
+
+    let mut legacy_json = serde_json::to_value(&model).unwrap();
+    assert_eq!(legacy_json["created_at"], "2026-08-21T01:02:03Z");
+    assert_eq!(
+        legacy_json["retention_until"],
+        "2026-08-22T04:05:06.123456Z"
+    );
+    legacy_json.as_object_mut().unwrap().remove("prechecked_at");
+    legacy_json["queued_at"] = serde_json::Value::Null;
+    let decoded: tenant_data_migration::Model = serde_json::from_value(legacy_json).unwrap();
+    assert_eq!(decoded.created_at, now);
+    assert_eq!(decoded.created_at.offset(), UtcOffset::UTC);
+    assert_eq!(decoded.prechecked_at, None);
+    assert_eq!(decoded.queued_at, None);
 }
 
 #[test]
 fn migration_item_and_placement_mapping_preserve_every_field() {
-    let now = "2026-08-21T01:02:03Z".parse().unwrap();
-    let later = "2026-08-22T04:05:06Z".parse().unwrap();
+    let now = datetime!(2026-08-21 06:32:03.123 +05:30);
+    let later = datetime!(2026-08-22 04:05:06.123456789 UTC);
     let item = tenant_data_migration_item::Model {
         id: 11,
         migration_id: 12,
@@ -110,6 +127,15 @@ fn migration_item_and_placement_mapping_preserve_every_field() {
     assert_eq!(
         map_placement_model(map_placement(placement.clone())),
         placement
+    );
+    let item_json = serde_json::to_value(&item).unwrap();
+    let placement_json = serde_json::to_value(&placement).unwrap();
+    assert_eq!(item_json["copy_started_at"], "2026-08-21T01:02:03.123Z");
+    assert_eq!(item_json["copied_at"], "2026-08-22T04:05:06.123456789Z");
+    assert_eq!(placement_json["created_at"], "2026-08-21T01:02:03.123Z");
+    assert_eq!(
+        placement_json["updated_at"],
+        "2026-08-22T04:05:06.123456789Z"
     );
 }
 

@@ -1,9 +1,9 @@
-use chrono::{Duration, Utc};
 use ryframe_kernel::{AppError, AppResult};
+use time::{Duration, OffsetDateTime};
 
 use crate::ports::tenant_data::{TenantDataMigrationRecord, TenantDataPlacementRecord};
 
-use super::{TenantDataMigrationService, ensure_not_cancel_requested, migration_record_time};
+use super::{TenantDataMigrationService, ensure_not_cancel_requested};
 
 impl TenantDataMigrationService {
     pub(super) async fn enter_maintenance(
@@ -39,7 +39,6 @@ impl TenantDataMigrationService {
                 "源 placement 与迁移计划不一致".into(),
             ));
         }
-        let now = migration_record_time(now)?;
         let changed = placement.state == TenantDataPlacementRecord::STATE_ACTIVE;
         if changed {
             placement.state = TenantDataPlacementRecord::STATE_MAINTENANCE.into();
@@ -109,7 +108,6 @@ impl TenantDataMigrationService {
                 "cutover 前 placement 已变化".into(),
             ));
         }
-        let now = migration_record_time(now)?;
         placement.current_target_key = migration.target_key.clone();
         placement.placement_generation = migration.target_generation;
         placement.switch_token = migration.switch_token.clone();
@@ -153,11 +151,13 @@ impl TenantDataMigrationService {
                 "迁移状态不允许进入 retention_pending".into(),
             ));
         }
-        let now = migration_record_time(now)?;
         migration.state = TenantDataMigrationRecord::STATE_RETENTION_PENDING.into();
         migration.retention_until = Some(
-            migration.succeeded_at.unwrap_or(now)
-                + Duration::hours(i64::from(migration.retention_hours)),
+            migration
+                .succeeded_at
+                .unwrap_or(now)
+                .checked_add(Duration::hours(i64::from(migration.retention_hours)))
+                .ok_or_else(|| AppError::Database("迁移保留截止时间无法精确表示为 UTC".into()))?,
         );
         migration.updated_at = now;
         migration = transaction.save_migration(migration).await?;
@@ -177,7 +177,7 @@ impl TenantDataMigrationService {
         update: F,
     ) -> AppResult<TenantDataMigrationRecord>
     where
-        F: FnOnce(&mut TenantDataMigrationRecord, chrono::DateTime<Utc>),
+        F: FnOnce(&mut TenantDataMigrationRecord, OffsetDateTime),
     {
         let now = self.persistence.database_now().await?;
         let transaction = self.persistence.begin().await?;
@@ -196,7 +196,6 @@ impl TenantDataMigrationService {
                 snapshot.state, migration.state
             )));
         }
-        let now = migration_record_time(now)?;
         migration.state = state.into();
         migration.updated_at = now;
         update(&mut migration, now);
@@ -226,21 +225,14 @@ pub(super) async fn activate_control(
     let now = persistence.database_now().await?;
     let transaction = persistence.begin().await?;
     TenantDataMigrationService::renew_operation_lease(&*transaction, &snapshot, now).await?;
-    activate(
-        transaction,
-        &snapshot,
-        published_version,
-        migration_record_time(now)?,
-        cache,
-    )
-    .await
+    activate(transaction, &snapshot, published_version, now, cache).await
 }
 
 async fn activate(
     transaction: Box<dyn crate::ports::tenant_data::TenantDataMigrationTransaction>,
     snapshot: &TenantDataMigrationRecord,
     published_version: i64,
-    now: chrono::DateTime<Utc>,
+    now: OffsetDateTime,
     authorization_cache: &crate::AuthorizationCache,
 ) -> AppResult<TenantDataMigrationRecord> {
     let tenant = transaction

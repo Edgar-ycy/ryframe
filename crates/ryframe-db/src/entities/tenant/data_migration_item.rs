@@ -1,8 +1,8 @@
 //! 租户数据迁移明细实体。
 
-use chrono::{DateTime, Utc};
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 /// 停写迁移中单张编译期 catalog 表的复制和校验检查点。
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
@@ -21,13 +21,30 @@ pub struct Model {
     pub target_digest: Option<String>,
     pub error_code: Option<String>,
     pub error_detail: Option<String>,
-    pub copy_started_at: Option<DateTime<Utc>>,
-    pub copied_at: Option<DateTime<Utc>>,
-    pub verified_at: Option<DateTime<Utc>>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub copy_started_at: Option<OffsetDateTime>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub copied_at: Option<OffsetDateTime>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub verified_at: Option<OffsetDateTime>,
     pub cleanup_state: String,
     pub cleanup_row_count: i64,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    #[serde(with = "ryframe_application::ports::utc_timestamp")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "ryframe_application::ports::utc_timestamp")]
+    pub updated_at: OffsetDateTime,
 }
 
 impl Model {

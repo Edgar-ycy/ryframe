@@ -73,7 +73,10 @@ impl Drop for Work {
 }
 
 fn fixture(failure: Failure) -> (Arc<Shared>, AuthorizationCache) {
-    let now = chrono::DateTime::from_timestamp(1_800_000_000, 123_456_000).unwrap();
+    let now = OffsetDateTime::from_unix_timestamp(1_800_000_000)
+        .unwrap()
+        .replace_nanosecond(123_456_000)
+        .unwrap();
     let migration = TenantDataMigrationRecord {
         id: 55,
         tenant_id: "migration-tenant".into(),
@@ -294,10 +297,7 @@ impl AuthorizationMirrorTransaction for Work {
         Ok(state.epoch)
     }
     async fn database_now(&self) -> AppResult<OffsetDateTime> {
-        let now = self.pending.lock().unwrap().migration.updated_at;
-        Ok(OffsetDateTime::from_unix_timestamp(now.timestamp())
-            .and_then(|time| time.replace_nanosecond(now.timestamp_subsec_nanos()))
-            .unwrap())
+        Ok(self.pending.lock().unwrap().migration.updated_at)
     }
     async fn record(&self, event: AuthorizationMirrorEvent) -> AppResult<()> {
         if self.shared.failure == Failure::Outbox {
@@ -305,11 +305,7 @@ impl AuthorizationMirrorTransaction for Work {
         }
         let mut pending = self.pending.lock().unwrap();
         let now = pending.migration.updated_at;
-        assert_eq!(event.available_at.unix_timestamp(), now.timestamp());
-        assert_eq!(
-            event.available_at.nanosecond(),
-            now.timestamp_subsec_nanos()
-        );
+        assert_eq!(event.available_at, now);
         pending.mirrors.push(event.payload);
         Ok(())
     }
@@ -398,7 +394,7 @@ impl TenantDataMigrationTransaction for Work {
         let state = self.pending.lock().unwrap();
         assert_eq!(tenant_id, state.migration.tenant_id);
         assert_eq!(owner, state.migration.switch_token);
-        let now = crate::ports::utc_timestamp::from_chrono(state.migration.updated_at).unwrap();
+        let now = state.migration.updated_at;
         assert_eq!(expires_at, now + time::Duration::hours(24));
         assert_eq!(expires_at.offset(), time::UtcOffset::UTC);
         self.shared.events.lock().unwrap().push("renew".into());

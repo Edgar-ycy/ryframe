@@ -23,7 +23,7 @@ pub struct CreateTenantDataMigration {
     pub switch_token: String,
     pub operator_id: i64,
     pub retention_hours: i32,
-    pub now: DateTime<Utc>,
+    pub now: OffsetDateTime,
 }
 
 #[derive(Clone, Debug)]

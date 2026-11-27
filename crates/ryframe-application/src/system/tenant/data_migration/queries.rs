@@ -4,7 +4,7 @@ use crate::ports::tenant_data::TenantDataMigrationRecord;
 
 use super::{
     MigrationView, TenantDataMigrationService, backup_window_start, ensure_platform_actor,
-    migration_record_time, validate_migration_tenant,
+    validate_migration_tenant,
 };
 
 impl TenantDataMigrationService {
@@ -50,11 +50,7 @@ impl TenantDataMigrationService {
         let mut can_finalize = false;
         let mut action_reasons = Vec::new();
         if migration.can_finalize() {
-            let record_now = migration_record_time(now)?;
-            if migration
-                .retention_until
-                .is_none_or(|until| until > record_now)
-            {
+            if migration.retention_until.is_none_or(|until| until > now) {
                 action_reasons.push("retention_period_not_elapsed".into());
             } else if let Some(not_before) = migration.activated_at.or(migration.succeeded_at) {
                 if self

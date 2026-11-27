@@ -1,8 +1,8 @@
 //! 租户数据迁移实体。
 
-use chrono::{DateTime, Utc};
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 /// 一次租户业务数据停写迁移的权威状态。
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
@@ -35,26 +35,113 @@ pub struct Model {
     pub retention_hours: i32,
     pub error_code: Option<String>,
     pub error_detail: Option<String>,
-    pub prechecked_at: Option<DateTime<Utc>>,
-    pub queued_at: Option<DateTime<Utc>>,
-    pub quiesced_at: Option<DateTime<Utc>>,
-    pub frozen_at: Option<DateTime<Utc>>,
-    pub copy_started_at: Option<DateTime<Utc>>,
-    pub copy_completed_at: Option<DateTime<Utc>>,
-    pub verified_at: Option<DateTime<Utc>>,
-    pub cut_over_at: Option<DateTime<Utc>>,
-    pub activated_at: Option<DateTime<Utc>>,
-    pub succeeded_at: Option<DateTime<Utc>>,
-    pub retention_until: Option<DateTime<Utc>>,
-    pub cancel_requested_at: Option<DateTime<Utc>>,
-    pub finalize_requested_at: Option<DateTime<Utc>>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub prechecked_at: Option<OffsetDateTime>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub queued_at: Option<OffsetDateTime>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub quiesced_at: Option<OffsetDateTime>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub frozen_at: Option<OffsetDateTime>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub copy_started_at: Option<OffsetDateTime>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub copy_completed_at: Option<OffsetDateTime>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub verified_at: Option<OffsetDateTime>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub cut_over_at: Option<OffsetDateTime>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub activated_at: Option<OffsetDateTime>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub succeeded_at: Option<OffsetDateTime>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub retention_until: Option<OffsetDateTime>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub cancel_requested_at: Option<OffsetDateTime>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub finalize_requested_at: Option<OffsetDateTime>,
     /// catalog 批次均已清空、可安全移除目标 fence/slot 的控制面检查点。
-    pub cleanup_ready_at: Option<DateTime<Utc>>,
-    pub finalized_at: Option<DateTime<Utc>>,
-    pub failed_at: Option<DateTime<Utc>>,
-    pub cancelled_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub cleanup_ready_at: Option<OffsetDateTime>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub finalized_at: Option<OffsetDateTime>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub failed_at: Option<OffsetDateTime>,
+    #[serde(
+        default,
+        serialize_with = "ryframe_application::ports::utc_timestamp::serialize_optional",
+        deserialize_with = "ryframe_application::ports::utc_timestamp::deserialize_optional"
+    )]
+    pub cancelled_at: Option<OffsetDateTime>,
+    #[serde(with = "ryframe_application::ports::utc_timestamp")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "ryframe_application::ports::utc_timestamp")]
+    pub updated_at: OffsetDateTime,
 }
 
 impl Model {

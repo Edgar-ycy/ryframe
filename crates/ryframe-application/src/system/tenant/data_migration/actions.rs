@@ -64,9 +64,8 @@ impl TenantDataMigrationService {
             None => {
                 intent.cancel_idempotency_key_hash = Some(key_hash.clone());
                 intent.cancelled_by = Some(actor.user_id);
-                let record_now = migration_record_time(intent_now)?;
-                intent.cancel_requested_at = Some(record_now);
-                intent.updated_at = record_now;
+                intent.cancel_requested_at = Some(intent_now);
+                intent.updated_at = intent_now;
                 intent = intent_transaction.save_migration(intent).await?;
             }
         }
@@ -122,11 +121,7 @@ impl TenantDataMigrationService {
             return Err(AppError::Conflict("迁移尚未进入保留期清理阶段".into()));
         }
         let now = self.persistence.database_now().await?;
-        let record_now = migration_record_time(now)?;
-        if snapshot
-            .retention_until
-            .is_none_or(|until| until > record_now)
-        {
+        if snapshot.retention_until.is_none_or(|until| until > now) {
             return Err(AppError::Conflict("源数据保留期尚未结束".into()));
         }
         let not_before = snapshot
@@ -169,10 +164,7 @@ impl TenantDataMigrationService {
             }
             _ => {}
         }
-        if intent
-            .retention_until
-            .is_none_or(|until| until > record_now)
-        {
+        if intent.retention_until.is_none_or(|until| until > now) {
             return Err(AppError::Conflict("源数据保留期尚未结束".into()));
         }
         let intent_not_before = intent
@@ -190,8 +182,8 @@ impl TenantDataMigrationService {
         if intent.finalize_idempotency_key_hash.is_none() {
             intent.finalize_idempotency_key_hash = Some(key_hash.clone());
             intent.finalized_by = Some(actor.user_id);
-            intent.finalize_requested_at = Some(record_now);
-            intent.updated_at = record_now;
+            intent.finalize_requested_at = Some(now);
+            intent.updated_at = now;
             intent = intent_transaction.save_migration(intent).await?;
         }
         let background_job_id = intent

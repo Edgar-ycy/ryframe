@@ -60,25 +60,25 @@ pub struct TenantDataMigrationRecord {
     pub retention_hours: i32,
     pub error_code: Option<String>,
     pub error_detail: Option<String>,
-    pub prechecked_at: Option<DateTime<Utc>>,
-    pub queued_at: Option<DateTime<Utc>>,
-    pub quiesced_at: Option<DateTime<Utc>>,
-    pub frozen_at: Option<DateTime<Utc>>,
-    pub copy_started_at: Option<DateTime<Utc>>,
-    pub copy_completed_at: Option<DateTime<Utc>>,
-    pub verified_at: Option<DateTime<Utc>>,
-    pub cut_over_at: Option<DateTime<Utc>>,
-    pub activated_at: Option<DateTime<Utc>>,
-    pub succeeded_at: Option<DateTime<Utc>>,
-    pub retention_until: Option<DateTime<Utc>>,
-    pub cancel_requested_at: Option<DateTime<Utc>>,
-    pub finalize_requested_at: Option<DateTime<Utc>>,
-    pub cleanup_ready_at: Option<DateTime<Utc>>,
-    pub finalized_at: Option<DateTime<Utc>>,
-    pub failed_at: Option<DateTime<Utc>>,
-    pub cancelled_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub prechecked_at: Option<OffsetDateTime>,
+    pub queued_at: Option<OffsetDateTime>,
+    pub quiesced_at: Option<OffsetDateTime>,
+    pub frozen_at: Option<OffsetDateTime>,
+    pub copy_started_at: Option<OffsetDateTime>,
+    pub copy_completed_at: Option<OffsetDateTime>,
+    pub verified_at: Option<OffsetDateTime>,
+    pub cut_over_at: Option<OffsetDateTime>,
+    pub activated_at: Option<OffsetDateTime>,
+    pub succeeded_at: Option<OffsetDateTime>,
+    pub retention_until: Option<OffsetDateTime>,
+    pub cancel_requested_at: Option<OffsetDateTime>,
+    pub finalize_requested_at: Option<OffsetDateTime>,
+    pub cleanup_ready_at: Option<OffsetDateTime>,
+    pub finalized_at: Option<OffsetDateTime>,
+    pub failed_at: Option<OffsetDateTime>,
+    pub cancelled_at: Option<OffsetDateTime>,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
 }
 
 impl TenantDataMigrationRecord {
@@ -127,13 +127,13 @@ pub struct TenantDataMigrationItemRecord {
     pub target_digest: Option<String>,
     pub error_code: Option<String>,
     pub error_detail: Option<String>,
-    pub copy_started_at: Option<DateTime<Utc>>,
-    pub copied_at: Option<DateTime<Utc>>,
-    pub verified_at: Option<DateTime<Utc>>,
+    pub copy_started_at: Option<OffsetDateTime>,
+    pub copied_at: Option<OffsetDateTime>,
+    pub verified_at: Option<OffsetDateTime>,
     pub cleanup_state: String,
     pub cleanup_row_count: i64,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
 }
 
 impl TenantDataMigrationItemRecord {
@@ -154,8 +154,8 @@ pub struct TenantDataPlacementRecord {
     pub placement_generation: i64,
     pub state: String,
     pub switch_token: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: OffsetDateTime,
+    pub updated_at: OffsetDateTime,
 }
 
 impl TenantDataPlacementRecord {
@@ -204,7 +204,7 @@ pub struct CreateTenantDataMigrationRecord {
     pub switch_token: String,
     pub operator_id: i64,
     pub retention_hours: i32,
-    pub now: DateTime<Utc>,
+    pub now: OffsetDateTime,
 }
 
 #[derive(Clone, Debug)]
