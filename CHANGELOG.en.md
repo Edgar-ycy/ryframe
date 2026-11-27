@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Share RFC3339 validation across backup inventory, recovery inputs, save measurements, and runtime receipts while preserving each entry point's timestamp precision and format rules.
+
 - Fix the original runtime record lookup during RustFS-only handoff. Verify API and Worker exit evidence from the registered post-copy directory.
 
 - Share RFC3339 parsing between DevEx reports and targeted resource source receipts, preserving historical offsets, subsecond precision, and ABBA sample order checks.

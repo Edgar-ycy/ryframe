@@ -5,7 +5,7 @@ use regex::Regex;
 use serde_json::{Value, json};
 
 use super::{documents, model};
-use crate::Result;
+use crate::{Result, utc_timestamp::rfc3339_order_key};
 
 #[cfg(test)]
 #[path = "../../../../tests/unit/recovery/source/runtime/cache/tests.rs"]
@@ -121,7 +121,7 @@ fn expired(before: &Value) -> Result<Value> {
 
 fn timestamp(value: &Value) -> Result<()> {
     let text = documents::text(value, "授权缓存清理时间")?;
-    chrono::DateTime::parse_from_rfc3339(text).map_err(|_| "来源授权缓存清理时间无效")?;
+    rfc3339_order_key(text).map_err(|_| "来源授权缓存清理时间无效")?;
     Ok(())
 }
 

@@ -1,10 +1,9 @@
 //! 保存测量的结果结构与文件读写。
 use std::{fs, path::Path};
 
-use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 
-use crate::Result;
+use crate::{Result, utc_timestamp::rfc3339_order_key};
 
 pub(crate) const RESULT_FILE_NAME: &str = "cargo-dev-save-result.json";
 
@@ -176,7 +175,7 @@ pub(crate) fn read_measurement_with_contract(
     if measurement.schema_version != 1
         || !measurement.save_to_ready_ms.is_finite()
         || measurement.save_to_ready_ms < 0.0
-        || DateTime::parse_from_rfc3339(&measurement.started_at).is_err()
+        || rfc3339_order_key(&measurement.started_at).is_err()
         || measurement.ready_kind != expected_ready_kind
         || measurement.cargo_invocations != expected_cargo_invocations
     {

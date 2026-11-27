@@ -2,7 +2,7 @@ use regex::Regex;
 use serde_json::{Value, json};
 
 use super::super::{input::BUCKETS, json as document, resources::common};
-use crate::Result;
+use crate::{Result, utc_timestamp::rfc3339_order_key};
 
 pub(super) fn read_only(value: &Value, target: &Value) -> Result<()> {
     if value.get("transport").is_some() {
@@ -301,7 +301,7 @@ pub(super) fn native_owner_response(response: &Value, scope: &str, bucket: &str)
             "ContentLength" | "MissingMeta" | "TagCount" | "PartsCount" => value.is_u64(),
             "LastModified" | "Expires" => value
                 .as_str()
-                .is_some_and(|value| chrono::DateTime::parse_from_rfc3339(value).is_ok()),
+                .is_some_and(|value| rfc3339_order_key(value).is_ok()),
             "Metadata" => value
                 .as_object()
                 .is_some_and(|metadata| metadata.values().all(Value::is_string)),

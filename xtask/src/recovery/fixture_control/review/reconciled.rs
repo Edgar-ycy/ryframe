@@ -14,6 +14,7 @@ use crate::{
         },
         fixture_control::{services::lifecycle::query, source_pair::execution},
     },
+    utc_timestamp::rfc3339_order_key,
 };
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -222,7 +223,7 @@ fn derive(backend: &Path, origin: &Origin, proposed: &Value, publication: &Value
     let backend_head = document::text(&sources["backend"]["head"], "接续后端提交")?;
     let frontend_head = document::text(&sources["frontend"]["head"], "接续前端提交")?;
     let created = document::text(&proposed["created_at"], "接续审阅时间")?;
-    chrono::DateTime::parse_from_rfc3339(created)?;
+    rfc3339_order_key(created)?;
     let mut review = origin.review.clone();
     review["created_at"] = json!(created);
     review["future_root"] = json!(path_text_lexical(&future)?);

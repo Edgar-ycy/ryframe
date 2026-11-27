@@ -1,13 +1,12 @@
 use std::path::PathBuf;
 
-use chrono::DateTime;
-
 use crate::{
     cli::{
         BindingsInputOptions, CliError, ProductInputOptions, RecoveryInputsCommand,
         ReferenceInputMode, ReferenceInputOptions, RestoreInputPublication, RestoreInputSide,
     },
     local_test_path::{LocalTestPathKind, validate_local_test_path},
+    utc_timestamp::rfc3339_order_key,
     workspace::root_dir,
 };
 
@@ -269,7 +268,7 @@ fn validate_fault_at(value: &str) -> Result<(), CliError> {
         .map(|(_, fraction)| fraction.len())
         .unwrap_or(0);
     if !matches!(precision, 0 | 3 | 6)
-        || DateTime::parse_from_rfc3339(value).is_err()
+        || rfc3339_order_key(value).is_err()
         || body
             .split_once('.')
             .is_some_and(|(_, fraction)| !fraction.bytes().all(|byte| byte.is_ascii_digit()))

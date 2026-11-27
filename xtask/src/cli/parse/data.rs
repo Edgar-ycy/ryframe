@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use chrono::DateTime;
+use crate::utc_timestamp::rfc3339_order_key;
 
 #[path = "data/path.rs"]
 mod path;
@@ -257,7 +257,7 @@ fn validate_sha256(value: &str) -> Result<(), CliError> {
 }
 
 fn validate_rfc3339(value: &str) -> Result<(), CliError> {
-    DateTime::parse_from_rfc3339(value)
+    rfc3339_order_key(value)
         .map(|_| ())
         .map_err(|_| CliError::new("库存观察时间必须是 RFC3339"))
 }

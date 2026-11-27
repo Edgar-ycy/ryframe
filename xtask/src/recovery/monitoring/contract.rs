@@ -4,7 +4,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use chrono::DateTime;
 use regex::Regex;
 use serde_json::{Map, Value};
 
@@ -12,6 +11,7 @@ use crate::{
     Result,
     local_test_path::{LocalTestPathKind, validate_local_test_path},
     recovery::clone::native::{digest, json},
+    utc_timestamp::rfc3339_order_key,
 };
 
 pub(crate) const TOKEN_NAME: &str = "metrics-token.txt";
@@ -422,7 +422,7 @@ pub(crate) fn timestamp(value: Option<&Value>, label: &str) -> Result<()> {
     let text = value
         .and_then(Value::as_str)
         .ok_or_else(|| format!("{label}必须是带时区的时间字符串"))?;
-    DateTime::parse_from_rfc3339(text).map_err(|_| format!("{label}不是有效时间"))?;
+    rfc3339_order_key(text).map_err(|_| format!("{label}不是有效时间"))?;
     Ok(())
 }
 
