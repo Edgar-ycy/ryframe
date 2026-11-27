@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Generic soft deletion for departments, menus, roles, and users uses the shared host UTC clock and preserves MySQL's second-level update timestamps and repeated matching of deleted rows.
+
 - Recovery source lineage verifies the reference dataset's tenant post allocations, post batch receipt, and original batch input digest.
 
 - Recovery source lineage accepts `/readyz` for the Worker and rejects a Worker that shares the target API's listening address and port.

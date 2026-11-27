@@ -15,9 +15,13 @@ use ryframe_db::{
     application_ports::{system::dict, transaction::DatabasePortTransaction},
     entities::{cache_namespace_version, dept, menu, permission, role, user},
     migration,
-    repositories::{CONFIG_CACHE_NAMESPACE, TenantProvisioningRepository},
+    repositories::{
+        CONFIG_CACHE_NAMESPACE, DeptRepository, MenuRepository, RoleRepository,
+        TenantProvisioningRepository, UserRepository,
+    },
+    repository::Repository,
 };
-use ryframe_kernel::AppResult;
+use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ConnectionTrait, DatabaseConnection, DbBackend, EntityTrait,
     Statement, TransactionTrait,
@@ -213,23 +217,24 @@ async fn verify_auto_fill_utc_writes(database: &DatabaseConnection) -> Result<()
             assert_eq!($model.updated_at, stored_updated_at, stringify!($entity));
             assert_eq!($model.updated_at.offset(), UtcOffset::UTC);
             $($verify)?
+            id
         }};
     }
-    verify_model!(dept, 1, model, {
+    let dept_id = verify_model!(dept, 1, model, {
         model.name = "填充校验部门".into();
     });
-    verify_model!(menu, 1, model, {
+    let menu_id = verify_model!(menu, 1, model, {
         model.name = "填充校验菜单".into();
         model.route_key = None;
     });
     verify_model!(permission, 1, model, {
         model.code = "fill:probe".into();
     });
-    verify_model!(role, 2, model, {
+    let role_id = verify_model!(role, 2, model, {
         model.code = "fill_probe".into();
     });
     let login = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
-    verify_model!(
+    let user_id = verify_model!(
         user,
         2,
         model,
@@ -241,6 +246,71 @@ async fn verify_auto_fill_utc_writes(database: &DatabaseConnection) -> Result<()
             assert_eq!(model.login_date, Some(login));
         }
     );
+    verify_generic_soft_deletes(database, [dept_id, menu_id, role_id, user_id]).await
+}
+
+async fn verify_generic_soft_deletes(
+    database: &DatabaseConnection,
+    [dept_id, menu_id, role_id, user_id]: [i64; 4],
+) -> Result<(), String> {
+    let assert_stamp = |value: OffsetDateTime, before: i64, after: i64| {
+        assert_eq!(value.offset(), UtcOffset::UTC);
+        assert_eq!(value.nanosecond(), 0);
+        // DATETIME 可把写入的微秒舍入到下一秒。
+        assert!((before..=after + 1).contains(&value.unix_timestamp()));
+    };
+    macro_rules! verify_delete {
+        ($entity:ident, $repository:ident, $id:expr, $other:expr) => {{
+            let read = |id| async move {
+                $entity::Entity::find_by_id(id)
+                    .one(database)
+                    .await
+                    .map_err(db_error)?
+                    .ok_or_else(|| concat!("缺少软删除校验行 ", stringify!($entity)).to_owned())
+            };
+            let original = read($id).await?;
+            let other = read($other).await?;
+            let tenant = original.tenant_id.as_str();
+            assert_ne!(tenant, "tenant-cache-utc");
+            assert_eq!(original.del_flag, $entity::Model::DEL_FLAG_NORMAL);
+            assert!(matches!(
+                $repository.delete(database, "tenant-cache-utc", $id).await,
+                Err(AppError::NotFound(message)) if message == "记录不存在"
+            ));
+            assert_eq!(read($id).await?, original);
+
+            let start = OffsetDateTime::now_utc().unix_timestamp();
+            $repository.delete(database, tenant, $id).await.map_err(|error| error.to_string())?;
+            let end = OffsetDateTime::now_utc().unix_timestamp();
+            let removed = read($id).await?;
+            assert_stamp(removed.updated_at, start, end);
+            let mut expected = original.clone();
+            expected.del_flag = $entity::Model::DEL_FLAG_DELETED.into();
+            expected.updated_at = removed.updated_at;
+            assert_eq!(removed, expected);
+
+            // 恢复原更新时间，确保同一秒内也能验证已删行再次匹配并写入新时间。
+            let mut marked = $entity::ActiveModel::from(removed);
+            marked.updated_at = ActiveValue::Set(original.updated_at);
+            let marked = marked.update(database).await.map_err(db_error)?;
+            assert_eq!(marked.del_flag, $entity::Model::DEL_FLAG_DELETED);
+            assert_eq!(marked.updated_at, original.updated_at);
+
+            let start = OffsetDateTime::now_utc().unix_timestamp();
+            $repository.delete(database, tenant, $id).await.map_err(|error| error.to_string())?;
+            let end = OffsetDateTime::now_utc().unix_timestamp();
+            let repeated = read($id).await?;
+            assert_stamp(repeated.updated_at, start, end);
+            assert_ne!(repeated.updated_at, original.updated_at);
+            expected.updated_at = repeated.updated_at;
+            assert_eq!(repeated, expected);
+            assert_eq!(read($other).await?, other);
+        }};
+    }
+    verify_delete!(dept, DeptRepository, dept_id, 1);
+    verify_delete!(menu, MenuRepository, menu_id, 1);
+    verify_delete!(role, RoleRepository, role_id, 2);
+    verify_delete!(user, UserRepository, user_id, 2);
     Ok(())
 }
 

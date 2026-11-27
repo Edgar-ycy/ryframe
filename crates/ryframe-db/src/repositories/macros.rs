@@ -38,7 +38,13 @@ macro_rules! update_entity {
 
 macro_rules! soft_delete_entity {
     ($entity:ident, $db:expr, $tenant_id:expr, $id:expr) => {
-        soft_delete_entity!($entity, $db, $tenant_id, $id, chrono::Utc::now())
+        soft_delete_entity!(
+            $entity,
+            $db,
+            $tenant_id,
+            $id,
+            time::OffsetDateTime::now_utc()
+        )
     };
     ($entity:ident, $db:expr, $tenant_id:expr, $id:expr, $updated_at:expr) => {{
         use $crate::DbResultExt as _;
