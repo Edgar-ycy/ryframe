@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- Share UTC time-window validation for source runtime receipts, preserving the original RFC3339 format and ordering rules.
+
 - Verify published source receipts with the producer executable and managed intent bound to the original run.
 
 - Reuse the Redis generation retained by the RustFS handoff, close audited failures before startup, and verify the exact expiry times of existing sessions and logout records created during source verification.

@@ -1,7 +1,9 @@
 //! 登录原始行、缓存主体与远端写入计数；未知结果只记录已知事实。
 use super::documents;
-use crate::Result;
-use chrono::{DateTime, Utc};
+use crate::{
+    Result,
+    utc_timestamp::{now_order_key, rfc3339_order_key},
+};
 use regex::Regex;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -217,10 +219,9 @@ pub(super) fn time_order(args: &Value) -> Result<Value> {
     }
     let mut previous = None;
     for value in values {
-        let time = DateTime::parse_from_rfc3339(documents::text(value, "来源时间")?)
-            .map_err(|_| "来源时间无效")?
-            .with_timezone(&Utc);
-        if time > Utc::now() || previous.is_some_and(|previous| previous > time) {
+        let time =
+            rfc3339_order_key(documents::text(value, "来源时间")?).map_err(|_| "来源时间无效")?;
+        if time > now_order_key() || previous.is_some_and(|previous| previous > time) {
             return Err("来源运行收据时间顺序不成立".into());
         }
         previous = Some(time);
